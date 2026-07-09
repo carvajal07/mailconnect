@@ -162,11 +162,16 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
       Bases de datos, Reportes, Estadísticas, Mi cuenta.
       - [x] **Plantillas HTML** → constructor drag-and-drop "pro" (tipo Topol): 10 bloques
             (encabezado, texto, imagen, botón, logo, 2 columnas, redes sociales, HTML crudo,
-            divisor, espaciador), reorden por arrastre + flechas, duplicar/eliminar, panel de
-            propiedades, variables de personalización `{{nombre}}`, vista previa (iframe),
-            "Ver HTML", **borradores** en localStorage (guardar/cargar/eliminar), **cargar de
-            SES** (get-template → bloque HTML editable) y **publicar** vía `create-template`.
-            HTML generado "email-safe" (tablas + estilos inline). Fuente: `components/portal/`.
+            divisor, espaciador) en paleta agrupada (Contenido/Estructura), reorden por
+            arrastre + flechas, duplicar/eliminar, panel de propiedades, variables `{{nombre}}`.
+            **Ajustes globales** (ancho de contenido, fondos, color de texto/enlaces, fuente,
+            esquinas, preheader), **vista previa** escritorio/móvil (iframe), "Ver HTML",
+            **borradores** en localStorage (bloques + ajustes), **cargar de SES**
+            (get-template → bloque HTML editable) y **publicar** vía `create-template`.
+            El HTML generado es **responsive y cross-client**: XHTML doctype, media queries
+            (columnas que apilan en móvil), ghost tables + condicionales MSO para Outlook,
+            fix de Apple Mail, imágenes fluidas y botones bulletproof. Modelo y generación en
+            `components/portal/htmlBuilder.ts`; UI en `HtmlBuilderSection.tsx`.
       - [x] **Campañas** reutiliza `CampanasSection`. **Mi cuenta** muestra la sesión y permite
             cambiar la contraseña (change-password con token).
       - [ ] Plantillas PDF, Bases de datos, Reportes y Estadísticas quedan como placeholders
