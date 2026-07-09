@@ -12,12 +12,12 @@ import {
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import AssessmentIcon from '@mui/icons-material/Assessment';
-import BarChartIcon from '@mui/icons-material/BarChart';
 import { useNavigate } from 'react-router-dom';
 import { PortalSidebar } from '../../components/portal/PortalSidebar';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
 import { PlaceholderSection } from '../../components/portal/PlaceholderSection';
 import { BasesDatosSection } from '../../components/portal/BasesDatosSection';
+import { EstadisticasSection } from '../../components/portal/EstadisticasSection';
 import { MiCuentaSection } from '../../components/portal/MiCuentaSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
 import { ThemeToggle } from '../../components/ThemeToggle';
@@ -68,13 +68,7 @@ export const PortalPage = () => {
           />
         );
       case 'estadisticas':
-        return (
-          <PlaceholderSection
-            title="Estadísticas"
-            icon={<BarChartIcon fontSize="inherit" />}
-            description="Tableros con tasas de apertura, clics y rebotes de tus campañas. Se conectará cuando el backend exponga las métricas agregadas."
-          />
-        );
+        return <EstadisticasSection />;
       default:
         return <HtmlBuilderSection />;
     }

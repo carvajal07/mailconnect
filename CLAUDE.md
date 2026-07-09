@@ -179,7 +179,13 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             de registros, columna de email, y cuenta válidos/inválidos/duplicados) y subida real
             a S3 vía `get-urlS3` (`documentType=database`), devolviendo la ruta para usarla como
             Data Path. Lista de bases de la sesión (backend aún no expone listado/edición/lista negra).
-      - [ ] Plantillas PDF, Reportes y Estadísticas quedan como placeholders (esperan backend).
+      - [x] **Estadísticas** (`EstadisticasSection` + `charts.tsx`): tablero con KPIs
+            (pendientes/creadas/enviadas, total envíos, apertura promedio), **dona** de
+            campañas por estado, **embudo** de envío (enviados→entregados→abiertos→clics) y
+            tabla con detalle por campaña. Gráficos en SVG propio (sin dependencias),
+            theme-aware y con paleta validada (dataviz). Datos ilustrativos hasta que el
+            backend exponga métricas agregadas.
+      - [ ] Plantillas PDF y Reportes quedan como placeholders (esperan backend).
             El constructor HTML se irá ampliando (más bloques/estilos).
 - [~] Conectar las secciones del panel a la API real (capa de servicios nueva):
       - [x] **Plantillas** → `create-template`, `get-template`, `delete-template` (reales).
