@@ -116,15 +116,18 @@ def lambda_handler(event, context):
         if not user:
             return {'status': False, 'statusCode': 404, 'description': "Usuario no encontrado"}
 
+        # Validar la contraseña ANTES de autorizar. El camino por OTP consume el
+        # código durante la autorización, así que si la clave es débil rechazamos
+        # primero y el OTP sigue disponible para reintentar.
+        if not _valid_password(new_password):
+            return {'status': False, 'statusCode': 400,
+                    'description': "La contraseña no cumple los requisitos mínimos (8+ caracteres, mayúscula, minúscula y número)."}
+
         # Autorización: token de sesión O un OTP válido (recuperación)
         authorized = _authorized_by_token(event, payload, email) or _authorized_by_otp(user['userId'], otp)
         if not authorized:
             return {'status': False, 'statusCode': 401,
                     'description': "No autorizado. Se requiere sesión válida o un OTP correcto."}
-
-        if not _valid_password(new_password):
-            return {'status': False, 'statusCode': 400,
-                    'description': "La contraseña no cumple los requisitos mínimos (8+ caracteres, mayúscula, minúscula y número)."}
 
         # Nuevo salt + hash
         salt = str(uuid.uuid4())

@@ -1,96 +1,100 @@
 import { createTheme } from '@mui/material/styles';
 
 // Paleta de colores personalizada - Tema Claro/Profesional
+//
+// Derivada de la MARCA MailConnect (los mismos tokens del logo y la landing):
+//   cyan #00c3ff · azul #0075be · navy/ink #16233f · verde #1fbf87 · amber #ff9d2e
+// Fuente única de la marca: src/pages/landing/landing.css (bloque .mc-landing).
 export const colorPalette = {
-  // Colores principales
+  // Colores principales (azul de marca)
   primary: {
-    main: '#2C3E50',      // Azul oscuro elegante
-    light: '#34495E',     // Azul oscuro claro
-    dark: '#1A252F',      // Azul oscuro profundo
+    main: '#0075be',      // Brand-strong (azul del logo) - acción principal
+    light: '#00c3ff',     // Brand cyan
+    dark: '#005a94',      // Azul oscuro
     contrastText: '#FFFFFF',
   },
   secondary: {
-    main: '#3498DB',      // Azul vibrante
-    light: '#5DADE2',     // Azul claro
-    dark: '#2874A6',      // Azul oscuro
+    main: '#16233f',      // Ink/navy de marca
+    light: '#2a3a5a',     // Navy claro
+    dark: '#0a1628',      // Ink profundo
     contrastText: '#FFFFFF',
   },
-  
-  // Colores de acento
+
+  // Colores de acento (canales / documentos, igual que la landing)
   accent: {
-    teal: '#1ABC9C',      // Verde azulado
-    purple: '#9B59B6',    // Púrpura
-    orange: '#E67E22',    // Naranja
-    turquoise: '#16A085', // Turquesa
+    teal: '#1fbf87',      // Verde de marca
+    purple: '#6f5ec2',    // Violeta de marca
+    orange: '#ff9d2e',    // Ámbar de marca
+    turquoise: '#00c3ff', // Cyan de marca
   },
 
-  // Colores de estado
+  // Colores de estado (alineados a la marca)
   success: {
-    main: '#27AE60',      // Verde éxito
-    light: '#2ECC71',     // Verde claro
-    dark: '#1E8449',      // Verde oscuro
+    main: '#1fbf87',      // Verde de marca
+    light: '#4fd0a2',     // Verde claro
+    dark: '#159467',      // Verde oscuro
     contrastText: '#FFFFFF',
   },
   warning: {
-    main: '#F39C12',      // Amarillo/Naranja advertencia
-    light: '#F5B041',     // Amarillo claro
-    dark: '#D68910',      // Naranja oscuro
-    contrastText: '#000000',
+    main: '#ff9d2e',      // Ámbar de marca
+    light: '#ffb75e',     // Ámbar claro
+    dark: '#d97e12',      // Ámbar oscuro
+    contrastText: '#16233f',
   },
   error: {
-    main: '#E74C3C',      // Rojo error
-    light: '#EC7063',     // Rojo claro
-    dark: '#C0392B',      // Rojo oscuro
+    main: '#e5484d',      // Rojo (accesible sobre fondo claro)
+    light: '#ef6f73',     // Rojo claro
+    dark: '#c1343a',      // Rojo oscuro
     contrastText: '#FFFFFF',
   },
   info: {
-    main: '#3498DB',      // Azul información
-    light: '#5DADE2',     // Azul claro
-    dark: '#2874A6',      // Azul oscuro
-    contrastText: '#FFFFFF',
+    main: '#00c3ff',      // Cyan de marca
+    light: '#5bd6ff',     // Cyan claro
+    dark: '#0092c4',      // Cyan oscuro
+    contrastText: '#16233f',
   },
 
   // Colores para cantidades/estados
   quantity: {
-    low: '#E74C3C',       // Rojo para bajo
-    medium: '#F39C12',    // Amarillo para medio
-    high: '#27AE60',      // Verde para alto
-    critical: '#C0392B',  // Rojo oscuro crítico
+    low: '#e5484d',       // Rojo para bajo
+    medium: '#ff9d2e',    // Ámbar para medio
+    high: '#1fbf87',      // Verde para alto
+    critical: '#c1343a',  // Rojo oscuro crítico
   },
 
-  // Grises y neutros
+  // Grises y neutros (con leve tinte azulado de la marca)
   neutral: {
-    50: '#FAFAFA',
-    100: '#F5F5F5',
-    200: '#EEEEEE',
-    300: '#E0E0E0',
-    400: '#BDBDBD',
-    500: '#9E9E9E',
-    600: '#757575',
-    700: '#616161',
-    800: '#424242',
-    900: '#212121',
+    50: '#f4f8fc',
+    100: '#eaf1f8',
+    200: '#e4ebf3',
+    300: '#d8e2ee',
+    400: '#b7c4d6',
+    500: '#8090a6',
+    600: '#5b6b86',
+    700: '#42506a',
+    800: '#28344c',
+    900: '#16233f',
   },
 
   // Fondo y superficie
   background: {
-    default: '#F8F9FA',   // Fondo claro
+    default: '#f4f8fc',   // Fondo claro (bg-alt de la marca)
     paper: '#FFFFFF',     // Superficie de papel
-    dark: '#1A252F',      // Fondo oscuro (para modo oscuro)
-    overlay: 'rgba(0, 0, 0, 0.5)', // Overlay
+    dark: '#16233f',      // Fondo oscuro (bloques navy de la marca)
+    overlay: 'rgba(16, 35, 63, 0.5)', // Overlay (ink transparente)
   },
 
   // Texto
   text: {
-    primary: '#2C3E50',   // Texto principal
-    secondary: '#7F8C8D',  // Texto secundario
-    disabled: '#BDC3C7',   // Texto deshabilitado
-    hint: '#95A5A6',       // Texto de ayuda
+    primary: '#16233f',   // Ink de marca
+    secondary: '#5b6b86',  // Texto atenuado de la marca
+    disabled: '#9fb0c4',   // Texto deshabilitado
+    hint: '#8090a6',       // Texto de ayuda
   },
 
   // Divisores y bordes
-  divider: '#ECF0F1',
-  border: '#D5DBDB',
+  divider: '#e4ebf3',
+  border: '#d8e2ee',
 };
 
 // Tema de Material UI - Modo Claro
@@ -207,7 +211,7 @@ const theme = createTheme({
         },
         containedPrimary: {
           '&:hover': {
-            backgroundColor: colorPalette.primary.light,
+            backgroundColor: colorPalette.primary.dark,
           },
         },
         outlined: {

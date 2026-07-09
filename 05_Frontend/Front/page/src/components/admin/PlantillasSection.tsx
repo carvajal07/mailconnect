@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Box,
   Button,
@@ -21,63 +21,75 @@ import {
   Select,
   MenuItem,
   FormControl,
-  InputLabel
+  InputLabel,
+  Chip,
+  Alert,
+  CircularProgress,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
-import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
 import VisibilityIcon from '@mui/icons-material/Visibility';
-import { API_CONFIG, buildUrl } from '../../config/api';
+import { getUser } from '../../services/authService';
+import { templatesService } from '../../services/templatesService';
+import type { TemplatePayload } from '../../services/templatesService';
+import { isOk } from '../../services/apiClient';
+import { useFeedback } from '../../hooks/useFeedback';
 
-interface Plantilla {
-  id?: string;
-  userId: string;
-  customerId: string;
-  channel: number;
-  templateName: string;
-  subject: string;
-  htmlBody: string;
-  textBody: string;
+interface Plantilla extends TemplatePayload {
+  source: 'created' | 'fetched';
 }
 
+const emptyForm = (userId = ''): Plantilla => ({
+  userId,
+  customerId: '',
+  channel: 1,
+  templateName: '',
+  subject: '',
+  htmlBody: '',
+  textBody: '',
+  source: 'created',
+});
+
 export const PlantillasSection = () => {
+  const sessionUserId = getUser()?.userId ?? '';
+  const { notify, FeedbackSnackbar } = useFeedback();
+
   const [plantillas, setPlantillas] = useState<Plantilla[]>([]);
   const [openDialog, setOpenDialog] = useState(false);
   const [openViewDialog, setOpenViewDialog] = useState(false);
-  const [dialogMode, setDialogMode] = useState<'create' | 'edit'>('create');
   const [selectedPlantilla, setSelectedPlantilla] = useState<Plantilla | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [formData, setFormData] = useState<Plantilla>({
-    userId: '',
-    customerId: '',
-    channel: 1,
-    templateName: '',
-    subject: '',
-    htmlBody: '',
-    textBody: '',
-  });
+  const [queryName, setQueryName] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [loadingName, setLoadingName] = useState('');
+  const [formData, setFormData] = useState<Plantilla>(emptyForm(sessionUserId));
 
-  const handleOpenDialog = (mode: 'create' | 'edit', plantilla?: Plantilla) => {
-    setDialogMode(mode);
-    if (mode === 'edit' && plantilla) {
-      setSelectedPlantilla(plantilla);
-      setFormData(plantilla);
-    } else {
-      setFormData({
-        userId: '',
-        customerId: '',
-        channel: 1,
-        templateName: '',
-        subject: '',
-        htmlBody: '',
-        textBody: '',
-      });
-    }
+  const handleOpenDialog = () => {
+    setFormData(emptyForm(sessionUserId));
     setOpenDialog(true);
   };
 
-  const handleOpenViewDialog = (plantilla: Plantilla) => {
+  const handleOpenViewDialog = async (plantilla: Plantilla) => {
+    // Si aún no tenemos el contenido real, lo pedimos al backend (get-template).
+    if (!plantilla.htmlBody && plantilla.templateName) {
+      setLoadingName(plantilla.templateName);
+      const res = await templatesService.get(plantilla.userId || sessionUserId, plantilla.templateName);
+      setLoadingName('');
+      if (isOk(res) && res.template) {
+        plantilla = {
+          ...plantilla,
+          subject: res.template.SubjectPart ?? plantilla.subject,
+          htmlBody: res.template.HtmlPart ?? '',
+          textBody: res.template.TextPart ?? '',
+        };
+        setPlantillas((prev) =>
+          prev.map((p) => (p.templateName === plantilla.templateName ? plantilla : p)),
+        );
+      } else {
+        notify(res.description || 'No se pudo obtener la plantilla del backend.', 'error');
+      }
+    }
     setSelectedPlantilla(plantilla);
     setOpenViewDialog(true);
   };
@@ -89,111 +101,116 @@ export const PlantillasSection = () => {
   };
 
   const handleInputChange = (field: keyof Plantilla, value: string | number) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
   const handleSubmit = async () => {
-    try {
-      const url = dialogMode === 'create'
-        ? buildUrl(API_CONFIG.TEMPLATES.CREATE)
-        : buildUrl(API_CONFIG.TEMPLATES.UPDATE);
+    if (!formData.userId || !formData.customerId || !formData.templateName) {
+      notify('User ID, Customer ID y Nombre de la plantilla son obligatorios.', 'warning');
+      return;
+    }
+    setSubmitting(true);
+    const res = await templatesService.create({
+      userId: formData.userId,
+      customerId: formData.customerId,
+      channel: Number(formData.channel),
+      templateName: formData.templateName,
+      subject: formData.subject,
+      htmlBody: formData.htmlBody,
+      textBody: formData.textBody,
+    });
+    setSubmitting(false);
 
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData),
+    if (isOk(res)) {
+      notify(
+        'Plantilla creada. El backend generó el nombre final con el formato cliente_consecutivo_canal_nombre.',
+        'success',
+      );
+      setPlantillas((prev) => [{ ...formData, source: 'created' }, ...prev]);
+      handleCloseDialog();
+    } else {
+      notify(res.description || 'No se pudo crear la plantilla.', 'error');
+    }
+  };
+
+  const handleQueryByName = async () => {
+    const name = queryName.trim();
+    if (!name) return;
+    setLoadingName(name);
+    const res = await templatesService.get(sessionUserId, name);
+    setLoadingName('');
+    if (isOk(res) && res.template) {
+      const fetched: Plantilla = {
+        userId: sessionUserId,
+        customerId: '',
+        channel: 1,
+        templateName: res.template.TemplateName || name,
+        subject: res.template.SubjectPart ?? '',
+        htmlBody: res.template.HtmlPart ?? '',
+        textBody: res.template.TextPart ?? '',
+        source: 'fetched',
+      };
+      setPlantillas((prev) => {
+        const rest = prev.filter((p) => p.templateName !== fetched.templateName);
+        return [fetched, ...rest];
       });
-
-      if (response.ok) {
-        console.log('Plantilla guardada exitosamente');
-        handleCloseDialog();
-        loadPlantillas();
-      } else {
-        console.error('Error al guardar plantilla');
-      }
-    } catch (error) {
-      console.error('Error:', error);
+      notify('Plantilla consultada correctamente.', 'success');
+      setQueryName('');
+    } else {
+      notify(res.description || 'No se encontró la plantilla con ese nombre.', 'error');
     }
   };
 
-  const loadPlantillas = async () => {
-    try {
-      const response = await fetch(buildUrl(API_CONFIG.TEMPLATES.LIST));
-      if (response.ok) {
-        const data = await response.json();
-        setPlantillas(data);
-      }
-    } catch (error) {
-      console.error('Error al cargar plantillas:', error);
-    }
-  };
-
-  const handleDelete = async (userId: string, templateName: string) => {
-    if (window.confirm('¿Está seguro de eliminar esta plantilla?')) {
-      try {
-        const response = await fetch(buildUrl(API_CONFIG.TEMPLATES.DELETE), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ userId, templateName }),
-        });
-
-        if (response.ok) {
-          console.log('Plantilla eliminada exitosamente');
-          loadPlantillas();
-        }
-      } catch (error) {
-        console.error('Error al eliminar plantilla:', error);
-      }
-    }
-  };
-
-  const handleSearch = async () => {
-    try {
-      const url = `${buildUrl(API_CONFIG.TEMPLATES.SEARCH)}?term=${searchTerm}`;
-      const response = await fetch(url);
-      if (response.ok) {
-        const data = await response.json();
-        setPlantillas(data);
-      }
-    } catch (error) {
-      console.error('Error en búsqueda:', error);
+  const handleDelete = async (plantilla: Plantilla) => {
+    if (!window.confirm(`¿Eliminar la plantilla "${plantilla.templateName}"?`)) return;
+    const res = await templatesService.remove(plantilla.userId || sessionUserId, plantilla.templateName);
+    if (isOk(res)) {
+      notify('Plantilla eliminada correctamente.', 'success');
+      setPlantillas((prev) => prev.filter((p) => p.templateName !== plantilla.templateName));
+    } else {
+      notify(res.description || 'No se pudo eliminar la plantilla.', 'error');
     }
   };
 
   const getChannelName = (channel: number) => {
-    const channels: Record<number, string> = {
-      1: 'Email',
-      2: 'SMS',
-      3: 'WhatsApp',
-    };
-    return channels[channel] || 'Desconocido';
+    const channels: Record<number, string> = { 1: 'Email', 2: 'SMS', 3: 'WhatsApp' };
+    return channels[channel] || `Canal ${channel}`;
   };
+
+  // Búsqueda del lado del cliente sobre la lista local (el backend no expone listar/buscar).
+  const visibles = useMemo(() => {
+    const t = searchTerm.trim().toLowerCase();
+    if (!t) return plantillas;
+    return plantillas.filter(
+      (p) =>
+        p.templateName.toLowerCase().includes(t) ||
+        p.subject.toLowerCase().includes(t) ||
+        p.customerId.toLowerCase().includes(t),
+    );
+  }, [plantillas, searchTerm]);
 
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4">Plantillas</Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog('create')}
-        >
+        <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenDialog}>
           Crear Plantilla
         </Button>
       </Stack>
+
+      <Alert severity="info" sx={{ mb: 2 }}>
+        El backend soporta <strong>crear</strong>, <strong>consultar por nombre</strong> y{' '}
+        <strong>eliminar</strong> plantillas. Aún no expone un listado global, por eso la tabla
+        muestra lo que creas o consultas en esta sesión.
+      </Alert>
 
       <Paper sx={{ p: 2, mb: 3 }}>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="center">
           <TextField
             fullWidth
-            placeholder="Buscar plantillas..."
+            placeholder="Filtrar la lista actual..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -201,13 +218,23 @@ export const PlantillasSection = () => {
                 </InputAdornment>
               ),
             }}
-            sx={{ flex: { md: 2 } }}
+            sx={{ flex: { md: 1 } }}
           />
-          <Button variant="outlined" onClick={handleSearch} sx={{ minWidth: 120 }}>
-            Buscar
-          </Button>
-          <Button variant="outlined" onClick={loadPlantillas} sx={{ minWidth: 120 }}>
-            Listar Todas
+          <TextField
+            fullWidth
+            placeholder="Nombre exacto en SES para consultar..."
+            value={queryName}
+            onChange={(e) => setQueryName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleQueryByName()}
+            sx={{ flex: { md: 1 } }}
+          />
+          <Button
+            variant="outlined"
+            onClick={handleQueryByName}
+            disabled={!queryName.trim() || !!loadingName}
+            sx={{ minWidth: 160 }}
+          >
+            {loadingName ? <CircularProgress size={20} /> : 'Consultar por nombre'}
           </Button>
         </Stack>
       </Paper>
@@ -219,34 +246,36 @@ export const PlantillasSection = () => {
               <TableCell>Nombre</TableCell>
               <TableCell>Canal</TableCell>
               <TableCell>Asunto</TableCell>
-              <TableCell>Customer ID</TableCell>
+              <TableCell>Origen</TableCell>
               <TableCell align="right">Acciones</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {plantillas.map((plantilla, index) => (
-              <TableRow key={index}>
+            {visibles.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                  Aún no hay plantillas. Crea una o consúltala por su nombre exacto.
+                </TableCell>
+              </TableRow>
+            )}
+            {visibles.map((plantilla, index) => (
+              <TableRow key={`${plantilla.templateName}-${index}`}>
                 <TableCell>{plantilla.templateName}</TableCell>
                 <TableCell>{getChannelName(plantilla.channel)}</TableCell>
                 <TableCell>{plantilla.subject}</TableCell>
-                <TableCell>{plantilla.customerId}</TableCell>
+                <TableCell>
+                  <Chip
+                    label={plantilla.source === 'created' ? 'Creada' : 'Consultada'}
+                    size="small"
+                    color={plantilla.source === 'created' ? 'primary' : 'info'}
+                    variant="outlined"
+                  />
+                </TableCell>
                 <TableCell align="right">
-                  <IconButton
-                    color="info"
-                    onClick={() => handleOpenViewDialog(plantilla)}
-                  >
+                  <IconButton color="info" onClick={() => handleOpenViewDialog(plantilla)}>
                     <VisibilityIcon />
                   </IconButton>
-                  <IconButton
-                    color="primary"
-                    onClick={() => handleOpenDialog('edit', plantilla)}
-                  >
-                    <EditIcon />
-                  </IconButton>
-                  <IconButton
-                    color="error"
-                    onClick={() => handleDelete(plantilla.userId, plantilla.templateName)}
-                  >
+                  <IconButton color="error" onClick={() => handleDelete(plantilla)}>
                     <DeleteIcon />
                   </IconButton>
                 </TableCell>
@@ -256,11 +285,9 @@ export const PlantillasSection = () => {
         </Table>
       </TableContainer>
 
-      {/* Dialog para crear/editar */}
+      {/* Dialog para crear */}
       <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="lg" fullWidth>
-        <DialogTitle>
-          {dialogMode === 'create' ? 'Crear Plantilla' : 'Editar Plantilla'}
-        </DialogTitle>
+        <DialogTitle>Crear Plantilla</DialogTitle>
         <DialogContent>
           <Box sx={{ mt: 2 }}>
             <Stack spacing={2}>
@@ -270,6 +297,7 @@ export const PlantillasSection = () => {
                   label="User ID"
                   value={formData.userId}
                   onChange={(e) => handleInputChange('userId', e.target.value)}
+                  helperText="Prellenado desde tu sesión"
                 />
                 <TextField
                   fullWidth
@@ -324,14 +352,16 @@ export const PlantillasSection = () => {
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseDialog}>Cancelar</Button>
-          <Button variant="contained" onClick={handleSubmit}>
-            {dialogMode === 'create' ? 'Crear' : 'Guardar'}
+          <Button onClick={handleCloseDialog} disabled={submitting}>
+            Cancelar
+          </Button>
+          <Button variant="contained" onClick={handleSubmit} disabled={submitting}>
+            {submitting ? <CircularProgress size={22} /> : 'Crear'}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Dialog para ver plantilla */}
+      {/* Dialog para ver */}
       <Dialog open={openViewDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
         <DialogTitle>Ver Plantilla</DialogTitle>
         <DialogContent>
@@ -349,9 +379,9 @@ export const PlantillasSection = () => {
               <Typography variant="subtitle1" gutterBottom sx={{ mt: 2 }}>
                 <strong>HTML Body:</strong>
               </Typography>
-              <Paper sx={{ p: 2, bgcolor: 'grey.100', maxHeight: 300, overflow: 'auto' }}>
+              <Paper variant="outlined" sx={{ p: 2, maxHeight: 300, overflow: 'auto' }}>
                 <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {selectedPlantilla.htmlBody}
+                  {selectedPlantilla.htmlBody || '(sin contenido)'}
                 </pre>
               </Paper>
               {selectedPlantilla.textBody && (
@@ -359,7 +389,7 @@ export const PlantillasSection = () => {
                   <Typography variant="subtitle1" gutterBottom sx={{ mt: 2 }}>
                     <strong>Text Body:</strong>
                   </Typography>
-                  <Paper sx={{ p: 2, bgcolor: 'grey.100' }}>
+                  <Paper variant="outlined" sx={{ p: 2 }}>
                     <Typography>{selectedPlantilla.textBody}</Typography>
                   </Paper>
                 </>
@@ -371,6 +401,8 @@ export const PlantillasSection = () => {
           <Button onClick={handleCloseDialog}>Cerrar</Button>
         </DialogActions>
       </Dialog>
+
+      {FeedbackSnackbar}
     </Box>
   );
 };

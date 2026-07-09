@@ -5,11 +5,12 @@ import { AUTH_API_BASE, AUTH_ENDPOINTS } from '../config/api';
  * Conecta el front con los endpoints de seguridad del backend (AWS API Gateway).
  * La URL base se toma de VITE_API_BASE_URL (ver .env) o del valor por defecto.
  *
- * Estado del backend (feb. 2026):
- *  - /login  y  /register  -> IMPLEMENTADOS y funcionales.
- *  - /verify-code, /create-otp, /validate-otp, /change-password,
- *    /forgot-password, /token/refresh, /logout -> STUBS en el backend
- *    (el cliente ya queda conectado; funcionarán al implementar la lambda).
+ * Estado del backend (jul. 2026):
+ *  - /login, /register, /logout, /account-activation -> IMPLEMENTADOS.
+ *  - /create-otp, /validate-otp, /change-password, /forgot-password -> IMPLEMENTADOS.
+ *    La recuperación de contraseña es: /forgot-password (envía OTP al correo) y
+ *    luego /change-password con { user, password, otp } desde la pantalla de reseteo.
+ *  - /verify-code, /token/refresh -> STUBS en el backend (cliente ya conectado).
  */
 
 export interface ApiResponse<T = unknown> {
@@ -101,21 +102,31 @@ export const authService = {
   verifyCode: (user: string, code: number) =>
     post(AUTH_ENDPOINTS.VERIFY_CODE, { user, code }),
 
-  /** Solicitud de recuperación de contraseña. Backend pendiente. */
+  /**
+   * Solicita el envío de un OTP de recuperación al correo del usuario.
+   * Por seguridad el backend responde siempre 200 (no revela si el correo existe).
+   */
   forgotPassword: (user: string) =>
     post(AUTH_ENDPOINTS.FORGOT_PASSWORD, { user }),
 
-  /** Crear OTP (requiere token). Backend pendiente. */
+  /** Crear OTP (requiere token). */
   createOtp: (userId: string, ip: string, system = 'Autenticacion', expiration = 5) =>
     post(AUTH_ENDPOINTS.CREATE_OTP, { userId, ip, system, expiration }, true),
 
-  /** Validar OTP. Backend pendiente. */
+  /** Validar OTP. */
   validateOtp: (otp: number, userId: string, ip: string) =>
     post(AUTH_ENDPOINTS.VALIDATE_OTP, { otp, userId, ip }),
 
-  /** Cambiar contraseña. Backend pendiente. */
-  changePassword: (user: string, password: string) =>
-    post(AUTH_ENDPOINTS.CHANGE_PASSWORD, { user, password }),
+  /**
+   * Cambiar contraseña. Si se pasa `otp` es una recuperación (no requiere sesión);
+   * sin `otp` requiere un token de sesión válido (Authorization: Bearer).
+   */
+  changePassword: (user: string, password: string, otp?: number) =>
+    post(
+      AUTH_ENDPOINTS.CHANGE_PASSWORD,
+      otp !== undefined ? { user, password, otp } : { user, password },
+      otp === undefined,
+    ),
 
   refreshToken: () => post(AUTH_ENDPOINTS.REFRESH_TOKEN, {}, true),
 

@@ -15,333 +15,123 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  IconButton,
   Stack,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
-  Checkbox,
-  FormControlLabel,
   Chip,
-  Divider
+  Alert,
+  CircularProgress,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
-import DeleteIcon from '@mui/icons-material/Delete';
-import SendIcon from '@mui/icons-material/Send';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import EmailIcon from '@mui/icons-material/Email';
-import { API_CONFIG, buildUrl } from '../../config/api';
+import { getUser } from '../../services/authService';
+import { campaignsService } from '../../services/campaignsService';
+import type { CampaignPayload } from '../../services/campaignsService';
+import { isOk } from '../../services/apiClient';
+import { useFeedback } from '../../hooks/useFeedback';
 
-interface Campana {
-  id?: string;
-  customerId: string;
-  customerName: string;
-  campaignName: string;
-  channelName: string;
-  attachmentType: string;
-  template: string;
-  from: string;
-  dataPath: string;
-  variableDocument: boolean;
-  mask: string;
-  attachment?: { path: string }[];
+interface Campana extends CampaignPayload {
+  campaignId?: string;
 }
 
+const emptyForm = (from = ''): Campana => ({
+  customerId: '',
+  campaignName: '',
+  channelName: 'EM',
+  attachmentType: 'NONE',
+  template: '',
+  from,
+  dataPath: '',
+});
+
 export const CampanasSection = () => {
+  const sessionEmail = getUser()?.email ?? '';
+  const { notify, FeedbackSnackbar } = useFeedback();
+
   const [campanas, setCampanas] = useState<Campana[]>([]);
   const [openDialog, setOpenDialog] = useState(false);
   const [openUploadDialog, setOpenUploadDialog] = useState(false);
-  const [openSamplesDialog, setOpenSamplesDialog] = useState(false);
-  const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [formData, setFormData] = useState<Campana>(emptyForm(sessionEmail));
 
-  // Form data para crear campaña
-  const [formData, setFormData] = useState<Campana>({
-    customerId: '',
-    customerName: '',
-    campaignName: '',
-    channelName: '',
-    attachmentType: 'ONFILE',
-    template: '',
-    from: '',
-    dataPath: '',
-    variableDocument: false,
-    mask: '',
-    attachment: [],
-  });
-
-  // Upload CSV
+  // Carga de CSV / documento a S3 (URL prefirmada).
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvCustomer, setCsvCustomer] = useState('');
   const [csvDocumentType, setCsvDocumentType] = useState<'database' | 'document'>('database');
-
-  // Adjuntos
-  const [attachmentPaths, setAttachmentPaths] = useState<string[]>(['']);
-
-  // Envío de muestras
-  const [samplesData, setSamplesData] = useState({
-    customerName: '',
-    campaignName: '',
-    userId: '',
-    template: '',
-    templateVersion: 1,
-    quantitySamples: 1,
-    selectiveSamples: false,
-    recipients: [''],
-    identifications: [''],
-  });
+  const [lastUploadPath, setLastUploadPath] = useState('');
 
   const handleOpenDialog = () => {
-    setFormData({
-      customerId: '',
-      customerName: '',
-      campaignName: '',
-      channelName: '',
-      attachmentType: 'ONFILE',
-      template: '',
-      from: '',
-      dataPath: '',
-      variableDocument: false,
-      mask: '',
-      attachment: [],
-    });
+    setFormData(emptyForm(sessionEmail));
     setOpenDialog(true);
   };
 
   const handleCloseDialog = () => {
     setOpenDialog(false);
     setOpenUploadDialog(false);
-    setOpenSamplesDialog(false);
   };
 
-  const handleInputChange = (field: keyof Campana, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+  const handleInputChange = (field: keyof Campana, value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
   const handleSubmit = async () => {
-    try {
-      const payload = {
-        ...formData,
-        attachment: attachmentPaths
-          .filter(path => path.trim() !== '')
-          .map(path => ({ path })),
-      };
+    if (!formData.customerId || !formData.campaignName || !formData.channelName) {
+      notify('Customer ID, Nombre de la campaña y Canal son obligatorios.', 'warning');
+      return;
+    }
+    setSubmitting(true);
+    const res = await campaignsService.create({
+      customerId: formData.customerId,
+      campaignName: formData.campaignName,
+      channelName: formData.channelName,
+      attachmentType: formData.attachmentType,
+      dataPath: formData.dataPath,
+      template: formData.template,
+      from: formData.from,
+    });
+    setSubmitting(false);
 
-      const response = await fetch(buildUrl(API_CONFIG.CAMPAIGNS.CREATE), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.ok) {
-        console.log('Campaña creada exitosamente');
-        handleCloseDialog();
-        loadCampanas();
-      } else {
-        console.error('Error al crear campaña');
-      }
-    } catch (error) {
-      console.error('Error:', error);
+    if (isOk(res)) {
+      const campaignId = res.data?.campaignId;
+      notify(`Campaña creada correctamente${campaignId ? ` (ID ${campaignId})` : ''}.`, 'success');
+      setCampanas((prev) => [{ ...formData, campaignId }, ...prev]);
+      handleCloseDialog();
+    } else {
+      notify(res.description || 'No se pudo crear la campaña.', 'error');
     }
   };
 
-  const loadCampanas = async () => {
-    try {
-      const response = await fetch(buildUrl(API_CONFIG.CAMPAIGNS.LIST));
-      if (response.ok) {
-        const data = await response.json();
-        setCampanas(data);
-      }
-    } catch (error) {
-      console.error('Error al cargar campañas:', error);
-    }
-  };
-
-  const loadCampanasByClient = async (clientId: string) => {
-    try {
-      const response = await fetch(
-        buildUrl(API_CONFIG.CAMPAIGNS.GET_BY_CLIENT, { clientId })
-      );
-      if (response.ok) {
-        const data = await response.json();
-        setCampanas(data);
-      }
-    } catch (error) {
-      console.error('Error al cargar campañas del cliente:', error);
-    }
-  };
-
-  // Manejo de carga de CSV
   const handleUploadCSV = async () => {
     if (!csvFile || !csvCustomer) {
-      alert('Por favor complete todos los campos');
+      notify('Selecciona un archivo y el nombre del cliente.', 'warning');
       return;
     }
-
-    try {
-      // 1. Obtener URL prefirmada
-      const presignResponse = await fetch(buildUrl(API_CONFIG.FILES.PRESIGN_URL), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          customer: csvCustomer,
-          documentType: csvDocumentType,
-          documentName: csvFile.name,
-        }),
-      });
-
-      if (!presignResponse.ok) {
-        throw new Error('Error al obtener URL prefirmada');
-      }
-
-      const { uploadUrl } = await presignResponse.json();
-
-      // 2. Subir archivo usando la URL prefirmada
-      const uploadResponse = await fetch(uploadUrl, {
-        method: 'PUT',
-        body: csvFile,
-        headers: {
-          'Content-Type': 'text/csv',
-        },
-      });
-
-      if (uploadResponse.ok) {
-        console.log('Archivo CSV subido exitosamente');
-        alert('Archivo CSV subido exitosamente');
-        handleCloseDialog();
-      } else {
-        console.error('Error al subir archivo');
-      }
-    } catch (error) {
-      console.error('Error:', error);
-      alert('Error al subir el archivo');
-    }
-  };
-
-  // Manejo de envío de muestras
-  const handleSendSamples = async () => {
-    try {
-      const payload = {
-        ...samplesData,
-        recipients: samplesData.recipients.filter(r => r.trim() !== ''),
-        identifications: samplesData.selectiveSamples
-          ? samplesData.identifications.filter(i => i.trim() !== '')
-          : [],
-      };
-
-      const response = await fetch(buildUrl(API_CONFIG.CAMPAIGNS.SEND_SAMPLES), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.ok) {
-        console.log('Muestras enviadas exitosamente');
-        alert('Muestras enviadas exitosamente');
-        handleCloseDialog();
-      } else {
-        console.error('Error al enviar muestras');
-      }
-    } catch (error) {
-      console.error('Error:', error);
-    }
-  };
-
-  // Manejo de envío real
-  const handleSendReal = async (campana: Campana) => {
-    if (!window.confirm('¿Está seguro de enviar la campaña real?')) {
+    setUploading(true);
+    // 1) Pedir URL prefirmada al backend.
+    const presign = await campaignsService.presignUrl({
+      customer: csvCustomer,
+      documentName: csvFile.name,
+      documentType: csvDocumentType,
+    });
+    if (!isOk(presign) || !presign.data?.url) {
+      setUploading(false);
+      notify(presign.description || 'No se pudo obtener la URL de carga.', 'error');
       return;
     }
-
-    try {
-      const payload = {
-        customerName: campana.customerName,
-        campaignName: campana.campaignName,
-        userId: campana.customerId,
-        template: campana.template,
-        templateVersion: 1,
-      };
-
-      const response = await fetch(buildUrl(API_CONFIG.CAMPAIGNS.SEND_REAL), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.ok) {
-        console.log('Campaña enviada exitosamente');
-        alert('Campaña enviada exitosamente');
-      } else {
-        console.error('Error al enviar campaña');
-      }
-    } catch (error) {
-      console.error('Error:', error);
+    // 2) Subir el archivo directo a S3 con PUT.
+    const ok = await campaignsService.uploadToS3(presign.data.url, csvFile);
+    setUploading(false);
+    if (ok) {
+      const path = presign.data.path ?? '';
+      setLastUploadPath(path);
+      notify(`Archivo subido a S3${path ? `: ${path}` : ''}. Usa esa ruta como "Data Path".`, 'success');
+      setCsvFile(null);
+    } else {
+      notify('El archivo no se pudo subir a S3.', 'error');
     }
-  };
-
-  // Agregar/Eliminar correos de muestras
-  const addRecipient = () => {
-    setSamplesData(prev => ({
-      ...prev,
-      recipients: [...prev.recipients, ''],
-    }));
-  };
-
-  const removeRecipient = (index: number) => {
-    setSamplesData(prev => ({
-      ...prev,
-      recipients: prev.recipients.filter((_, i) => i !== index),
-    }));
-  };
-
-  const updateRecipient = (index: number, value: string) => {
-    setSamplesData(prev => ({
-      ...prev,
-      recipients: prev.recipients.map((r, i) => (i === index ? value : r)),
-    }));
-  };
-
-  // Agregar/Eliminar identificaciones
-  const addIdentification = () => {
-    setSamplesData(prev => ({
-      ...prev,
-      identifications: [...prev.identifications, ''],
-    }));
-  };
-
-  const removeIdentification = (index: number) => {
-    setSamplesData(prev => ({
-      ...prev,
-      identifications: prev.identifications.filter((_, i) => i !== index),
-    }));
-  };
-
-  const updateIdentification = (index: number, value: string) => {
-    setSamplesData(prev => ({
-      ...prev,
-      identifications: prev.identifications.map((id, i) => (i === index ? value : id)),
-    }));
-  };
-
-  // Agregar/Eliminar rutas de adjuntos
-  const addAttachmentPath = () => {
-    setAttachmentPaths(prev => [...prev, '']);
-  };
-
-  const removeAttachmentPath = (index: number) => {
-    setAttachmentPaths(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const updateAttachmentPath = (index: number, value: string) => {
-    setAttachmentPaths(prev => prev.map((path, i) => (i === index ? value : path)));
   };
 
   return (
@@ -349,87 +139,58 @@ export const CampanasSection = () => {
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4">Campañas</Typography>
         <Stack direction="row" spacing={2}>
-          <Button
-            variant="outlined"
-            startIcon={<CloudUploadIcon />}
-            onClick={() => setOpenUploadDialog(true)}
-          >
+          <Button variant="outlined" startIcon={<CloudUploadIcon />} onClick={() => setOpenUploadDialog(true)}>
             Cargar CSV
           </Button>
-          <Button
-            variant="outlined"
-            startIcon={<EmailIcon />}
-            onClick={() => setOpenSamplesDialog(true)}
-          >
-            Enviar Muestras
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={handleOpenDialog}
-          >
+          <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenDialog}>
             Crear Campaña
           </Button>
         </Stack>
       </Stack>
 
-      <Paper sx={{ p: 2, mb: 3 }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="center">
-          <TextField
-            fullWidth
-            label="Customer ID"
-            value={selectedCustomerId}
-            onChange={(e) => setSelectedCustomerId(e.target.value)}
-            placeholder="Ingrese el ID del cliente"
-            sx={{ flex: { md: 2 } }}
-          />
-          <Button
-            variant="outlined"
-            onClick={() => loadCampanasByClient(selectedCustomerId)}
-            sx={{ minWidth: 140 }}
-          >
-            Listar por Cliente
-          </Button>
-          <Button variant="outlined" onClick={loadCampanas} sx={{ minWidth: 120 }}>
-            Listar Todas
-          </Button>
-        </Stack>
-      </Paper>
+      <Alert severity="info" sx={{ mb: 2 }}>
+        Conectado a los endpoints reales de <strong>crear campaña</strong> y{' '}
+        <strong>cargar archivo</strong> (URL prefirmada de S3). El listado global, el envío de
+        muestras y el envío real aún no están expuestos como endpoints, por eso la tabla muestra
+        las campañas creadas en esta sesión.
+      </Alert>
+
+      {lastUploadPath && (
+        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setLastUploadPath('')}>
+          Último archivo subido: <strong>{lastUploadPath}</strong>
+        </Alert>
+      )}
 
       <TableContainer component={Paper}>
         <Table>
           <TableHead>
             <TableRow>
               <TableCell>Campaña</TableCell>
-              <TableCell>Cliente</TableCell>
+              <TableCell>Customer ID</TableCell>
               <TableCell>Canal</TableCell>
               <TableCell>Plantilla</TableCell>
               <TableCell>De</TableCell>
-              <TableCell align="right">Acciones</TableCell>
+              <TableCell>ID</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
+            {campanas.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                  Aún no hay campañas creadas en esta sesión.
+                </TableCell>
+              </TableRow>
+            )}
             {campanas.map((campana, index) => (
-              <TableRow key={index}>
+              <TableRow key={`${campana.campaignName}-${index}`}>
                 <TableCell>{campana.campaignName}</TableCell>
-                <TableCell>{campana.customerName}</TableCell>
+                <TableCell>{campana.customerId}</TableCell>
                 <TableCell>
                   <Chip label={campana.channelName} size="small" />
                 </TableCell>
                 <TableCell>{campana.template}</TableCell>
                 <TableCell>{campana.from}</TableCell>
-                <TableCell align="right">
-                  <IconButton
-                    color="primary"
-                    onClick={() => handleSendReal(campana)}
-                    title="Enviar campaña real"
-                  >
-                    <SendIcon />
-                  </IconButton>
-                  <IconButton color="error" title="Eliminar">
-                    <DeleteIcon />
-                  </IconButton>
-                </TableCell>
+                <TableCell>{campana.campaignId ?? '—'}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -451,25 +212,36 @@ export const CampanasSection = () => {
                 />
                 <TextField
                   fullWidth
-                  label="Nombre del Cliente"
-                  value={formData.customerName}
-                  onChange={(e) => handleInputChange('customerName', e.target.value)}
-                />
-              </Stack>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <TextField
-                  fullWidth
                   label="Nombre de la Campaña"
                   value={formData.campaignName}
                   onChange={(e) => handleInputChange('campaignName', e.target.value)}
                 />
-                <TextField
-                  fullWidth
-                  label="Canal"
-                  value={formData.channelName}
-                  onChange={(e) => handleInputChange('channelName', e.target.value)}
-                  placeholder="Ej: EAU, SMS, WhatsApp"
-                />
+              </Stack>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                <FormControl fullWidth>
+                  <InputLabel>Canal</InputLabel>
+                  <Select
+                    value={formData.channelName}
+                    label="Canal"
+                    onChange={(e) => handleInputChange('channelName', e.target.value)}
+                  >
+                    <MenuItem value="EM">EM — Email marketing</MenuItem>
+                    <MenuItem value="EAU">EAU — Adjunto único</MenuItem>
+                    <MenuItem value="EAP">EAP — Adjunto personalizado</MenuItem>
+                  </Select>
+                </FormControl>
+                <FormControl fullWidth>
+                  <InputLabel>Tipo de Adjunto</InputLabel>
+                  <Select
+                    value={formData.attachmentType}
+                    label="Tipo de Adjunto"
+                    onChange={(e) => handleInputChange('attachmentType', e.target.value)}
+                  >
+                    <MenuItem value="NONE">NONE</MenuItem>
+                    <MenuItem value="ONFILE">ONFILE</MenuItem>
+                    <MenuItem value="ONLINE">ONLINE</MenuItem>
+                  </Select>
+                </FormControl>
               </Stack>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                 <TextField
@@ -477,6 +249,7 @@ export const CampanasSection = () => {
                   label="Plantilla"
                   value={formData.template}
                   onChange={(e) => handleInputChange('template', e.target.value)}
+                  placeholder="Nombre de la plantilla (SES)"
                 />
                 <TextField
                   fullWidth
@@ -485,89 +258,30 @@ export const CampanasSection = () => {
                   onChange={(e) => handleInputChange('from', e.target.value)}
                 />
               </Stack>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <TextField
-                  fullWidth
-                  label="Data Path"
-                  value={formData.dataPath}
-                  onChange={(e) => handleInputChange('dataPath', e.target.value)}
-                  placeholder="Ej: 2025-10-17/archivo.csv"
-                />
-                <TextField
-                  fullWidth
-                  label="Máscara"
-                  value={formData.mask}
-                  onChange={(e) => handleInputChange('mask', e.target.value)}
-                />
-              </Stack>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
-                <FormControl fullWidth>
-                  <InputLabel>Tipo de Adjunto</InputLabel>
-                  <Select
-                    value={formData.attachmentType}
-                    label="Tipo de Adjunto"
-                    onChange={(e) => handleInputChange('attachmentType', e.target.value)}
-                  >
-                    <MenuItem value="ONFILE">ONFILE</MenuItem>
-                    <MenuItem value="ONLINE">ONLINE</MenuItem>
-                    <MenuItem value="NONE">NONE</MenuItem>
-                  </Select>
-                </FormControl>
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      checked={formData.variableDocument}
-                      onChange={(e) => handleInputChange('variableDocument', e.target.checked)}
-                    />
-                  }
-                  label="Documento Variable"
-                />
-              </Stack>
-
-              <Divider sx={{ my: 1 }} />
-              <Typography variant="subtitle1" gutterBottom>
-                Adjuntos
-              </Typography>
-              {attachmentPaths.map((path, index) => (
-                <Stack key={index} direction="row" spacing={1}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label={`Ruta del adjunto ${index + 1}`}
-                    value={path}
-                    onChange={(e) => updateAttachmentPath(index, e.target.value)}
-                    placeholder="Ej: 2025-10-17/archivo.pdf"
-                  />
-                  <IconButton
-                    color="error"
-                    onClick={() => removeAttachmentPath(index)}
-                    disabled={attachmentPaths.length === 1}
-                  >
-                    <DeleteIcon />
-                  </IconButton>
-                </Stack>
-              ))}
-              <Button
-                size="small"
-                startIcon={<AddIcon />}
-                onClick={addAttachmentPath}
-              >
-                Agregar Adjunto
-              </Button>
+              <TextField
+                fullWidth
+                label="Data Path"
+                value={formData.dataPath}
+                onChange={(e) => handleInputChange('dataPath', e.target.value)}
+                placeholder="Ruta del CSV en S3 (ej: 2025-10-17/archivo.csv)"
+                helperText="Usa la ruta que devuelve 'Cargar CSV'"
+              />
             </Stack>
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseDialog}>Cancelar</Button>
-          <Button variant="contained" onClick={handleSubmit}>
-            Crear Campaña
+          <Button onClick={handleCloseDialog} disabled={submitting}>
+            Cancelar
+          </Button>
+          <Button variant="contained" onClick={handleSubmit} disabled={submitting}>
+            {submitting ? <CircularProgress size={22} /> : 'Crear Campaña'}
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* Dialog para cargar CSV */}
       <Dialog open={openUploadDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
-        <DialogTitle>Cargar Archivo CSV</DialogTitle>
+        <DialogTitle>Cargar Archivo</DialogTitle>
         <DialogContent>
           <Box sx={{ mt: 2 }}>
             <Stack spacing={2}>
@@ -577,6 +291,7 @@ export const CampanasSection = () => {
                 value={csvCustomer}
                 onChange={(e) => setCsvCustomer(e.target.value)}
                 placeholder="Ej: merkacaldas"
+                helperText="Se usa para el bucket: {cliente}.{tipo}"
               />
               <FormControl fullWidth>
                 <InputLabel>Tipo de Documento</InputLabel>
@@ -585,196 +300,34 @@ export const CampanasSection = () => {
                   label="Tipo de Documento"
                   onChange={(e) => setCsvDocumentType(e.target.value as 'database' | 'document')}
                 >
-                  <MenuItem value="database">Database</MenuItem>
-                  <MenuItem value="document">Document</MenuItem>
+                  <MenuItem value="database">Database (CSV de destinatarios)</MenuItem>
+                  <MenuItem value="document">Document (adjunto)</MenuItem>
                 </Select>
               </FormControl>
-              <Button
-                variant="outlined"
-                component="label"
-                fullWidth
-                startIcon={<CloudUploadIcon />}
-              >
-                Seleccionar Archivo CSV
+              <Button variant="outlined" component="label" fullWidth startIcon={<CloudUploadIcon />}>
+                Seleccionar Archivo
                 <input
                   type="file"
-                  accept=".csv"
+                  accept=".csv,.pdf,.docx,.xlsx"
                   hidden
                   onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
                 />
               </Button>
-              {csvFile && (
-                <Typography variant="body2">
-                  Archivo seleccionado: {csvFile.name}
-                </Typography>
-              )}
+              {csvFile && <Typography variant="body2">Archivo seleccionado: {csvFile.name}</Typography>}
             </Stack>
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseDialog}>Cancelar</Button>
-          <Button
-            variant="contained"
-            onClick={handleUploadCSV}
-            disabled={!csvFile || !csvCustomer}
-          >
-            Subir Archivo
+          <Button onClick={handleCloseDialog} disabled={uploading}>
+            Cancelar
+          </Button>
+          <Button variant="contained" onClick={handleUploadCSV} disabled={!csvFile || !csvCustomer || uploading}>
+            {uploading ? <CircularProgress size={22} /> : 'Subir Archivo'}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Dialog para envío de muestras */}
-      <Dialog open={openSamplesDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
-        <DialogTitle>Enviar Muestras</DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 2 }}>
-            <Stack spacing={2}>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <TextField
-                  fullWidth
-                  label="Nombre del Cliente"
-                  value={samplesData.customerName}
-                  onChange={(e) =>
-                    setSamplesData(prev => ({ ...prev, customerName: e.target.value }))
-                  }
-                />
-                <TextField
-                  fullWidth
-                  label="Nombre de la Campaña"
-                  value={samplesData.campaignName}
-                  onChange={(e) =>
-                    setSamplesData(prev => ({ ...prev, campaignName: e.target.value }))
-                  }
-                />
-              </Stack>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <TextField
-                  fullWidth
-                  label="User ID"
-                  value={samplesData.userId}
-                  onChange={(e) =>
-                    setSamplesData(prev => ({ ...prev, userId: e.target.value }))
-                  }
-                />
-                <TextField
-                  fullWidth
-                  label="Plantilla"
-                  value={samplesData.template}
-                  onChange={(e) =>
-                    setSamplesData(prev => ({ ...prev, template: e.target.value }))
-                  }
-                />
-              </Stack>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <TextField
-                  fullWidth
-                  label="Versión de Plantilla"
-                  type="number"
-                  value={samplesData.templateVersion}
-                  onChange={(e) =>
-                    setSamplesData(prev => ({
-                      ...prev,
-                      templateVersion: parseInt(e.target.value) || 1,
-                    }))
-                  }
-                />
-                <TextField
-                  fullWidth
-                  label="Cantidad de Muestras"
-                  type="number"
-                  value={samplesData.quantitySamples}
-                  onChange={(e) =>
-                    setSamplesData(prev => ({
-                      ...prev,
-                      quantitySamples: parseInt(e.target.value) || 1,
-                    }))
-                  }
-                />
-              </Stack>
-
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={samplesData.selectiveSamples}
-                    onChange={(e) =>
-                      setSamplesData(prev => ({
-                        ...prev,
-                        selectiveSamples: e.target.checked,
-                      }))
-                    }
-                  />
-                }
-                label="Muestras Selectivas"
-              />
-
-              <Divider sx={{ my: 1 }} />
-              <Typography variant="subtitle1" gutterBottom>
-                Correos para Muestras
-              </Typography>
-              {samplesData.recipients.map((email, index) => (
-                <Stack key={index} direction="row" spacing={1}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    type="email"
-                    label={`Correo ${index + 1}`}
-                    value={email}
-                    onChange={(e) => updateRecipient(index, e.target.value)}
-                    placeholder="correo@ejemplo.com"
-                  />
-                  <IconButton
-                    color="error"
-                    onClick={() => removeRecipient(index)}
-                    disabled={samplesData.recipients.length === 1}
-                  >
-                    <DeleteIcon />
-                  </IconButton>
-                </Stack>
-              ))}
-              <Button size="small" startIcon={<AddIcon />} onClick={addRecipient}>
-                Agregar Correo
-              </Button>
-
-              {samplesData.selectiveSamples && (
-                <>
-                  <Divider sx={{ my: 1 }} />
-                  <Typography variant="subtitle1" gutterBottom>
-                    Identificaciones (Muestras Selectivas)
-                  </Typography>
-                  {samplesData.identifications.map((id, index) => (
-                    <Stack key={index} direction="row" spacing={1}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label={`Identificación ${index + 1}`}
-                        value={id}
-                        onChange={(e) => updateIdentification(index, e.target.value)}
-                        placeholder="Ingrese identificación"
-                      />
-                      <IconButton
-                        color="error"
-                        onClick={() => removeIdentification(index)}
-                        disabled={samplesData.identifications.length === 1}
-                      >
-                        <DeleteIcon />
-                      </IconButton>
-                    </Stack>
-                  ))}
-                  <Button size="small" startIcon={<AddIcon />} onClick={addIdentification}>
-                    Agregar Identificación
-                  </Button>
-                </>
-              )}
-            </Stack>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleCloseDialog}>Cancelar</Button>
-          <Button variant="contained" onClick={handleSendSamples}>
-            Enviar Muestras
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {FeedbackSnackbar}
     </Box>
   );
 };

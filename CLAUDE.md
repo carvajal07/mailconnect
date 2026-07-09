@@ -48,9 +48,11 @@ Se implementaron/corrigieron estas lambdas de seguridad (ver contratos en §3):
 - `Api_V1_Security_Acount-activation` — implementado (valida la clave, activa la cuenta, redirige 302).
 
 ### Pruebas (`08_Pruebas/PruebasSeguridad`)
-- Suite **pytest + moto** (mock de DynamoDB y SES; no toca AWS). 15 pruebas, todas en verde.
-- Cubre: registro, activación, login, OTP, cambio de contraseña (por OTP y por token) y logout,
-  con casos de error.
+- Suite **pytest + moto** (mock de DynamoDB y SES; no toca AWS). 25 pruebas, todas en verde.
+- Cubre: registro, activación, login, OTP, cambio de contraseña (por OTP y por token),
+  recuperación de contraseña (`forgot-password`), validación del `Authorizer` (JWT) y
+  logout, con casos de error.
+- **CI:** corren solas en cada push/PR (`.github/workflows/tests.yml`).
 
 ---
 
@@ -67,10 +69,10 @@ Corrige la tabla del README (que marca varias como TODO):
 | `Logout` | `POST /api/logout` | ✅ Implementado |
 | `Create-otp` | `POST /api/create-otp` | ✅ Implementado |
 | `Validate-otp` | `POST /api/validate-otp` | ✅ Implementado |
-| `Recovery-password` | `POST /api/forgot-password` | ⚠️ **Stub** (aún "Hello from Lambda") |
+| `Recovery-password` | `POST /api/forgot-password` | ✅ Implementado (genera y envía OTP; respuesta genérica) |
 | `Verify-code` | `POST /api/verify-code` | ⚠️ **Stub** |
 | `Refresh-token` | `POST /api/token/refresh` | ⚠️ **Stub** |
-| `Authorizer` | (Lambda Authorizer) | ⚠️ Permite todo (aún no valida el JWT) |
+| `Authorizer` / `Authorizer2` | (Lambda Authorizer) | ✅ Valida el JWT (HS256) con `SECRET_KEY`; deniega por defecto |
 
 ---
 
@@ -93,8 +95,14 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `account-activation` | query `?qs=<activationKey>` | 302 redirect (éxito/error/expirado) |
 | `create-otp` | `{ user (email) o userId, expiration (min), system, ip }` | 201 `data:{otpId}` (envía el código por correo) |
 | `validate-otp` | `{ otp (número), user o userId, ip }` | 200 válido (consume) · 401 inválido · 410 expirado |
-| `change-password` | `{ user (email), password (nueva), otp? }` + header `Authorization: Bearer` (alternativo) | 200 ok · 401 sin auth · 400 débil · 404 no existe |
+| `change-password` | `{ user (email), password (nueva), otp? }` + header `Authorization: Bearer` (alternativo) | 200 ok · 401 sin auth/OTP · 400 débil · 404 no existe |
+| `forgot-password` | `{ user (email), ip? }` | 200 siempre (genérico, no revela si el correo existe; envía OTP por correo) |
 | `logout` | `{ user (email) }` | 200 (idempotente) |
+
+> **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
+> del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
+> primero la fortaleza de la contraseña (400) **antes** de consumir el OTP, para que una clave
+> débil no gaste el código.
 
 ### Variables de entorno que esperan las lambdas
 - `SECRET_KEY` — firma/validación JWT (login, change-password). **La misma que ya usa login.**
@@ -116,8 +124,10 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   (el `event` **es** el body) como proxy (`event['body']` string) vía un helper `_get_payload`.
 - **Backend – OTP:** el código se guarda **hasheado** (sha256); `create-otp` lo envía por
   correo, `validate-otp` lo consume. `change-password` acepta OTP (recuperación) **o** token (logueado).
-- **Seguridad JWT:** hoy el `Authorizer` permite todo y `SECRET_KEY` está en código.
-  Pendiente endurecer (ver plan).
+- **Seguridad JWT:** el `Authorizer` ahora **valida** el JWT (HS256) con `SECRET_KEY`
+  y deniega por defecto (fail-closed). `Login` y las lambdas nuevas leen `SECRET_KEY`
+  desde variable de entorno. Pendiente: mover `SECRET_KEY` a AWS Secrets Manager.
+  Requisito de despliegue: los Authorizers necesitan el layer de PyJWT y la env `SECRET_KEY`.
 - **Pruebas:** independientes (cada test crea su propio usuario con email único). Rutas a
   las lambdas calculadas desde la raíz del repo (`Path(__file__).parents[2]`).
 
@@ -131,23 +141,33 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [x] Landing pública (Opción B) en React, ruta `/`, tokens de marca configurables.
 - [x] CTAs conectados a `/login` y `/register`; botón de WhatsApp real.
 - [x] `authService` + `RequireAuth`; login/registro/recuperación conectados; `/admin` protegido.
-- [ ] **Fase 1 – Tema unificado:** que `theme.config.js` (dark) y `theme-light.config.js`
-      deriven de la marca (hoy el tema claro usa colores Flat-UI genéricos, no del logo).
-- [ ] **Fase 3 – Deuda técnica:** limpiar el boilerplate de Vite en `src/index.css`
-      (fondo `#242424`, links `#646cff`) y quitar los colores hardcodeados "dark-only"
-      de `LoginPage`/`RegisterPage`/`ForgotPasswordPage` (para que el tema claro luzca bien).
-- [ ] **Pantalla de reseteo con OTP** (ingresar código + nueva contraseña) para cerrar
-      la recuperación end-to-end.
-- [ ] Conectar las secciones del panel (`ClientesSection`, `CampanasSection`,
-      `PlantillasSection`) a la API real (hoy `config/api.ts` tiene endpoints placeholder).
+- [x] **Fase 1 – Tema unificado:** `theme-light.config.js` ahora deriva de la marca
+      (cyan `#00c3ff`, azul `#0075be`, navy `#16233f`, verde `#1fbf87`, ámbar `#ff9d2e`)
+      en vez de los colores Flat-UI genéricos. El tema oscuro ya usaba la marca.
+- [x] **Fase 3 – Deuda técnica:** limpiado el boilerplate de Vite en `src/index.css`
+      (sin `#242424` ni `#646cff`; solo resets neutros, MUI controla el color). Los colores
+      "dark-only" hardcodeados de las páginas de auth se movieron a un helper theme-aware
+      (`src/theme/authStyles.ts`): glow cyan en oscuro, sombras suaves en claro.
+- [x] **Pantalla de reseteo con OTP** (`/reset-password`: código + nueva contraseña) que
+      cierra la recuperación end-to-end (llama a `change-password` con OTP).
+- [~] Conectar las secciones del panel a la API real (capa de servicios nueva):
+      - [x] **Plantillas** → `create-template`, `get-template`, `delete-template` (reales).
+      - [x] **Campañas** → `create-campaign` y `get-urlS3` (URL prefirmada + PUT a S3).
+      - [ ] **Clientes** → solo existe `register`; falta backend de listar/editar/eliminar.
+      - Nota: el backend aún no expone listar/buscar/muestras/envío-real, así que las
+        tablas muestran lo creado/consultado en la sesión y esas acciones están deshabilitadas.
+        Los servicios viven en `src/services/{apiClient,templatesService,campaignsService}.ts`.
 
 ### Backend
 - [x] `register` arreglado (+ correo de activación); `login` corregido (`userId`).
 - [x] `change-password`, `logout`, `create-otp`, `validate-otp`, `account-activation`.
-- [ ] Implementar `/forgot-password` como wrapper que cree y envíe el OTP (hoy stub).
+- [x] Implementar `/forgot-password` como wrapper que crea y envía el OTP (con respuesta
+      genérica anti-enumeración). `change-password` ahora valida la clave antes de consumir el OTP.
 - [ ] Implementar `verify-code` y `token/refresh` (hoy stubs).
-- [ ] Endurecer el `Authorizer` para que **valide el JWT** de verdad.
-- [ ] Mover `SECRET_KEY` a variable de entorno / AWS Secrets Manager.
+- [x] Endurecer el `Authorizer` (y `Authorizer2`) para que **valide el JWT** (HS256) con
+      `SECRET_KEY`, soportando autorizadores TOKEN y REQUEST, y denegando por defecto.
+- [x] `SECRET_KEY` se lee desde variable de entorno (`Login` + lambdas nuevas + Authorizers).
+- [ ] Mover `SECRET_KEY` a **AWS Secrets Manager** (hoy es variable de entorno).
 - [ ] Lista negra por cliente; manejo de CSV grandes por partes; segmentar IPs SES por cliente.
 
 ### Infraestructura / despliegue
@@ -159,11 +179,9 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [ ] Definir `VITE_API_BASE_URL` de producción en el front.
 
 ### Calidad / CI-CD
-- [ ] **CI con GitHub Actions:** correr `pytest` de `08_Pruebas/PruebasSeguridad`
-      automáticamente en cada `push` y `pull_request`, **antes de hacer merge**,
-      para evitar regresiones (como la del `register` roto o el `userId` del login).
-      Sugerido: workflow en `.github/workflows/tests.yml` (Python 3.11,
-      `pip install -r 08_Pruebas/PruebasSeguridad/requirements.txt`, `pytest`).
+- [x] **CI con GitHub Actions:** `pytest` de `08_Pruebas/PruebasSeguridad` corre
+      automáticamente en cada `push` y `pull_request` (Python 3.11) vía
+      `.github/workflows/tests.yml`, para evitar regresiones.
 - [ ] (Opcional) Añadir al CI el build del frontend (`npm ci && npm run build`).
 - [ ] (Opcional) Migrar a CI/CD de despliegue (CodeBuild/CodePipeline o GH Actions → AWS).
 
@@ -187,7 +205,20 @@ src/config/api.ts                       (mod)    base + endpoints de auth
 src/App.tsx                             (mod)    ruta / (landing) + /admin protegido
 src/pages/auth/LoginPage.tsx            (mod)    conectado a /login
 src/pages/auth/RegisterPage.tsx         (mod)    +campos phone/company/NIT, /register
-src/pages/auth/ForgotPasswordPage.tsx   (mod)    conectado a /forgot-password
+src/pages/auth/ForgotPasswordPage.tsx   (mod)    envía OTP y navega a /reset-password
+src/pages/auth/ResetPasswordPage.tsx    (nuevo)  reseteo con OTP (código + nueva clave)
+src/pages/auth/LoginPage.tsx            (mod)    estilos theme-aware (sin hardcodes)
+src/pages/auth/RegisterPage.tsx         (mod)    estilos theme-aware (sin hardcodes)
+src/theme/authStyles.ts                 (nuevo)  estilos de auth theme-aware (claro/oscuro)
+src/services/apiClient.ts               (nuevo)  cliente HTTP autenticado + envelope
+src/services/templatesService.ts        (nuevo)  create/get/delete-template (reales)
+src/services/campaignsService.ts        (nuevo)  create-campaign + get-urlS3 (S3 PUT)
+src/hooks/useFeedback.tsx               (nuevo)  Snackbar de feedback reutilizable
+src/components/admin/PlantillasSection.tsx (mod) conectada a templatesService
+src/components/admin/CampanasSection.tsx   (mod) conectada a campaignsService
+src/config/api.ts                       (mod)    endpoints reales + placeholders marcados
+theme-light.config.js                   (mod)    tema claro derivado de la marca
+src/index.css                           (mod)    limpio boilerplate de Vite (resets neutros)
 src/pages/admin/AdminPage.tsx           (mod)    logout real + saludo
 .env.example                            (nuevo)  VITE_API_BASE_URL
 ```
@@ -201,11 +232,19 @@ Api_V1_Security_Logout/lambda_function.py            (implementado)
 Api_V1_Security_Create-otp/lambda_function.py        (implementado)
 Api_V1_Security_Validate-otp/lambda_function.py      (implementado)
 Api_V1_Security_Acount-activation/lambda_function.py (implementado)
+Api_V1_Security_Recovery-password/lambda_function.py (implementado: forgot-password)
+Authorizer/lambda_function.py                        (valida JWT; antes allow-all)
+Authorizer2/lambda_function.py                       (valida JWT; antes allow-all)
+```
+
+**CI** (`.github/workflows/`)
+```
+tests.yml             (nuevo)  corre pytest en cada push/PR (Python 3.11)
 ```
 
 **Pruebas** (`08_Pruebas/PruebasSeguridad/`)
 ```
-test_seguridad.py     (15 pruebas pytest + moto)
+test_seguridad.py     (25 pruebas pytest + moto)
 requirements.txt
 README.md
 ```
