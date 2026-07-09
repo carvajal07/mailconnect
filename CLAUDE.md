@@ -176,6 +176,12 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             **Diseño:** paleta con icono por bloque (Contenido/Estructura) y lienzo tipo "hoja
             de correo" centrada con sombra; los bloques se renderizan sobre la hoja blanca
             (colores fijos), de modo que el **modo oscuro** se ve correcto (WYSIWYG legible).
+            **Imágenes:** los bloques imagen/logo tienen "Subir imagen a S3" (get-urlS3 con
+            `documentType=document`), que fija el `src` a la URL pública del objeto.
+            **Plantillas prediseñadas** (`templatePresets.ts`): 5 integradas (Boletín, Promoción,
+            Bienvenida, Anuncio, Evento) con miniatura en vivo; el admin puede crear más con
+            "Guardar plantilla" (se guardan en localStorage). El builder se reusa en `/admin`
+            (sección "Plantillas prediseñadas", `HtmlBuilderSection allowSavePreset`).
       - [x] **Campañas** reutiliza `CampanasSection`. **Mi cuenta** muestra la sesión y permite
             cambiar la contraseña (change-password con token).
       - [x] **Bases de datos** (`BasesDatosSection` + `csv.ts`): carga de CSV con

@@ -45,11 +45,16 @@ import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 import ShareIcon from '@mui/icons-material/Share';
 import HorizontalRuleIcon from '@mui/icons-material/HorizontalRule';
 import HeightIcon from '@mui/icons-material/Height';
+import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
+import BookmarkAddIcon from '@mui/icons-material/BookmarkAdd';
+import AddPhotoAlternateIcon from '@mui/icons-material/AddPhotoAlternate';
 import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
 import { templatesService } from '../../services/templatesService';
+import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { allPresets, customPresets, cloneBlocks, type TemplatePreset } from './templatePresets';
 import {
   BLOCK_LABELS,
   VARIABLES,
@@ -76,8 +81,9 @@ const BLOCK_ICONS: Record<BlockType, ReactNode> = {
   spacer: <HeightIcon fontSize="small" />,
 };
 
-export const HtmlBuilderSection = () => {
+export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePreset?: boolean } = {}) => {
   const sessionUserId = getUser()?.userId ?? '';
+  const sessionCustomer = getUser()?.customer ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
 
   const [blocks, setBlocks] = useState<Block[]>([]);
@@ -98,6 +104,10 @@ export const HtmlBuilderSection = () => {
   const [saving, setSaving] = useState(false);
   const [meta, setMeta] = useState({ templateName: '', customerId: '', subject: '' });
   const [draftsVersion, setDraftsVersion] = useState(0);
+  const [presetsOpen, setPresetsOpen] = useState(false);
+  const [presetsVersion, setPresetsVersion] = useState(0);
+  const [savePresetOpen, setSavePresetOpen] = useState(false);
+  const [presetMeta, setPresetMeta] = useState({ name: '', description: '' });
 
   const html = useMemo(() => generateHtml(blocks, settings), [blocks, settings]);
   const selected = blocks.find((b) => b.id === selectedId) ?? null;
@@ -250,6 +260,58 @@ export const HtmlBuilderSection = () => {
   };
 
   const draftList = useMemo(() => drafts.list(), [draftsVersion]);
+  const presetList = useMemo(() => allPresets(), [presetsVersion, presetsOpen]);
+
+  /* ---------------- Imágenes → S3 ---------------- */
+  const uploadImage = async (file: File): Promise<string | null> => {
+    if (!sessionCustomer) {
+      notify('Tu sesión no tiene un cliente asociado para el bucket de imágenes.', 'warning');
+      return null;
+    }
+    const presign = await campaignsService.presignUrl({
+      customer: sessionCustomer,
+      documentName: file.name,
+      documentType: 'document',
+    });
+    if (!isOk(presign) || !presign.data?.url) {
+      notify(presign.description || 'No se pudo obtener la URL de carga.', 'error');
+      return null;
+    }
+    const ok = await campaignsService.uploadToS3(presign.data.url, file);
+    if (!ok) {
+      notify('No se pudo subir la imagen a S3.', 'error');
+      return null;
+    }
+    notify('Imagen subida a S3.', 'success');
+    return campaignsService.publicUrl(sessionCustomer, 'document', presign.data.path ?? '');
+  };
+
+  /* ---------------- Plantillas prediseñadas ---------------- */
+  const loadPreset = (p: TemplatePreset) => {
+    setBlocks(cloneBlocks(p.blocks));
+    setSettings({ ...p.settings });
+    setSelectedId(null);
+    setPresetsOpen(false);
+    notify(`Plantilla "${p.name}" cargada.`, 'success');
+  };
+
+  const deleteCustomPreset = (name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    customPresets.remove(name);
+    setPresetsVersion((v) => v + 1);
+    notify(`Plantilla "${name}" eliminada.`, 'info');
+  };
+
+  const savePreset = () => {
+    const name = presetMeta.name.trim();
+    if (!name) return notify('Escribe un nombre para la plantilla.', 'warning');
+    if (blocks.length === 0) return notify('Agrega bloques antes de guardar la plantilla.', 'warning');
+    customPresets.save(name, blocks, settings, presetMeta.description.trim());
+    setPresetsVersion((v) => v + 1);
+    setSavePresetOpen(false);
+    setPresetMeta({ name: '', description: '' });
+    notify(`Plantilla "${name}" guardada como prediseñada.`, 'success');
+  };
 
   return (
     <Box>
@@ -270,6 +332,14 @@ export const HtmlBuilderSection = () => {
           <Button size="small" startIcon={<NoteAddIcon />} onClick={handleNew}>
             Nuevo
           </Button>
+          <Button size="small" startIcon={<ViewQuiltIcon />} onClick={() => setPresetsOpen(true)}>
+            Plantillas
+          </Button>
+          {allowSavePreset && (
+            <Button size="small" startIcon={<BookmarkAddIcon />} onClick={() => setSavePresetOpen(true)} disabled={blocks.length === 0}>
+              Guardar plantilla
+            </Button>
+          )}
           <Button size="small" startIcon={<FolderIcon />} onClick={(e) => setDraftsAnchor(e.currentTarget)}>
             Borradores
           </Button>
@@ -488,12 +558,85 @@ export const HtmlBuilderSection = () => {
               </Typography>
             ) : (
               <Box sx={{ mt: 1 }}>
-                <BlockEditor block={selected} onChange={updateSelected} onInsertVariable={insertVariable} />
+                <BlockEditor block={selected} onChange={updateSelected} onInsertVariable={insertVariable} onUploadImage={uploadImage} />
               </Box>
             )}
           </Paper>
         </Stack>
       )}
+
+      {/* Galería de plantillas prediseñadas */}
+      <Dialog open={presetsOpen} onClose={() => setPresetsOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Plantillas prediseñadas</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Elige una plantilla para empezar. Reemplaza el contenido del lienzo actual.
+          </Typography>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+            {presetList.map((p) => (
+              <Paper
+                key={p.id}
+                variant="outlined"
+                onClick={() => loadPreset(p)}
+                sx={{ overflow: 'hidden', cursor: 'pointer', transition: 'all .2s', '&:hover': { borderColor: 'primary.main', boxShadow: 3 } }}
+              >
+                <Box sx={{ height: 170, bgcolor: '#eef2f7', overflow: 'hidden', position: 'relative' }}>
+                  <iframe
+                    title={p.id}
+                    srcDoc={generateHtml(p.blocks, p.settings)}
+                    tabIndex={-1}
+                    style={{ width: '166%', height: '270px', border: 0, transform: 'scale(0.6)', transformOrigin: 'top left', pointerEvents: 'none' }}
+                  />
+                </Box>
+                <Box sx={{ p: 1.5 }}>
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    <Typography variant="subtitle2" fontWeight={700} sx={{ flex: 1 }}>
+                      {p.name}
+                    </Typography>
+                    {p.custom && (
+                      <>
+                        <Box component="span" sx={{ fontSize: 11, color: 'primary.main', border: '1px solid', borderColor: 'primary.main', borderRadius: 1, px: 0.5 }}>
+                          Personalizada
+                        </Box>
+                        <IconButton size="small" color="error" onClick={(e) => deleteCustomPreset(p.name, e)}>
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </>
+                    )}
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary">
+                    {p.description}
+                  </Typography>
+                </Box>
+              </Paper>
+            ))}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPresetsOpen(false)}>Cerrar</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Guardar como plantilla prediseñada (admin) */}
+      <Dialog open={savePresetOpen} onClose={() => setSavePresetOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Guardar como plantilla prediseñada</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField label="Nombre de la plantilla" value={presetMeta.name} onChange={(e) => setPresetMeta((m) => ({ ...m, name: e.target.value }))} fullWidth />
+            <TextField label="Descripción" value={presetMeta.description} onChange={(e) => setPresetMeta((m) => ({ ...m, description: e.target.value }))} fullWidth multiline minRows={2} />
+            <Typography variant="caption" color="text.secondary">
+              Quedará disponible en "Plantillas" para todos en este navegador. Persistir/compartir
+              entre usuarios requerirá backend.
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSavePresetOpen(false)}>Cancelar</Button>
+          <Button variant="contained" onClick={savePreset}>
+            Guardar
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Ver HTML */}
       <Dialog open={showHtml} onClose={() => setShowHtml(false)} maxWidth="md" fullWidth>
@@ -675,14 +818,26 @@ const BlockEditor = ({
   block: b,
   onChange,
   onInsertVariable,
+  onUploadImage,
 }: {
   block: Block;
   onChange: (patch: Partial<Block>) => void;
   onInsertVariable: (v: string) => void;
+  onUploadImage: (file: File) => Promise<string | null>;
 }) => {
   const [varAnchor, setVarAnchor] = useState<null | HTMLElement>(null);
+  const [uploadingImg, setUploadingImg] = useState(false);
+  const isImage = b.type === 'image' || b.type === 'logo';
   const hasText = b.type === 'heading' || b.type === 'text' || b.type === 'button';
   const hasUrl = b.type === 'image' || b.type === 'button' || b.type === 'logo';
+
+  const handleUpload = async (file: File | null) => {
+    if (!file) return;
+    setUploadingImg(true);
+    const url = await onUploadImage(file);
+    setUploadingImg(false);
+    if (url) onChange({ url });
+  };
   const hasAlign = b.type !== 'divider' && b.type !== 'spacer' && b.type !== 'html';
   const hasColor = b.type === 'heading' || b.type === 'button';
 
@@ -762,6 +917,19 @@ const BlockEditor = ({
           fullWidth
           size="small"
         />
+      )}
+
+      {isImage && (
+        <Button
+          component="label"
+          size="small"
+          variant="outlined"
+          disabled={uploadingImg}
+          startIcon={uploadingImg ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}
+        >
+          {uploadingImg ? 'Subiendo…' : 'Subir imagen a S3'}
+          <input type="file" accept="image/*" hidden onChange={(e) => handleUpload(e.target.files?.[0] ?? null)} />
+        </Button>
       )}
 
       {hasAlign && (

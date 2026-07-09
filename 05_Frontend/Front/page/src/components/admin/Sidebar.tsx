@@ -13,6 +13,7 @@ import {
 import PeopleIcon from '@mui/icons-material/People';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import DescriptionIcon from '@mui/icons-material/Description';
+import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
 
 interface SidebarProps {
   activeSection: string;
@@ -26,6 +27,7 @@ export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
     { id: 'clientes', label: 'Clientes', icon: <PeopleIcon /> },
     { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },
     { id: 'plantillas', label: 'Plantillas', icon: <DescriptionIcon /> },
+    { id: 'plantillas-pre', label: 'Plantillas prediseñadas', icon: <ViewQuiltIcon /> },
   ];
 
   return (

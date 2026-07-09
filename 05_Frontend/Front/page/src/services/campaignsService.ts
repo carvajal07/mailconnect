@@ -51,11 +51,20 @@ export const campaignsService = {
       const res = await fetch(url, {
         method: 'PUT',
         body: file,
-        headers: { 'Content-Type': file.type || 'text/csv' },
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
       });
       return res.ok;
     } catch {
       return false;
     }
   },
+
+  /**
+   * URL pública (lectura) de un objeto ya subido a S3. Se usa para el src de las
+   * imágenes del correo. Usa estilo path (compatible con buckets con punto, p. ej.
+   * "cliente.document"). El objeto/bucket debe permitir lectura pública para que la
+   * imagen se vea en los clientes de correo.
+   */
+  publicUrl: (customer: string, documentType: 'database' | 'document', path: string): string =>
+    `https://s3.us-east-1.amazonaws.com/${customer.toLowerCase()}.${documentType}/${path}`,
 };

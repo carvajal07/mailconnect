@@ -14,6 +14,7 @@ import { Sidebar } from '../../components/admin/Sidebar';
 import { ClientesSection } from '../../components/admin/ClientesSection';
 import { PlantillasSection } from '../../components/admin/PlantillasSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
+import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
 import { useNavigate } from 'react-router-dom';
@@ -51,6 +52,8 @@ export const AdminPage = () => {
         return <ClientesSection />;
       case 'plantillas':
         return <PlantillasSection />;
+      case 'plantillas-pre':
+        return <HtmlBuilderSection allowSavePreset />;
       case 'campanas':
         return <CampanasSection />;
       default:
