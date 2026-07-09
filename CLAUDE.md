@@ -150,8 +150,13 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
       (`src/theme/authStyles.ts`): glow cyan en oscuro, sombras suaves en claro.
 - [x] **Pantalla de reseteo con OTP** (`/reset-password`: código + nueva contraseña) que
       cierra la recuperación end-to-end (llama a `change-password` con OTP).
-- [ ] Conectar las secciones del panel (`ClientesSection`, `CampanasSection`,
-      `PlantillasSection`) a la API real (hoy `config/api.ts` tiene endpoints placeholder).
+- [~] Conectar las secciones del panel a la API real (capa de servicios nueva):
+      - [x] **Plantillas** → `create-template`, `get-template`, `delete-template` (reales).
+      - [x] **Campañas** → `create-campaign` y `get-urlS3` (URL prefirmada + PUT a S3).
+      - [ ] **Clientes** → solo existe `register`; falta backend de listar/editar/eliminar.
+      - Nota: el backend aún no expone listar/buscar/muestras/envío-real, así que las
+        tablas muestran lo creado/consultado en la sesión y esas acciones están deshabilitadas.
+        Los servicios viven en `src/services/{apiClient,templatesService,campaignsService}.ts`.
 
 ### Backend
 - [x] `register` arreglado (+ correo de activación); `login` corregido (`userId`).
@@ -205,6 +210,13 @@ src/pages/auth/ResetPasswordPage.tsx    (nuevo)  reseteo con OTP (código + nuev
 src/pages/auth/LoginPage.tsx            (mod)    estilos theme-aware (sin hardcodes)
 src/pages/auth/RegisterPage.tsx         (mod)    estilos theme-aware (sin hardcodes)
 src/theme/authStyles.ts                 (nuevo)  estilos de auth theme-aware (claro/oscuro)
+src/services/apiClient.ts               (nuevo)  cliente HTTP autenticado + envelope
+src/services/templatesService.ts        (nuevo)  create/get/delete-template (reales)
+src/services/campaignsService.ts        (nuevo)  create-campaign + get-urlS3 (S3 PUT)
+src/hooks/useFeedback.tsx               (nuevo)  Snackbar de feedback reutilizable
+src/components/admin/PlantillasSection.tsx (mod) conectada a templatesService
+src/components/admin/CampanasSection.tsx   (mod) conectada a campaignsService
+src/config/api.ts                       (mod)    endpoints reales + placeholders marcados
 theme-light.config.js                   (mod)    tema claro derivado de la marca
 src/index.css                           (mod)    limpio boilerplate de Vite (resets neutros)
 src/pages/admin/AdminPage.tsx           (mod)    logout real + saludo

@@ -21,45 +21,48 @@ export const AUTH_ENDPOINTS = {
   REFRESH_TOKEN: '/token/refresh',
 };
 
+// NOTA: los módulos del panel usan la capa de servicios (services/*.ts), que solo
+// llama a endpoints REALES del backend. Los marcados como (⚠️ no existe aún) son
+// placeholders sin lambda desplegada; la UI los deshabilita hasta que existan.
 export const API_CONFIG = {
   // URL base (para módulos de negocio del panel).
   BASE_URL: AUTH_API_BASE,
 
-  // Endpoints de Clientes
+  // Endpoints de Clientes (los clientes son usuarios; solo hay registro real).
   CLIENTS: {
-    REGISTER: '/clients/register',
-    LIST: '/clients/list',
-    GET_BY_ID: '/clients/:id',
-    UPDATE: '/clients/:id',
-    DELETE: '/clients/:id',
-    SEARCH: '/clients/search',
+    REGISTER: '/register',            // ✅ real (Api_V1_Security_Register)
+    LIST: '/clients/list',            // ⚠️ no existe aún
+    GET_BY_ID: '/clients/:id',        // ⚠️ no existe aún
+    UPDATE: '/clients/:id',           // ⚠️ no existe aún
+    DELETE: '/clients/:id',           // ⚠️ no existe aún
+    SEARCH: '/clients/search',        // ⚠️ no existe aún
   },
 
-  // Endpoints de Plantillas
+  // Endpoints de Plantillas (ver services/templatesService.ts)
   TEMPLATES: {
-    CREATE: '/create-template',
-    LIST: '/templates/list',
-    GET: '/get-template',
-    UPDATE: '/templates/update',
-    DELETE: '/delete-template',
-    SEARCH: '/templates/search',
+    CREATE: '/create-template',       // ✅ real
+    GET: '/get-template',             // ✅ real
+    DELETE: '/delete-template',       // ✅ real
+    LIST: '/templates/list',          // ⚠️ no existe aún
+    UPDATE: '/templates/update',      // ⚠️ no existe aún
+    SEARCH: '/templates/search',      // ⚠️ no existe aún
   },
 
-  // Endpoints de Campañas
+  // Endpoints de Campañas (ver services/campaignsService.ts)
   CAMPAIGNS: {
-    CREATE: '/email/config/create-campaign',
-    LIST: '/campaigns/list',
-    GET_BY_CLIENT: '/campaigns/client/:clientId',
-    UPDATE: '/campaigns/:id',
-    DELETE: '/campaigns/:id',
-    SEND_SAMPLES: '/campaigns/send-samples',
-    SEND_REAL: '/campaigns/send-real',
+    CREATE: '/email/config/create-campaign',       // ✅ real
+    LIST: '/campaigns/list',                       // ⚠️ no existe aún
+    GET_BY_CLIENT: '/campaigns/client/:clientId',  // ⚠️ no existe aún
+    UPDATE: '/campaigns/:id',                      // ⚠️ no existe aún
+    DELETE: '/campaigns/:id',                      // ⚠️ no existe aún
+    SEND_SAMPLES: '/campaigns/send-samples',       // ⚠️ no existe aún
+    SEND_REAL: '/campaigns/send-real',             // ⚠️ no existe aún
   },
 
   // Endpoints de archivos
   FILES: {
-    PRESIGN_URL: '/get-urlS3',
-    UPLOAD: '/files/upload',
+    PRESIGN_URL: '/get-urlS3',        // ✅ real
+    UPLOAD: '/files/upload',          // ⚠️ no existe aún (se usa PUT prefirmado)
   },
 };
 
