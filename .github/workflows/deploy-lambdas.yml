@@ -21,11 +21,11 @@ on:
   workflow_dispatch:
     inputs:
       function:
-        description: 'Carpeta de una lambda específica (vacío = usar "all")'
+        description: 'Una o varias carpetas de lambda (separadas por coma o espacio). Vacío = usar "all".'
         required: false
         default: ''
       all:
-        description: 'Desplegar TODAS las lambdas'
+        description: 'Desplegar TODAS las lambdas (usar con cuidado: sobrescribe con el código del repo)'
         type: boolean
         required: false
         default: false
@@ -53,21 +53,28 @@ jobs:
 
       - name: Determinar qué lambdas desplegar
         id: targets
+        env:
+          EVENT: ${{ github.event_name }}
+          FN_INPUT: ${{ github.event.inputs.function }}
+          ALL_INPUT: ${{ github.event.inputs.all }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           DIR="$LAMBDAS_DIR"
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ -n "${{ github.event.inputs.function }}" ]; then
-              echo "${{ github.event.inputs.function }}" > folders.txt
-            elif [ "${{ github.event.inputs.all }}" = "true" ]; then
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ -n "${FN_INPUT}" ]; then
+              # Acepta lista separada por coma o espacio.
+              printf '%s' "$FN_INPUT" | tr ', ' '\n' | grep -v '^$' | sort -u > folders.txt
+            elif [ "${ALL_INPUT}" = "true" ]; then
               ls -1 "$DIR" > folders.txt
             else
               echo "Nada que hacer: indica 'function' o marca 'all'." ; : > folders.txt
             fi
           else
             # push: carpetas de lambda cambiadas entre el commit anterior y este
-            git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
+            git diff --name-only "$BEFORE" "$SHA" \
               | grep "^$DIR/" \
               | sed -E "s#^$DIR/([^/]+)/.*#\1#" \
               | sort -u > folders.txt || true
