@@ -141,11 +141,13 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [x] Landing pública (Opción B) en React, ruta `/`, tokens de marca configurables.
 - [x] CTAs conectados a `/login` y `/register`; botón de WhatsApp real.
 - [x] `authService` + `RequireAuth`; login/registro/recuperación conectados; `/admin` protegido.
-- [ ] **Fase 1 – Tema unificado:** que `theme.config.js` (dark) y `theme-light.config.js`
-      deriven de la marca (hoy el tema claro usa colores Flat-UI genéricos, no del logo).
-- [ ] **Fase 3 – Deuda técnica:** limpiar el boilerplate de Vite en `src/index.css`
-      (fondo `#242424`, links `#646cff`) y quitar los colores hardcodeados "dark-only"
-      de `LoginPage`/`RegisterPage`/`ForgotPasswordPage` (para que el tema claro luzca bien).
+- [x] **Fase 1 – Tema unificado:** `theme-light.config.js` ahora deriva de la marca
+      (cyan `#00c3ff`, azul `#0075be`, navy `#16233f`, verde `#1fbf87`, ámbar `#ff9d2e`)
+      en vez de los colores Flat-UI genéricos. El tema oscuro ya usaba la marca.
+- [x] **Fase 3 – Deuda técnica:** limpiado el boilerplate de Vite en `src/index.css`
+      (sin `#242424` ni `#646cff`; solo resets neutros, MUI controla el color). Los colores
+      "dark-only" hardcodeados de las páginas de auth se movieron a un helper theme-aware
+      (`src/theme/authStyles.ts`): glow cyan en oscuro, sombras suaves en claro.
 - [x] **Pantalla de reseteo con OTP** (`/reset-password`: código + nueva contraseña) que
       cierra la recuperación end-to-end (llama a `change-password` con OTP).
 - [ ] Conectar las secciones del panel (`ClientesSection`, `CampanasSection`,
@@ -200,6 +202,11 @@ src/pages/auth/LoginPage.tsx            (mod)    conectado a /login
 src/pages/auth/RegisterPage.tsx         (mod)    +campos phone/company/NIT, /register
 src/pages/auth/ForgotPasswordPage.tsx   (mod)    envía OTP y navega a /reset-password
 src/pages/auth/ResetPasswordPage.tsx    (nuevo)  reseteo con OTP (código + nueva clave)
+src/pages/auth/LoginPage.tsx            (mod)    estilos theme-aware (sin hardcodes)
+src/pages/auth/RegisterPage.tsx         (mod)    estilos theme-aware (sin hardcodes)
+src/theme/authStyles.ts                 (nuevo)  estilos de auth theme-aware (claro/oscuro)
+theme-light.config.js                   (mod)    tema claro derivado de la marca
+src/index.css                           (mod)    limpio boilerplate de Vite (resets neutros)
 src/pages/admin/AdminPage.tsx           (mod)    logout real + saludo
 .env.example                            (nuevo)  VITE_API_BASE_URL
 ```

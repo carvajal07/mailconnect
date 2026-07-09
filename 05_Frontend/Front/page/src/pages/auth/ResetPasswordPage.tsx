@@ -15,6 +15,13 @@ import {
 import { ArrowBack, Visibility, VisibilityOff } from '@mui/icons-material';
 import { AuthLayout } from '../../components/AuthLayout';
 import { authService } from '../../services/authService';
+import {
+  authCardSx,
+  authTitleSx,
+  authSubmitSx,
+  authLinkSx,
+  authBackButtonSx,
+} from '../../theme/authStyles';
 
 interface LocationState {
   email?: string;
@@ -100,34 +107,11 @@ export const ResetPasswordPage = () => {
 
   return (
     <AuthLayout>
-      <Paper
-        elevation={6}
-        sx={{
-          p: 4,
-          width: '100%',
-          backgroundColor: 'background.paper',
-          border: '2px solid',
-          borderColor: 'rgba(74, 159, 184, 0.3)',
-          boxShadow: '0 0 40px rgba(0, 195, 255, 0.2)',
-          transition: 'all 0.3s ease',
-          '&:hover': {
-            borderColor: 'info.main',
-            boxShadow: '0 0 60px rgba(0, 195, 255, 0.4)',
-            transform: 'translateY(-4px)',
-          },
-        }}
-      >
+      <Paper elevation={6} sx={authCardSx}>
         <Button
           startIcon={<ArrowBack />}
           onClick={() => navigate('/forgot-password')}
-          sx={{
-            mb: 2,
-            color: 'info.main',
-            '&:hover': {
-              backgroundColor: 'rgba(0, 195, 255, 0.05)',
-              textShadow: '0 0 10px rgba(0, 195, 255, 0.6)',
-            },
-          }}
+          sx={authBackButtonSx}
         >
           Solicitar otro código
         </Button>
@@ -138,7 +122,7 @@ export const ResetPasswordPage = () => {
           gutterBottom
           align="center"
           fontWeight="bold"
-          sx={{ color: 'info.main', textShadow: '0 0 20px rgba(0, 195, 255, 0.6)', mb: 2 }}
+          sx={authTitleSx}
         >
           Restablecer Contraseña
         </Typography>
@@ -231,15 +215,7 @@ export const ResetPasswordPage = () => {
             variant="contained"
             size="large"
             disabled={isSubmitting || !!successMessage}
-            sx={{
-              mt: 3,
-              mb: 2,
-              boxShadow: '0 0 20px rgba(0, 195, 255, 0.3)',
-              '&:hover': {
-                boxShadow: '0 0 35px rgba(0, 195, 255, 0.6)',
-                transform: 'translateY(-2px)',
-              },
-            }}
+            sx={authSubmitSx}
           >
             {isSubmitting ? 'Actualizando...' : 'Restablecer contraseña'}
           </Button>
@@ -252,12 +228,7 @@ export const ResetPasswordPage = () => {
               component="button"
               variant="body2"
               onClick={() => navigate('/login')}
-              sx={{
-                cursor: 'pointer',
-                color: 'info.main',
-                textDecoration: 'none',
-                '&:hover': { textShadow: '0 0 10px rgba(0, 195, 255, 0.6)' },
-              }}
+              sx={authLinkSx}
             >
               Inicia sesión aquí
             </Link>

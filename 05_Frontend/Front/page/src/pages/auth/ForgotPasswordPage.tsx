@@ -13,6 +13,13 @@ import {
 import { ArrowBack } from '@mui/icons-material';
 import { AuthLayout } from '../../components/AuthLayout';
 import { authService } from '../../services/authService';
+import {
+  authCardSx,
+  authTitleSx,
+  authSubmitSx,
+  authLinkSx,
+  authBackButtonSx,
+} from '../../theme/authStyles';
 
 export const ForgotPasswordPage = () => {
   const navigate = useNavigate();
@@ -74,34 +81,11 @@ export const ForgotPasswordPage = () => {
 
   return (
     <AuthLayout>
-      <Paper
-          elevation={6}
-          sx={{
-            p: 4,
-            width: '100%',
-            backgroundColor: 'background.paper',
-            border: '2px solid',
-            borderColor: 'rgba(74, 159, 184, 0.3)',
-            boxShadow: '0 0 40px rgba(0, 195, 255, 0.2)',
-            transition: 'all 0.3s ease',
-            '&:hover': {
-              borderColor: 'info.main',
-              boxShadow: '0 0 60px rgba(0, 195, 255, 0.4)',
-              transform: 'translateY(-4px)',
-            }
-          }}
-        >
+      <Paper elevation={6} sx={authCardSx}>
           <Button
             startIcon={<ArrowBack />}
             onClick={() => navigate('/login')}
-            sx={{
-              mb: 2,
-              color: 'info.main',
-              '&:hover': {
-                backgroundColor: 'rgba(0, 195, 255, 0.05)',
-                textShadow: '0 0 10px rgba(0, 195, 255, 0.6)',
-              }
-            }}
+            sx={authBackButtonSx}
           >
             Volver al login
           </Button>
@@ -112,11 +96,7 @@ export const ForgotPasswordPage = () => {
             gutterBottom
             align="center"
             fontWeight="bold"
-            sx={{
-              color: 'info.main',
-              textShadow: '0 0 20px rgba(0, 195, 255, 0.6)',
-              mb: 2,
-            }}
+            sx={authTitleSx}
           >
             Recuperar Contraseña
           </Typography>
@@ -155,12 +135,6 @@ export const ForgotPasswordPage = () => {
               placeholder="tu@email.com"
               required
               autoFocus
-              sx={{
-                '& .MuiInputBase-input::placeholder': {
-                  color: 'rgba(255, 255, 255, 0.5)',
-                  opacity: 1,
-                }
-              }}
             />
 
             <Button
@@ -169,15 +143,7 @@ export const ForgotPasswordPage = () => {
               variant="contained"
               size="large"
               disabled={isSubmitting}
-              sx={{
-                mt: 3,
-                mb: 2,
-                boxShadow: '0 0 20px rgba(0, 195, 255, 0.3)',
-                '&:hover': {
-                  boxShadow: '0 0 35px rgba(0, 195, 255, 0.6)',
-                  transform: 'translateY(-2px)',
-                }
-              }}
+              sx={authSubmitSx}
             >
               {isSubmitting ? 'Enviando...' : 'Enviar instrucciones'}
             </Button>
@@ -190,14 +156,7 @@ export const ForgotPasswordPage = () => {
                 component="button"
                 variant="body2"
                 onClick={() => navigate('/login')}
-                sx={{
-                  cursor: 'pointer',
-                  color: 'info.main',
-                  textDecoration: 'none',
-                  '&:hover': {
-                    textShadow: '0 0 10px rgba(0, 195, 255, 0.6)',
-                  }
-                }}
+                sx={authLinkSx}
               >
                 Inicia sesión aquí
               </Link>
@@ -211,14 +170,7 @@ export const ForgotPasswordPage = () => {
                 component="button"
                 variant="body2"
                 onClick={() => navigate('/register')}
-                sx={{
-                  cursor: 'pointer',
-                  color: 'info.main',
-                  textDecoration: 'none',
-                  '&:hover': {
-                    textShadow: '0 0 10px rgba(0, 195, 255, 0.6)',
-                  }
-                }}
+                sx={authLinkSx}
               >
                 Regístrate aquí
               </Link>

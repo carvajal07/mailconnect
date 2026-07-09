@@ -15,6 +15,12 @@ import {
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { AuthLayout } from '../../components/AuthLayout';
 import { authService } from '../../services/authService';
+import {
+  authCardSx,
+  authTitleSx,
+  authSubmitSx,
+  authLinkSx,
+} from '../../theme/authStyles';
 
 interface FormData {
   name: string;
@@ -189,43 +195,16 @@ export const RegisterPage = () => {
     }
   };
 
-  const placeholderSx = {
-    '& .MuiInputBase-input::placeholder': {
-      color: 'rgba(255, 255, 255, 0.5)',
-      opacity: 1,
-    }
-  };
-
   return (
     <AuthLayout>
-      <Paper
-          elevation={6}
-          sx={{
-            p: 4,
-            width: '100%',
-            backgroundColor: 'background.paper',
-            border: '2px solid',
-            borderColor: 'rgba(74, 159, 184, 0.3)',
-            boxShadow: '0 0 40px rgba(0, 195, 255, 0.2)',
-            transition: 'all 0.3s ease',
-            '&:hover': {
-              borderColor: 'info.main',
-              boxShadow: '0 0 60px rgba(0, 195, 255, 0.4)',
-              transform: 'translateY(-4px)',
-            }
-          }}
-        >
+      <Paper elevation={6} sx={authCardSx}>
           <Typography
             variant="h4"
             component="h1"
             gutterBottom
             align="center"
             fontWeight="bold"
-            sx={{
-              color: 'info.main',
-              textShadow: '0 0 20px rgba(0, 195, 255, 0.6)',
-              mb: 2,
-            }}
+            sx={authTitleSx}
           >
             Crear Cuenta
           </Typography>
@@ -261,9 +240,7 @@ export const RegisterPage = () => {
               disabled={isSubmitting}
               margin="normal"
               required
-              placeholder="Juan Pérez"
-              sx={placeholderSx}
-            />
+              placeholder="Juan Pérez"            />
 
             <TextField
               fullWidth
@@ -277,9 +254,7 @@ export const RegisterPage = () => {
               disabled={isSubmitting}
               margin="normal"
               required
-              placeholder="tu@email.com"
-              sx={placeholderSx}
-            />
+              placeholder="tu@email.com"            />
 
             <TextField
               fullWidth
@@ -293,9 +268,7 @@ export const RegisterPage = () => {
               margin="normal"
               required
               placeholder="3001234567"
-              inputProps={{ inputMode: 'numeric' }}
-              sx={placeholderSx}
-            />
+              inputProps={{ inputMode: 'numeric' }}            />
 
             <TextField
               fullWidth
@@ -308,9 +281,7 @@ export const RegisterPage = () => {
               disabled={isSubmitting}
               margin="normal"
               required
-              placeholder="Mi Empresa S.A.S."
-              sx={placeholderSx}
-            />
+              placeholder="Mi Empresa S.A.S."            />
 
             <TextField
               fullWidth
@@ -324,9 +295,7 @@ export const RegisterPage = () => {
               margin="normal"
               required
               placeholder="900123456"
-              inputProps={{ inputMode: 'numeric' }}
-              sx={placeholderSx}
-            />
+              inputProps={{ inputMode: 'numeric' }}            />
 
             <TextField
               fullWidth
@@ -340,9 +309,7 @@ export const RegisterPage = () => {
               disabled={isSubmitting}
               margin="normal"
               required
-              placeholder="••••••••"
-              sx={placeholderSx}
-              InputProps={{
+              placeholder="••••••••"              InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
                     <IconButton
@@ -369,9 +336,7 @@ export const RegisterPage = () => {
               disabled={isSubmitting}
               margin="normal"
               required
-              placeholder="••••••••"
-              sx={placeholderSx}
-              InputProps={{
+              placeholder="••••••••"              InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
                     <IconButton
@@ -392,15 +357,7 @@ export const RegisterPage = () => {
               variant="contained"
               size="large"
               disabled={isSubmitting}
-              sx={{
-                mt: 3,
-                mb: 2,
-                boxShadow: '0 0 20px rgba(0, 195, 255, 0.3)',
-                '&:hover': {
-                  boxShadow: '0 0 35px rgba(0, 195, 255, 0.6)',
-                  transform: 'translateY(-2px)',
-                }
-              }}
+              sx={authSubmitSx}
             >
               {isSubmitting ? 'Registrando...' : 'Crear Cuenta'}
             </Button>
@@ -413,14 +370,7 @@ export const RegisterPage = () => {
                 component="button"
                 variant="body2"
                 onClick={() => navigate('/login')}
-                sx={{
-                  cursor: 'pointer',
-                  color: 'info.main',
-                  textDecoration: 'none',
-                  '&:hover': {
-                    textShadow: '0 0 10px rgba(0, 195, 255, 0.6)',
-                  }
-                }}
+                sx={authLinkSx}
               >
                 Inicia sesión aquí
               </Link>

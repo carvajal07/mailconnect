@@ -16,6 +16,13 @@ import {
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { AuthLayout } from '../../components/AuthLayout';
 import { authService, saveSession } from '../../services/authService';
+import {
+  authCardSx,
+  authTitleSx,
+  authSubmitSx,
+  authLinkSx,
+  authOutlinedButtonSx,
+} from '../../theme/authStyles';
 
 interface FormErrors {
   email?: string;
@@ -167,34 +174,14 @@ export const LoginPage = () => {
 
   return (
     <AuthLayout>
-      <Paper
-          elevation={6}
-          sx={{
-            p: 4,
-            width: '100%',
-            backgroundColor: 'background.paper',
-            border: '2px solid',
-            borderColor: 'rgba(74, 159, 184, 0.3)',
-            boxShadow: '0 0 40px rgba(0, 195, 255, 0.2)',
-            transition: 'all 0.3s ease',
-            '&:hover': {
-              borderColor: 'info.main',
-              boxShadow: '0 0 60px rgba(0, 195, 255, 0.4)',
-              transform: 'translateY(-4px)',
-            }
-          }}
-        >
+      <Paper elevation={6} sx={authCardSx}>
           <Typography
             variant="h4"
             component="h1"
             gutterBottom
             align="center"
             fontWeight="bold"
-            sx={{
-              color: 'info.main',
-              textShadow: '0 0 20px rgba(0, 195, 255, 0.6)',
-              mb: 2,
-            }}
+            sx={authTitleSx}
           >
             Iniciar Sesión
           </Typography>
@@ -230,12 +217,6 @@ export const LoginPage = () => {
               placeholder="tu@email.com"
               required
               autoComplete="email"
-              sx={{
-                '& .MuiInputBase-input::placeholder': {
-                  color: 'rgba(255, 255, 255, 0.5)',
-                  opacity: 1,
-                }
-              }}
             />
 
             {/* Campo de Contraseña */}
@@ -254,12 +235,6 @@ export const LoginPage = () => {
               placeholder="••••••••"
               required
               autoComplete="current-password"
-              sx={{
-                '& .MuiInputBase-input::placeholder': {
-                  color: 'rgba(255, 255, 255, 0.5)',
-                  opacity: 1,
-                }
-              }}
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
@@ -284,14 +259,7 @@ export const LoginPage = () => {
                 type="button"
                 variant="body2"
                 onClick={() => navigate('/forgot-password')}
-                sx={{
-                  cursor: 'pointer',
-                  color: 'info.main',
-                  textDecoration: 'none',
-                  '&:hover': {
-                    textShadow: '0 0 10px rgba(0, 195, 255, 0.6)',
-                  }
-                }}
+                sx={authLinkSx}
               >
                 ¿Olvidaste tu contraseña?
               </Link>
@@ -304,15 +272,7 @@ export const LoginPage = () => {
               variant="contained"
               size="large"
               disabled={isSubmitting}
-              sx={{
-                mt: 1,
-                mb: 2,
-                boxShadow: '0 0 20px rgba(0, 195, 255, 0.3)',
-                '&:hover': {
-                  boxShadow: '0 0 35px rgba(0, 195, 255, 0.6)',
-                  transform: 'translateY(-2px)',
-                }
-              }}
+              sx={authSubmitSx}
             >
               {isSubmitting ? 'Iniciando sesión...' : 'Iniciar Sesión'}
             </Button>
@@ -332,15 +292,7 @@ export const LoginPage = () => {
               size="large"
               onClick={() => navigate('/register')}
               disabled={isSubmitting}
-              sx={{
-                borderColor: 'info.main',
-                color: 'info.main',
-                '&:hover': {
-                  borderColor: 'info.light',
-                  boxShadow: '0 0 20px rgba(0, 195, 255, 0.4)',
-                  backgroundColor: 'rgba(0, 195, 255, 0.05)',
-                }
-              }}
+              sx={authOutlinedButtonSx}
             >
               Crear cuenta
             </Button>
