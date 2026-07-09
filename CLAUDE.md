@@ -48,9 +48,11 @@ Se implementaron/corrigieron estas lambdas de seguridad (ver contratos en §3):
 - `Api_V1_Security_Acount-activation` — implementado (valida la clave, activa la cuenta, redirige 302).
 
 ### Pruebas (`08_Pruebas/PruebasSeguridad`)
-- Suite **pytest + moto** (mock de DynamoDB y SES; no toca AWS). 19 pruebas, todas en verde.
+- Suite **pytest + moto** (mock de DynamoDB y SES; no toca AWS). 25 pruebas, todas en verde.
 - Cubre: registro, activación, login, OTP, cambio de contraseña (por OTP y por token),
-  recuperación de contraseña (`forgot-password`) y logout, con casos de error.
+  recuperación de contraseña (`forgot-password`), validación del `Authorizer` (JWT) y
+  logout, con casos de error.
+- **CI:** corren solas en cada push/PR (`.github/workflows/tests.yml`).
 
 ---
 
@@ -70,7 +72,7 @@ Corrige la tabla del README (que marca varias como TODO):
 | `Recovery-password` | `POST /api/forgot-password` | ✅ Implementado (genera y envía OTP; respuesta genérica) |
 | `Verify-code` | `POST /api/verify-code` | ⚠️ **Stub** |
 | `Refresh-token` | `POST /api/token/refresh` | ⚠️ **Stub** |
-| `Authorizer` | (Lambda Authorizer) | ⚠️ Permite todo (aún no valida el JWT) |
+| `Authorizer` / `Authorizer2` | (Lambda Authorizer) | ✅ Valida el JWT (HS256) con `SECRET_KEY`; deniega por defecto |
 
 ---
 
@@ -122,8 +124,10 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   (el `event` **es** el body) como proxy (`event['body']` string) vía un helper `_get_payload`.
 - **Backend – OTP:** el código se guarda **hasheado** (sha256); `create-otp` lo envía por
   correo, `validate-otp` lo consume. `change-password` acepta OTP (recuperación) **o** token (logueado).
-- **Seguridad JWT:** hoy el `Authorizer` permite todo y `SECRET_KEY` está en código.
-  Pendiente endurecer (ver plan).
+- **Seguridad JWT:** el `Authorizer` ahora **valida** el JWT (HS256) con `SECRET_KEY`
+  y deniega por defecto (fail-closed). `Login` y las lambdas nuevas leen `SECRET_KEY`
+  desde variable de entorno. Pendiente: mover `SECRET_KEY` a AWS Secrets Manager.
+  Requisito de despliegue: los Authorizers necesitan el layer de PyJWT y la env `SECRET_KEY`.
 - **Pruebas:** independientes (cada test crea su propio usuario con email único). Rutas a
   las lambdas calculadas desde la raíz del repo (`Path(__file__).parents[2]`).
 
@@ -153,8 +157,10 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [x] Implementar `/forgot-password` como wrapper que crea y envía el OTP (con respuesta
       genérica anti-enumeración). `change-password` ahora valida la clave antes de consumir el OTP.
 - [ ] Implementar `verify-code` y `token/refresh` (hoy stubs).
-- [ ] Endurecer el `Authorizer` para que **valide el JWT** de verdad.
-- [ ] Mover `SECRET_KEY` a variable de entorno / AWS Secrets Manager.
+- [x] Endurecer el `Authorizer` (y `Authorizer2`) para que **valide el JWT** (HS256) con
+      `SECRET_KEY`, soportando autorizadores TOKEN y REQUEST, y denegando por defecto.
+- [x] `SECRET_KEY` se lee desde variable de entorno (`Login` + lambdas nuevas + Authorizers).
+- [ ] Mover `SECRET_KEY` a **AWS Secrets Manager** (hoy es variable de entorno).
 - [ ] Lista negra por cliente; manejo de CSV grandes por partes; segmentar IPs SES por cliente.
 
 ### Infraestructura / despliegue
@@ -166,11 +172,9 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [ ] Definir `VITE_API_BASE_URL` de producción en el front.
 
 ### Calidad / CI-CD
-- [ ] **CI con GitHub Actions:** correr `pytest` de `08_Pruebas/PruebasSeguridad`
-      automáticamente en cada `push` y `pull_request`, **antes de hacer merge**,
-      para evitar regresiones (como la del `register` roto o el `userId` del login).
-      Sugerido: workflow en `.github/workflows/tests.yml` (Python 3.11,
-      `pip install -r 08_Pruebas/PruebasSeguridad/requirements.txt`, `pytest`).
+- [x] **CI con GitHub Actions:** `pytest` de `08_Pruebas/PruebasSeguridad` corre
+      automáticamente en cada `push` y `pull_request` (Python 3.11) vía
+      `.github/workflows/tests.yml`, para evitar regresiones.
 - [ ] (Opcional) Añadir al CI el build del frontend (`npm ci && npm run build`).
 - [ ] (Opcional) Migrar a CI/CD de despliegue (CodeBuild/CodePipeline o GH Actions → AWS).
 
@@ -210,11 +214,18 @@ Api_V1_Security_Create-otp/lambda_function.py        (implementado)
 Api_V1_Security_Validate-otp/lambda_function.py      (implementado)
 Api_V1_Security_Acount-activation/lambda_function.py (implementado)
 Api_V1_Security_Recovery-password/lambda_function.py (implementado: forgot-password)
+Authorizer/lambda_function.py                        (valida JWT; antes allow-all)
+Authorizer2/lambda_function.py                       (valida JWT; antes allow-all)
+```
+
+**CI** (`.github/workflows/`)
+```
+tests.yml             (nuevo)  corre pytest en cada push/PR (Python 3.11)
 ```
 
 **Pruebas** (`08_Pruebas/PruebasSeguridad/`)
 ```
-test_seguridad.py     (19 pruebas pytest + moto)
+test_seguridad.py     (25 pruebas pytest + moto)
 requirements.txt
 README.md
 ```

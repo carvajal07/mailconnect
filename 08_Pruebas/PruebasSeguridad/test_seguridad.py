@@ -30,8 +30,18 @@ os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'testing')
 os.environ.setdefault('SECRET_KEY', 'test-secret-key-para-pruebas-32bytes!')
 os.environ.setdefault('SENDER_EMAIL', 'comunicaciones@mailconnect.com.co')
 
+from datetime import datetime, timedelta  # noqa: E402
+
+import jwt  # noqa: E402 (PyJWT)
 from moto import mock_aws  # noqa: E402
 import boto3  # noqa: E402
+
+
+def _make_jwt(user, minutes=60):
+    """Genera un JWT HS256 con la SECRET_KEY de prueba (positivo/expirado)."""
+    payload = {'user': user, 'exp': datetime.utcnow() + timedelta(minutes=minutes)}
+    token = jwt.encode(payload, os.environ['SECRET_KEY'], algorithm='HS256')
+    return token if isinstance(token, str) else token.decode()
 
 # --- Rutas: se calculan desde la raíz del repo, no hay rutas absolutas ---
 REPO_ROOT = Path(__file__).resolve().parents[2]          # .../ProyectoMailconnect
@@ -47,6 +57,7 @@ LAMBDA_FILES = {
     'change_password': 'Api_V1_Security_Change-password',
     'recovery':   'Api_V1_Security_Recovery-password',
     'logout':     'Api_V1_Security_Logout',
+    'authorizer': 'Authorizer',
 }
 
 # Tabla -> clave primaria (HASH)
@@ -327,6 +338,47 @@ def test_recovery_password_debil_no_consume_otp(ctx):
     ok = ctx.handler('change_password')(
         {'user': email, 'password': 'ClaveFuerte9', 'otp': 456789}, None)
     assert ok['statusCode'] == 200
+
+
+# ============================ AUTHORIZER ============================
+
+def test_authorizer_token_valido_permite(ctx):
+    token = _make_jwt('user@test.com')
+    policy = ctx.handler('authorizer')(
+        {'authorizationToken': 'Bearer ' + token, 'methodArn': 'arn:aws:execute-api:xx'}, None)
+    assert policy['policyDocument']['Statement'][0]['Effect'] == 'Allow'
+    assert policy['context']['user'] == 'user@test.com'
+
+
+def test_authorizer_token_en_header_request(ctx):
+    token = _make_jwt('req@test.com')
+    policy = ctx.handler('authorizer')(
+        {'headers': {'Authorization': 'Bearer ' + token}, 'methodArn': 'arn:aws:execute-api:xx'}, None)
+    assert policy['policyDocument']['Statement'][0]['Effect'] == 'Allow'
+
+
+def test_authorizer_sin_token_deniega(ctx):
+    with pytest.raises(Exception, match='Unauthorized'):
+        ctx.handler('authorizer')({'methodArn': 'arn:aws:execute-api:xx'}, None)
+
+
+def test_authorizer_token_invalido_deniega(ctx):
+    with pytest.raises(Exception, match='Unauthorized'):
+        ctx.handler('authorizer')({'authorizationToken': 'Bearer no-es-un-token'}, None)
+
+
+def test_authorizer_token_expirado_deniega(ctx):
+    token = _make_jwt('exp@test.com', minutes=-5)  # ya expirado
+    with pytest.raises(Exception, match='Unauthorized'):
+        ctx.handler('authorizer')({'authorizationToken': 'Bearer ' + token}, None)
+
+
+def test_authorizer_token_firmado_con_otra_clave_deniega(ctx):
+    otro = jwt.encode({'user': 'x@test.com', 'exp': datetime.utcnow() + timedelta(hours=1)},
+                      'clave-distinta', algorithm='HS256')
+    otro = otro if isinstance(otro, str) else otro.decode()
+    with pytest.raises(Exception, match='Unauthorized'):
+        ctx.handler('authorizer')({'authorizationToken': 'Bearer ' + otro}, None)
 
 
 # ============================ LOGOUT ============================
