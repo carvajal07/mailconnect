@@ -7,6 +7,8 @@ Plataforma de envío masivo de emails construida sobre AWS serverless. Permite a
 **API Base (Test):** `https://mtgt9qpb77.execute-api.us-east-1.amazonaws.com/Test`  
 **Dominio:** `mailconnect.com.co` | `api.mailconnect.com.co` (Godaddy → `76.223.105.231`)
 
+> 📌 **Estado actual e implementación reciente:** ver `CLAUDE.md` (landing pública + autenticación conectada al backend, lambdas de seguridad implementadas y probadas). Este README es la referencia de arquitectura.
+
 ---
 
 ## Estructura del repositorio
@@ -24,10 +26,10 @@ ProyectoMailconnect/
 │   ├── lambdas-prueba/ # Lambdas de prueba y versiones descartadas
 │   ├── scripts/        # Scripts Python sueltos, utilidades, envíos manuales
 │   └── librerias/      # Librerías empaquetadas para capas Lambda (JWT, etc.)
-├── 05_Frontend/        # App React/Vite (TypeScript)
+├── 05_Frontend/        # App React/Vite/TS: landing pública + auth + panel
 ├── 06_Plantillas/      # Templates HTML de email
 ├── 07_Schemas/         # JSON Schemas de validación de la API
-├── 08_Pruebas/         # CSVs y JSONs de datos de prueba
+├── 08_Pruebas/         # Datos de prueba (CSV/JSON) + PruebasSeguridad/ (pytest)
 └── 09_Herramientas/    # Colección Postman, notas de OTP
 ```
 
@@ -99,19 +101,19 @@ API Gateway (REST)
 
 | Lambda | Endpoint | Descripción | Estado |
 |--------|----------|-------------|--------|
-| `Api_V1_Security_Register` | `POST /api/register` | Registro de nuevo cliente | ✅ Implementado |
+| `Api_V1_Security_Register` | `POST /api/register` | Registro de cliente + correo de activación (SES) | ✅ Implementado |
 | `Api_V1_Security_Login` | `POST /api/login` | Login, retorna JWT + info del cliente | ✅ Implementado |
-| `Api_V1_Security_Logout` | `POST /api/logout` | Cierre de sesión | ⚠️ TODO |
-| `Api_V1_Security_Acount-activation` | `POST /api/verify-email/{token}` | Activa cuenta via OTP | ✅ Implementado |
-| `Api_V1_Security_Create-otp` | `POST /api/create-otp` | Genera OTP para recuperación | ⚠️ TODO |
-| `Api_V1_Security_Validate-otp` | `POST /api/validate-otp` | Valida OTP ingresado | ⚠️ TODO |
-| `Api_V1_Security_Verify-code` | `POST /api/verify-code` | Verifica código de confirmación | ⚠️ TODO |
-| `Api_V1_Security_Refresh-token` | `POST /api/token/refresh` | Renueva el JWT | ⚠️ TODO |
-| `Api_V1_Security_Change-password` | `POST /api/change-password` | Cambia contraseña (autenticado) | ⚠️ TODO |
-| `Api_V1_Security_Recovery-password` | `POST /api/forgot-password` | Recuperación de contraseña | ⚠️ TODO |
-| `Authorizer` / `Authorizer2` | (Lambda Authorizer) | Valida JWT en cada request | ✅ Implementado |
+| `Api_V1_Security_Logout` | `POST /api/logout` | Cierre de sesión (invalida sesiones) | ✅ Implementado |
+| `Api_V1_Security_Acount-activation` | `GET /api/account-activation?qs=` (o `/verify-email/{token}`) | Activa la cuenta con la clave del correo (redirige 302) | ✅ Implementado |
+| `Api_V1_Security_Create-otp` | `POST /api/create-otp` | Genera OTP (hasheado) y lo envía por correo | ✅ Implementado |
+| `Api_V1_Security_Validate-otp` | `POST /api/validate-otp` | Valida y consume el OTP | ✅ Implementado |
+| `Api_V1_Security_Verify-code` | `POST /api/verify-code` | Verifica código de confirmación | ⚠️ TODO (stub) |
+| `Api_V1_Security_Refresh-token` | `POST /api/token/refresh` | Renueva el JWT | ⚠️ TODO (stub) |
+| `Api_V1_Security_Change-password` | `POST /api/change-password` | Cambia contraseña (por token JWT o por OTP) | ✅ Implementado |
+| `Api_V1_Security_Recovery-password` | `POST /api/forgot-password` | Recuperación de contraseña | ⚠️ TODO (stub) |
+| `Authorizer` / `Authorizer2` | (Lambda Authorizer) | Valida JWT en cada request | ⚠️ Permite todo (no valida aún) |
 
-> ⚠️ Varias lambdas de seguridad tienen aún el placeholder `# TODO implement`. Las versiones funcionales están en `lambdas-prueba/` con nombres en minúsculas (`createOtp`, `validateOtp`, etc.).
+> ✅ La mayoría de las lambdas de seguridad ya están **implementadas y probadas** (ver `08_Pruebas/PruebasSeguridad`). Siguen como **stub** (`# TODO implement`): `Verify-code`, `Refresh-token` y `Recovery-password` (`/api/forgot-password`). El `Authorizer` aún **no valida** el JWT (permite todo). Las lambdas nuevas leen `SECRET_KEY`/`SENDER_EMAIL` desde variables de entorno.
 
 ### Template (`/api/...`)
 
@@ -226,7 +228,7 @@ Se crean automáticamente usando el nombre del cliente (`customer_name`):
 - El Lambda Authorizer valida el token antes de cada request al API Gateway
 - El payload del JWT contiene `user` (email del usuario)
 
-> ⚠️ El `SECRET_KEY` actualmente está hardcodeado en el código. Pendiente moverlo a variable de entorno o AWS Secrets Manager.
+> ⚠️ El `SECRET_KEY` de `Login` está hardcodeado y el `Authorizer` aún **no valida** el JWT (permite todo). Pendiente: validar en el Authorizer y mover `SECRET_KEY` a variable de entorno / AWS Secrets Manager. Las lambdas de seguridad nuevas ya lo leen desde variable de entorno.
 
 ---
 
@@ -333,10 +335,11 @@ POST /api/email/sent/ondemand
 
 ## Pendientes conocidos
 
-- [ ] Implementar las lambdas de seguridad marcadas como TODO (logout, create-otp, validate-otp, refresh-token, change-password, recovery-password, verify-code)
+- [x] Implementadas: `register` (+ activación), `login` (fix), `logout`, `create-otp`, `validate-otp`, `change-password`, `account-activation`
+- [ ] Faltan lambdas de seguridad: `verify-code`, `token/refresh` y `forgot-password` (recovery); endurecer el `Authorizer` para que valide el JWT
 - [ ] Mover `SECRET_KEY` del JWT a variable de entorno o Secrets Manager
-- [ ] Configurar CI/CD (CodeBuild + CodePipeline)
-- [ ] Agregar pruebas unitarias (Pytest)
+- [ ] Configurar CI (GitHub Actions: correr `pytest` en cada push/PR) y CI/CD de despliegue (CodeBuild/CodePipeline)
+- [x] Pruebas de integración de seguridad (pytest + moto) en `08_Pruebas/PruebasSeguridad` — pendiente ampliar cobertura a otros módulos
 - [ ] Implementar lista negra por cliente (`{customer_name}_blackList`)
 - [ ] Validar manejo de archivos CSV grandes (+100k registros) con lectura por partes
 - [ ] Segmentar IPs de envío SES por cliente

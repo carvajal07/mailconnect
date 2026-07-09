@@ -1,60 +1,84 @@
-import urllib.parse
+import os
 import boto3
 from datetime import datetime
 
-# Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb')
-table_otp = dynamodb.Table('otp')
+table_activation = dynamodb.Table('userActivation')
+table_user = dynamodb.Table('user')
 
-def update_otp(otpId):
-    # Actualizar estado del OTP a false
-    table_otp.update_item(
-        Key={'otpId':otpId},
-        UpdateExpression='SET #estado = :nuevo_estado',
-        ExpressionAttributeNames={'#estado': 'active'},
-        ExpressionAttributeValues={':nuevo_estado': False}
-    )
+# URLs de redirección (ajustables por variable de entorno)
+SUCCESS_URL = os.environ.get('ACTIVATION_SUCCESS_URL', 'https://www.mailconnect.com.co/?activated=1')
+ERROR_URL = os.environ.get('ACTIVATION_ERROR_URL', 'https://www.mailconnect.com.co/?activated=0')
+EXPIRED_URL = os.environ.get('ACTIVATION_EXPIRED_URL', 'https://www.mailconnect.com.co/?activated=expired')
+
+
+def _redirect(location):
+    return {"statusCode": 302, "headers": {"Location": location}}
+
+
+def _get_key(event):
+    """Toma la clave de activación de ?qs=... o del path /verify-email/{token}."""
+    if not isinstance(event, dict):
+        return None
+    qsp = event.get('queryStringParameters') or {}
+    if qsp.get('qs'):
+        return qsp['qs']
+    pp = event.get('pathParameters') or {}
+    if pp.get('token'):
+        return pp['token']
+    return None
+
 
 def lambda_handler(event, context):
-  # Obtener el parámetro del otp
-  #url = evento["rawQueryString"]
-  #parametros = parse_qs(urlparse(url).query)
-  print(event)
+    print(event)
 
+    activation_key = _get_key(event)
+    if not activation_key:
+        return _redirect(ERROR_URL)
 
-  otpHash = event['queryStringParameters']["qs"]
-  print(otpHash)
+    try:
+        # Buscar el registro de activación por su clave
+        response = table_activation.scan(
+            FilterExpression="activationKey = :k",
+            ExpressionAttributeValues={":k": activation_key},
+            ProjectionExpression='userActivationId, userId, expirationTime, used'
+        )
 
-  '''
-  #Consultar la informacion en la BD
-  projectionOtp_expression = 'otpId, expirationTime'  # Lista de campos a consultar
-    
-  response = table_otp.scan(
-      FilterExpression="otpHash = :otpHashToValidate AND active = :activeToValidate",
-      ExpressionAttributeValues={
-          ":otpHashToValidate": otpHash,
-          ":activeToValidate": True
-      },
-      ProjectionExpression=projectionOtp_expression
-  )
+        if not response['Items']:
+            return _redirect(ERROR_URL)
 
-  if response['Items']:
-    items = response['Items']
-    # Obtener la fecha y hora actual
-    now = datetime.utcnow()
-    # Ordena los resultados por el campo "expiration"
-    campoOrdenamiento = "expirationTime"
-    itemsOrdenados = sorted(items, key=lambda x: x[campoOrdenamiento], reverse=True)
-    otpId = itemsOrdenados[0]['otpId']
-    expirationTime = itemsOrdenados[0]['expirationTime']
+        item = response['Items'][0]
 
-    if expirationTime > int(now.timestamp()):
-      update_otp(otpId)
-  '''
-  # Redirigir a la URL predeterminada
-  return {
-    "statusCode": 302,
-    "headers": {
-      "Location": "https://www.mailconnect.com.co/"
-    }
-  }
+        # Ya usado
+        if item.get('used'):
+            return _redirect(SUCCESS_URL)
+
+        # Verificar expiración (ISO 'YYYY-MM-DDTHH:MM:SSZ' en UTC)
+        try:
+            exp = datetime.strptime(item['expirationTime'], '%Y-%m-%dT%H:%M:%SZ')
+        except Exception:
+            exp = None
+
+        if exp is not None and datetime.utcnow() > exp:
+            return _redirect(EXPIRED_URL)
+
+        # Activar la cuenta del usuario
+        table_user.update_item(
+            Key={'userId': item['userId']},
+            UpdateExpression='SET #a = :t',
+            ExpressionAttributeNames={'#a': 'active'},
+            ExpressionAttributeValues={':t': True}
+        )
+
+        # Marcar la activación como usada
+        table_activation.update_item(
+            Key={'userActivationId': item['userActivationId']},
+            UpdateExpression='SET used = :t',
+            ExpressionAttributeValues={':t': True}
+        )
+
+        return _redirect(SUCCESS_URL)
+
+    except Exception as e:
+        print("Error en account-activation: {}".format(e))
+        return _redirect(ERROR_URL)

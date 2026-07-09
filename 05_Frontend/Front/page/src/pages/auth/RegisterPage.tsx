@@ -14,10 +14,14 @@ import {
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { AuthLayout } from '../../components/AuthLayout';
+import { authService } from '../../services/authService';
 
 interface FormData {
   name: string;
   email: string;
+  phone: string;
+  company: string;
+  companyTin: string;
   password: string;
   confirmPassword: string;
 }
@@ -25,6 +29,9 @@ interface FormData {
 interface FormErrors {
   name?: string;
   email?: string;
+  phone?: string;
+  company?: string;
+  companyTin?: string;
   password?: string;
   confirmPassword?: string;
 }
@@ -34,6 +41,9 @@ export const RegisterPage = () => {
   const [formData, setFormData] = useState<FormData>({
     name: '',
     email: '',
+    phone: '',
+    company: '',
+    companyTin: '',
     password: '',
     confirmPassword: '',
   });
@@ -43,6 +53,7 @@ export const RegisterPage = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [submitError, setSubmitError] = useState('');
 
   // Validaciones
   const validateName = (name: string): string | undefined => {
@@ -55,6 +66,24 @@ export const RegisterPage = () => {
     if (!email) return 'El correo electrónico es requerido';
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) return 'El correo electrónico no es válido';
+    return undefined;
+  };
+
+  const validatePhone = (phone: string): string | undefined => {
+    if (!phone) return 'El teléfono es requerido';
+    if (!/^[0-9]+$/.test(phone)) return 'El teléfono debe contener solo números';
+    return undefined;
+  };
+
+  const validateCompany = (company: string): string | undefined => {
+    if (!company.trim()) return 'La empresa es requerida';
+    if (company.trim().length < 2) return 'La empresa debe tener al menos 2 caracteres';
+    return undefined;
+  };
+
+  const validateCompanyTin = (companyTin: string): string | undefined => {
+    if (!companyTin) return 'El NIT es requerido';
+    if (!/^[0-9]+$/.test(companyTin)) return 'El NIT debe contener solo números';
     return undefined;
   };
 
@@ -77,6 +106,9 @@ export const RegisterPage = () => {
     const newErrors: FormErrors = {
       name: validateName(formData.name),
       email: validateEmail(formData.email),
+      phone: validatePhone(formData.phone),
+      company: validateCompany(formData.company),
+      companyTin: validateCompanyTin(formData.companyTin),
       password: validatePassword(formData.password),
       confirmPassword: validateConfirmPassword(formData.password, formData.confirmPassword),
     };
@@ -89,20 +121,19 @@ export const RegisterPage = () => {
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
     const value = event.target.value;
+    setSubmitError('');
     setFormData(prev => ({ ...prev, [field]: value }));
 
     // Validar en tiempo real
     let error: string | undefined;
     switch (field) {
-      case 'name':
-        error = validateName(value);
-        break;
-      case 'email':
-        error = validateEmail(value);
-        break;
+      case 'name': error = validateName(value); break;
+      case 'email': error = validateEmail(value); break;
+      case 'phone': error = validatePhone(value); break;
+      case 'company': error = validateCompany(value); break;
+      case 'companyTin': error = validateCompanyTin(value); break;
       case 'password':
         error = validatePassword(value);
-        // Revalidar confirmPassword si ya fue llenado
         if (formData.confirmPassword) {
           setErrors(prev => ({
             ...prev,
@@ -125,26 +156,43 @@ export const RegisterPage = () => {
 
     setIsSubmitting(true);
     setSuccessMessage('');
+    setSubmitError('');
 
     try {
-      // Simulación de llamada API
-      console.log('Registrando usuario:', formData);
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      const res = await authService.register({
+        name: formData.name.trim(),
+        phone: formData.phone,
+        email: formData.email,
+        company: formData.company.trim(),
+        companyTin: Number(formData.companyTin),
+        password: formData.password,
+      });
 
-      // TODO: Implementar lógica de registro real
-      setSuccessMessage('¡Registro exitoso! Redirigiendo al login...');
+      if (res.status && (res.statusCode === 201 || res.statusCode === 200)) {
+        setSuccessMessage('¡Cuenta creada! Revisa tu correo para activarla y luego inicia sesión.');
+        setTimeout(() => navigate('/login'), 2500);
+        return;
+      }
 
-      setTimeout(() => {
-        navigate('/login');
-      }, 2000);
+      const msg =
+        res.statusCode === 409 ? 'Este correo ya está registrado. Intenta iniciar sesión.'
+        : res.statusCode === 400 ? 'Algunos datos no son válidos. Revisa el formulario.'
+        : res.statusCode === 0 ? res.description
+        : (res.description || 'No fue posible completar el registro. Intenta nuevamente.');
+      setSubmitError(msg);
 
     } catch (error) {
       console.error('Error al registrar:', error);
-      setErrors({
-        email: 'Este correo ya está registrado o hubo un error. Intenta nuevamente.',
-      });
+      setSubmitError('Ocurrió un error inesperado. Por favor, intenta nuevamente.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const placeholderSx = {
+    '& .MuiInputBase-input::placeholder': {
+      color: 'rgba(255, 255, 255, 0.5)',
+      opacity: 1,
     }
   };
 
@@ -195,6 +243,11 @@ export const RegisterPage = () => {
               {successMessage}
             </Alert>
           )}
+          {submitError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {submitError}
+            </Alert>
+          )}
 
           <form onSubmit={handleSubmit} noValidate>
             <TextField
@@ -209,12 +262,7 @@ export const RegisterPage = () => {
               margin="normal"
               required
               placeholder="Juan Pérez"
-              sx={{
-                '& .MuiInputBase-input::placeholder': {
-                  color: 'rgba(255, 255, 255, 0.5)',
-                  opacity: 1,
-                }
-              }}
+              sx={placeholderSx}
             />
 
             <TextField
@@ -230,12 +278,54 @@ export const RegisterPage = () => {
               margin="normal"
               required
               placeholder="tu@email.com"
-              sx={{
-                '& .MuiInputBase-input::placeholder': {
-                  color: 'rgba(255, 255, 255, 0.5)',
-                  opacity: 1,
-                }
-              }}
+              sx={placeholderSx}
+            />
+
+            <TextField
+              fullWidth
+              label="Teléfono"
+              name="phone"
+              value={formData.phone}
+              onChange={handleChange('phone')}
+              error={!!errors.phone}
+              helperText={errors.phone}
+              disabled={isSubmitting}
+              margin="normal"
+              required
+              placeholder="3001234567"
+              inputProps={{ inputMode: 'numeric' }}
+              sx={placeholderSx}
+            />
+
+            <TextField
+              fullWidth
+              label="Empresa"
+              name="company"
+              value={formData.company}
+              onChange={handleChange('company')}
+              error={!!errors.company}
+              helperText={errors.company}
+              disabled={isSubmitting}
+              margin="normal"
+              required
+              placeholder="Mi Empresa S.A.S."
+              sx={placeholderSx}
+            />
+
+            <TextField
+              fullWidth
+              label="NIT (sin dígito de verificación)"
+              name="companyTin"
+              value={formData.companyTin}
+              onChange={handleChange('companyTin')}
+              error={!!errors.companyTin}
+              helperText={errors.companyTin}
+              disabled={isSubmitting}
+              margin="normal"
+              required
+              placeholder="900123456"
+              inputProps={{ inputMode: 'numeric' }}
+              sx={placeholderSx}
             />
 
             <TextField
@@ -251,12 +341,7 @@ export const RegisterPage = () => {
               margin="normal"
               required
               placeholder="••••••••"
-              sx={{
-                '& .MuiInputBase-input::placeholder': {
-                  color: 'rgba(255, 255, 255, 0.5)',
-                  opacity: 1,
-                }
-              }}
+              sx={placeholderSx}
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
@@ -285,12 +370,7 @@ export const RegisterPage = () => {
               margin="normal"
               required
               placeholder="••••••••"
-              sx={{
-                '& .MuiInputBase-input::placeholder': {
-                  color: 'rgba(255, 255, 255, 0.5)',
-                  opacity: 1,
-                }
-              }}
+              sx={placeholderSx}
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">

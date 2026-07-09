@@ -17,6 +17,7 @@ import { CampanasSection } from '../../components/admin/CampanasSection';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
 import { useNavigate } from 'react-router-dom';
+import { authService, clearSession, getUser } from '../../services/authService';
 
 const DRAWER_WIDTH = 240;
 
@@ -24,6 +25,7 @@ export const AdminPage = () => {
   const [activeSection, setActiveSection] = useState('clientes');
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
+  const user = getUser();
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -35,7 +37,11 @@ export const AdminPage = () => {
 
   const handleLogout = () => {
     handleMenuClose();
-    // Aquí puedes agregar la lógica de logout
+    // Cerrar sesión: notificar al backend (best-effort) y limpiar sesión local
+    if (user?.email) {
+      authService.logout(user.email).catch(() => { /* ignorar errores de red */ });
+    }
+    clearSession();
     navigate('/login');
   };
 
@@ -67,6 +73,11 @@ export const AdminPage = () => {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1, ml: 2 }}>
             Panel de Administración
           </Typography>
+          {user?.name && (
+            <Typography variant="body2" sx={{ mr: 1, opacity: 0.9 }}>
+              Hola, {user.name}
+            </Typography>
+          )}
           <ThemeToggle />
           <IconButton
             color="inherit"

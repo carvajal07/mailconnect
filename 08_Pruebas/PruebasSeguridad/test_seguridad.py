@@ -1,0 +1,277 @@
+"""
+Pruebas de integración de las lambdas de seguridad de MailConnect.
+
+Se ejecutan 100% en local usando `moto` (mock de DynamoDB y SES), sin tocar AWS.
+Cubren el flujo: registro -> activación -> login -> OTP (crear/validar) ->
+cambio de contraseña (por OTP y por token) -> logout, más casos de error.
+
+Cómo correrlas:
+    cd 08_Pruebas/PruebasSeguridad
+    pip install -r requirements.txt
+    pytest -v
+
+Cómo mantenerlas:
+    - Cada test crea su propio usuario (email único) para ser independiente.
+    - Si agregas/renombras una lambda de seguridad, ajusta LAMBDA_FILES.
+    - Si cambia el esquema de una tabla (PK), ajusta TABLES.
+"""
+
+import os
+import sys
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+# --- Configuración de entorno para moto (antes de importar las lambdas) ---
+os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
+os.environ.setdefault('AWS_ACCESS_KEY_ID', 'testing')
+os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'testing')
+os.environ.setdefault('SECRET_KEY', 'test-secret-key-para-pruebas-32bytes!')
+os.environ.setdefault('SENDER_EMAIL', 'comunicaciones@mailconnect.com.co')
+
+from moto import mock_aws  # noqa: E402
+import boto3  # noqa: E402
+
+# --- Rutas: se calculan desde la raíz del repo, no hay rutas absolutas ---
+REPO_ROOT = Path(__file__).resolve().parents[2]          # .../ProyectoMailconnect
+LAMBDAS_DIR = REPO_ROOT / '04_Backend' / 'lambdas'
+
+# Nombre lógico -> carpeta de la lambda
+LAMBDA_FILES = {
+    'register':   'Api_V1_Security_Register',
+    'login':      'Api_V1_Security_Login',
+    'activation': 'Api_V1_Security_Acount-activation',
+    'create_otp': 'Api_V1_Security_Create-otp',
+    'validate_otp': 'Api_V1_Security_Validate-otp',
+    'change_password': 'Api_V1_Security_Change-password',
+    'logout':     'Api_V1_Security_Logout',
+}
+
+# Tabla -> clave primaria (HASH)
+TABLES = {
+    'user': 'userId',
+    'userData': 'userDataId',
+    'customer': 'customerId',
+    'userActivation': 'userActivationId',
+    'otp': 'otpId',
+    'session': 'sessionId',
+}
+
+SENDER = os.environ['SENDER_EMAIL']
+
+
+def _load_lambda(name, folder):
+    path = LAMBDAS_DIR / folder / 'lambda_function.py'
+    if not path.exists():
+        raise FileNotFoundError(f"No se encontró la lambda: {path}")
+    spec = importlib.util.spec_from_file_location(f"mc_{name}", str(path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class Ctx:
+    """Contenedor con handlers, recursos de tablas y helpers para las pruebas."""
+
+    def __init__(self):
+        self.mods = {name: _load_lambda(name, folder) for name, folder in LAMBDA_FILES.items()}
+        res = boto3.resource('dynamodb', region_name='us-east-1')
+        self.tables = {t: res.Table(t) for t in TABLES}
+        self._email_seq = 0
+
+    def handler(self, name):
+        return self.mods[name].lambda_handler
+
+    def unique_email(self, prefix='user'):
+        self._email_seq += 1
+        return f"{prefix}{self._email_seq}@test.com"
+
+    # ---- Helpers de flujo ----
+    def register(self, email, password='Password123', tin=900123456):
+        return self.handler('register')({
+            'name': 'Usuario Test', 'phone': '3204586576', 'email': email,
+            'company': 'Empresa Test', 'companyTin': tin, 'password': password,
+        }, None)
+
+    def user_id(self, email):
+        items = self.tables['user'].scan(
+            FilterExpression='email = :e',
+            ExpressionAttributeValues={':e': email},
+        )['Items']
+        return items[0]['userId'] if items else None
+
+    def activation_key(self, email):
+        uid = self.user_id(email)
+        items = self.tables['userActivation'].scan(
+            FilterExpression='userId = :u',
+            ExpressionAttributeValues={':u': uid},
+        )['Items']
+        return items[0]['activationKey'] if items else None
+
+    def make_active_user(self, email, password='Password123'):
+        self.register(email, password)
+        key = self.activation_key(email)
+        self.handler('activation')({'queryStringParameters': {'qs': key}}, None)
+        return email
+
+    def set_otp_code(self, code):
+        """Fija el código que generará create-otp (para poder validarlo)."""
+        self.mods['create_otp'].secrets.randbelow = lambda n: code
+
+
+@pytest.fixture(scope="module")
+def ctx():
+    with mock_aws():
+        client = boto3.client('dynamodb', region_name='us-east-1')
+        for table, pk in TABLES.items():
+            client.create_table(
+                TableName=table,
+                KeySchema=[{'AttributeName': pk, 'KeyType': 'HASH'}],
+                AttributeDefinitions=[{'AttributeName': pk, 'AttributeType': 'S'}],
+                BillingMode='PAY_PER_REQUEST',
+            )
+        boto3.client('ses', region_name='us-east-1').verify_email_identity(EmailAddress=SENDER)
+        yield Ctx()
+
+
+# ============================ REGISTRO ============================
+
+def test_registro_exitoso_crea_usuario_inactivo(ctx):
+    email = ctx.unique_email('reg')
+    resp = ctx.register(email)
+    assert resp['statusCode'] == 201
+    assert ctx.user_id(email) is not None
+    items = ctx.tables['user'].scan(
+        FilterExpression='email = :e', ExpressionAttributeValues={':e': email})['Items']
+    assert items[0]['active'] is False
+
+
+def test_registro_email_duplicado_409(ctx):
+    email = ctx.unique_email('dup')
+    ctx.register(email)
+    resp = ctx.register(email)
+    assert resp['statusCode'] == 409
+
+
+def test_registro_telefono_invalido_400(ctx):
+    resp = ctx.handler('register')({
+        'name': 'X', 'phone': 'abc', 'email': ctx.unique_email('bad'),
+        'company': 'C', 'companyTin': 900111, 'password': 'Password123',
+    }, None)
+    assert resp['statusCode'] == 400
+
+
+# ============================ ACTIVACIÓN ============================
+
+def test_activacion_valida_activa_cuenta(ctx):
+    email = ctx.unique_email('act')
+    ctx.register(email)
+    key = ctx.activation_key(email)
+    resp = ctx.handler('activation')({'queryStringParameters': {'qs': key}}, None)
+    assert resp['statusCode'] == 302
+    items = ctx.tables['user'].scan(
+        FilterExpression='email = :e', ExpressionAttributeValues={':e': email})['Items']
+    assert items[0]['active'] is True
+
+
+def test_activacion_clave_invalida_redirige(ctx):
+    resp = ctx.handler('activation')({'queryStringParameters': {'qs': 'clave-inexistente'}}, None)
+    assert resp['statusCode'] == 302
+    assert 'activated=0' in resp['headers']['Location']
+
+
+# ============================ LOGIN ============================
+
+def test_login_cuenta_inactiva_423(ctx):
+    email = ctx.unique_email('inact')
+    ctx.register(email)  # sin activar
+    resp = ctx.handler('login')({'user': email, 'password': 'Password123'}, None)
+    assert resp['statusCode'] == 423
+
+
+def test_login_exitoso_devuelve_token(ctx):
+    email = ctx.make_active_user(ctx.unique_email('login'))
+    resp = ctx.handler('login')({'user': email, 'password': 'Password123'}, None)
+    assert resp['statusCode'] == 200
+    assert resp['data']['token']
+    assert resp['data']['userId']
+
+
+def test_login_password_incorrecta_404(ctx):
+    email = ctx.make_active_user(ctx.unique_email('badpwd'))
+    resp = ctx.handler('login')({'user': email, 'password': 'ClaveErrada9'}, None)
+    assert resp['statusCode'] == 404
+
+
+# ============================ OTP ============================
+
+def test_create_y_validate_otp(ctx):
+    email = ctx.make_active_user(ctx.unique_email('otp'))
+    ctx.set_otp_code(123456)
+    creado = ctx.handler('create_otp')({'user': email, 'expiration': 5, 'system': 'Prueba'}, None)
+    assert creado['statusCode'] == 201
+
+    malo = ctx.handler('validate_otp')({'user': email, 'otp': 999999, 'ip': '1.1.1.1'}, None)
+    assert malo['statusCode'] == 401
+
+    ok = ctx.handler('validate_otp')({'user': email, 'otp': 123456, 'ip': '1.1.1.1'}, None)
+    assert ok['statusCode'] == 200
+
+
+def test_validate_otp_se_consume(ctx):
+    email = ctx.make_active_user(ctx.unique_email('otpc'))
+    ctx.set_otp_code(654321)
+    ctx.handler('create_otp')({'user': email, 'expiration': 5}, None)
+    ctx.handler('validate_otp')({'user': email, 'otp': 654321}, None)
+    # Reusarlo debe fallar (ya consumido)
+    segundo = ctx.handler('validate_otp')({'user': email, 'otp': 654321}, None)
+    assert segundo['statusCode'] == 401
+
+
+# ============================ CAMBIO DE CONTRASEÑA ============================
+
+def test_change_password_por_otp(ctx):
+    email = ctx.make_active_user(ctx.unique_email('chotp'))
+    ctx.set_otp_code(222333)
+    ctx.handler('create_otp')({'user': email, 'expiration': 5}, None)
+    resp = ctx.handler('change_password')({'user': email, 'password': 'NuevaClave456', 'otp': 222333}, None)
+    assert resp['statusCode'] == 200
+    login = ctx.handler('login')({'user': email, 'password': 'NuevaClave456'}, None)
+    assert login['statusCode'] == 200
+
+
+def test_change_password_por_token(ctx):
+    email = ctx.make_active_user(ctx.unique_email('chtok'))
+    login = ctx.handler('login')({'user': email, 'password': 'Password123'}, None)
+    token = login['data']['token']
+    resp = ctx.handler('change_password')(
+        {'user': email, 'password': 'OtraClave789', 'headers': {'Authorization': 'Bearer ' + token}}, None)
+    assert resp['statusCode'] == 200
+
+
+def test_change_password_sin_autorizacion_401(ctx):
+    email = ctx.make_active_user(ctx.unique_email('noauth'))
+    resp = ctx.handler('change_password')({'user': email, 'password': 'SinAuth123'}, None)
+    assert resp['statusCode'] == 401
+
+
+def test_change_password_debil_400(ctx):
+    email = ctx.make_active_user(ctx.unique_email('weak'))
+    login = ctx.handler('login')({'user': email, 'password': 'Password123'}, None)
+    token = login['data']['token']
+    resp = ctx.handler('change_password')(
+        {'user': email, 'password': 'debil', 'headers': {'Authorization': 'Bearer ' + token}}, None)
+    assert resp['statusCode'] == 400
+
+
+# ============================ LOGOUT ============================
+
+def test_logout_ok(ctx):
+    email = ctx.make_active_user(ctx.unique_email('logout'))
+    resp = ctx.handler('logout')({'user': email}, None)
+    assert resp['statusCode'] == 200
+
+
+if __name__ == '__main__':
+    sys.exit(pytest.main([__file__, '-v']))

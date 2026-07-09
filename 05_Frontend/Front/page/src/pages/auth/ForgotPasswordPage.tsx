@@ -12,6 +12,7 @@ import {
 } from '@mui/material';
 import { ArrowBack } from '@mui/icons-material';
 import { AuthLayout } from '../../components/AuthLayout';
+import { authService } from '../../services/authService';
 
 export const ForgotPasswordPage = () => {
   const navigate = useNavigate();
@@ -41,20 +42,20 @@ export const ForgotPasswordPage = () => {
     setSuccessMessage('');
 
     try {
-      // Simulación de llamada API
-      console.log('Enviando email de recuperación a:', email);
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      const res = await authService.forgotPassword(email);
 
-      // TODO: Implementar lógica real de recuperación de contraseña
-      setSuccessMessage(
-        'Se ha enviado un enlace de recuperación a tu correo electrónico. Por favor, revisa tu bandeja de entrada.'
-      );
-
-      // Limpiar el formulario
-      setEmail('');
-
+      if (res.status || res.statusCode === 200) {
+        setSuccessMessage(
+          'Si el correo está registrado, te enviaremos las instrucciones para restablecer tu contraseña. Revisa tu bandeja de entrada.'
+        );
+        setEmail('');
+      } else if (res.statusCode === 0) {
+        setError(res.description);
+      } else {
+        setError(res.description || 'No fue posible procesar la solicitud. Intenta nuevamente.');
+      }
     } catch (error) {
-      console.error('Error al enviar email de recuperación:', error);
+      console.error('Error al enviar recuperación:', error);
       setError('Hubo un error al enviar el correo. Por favor, intenta nuevamente.');
     } finally {
       setIsSubmitting(false);
@@ -122,7 +123,7 @@ export const ForgotPasswordPage = () => {
             align="center"
             sx={{ mb: 3 }}
           >
-            Ingresa tu correo electrónico y te enviaremos un enlace para restablecer tu contraseña
+            Ingresa tu correo electrónico y te enviaremos las instrucciones para restablecer tu contraseña
           </Typography>
 
           {successMessage && (
@@ -175,7 +176,7 @@ export const ForgotPasswordPage = () => {
                 }
               }}
             >
-              {isSubmitting ? 'Enviando...' : 'Enviar Enlace de Recuperación'}
+              {isSubmitting ? 'Enviando...' : 'Enviar instrucciones'}
             </Button>
           </form>
 

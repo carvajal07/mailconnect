@@ -1,8 +1,139 @@
+import os
 import json
+import time
+import uuid
+import hashlib
+import secrets
+import boto3
+
+dynamodb = boto3.resource('dynamodb')
+table_otp = dynamodb.Table('otp')
+table_user = dynamodb.Table('user')
+
+ses = boto3.client('ses')
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'comunicaciones@mailconnect.com.co')
+DEFAULT_EXPIRATION_MIN = int(os.environ.get('OTP_EXPIRATION_MIN', '5'))
+
+
+def _get_payload(event):
+    if isinstance(event, dict) and isinstance(event.get('body'), str):
+        try:
+            return json.loads(event['body'])
+        except Exception:
+            return {}
+    return event if isinstance(event, dict) else {}
+
+
+def _resolve_user(payload):
+    """Devuelve (userId, email) a partir de userId o user(email)."""
+    user_id = payload.get('userId')
+    email = payload.get('user') or payload.get('email')
+
+    if user_id and email:
+        return user_id, email
+
+    if user_id:
+        resp = table_user.scan(
+            FilterExpression="userId = :v",
+            ExpressionAttributeValues={":v": user_id},
+            ProjectionExpression='userId, email'
+        )
+        if resp['Items']:
+            return user_id, resp['Items'][0].get('email')
+        return user_id, None
+
+    if email:
+        resp = table_user.scan(
+            FilterExpression="email = :v",
+            ExpressionAttributeValues={":v": email},
+            ProjectionExpression='userId, email'
+        )
+        if resp['Items']:
+            return resp['Items'][0]['userId'], email
+        return None, email
+
+    return None, None
+
+
+def send_otp_email(email, code, system):
+    subject = "Tu código de verificación MailConnect"
+    html_body = """
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#16233f">
+      <h2 style="color:#0075be">Tu código de verificación</h2>
+      <p>Usa este código para continuar ({system}):</p>
+      <p style="text-align:center;font-size:34px;font-weight:bold;letter-spacing:8px;color:#0075be;margin:24px 0">
+        {code}
+      </p>
+      <p style="color:#5b6b86;font-size:13px">El código es de un solo uso.
+         Si no lo solicitaste, ignora este mensaje.</p>
+    </div>
+    """.format(code=code, system=system)
+    text_body = "Tu código de verificación MailConnect es: {code}".format(code=code)
+
+    ses.send_email(
+        Source=SENDER_EMAIL,
+        Destination={'ToAddresses': [email]},
+        Message={
+            'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+            'Body': {
+                'Html': {'Data': html_body, 'Charset': 'UTF-8'},
+                'Text': {'Data': text_body, 'Charset': 'UTF-8'},
+            }
+        }
+    )
+
 
 def lambda_handler(event, context):
-    # TODO implement
-    return {
-        'statusCode': 200,
-        'body': json.dumps('Hello from Lambda!')
-    }
+    payload = _get_payload(event)
+
+    system = payload.get('system', 'Autenticacion')
+    ip = payload.get('ip', '')
+    try:
+        expiration_min = int(payload.get('expiration', DEFAULT_EXPIRATION_MIN))
+    except Exception:
+        expiration_min = DEFAULT_EXPIRATION_MIN
+
+    try:
+        user_id, email = _resolve_user(payload)
+        if not user_id:
+            return {'status': False, 'statusCode': 404, 'description': "Usuario no encontrado"}
+
+        # Generar código de 6 dígitos y guardarlo hasheado
+        code = secrets.randbelow(1000000)
+        code_str = "{:06d}".format(code)
+        otp_id = str(uuid.uuid4())
+        otp_hash = hashlib.sha256(code_str.encode()).hexdigest()
+        expiration_time = int(time.time()) + expiration_min * 60
+
+        table_otp.put_item(
+            Item={
+                'otpId': otp_id,
+                'userId': user_id,
+                'otpHash': otp_hash,
+                'expirationTime': expiration_time,
+                'active': True,
+                'system': system,
+                'ip': ip,
+                'createdAt': int(time.time())
+            }
+        )
+
+        # Enviar el código por correo (si tenemos email)
+        email_sent = False
+        if email:
+            try:
+                send_otp_email(email, code_str, system)
+                email_sent = True
+            except Exception as mail_error:
+                print("No se pudo enviar el OTP por correo: {}".format(mail_error))
+
+        return {
+            'status': True,
+            'statusCode': 201,
+            'description': "OTP generado correctamente" if email_sent
+                           else "OTP generado (no se pudo enviar el correo)",
+            'data': {'otpId': otp_id}
+        }
+    except Exception as e:
+        print("Error en create-otp: {}".format(e))
+        return {'status': False, 'statusCode': 500, 'description': "Error no controlado en el servicio"}
