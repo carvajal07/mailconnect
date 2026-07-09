@@ -196,6 +196,37 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [ ] Mover `SECRET_KEY` a **AWS Secrets Manager** (hoy es variable de entorno).
 - [ ] Lista negra por cliente; manejo de CSV grandes por partes; segmentar IPs SES por cliente.
 
+### Producto – Estimador de costo de envío (criterio para más adelante)
+> **Objetivo:** antes de que el cliente confirme un envío, mostrarle un **estimado del
+> valor** de esa campaña, para que decida con el costo a la vista (no cobrar a ciegas).
+
+- [ ] **Mostrar un costo estimado en el flujo de envío** (pantalla previa a "Enviar"),
+      recalculado en vivo según los parámetros de la campaña.
+- **Factores que entran en el cálculo:**
+  - **Cantidad de envíos** (nº de destinatarios del CSV / segmento).
+  - **¿Lleva adjunto?** (sí/no) y **peso aproximado** del adjunto (por tramos de MB).
+  - **Tipo de adjunto / canal:**
+    - `EM` (sin adjunto) → costo base por correo.
+    - `EAU` (adjunto único, mismo para todos) → base + recargo por peso del adjunto.
+    - `EAP` (adjunto personalizado por destinatario) → base + costo de **combinación**
+      por destinatario, **distinto si el documento es PDF o Word/.docx** (la generación
+      y renderizado personalizado cuesta más y pesa más).
+- **Dónde va:**
+  - **Backend:** una tabla/JSON de **tarifas** (configurable, idealmente por cliente) y
+    un endpoint tipo `POST /api/email/estimate` que reciba `{ channel, recipients,
+    hasAttachment, attachmentSizeMB, attachmentType (pdf|docx), personalized }` y
+    devuelva `{ estimatedCost, currency, breakdown }`. El desglose debe explicar cada
+    componente (base × envíos, recargo por peso, recargo por personalización, etc.).
+  - **Frontend:** en `CampanasSection`/portal, tras cargar el CSV y elegir opciones,
+    llamar al estimador y mostrar el valor + desglose **antes** del botón de enviar,
+    con la aclaración de que es un **estimado** (el cobro real puede variar).
+- **Pendiente de definir:**
+  - Modelo de precios y **moneda (COP)**: ¿tarifa plana por correo + recargos, o por tramos?
+  - Cómo obtener el **peso del adjunto** (del archivo ya subido a S3 vía `get-urlS3`, o
+    declarado por el usuario) y cómo estimarlo para `EAP` antes de generar los documentos.
+  - Costos AWS de referencia (SES por correo, almacenamiento/tráfico S3, cómputo de la
+    combinación docx/PDF) para calibrar la tarifa; redondeo, impuestos y mínimo por campaña.
+
 ### Infraestructura / despliegue
 - [ ] Desplegar las lambdas nuevas y **crear sus rutas** en API Gateway
       (`/change-password`, `/logout`, `/create-otp`, `/validate-otp`, `/account-activation`).
