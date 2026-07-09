@@ -8,6 +8,29 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export type Delimiter = ';' | ',' | '\t' | '|';
 
+/**
+ * Columnas OBLIGATORIAS y su ORDEN. El backend (Prepare-batch) lee por posición:
+ * line[0] = Identificación (numérica), line[1] = Correo, line[2] = Nombre.
+ * Por eso el orden importa; después pueden ir columnas opcionales.
+ */
+export const REQUIRED_COLUMNS = [
+  { label: 'Identificación', hint: 'número de documento', numeric: true, synonyms: ['identificacion', 'cedula', 'documento', 'id', 'nit', 'nrodocumento'] },
+  { label: 'Correo', hint: 'correo electrónico', numeric: false, synonyms: ['correo', 'email', 'emails', 'mail', 'correoelectronico'] },
+  { label: 'Nombre', hint: 'nombre del destinatario', numeric: false, synonyms: ['nombre', 'nombres', 'name'] },
+] as const;
+
+/** Normaliza un encabezado: minúsculas, sin acentos ni signos. */
+export const normHeader = (s: string) =>
+  (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+export interface ColumnCheck {
+  label: string; // nombre esperado (Identificación, Correo, Nombre)
+  hint: string;
+  position: number; // 1-based
+  actualHeader: string; // lo que trae el archivo en esa posición
+  ok: boolean; // el encabezado en esa posición coincide con el esperado
+}
+
 export interface CsvAnalysis {
   delimiter: Delimiter;
   headers: string[];
@@ -16,6 +39,8 @@ export interface CsvAnalysis {
   validEmails: number;
   invalidEmails: number;
   duplicateEmails: number;
+  structure: ColumnCheck[]; // estado de las 3 columnas obligatorias (por posición)
+  structureOk: boolean; // las 3 obligatorias están en el orden correcto
   sample: string[][]; // primeras filas para la vista previa
 }
 
@@ -106,7 +131,17 @@ export function analyzeCsv(text: string, forcedDelimiter?: Delimiter): CsvAnalys
   const all = parseCsv(text, delimiter);
   const headers = all[0] ?? [];
   const dataRows = all.slice(1);
-  const emailColumnIndex = findEmailColumn(headers, dataRows);
+
+  // Validación de estructura obligatoria por POSICIÓN (así lo lee el backend).
+  const structure: ColumnCheck[] = REQUIRED_COLUMNS.map((col, i) => {
+    const actualHeader = headers[i] ?? '';
+    const ok = (col.synonyms as readonly string[]).includes(normHeader(actualHeader));
+    return { label: col.label, hint: col.hint, position: i + 1, actualHeader, ok };
+  });
+  const structureOk = structure.every((c) => c.ok);
+
+  // Correo = posición 2 si la estructura es correcta; si no, se intenta detectar.
+  const emailColumnIndex = structure[1]?.ok ? 1 : findEmailColumn(headers, dataRows);
 
   let validEmails = 0;
   let invalidEmails = 0;
@@ -139,6 +174,8 @@ export function analyzeCsv(text: string, forcedDelimiter?: Delimiter): CsvAnalys
     validEmails,
     invalidEmails,
     duplicateEmails,
+    structure,
+    structureOk,
     sample: dataRows.slice(0, 8),
   };
 }

@@ -184,11 +184,20 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             (sección "Plantillas prediseñadas", `HtmlBuilderSection allowSavePreset`).
       - [x] **Campañas** reutiliza `CampanasSection`. **Mi cuenta** muestra la sesión y permite
             cambiar la contraseña (change-password con token).
+      - [x] **Muestras** (`MuestrasSection`): flujo de prueba/aprobación previo al envío real.
+            Configuración de la campaña, **slider 1–5** que habilita dinámicamente los campos de
+            correo, selector **Aleatorias/Selectivas** (en selectivas, campo de **identificación**
+            por muestra), y apartado de **aprobación** (Aprobar/Rechazar → habilita "Enviar
+            campaña real"). El endpoint `send-samples` no existe aún; las muestras se registran
+            localmente para gestionar la aprobación (`campaignsService.sendSamples` marcado).
       - [x] **Bases de datos** (`BasesDatosSection` + `csv.ts`): carga de CSV con
             **validación/preview local** (parser propio: detecta delimitador, columnas, total
             de registros, columna de email, y cuenta válidos/inválidos/duplicados) y subida real
             a S3 vía `get-urlS3` (`documentType=database`), devolviendo la ruta para usarla como
-            Data Path. Lista de bases de la sesión (backend aún no expone listado/edición/lista negra).
+            Data Path. **Valida la estructura obligatoria por posición** (el backend Prepare-batch
+            lee `line[0]`=Identificación numérica, `line[1]`=Correo, `line[2]`=Nombre): el diálogo
+            muestra las 3 columnas requeridas **en orden** con estado ✓/✗ y avisa si no cumplen.
+            Lista de bases de la sesión (backend aún no expone listado/edición/lista negra).
       - [x] **Estadísticas** (`EstadisticasSection` + `charts.tsx`): tablero con KPIs
             (pendientes/creadas/enviadas, total envíos, apertura promedio), **dona** de
             campañas por estado, **embudo** de envío (enviados→entregados→abiertos→clics) y
