@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Box,
   Paper,
   TextField,
   Button,
@@ -11,9 +10,12 @@ import {
   InputAdornment,
   IconButton,
   Divider,
+  Box,
+  Alert,
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { AuthLayout } from '../../components/AuthLayout';
+import { authService, saveSession } from '../../services/authService';
 
 interface FormErrors {
   email?: string;
@@ -39,6 +41,7 @@ export const LoginPage = () => {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
   // Validación de email
   const validateEmail = (email: string): string | undefined => {
@@ -79,6 +82,7 @@ export const LoginPage = () => {
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
     const value = event.target.value;
+    setSubmitError('');
 
     setFormData(prev => ({
       ...prev,
@@ -121,6 +125,7 @@ export const LoginPage = () => {
 
     // Marcar todos los campos como tocados
     setTouched({ email: true, password: true });
+    setSubmitError('');
 
     if (!validateForm()) {
       return;
@@ -129,20 +134,32 @@ export const LoginPage = () => {
     setIsSubmitting(true);
 
     try {
-      // Aquí irá la lógica de autenticación
-      console.log('Iniciando sesión con:', formData);
+      const res = await authService.login(formData.email, formData.password);
 
-      // Simulación de llamada API
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (res.status && res.statusCode === 200 && res.data) {
+        // Guardar sesión (token + datos del usuario) y entrar al panel
+        saveSession(res.data.token, {
+          userId: res.data.userId,
+          name: res.data.name,
+          customer: res.data.customer,
+          email: formData.email,
+        });
+        navigate('/admin');
+        return;
+      }
 
-      // TODO: Implementar la lógica de autenticación real
-      alert('Login exitoso! (Implementar lógica real de autenticación)');
+      // Mapear los códigos de error del backend a mensajes claros
+      const msg =
+        res.statusCode === 404 ? 'Usuario o contraseña incorrectos.'
+        : res.statusCode === 423 ? 'Tu cuenta aún no está activada. Revisa tu correo para activarla.'
+        : res.statusCode === 400 ? 'Tu usuario está bloqueado. Contacta a soporte.'
+        : res.statusCode === 0 ? res.description
+        : (res.description || 'No fue posible iniciar sesión. Intenta nuevamente.');
+      setSubmitError(msg);
 
     } catch (error) {
       console.error('Error al iniciar sesión:', error);
-      setErrors({
-        email: 'Credenciales inválidas. Por favor, verifica tus datos.'
-      });
+      setSubmitError('Ocurrió un error inesperado. Por favor, intenta nuevamente.');
     } finally {
       setIsSubmitting(false);
     }
@@ -189,6 +206,12 @@ export const LoginPage = () => {
           >
             Ingresa tus credenciales para acceder
           </Typography>
+
+          {submitError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {submitError}
+            </Alert>
+          )}
 
           <form onSubmit={handleSubmit} noValidate>
             {/* Campo de Email */}
@@ -261,7 +284,6 @@ export const LoginPage = () => {
                 type="button"
                 variant="body2"
                 onClick={() => navigate('/forgot-password')}
-                disabled={isSubmitting}
                 sx={{
                   cursor: 'pointer',
                   color: 'info.main',

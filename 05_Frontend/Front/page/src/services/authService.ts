@@ -1,0 +1,149 @@
+import { AUTH_API_BASE, AUTH_ENDPOINTS } from '../config/api';
+
+/**
+ * Servicio de autenticación de MailConnect.
+ * Conecta el front con los endpoints de seguridad del backend (AWS API Gateway).
+ * La URL base se toma de VITE_API_BASE_URL (ver .env) o del valor por defecto.
+ *
+ * Estado del backend (feb. 2026):
+ *  - /login  y  /register  -> IMPLEMENTADOS y funcionales.
+ *  - /verify-code, /create-otp, /validate-otp, /change-password,
+ *    /forgot-password, /token/refresh, /logout -> STUBS en el backend
+ *    (el cliente ya queda conectado; funcionarán al implementar la lambda).
+ */
+
+export interface ApiResponse<T = unknown> {
+  status: boolean;
+  statusCode: number;
+  description: string;
+  data?: T;
+}
+
+export interface LoginData {
+  token: string;
+  customer: string;
+  userId: string;
+  name: string;
+}
+
+export interface RegisterPayload {
+  name: string;
+  phone: string;
+  email: string;
+  company: string;
+  companyTin: number;
+  password: string;
+}
+
+export interface SessionUser {
+  userId: string;
+  name: string;
+  customer: string;
+  email: string;
+}
+
+const TOKEN_KEY = 'mc_token';
+const USER_KEY = 'mc_user';
+
+/** POST genérico que normaliza la respuesta a ApiResponse. */
+async function post<T = unknown>(path: string, body: unknown, useAuth = false): Promise<ApiResponse<T>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (useAuth) {
+    const t = getToken();
+    if (t) headers['Authorization'] = `Bearer ${t}`;
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${AUTH_API_BASE}${path}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { status: false, statusCode: 0, description: 'No se pudo conectar con el servidor. Verifica tu conexión.' };
+  }
+
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    return { status: false, statusCode: res.status, description: 'Respuesta inválida del servidor.' };
+  }
+
+  // Soportar integración Lambda-proxy (cuerpo como string JSON dentro de "body").
+  if (json && typeof json === 'object' && typeof (json as { body?: unknown }).body === 'string') {
+    try { json = JSON.parse((json as { body: string }).body); } catch { /* se deja tal cual */ }
+  }
+
+  // Forma estándar del backend { status, statusCode, description, data }
+  if (json && typeof json === 'object' && 'statusCode' in json && 'status' in json) {
+    return json as ApiResponse<T>;
+  }
+
+  // Respuesta no estándar (stub / proxy simple): normalizar usando el HTTP status.
+  return {
+    status: res.ok,
+    statusCode: res.status,
+    description: typeof json === 'string' ? json : '',
+    data: json as T,
+  };
+}
+
+export const authService = {
+  login: (user: string, password: string) =>
+    post<LoginData>(AUTH_ENDPOINTS.LOGIN, { user, password }),
+
+  register: (payload: RegisterPayload) =>
+    post(AUTH_ENDPOINTS.REGISTER, payload),
+
+  /** Verificación de la cuenta por código (activación). Backend pendiente. */
+  verifyCode: (user: string, code: number) =>
+    post(AUTH_ENDPOINTS.VERIFY_CODE, { user, code }),
+
+  /** Solicitud de recuperación de contraseña. Backend pendiente. */
+  forgotPassword: (user: string) =>
+    post(AUTH_ENDPOINTS.FORGOT_PASSWORD, { user }),
+
+  /** Crear OTP (requiere token). Backend pendiente. */
+  createOtp: (userId: string, ip: string, system = 'Autenticacion', expiration = 5) =>
+    post(AUTH_ENDPOINTS.CREATE_OTP, { userId, ip, system, expiration }, true),
+
+  /** Validar OTP. Backend pendiente. */
+  validateOtp: (otp: number, userId: string, ip: string) =>
+    post(AUTH_ENDPOINTS.VALIDATE_OTP, { otp, userId, ip }),
+
+  /** Cambiar contraseña. Backend pendiente. */
+  changePassword: (user: string, password: string) =>
+    post(AUTH_ENDPOINTS.CHANGE_PASSWORD, { user, password }),
+
+  refreshToken: () => post(AUTH_ENDPOINTS.REFRESH_TOKEN, {}, true),
+
+  logout: (user?: string) => post(AUTH_ENDPOINTS.LOGOUT, { user }),
+};
+
+/* ------------------------- Manejo de sesión ------------------------- */
+
+export function saveSession(token: string, user: SessionUser): void {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function getUser(): SessionUser | null {
+  const raw = localStorage.getItem(USER_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw) as SessionUser; } catch { return null; }
+}
+
+export function clearSession(): void {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+export function isAuthenticated(): boolean {
+  return !!getToken();
+}

@@ -1,9 +1,29 @@
 // Configuración de URLs del backend
-// Modifica estas URLs con los endpoints reales de tu API
+// La base de la API se toma de la variable de entorno VITE_API_BASE_URL
+// (crea un archivo .env con VITE_API_BASE_URL=... ) o usa el valor por defecto.
+
+/** Base de la API de seguridad/autenticación (AWS API Gateway). */
+export const AUTH_API_BASE =
+  import.meta.env.VITE_API_BASE_URL ??
+  'https://mtgt9qpb77.execute-api.us-east-1.amazonaws.com/Test/api';
+
+/** Endpoints de seguridad (login, registro, activación, OTP, etc.). */
+export const AUTH_ENDPOINTS = {
+  LOGIN: '/login',
+  REGISTER: '/register',
+  LOGOUT: '/logout',
+  VERIFY_CODE: '/verify-code',
+  VERIFY_EMAIL: '/verify-email', // + /{token}
+  FORGOT_PASSWORD: '/forgot-password',
+  CHANGE_PASSWORD: '/change-password',
+  CREATE_OTP: '/create-otp',
+  VALIDATE_OTP: '/validate-otp',
+  REFRESH_TOKEN: '/token/refresh',
+};
 
 export const API_CONFIG = {
-  // URLs base
-  BASE_URL: 'http://localhost:3000/api', // Cambia esto por la URL real
+  // URL base (para módulos de negocio del panel).
+  BASE_URL: AUTH_API_BASE,
 
   // Endpoints de Clientes
   CLIENTS: {
@@ -17,17 +37,17 @@ export const API_CONFIG = {
 
   // Endpoints de Plantillas
   TEMPLATES: {
-    CREATE: '/templates/create',
+    CREATE: '/create-template',
     LIST: '/templates/list',
-    GET: '/templates/get',
+    GET: '/get-template',
     UPDATE: '/templates/update',
-    DELETE: '/templates/delete',
+    DELETE: '/delete-template',
     SEARCH: '/templates/search',
   },
 
   // Endpoints de Campañas
   CAMPAIGNS: {
-    CREATE: '/campaigns/create',
+    CREATE: '/email/config/create-campaign',
     LIST: '/campaigns/list',
     GET_BY_CLIENT: '/campaigns/client/:clientId',
     UPDATE: '/campaigns/:id',
@@ -38,7 +58,7 @@ export const API_CONFIG = {
 
   // Endpoints de archivos
   FILES: {
-    PRESIGN_URL: '/files/presign-url',
+    PRESIGN_URL: '/get-urlS3',
     UPLOAD: '/files/upload',
   },
 };

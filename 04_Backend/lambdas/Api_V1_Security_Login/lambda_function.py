@@ -74,6 +74,7 @@ def lambda_handler(event, context):
     customer = ""
     name = ""
     token = ""
+    userId = ""
     try:
         # Obtener datos del evento
         user = event['user']
