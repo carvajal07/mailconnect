@@ -45,6 +45,7 @@ LAMBDA_FILES = {
     'create_otp': 'Api_V1_Security_Create-otp',
     'validate_otp': 'Api_V1_Security_Validate-otp',
     'change_password': 'Api_V1_Security_Change-password',
+    'recovery':   'Api_V1_Security_Recovery-password',
     'logout':     'Api_V1_Security_Logout',
 }
 
@@ -118,6 +119,21 @@ class Ctx:
     def set_otp_code(self, code):
         """Fija el código que generará create-otp (para poder validarlo)."""
         self.mods['create_otp'].secrets.randbelow = lambda n: code
+
+    def set_recovery_code(self, code):
+        """Fija el código que generará recovery-password (para poder usarlo)."""
+        self.mods['recovery'].secrets.randbelow = lambda n: code
+
+    def active_otps(self, email):
+        """OTPs activos del usuario (para verificar consumo)."""
+        uid = self.user_id(email)
+        return [
+            i for i in self.tables['otp'].scan(
+                FilterExpression='userId = :u',
+                ExpressionAttributeValues={':u': uid},
+            )['Items']
+            if i.get('active')
+        ]
 
 
 @pytest.fixture(scope="module")
@@ -263,6 +279,54 @@ def test_change_password_debil_400(ctx):
     resp = ctx.handler('change_password')(
         {'user': email, 'password': 'debil', 'headers': {'Authorization': 'Bearer ' + token}}, None)
     assert resp['statusCode'] == 400
+
+
+# ==================== RECUPERACIÓN DE CONTRASEÑA ====================
+
+def test_recovery_password_flujo_completo(ctx):
+    """forgot-password genera un OTP que sirve para cambiar la contraseña."""
+    email = ctx.make_active_user(ctx.unique_email('rec'))
+    ctx.set_recovery_code(345678)
+
+    resp = ctx.handler('recovery')({'user': email, 'ip': '2.2.2.2'}, None)
+    assert resp['statusCode'] == 200
+
+    # El OTP generado permite cambiar la contraseña y loguearse con la nueva.
+    cambio = ctx.handler('change_password')(
+        {'user': email, 'password': 'Recuperada789', 'otp': 345678}, None)
+    assert cambio['statusCode'] == 200
+    login = ctx.handler('login')({'user': email, 'password': 'Recuperada789'}, None)
+    assert login['statusCode'] == 200
+
+
+def test_recovery_password_email_inexistente_200_generico(ctx):
+    """No revela si el correo existe: responde 200 y no genera OTP."""
+    resp = ctx.handler('recovery')({'user': 'noexiste@test.com'}, None)
+    assert resp['statusCode'] == 200
+    assert resp['status'] is True
+
+
+def test_recovery_password_sin_correo_400(ctx):
+    resp = ctx.handler('recovery')({}, None)
+    assert resp['statusCode'] == 400
+
+
+def test_recovery_password_debil_no_consume_otp(ctx):
+    """Una contraseña débil no debe gastar el OTP; se puede reintentar."""
+    email = ctx.make_active_user(ctx.unique_email('recweak'))
+    ctx.set_recovery_code(456789)
+    ctx.handler('recovery')({'user': email}, None)
+
+    # Intento con clave débil -> 400 y el OTP sigue activo.
+    debil = ctx.handler('change_password')(
+        {'user': email, 'password': 'debil', 'otp': 456789}, None)
+    assert debil['statusCode'] == 400
+    assert len(ctx.active_otps(email)) == 1
+
+    # Reintento con clave válida y el MISMO OTP -> 200.
+    ok = ctx.handler('change_password')(
+        {'user': email, 'password': 'ClaveFuerte9', 'otp': 456789}, None)
+    assert ok['statusCode'] == 200
 
 
 # ============================ LOGOUT ============================

@@ -110,10 +110,10 @@ API Gateway (REST)
 | `Api_V1_Security_Verify-code` | `POST /api/verify-code` | Verifica código de confirmación | ⚠️ TODO (stub) |
 | `Api_V1_Security_Refresh-token` | `POST /api/token/refresh` | Renueva el JWT | ⚠️ TODO (stub) |
 | `Api_V1_Security_Change-password` | `POST /api/change-password` | Cambia contraseña (por token JWT o por OTP) | ✅ Implementado |
-| `Api_V1_Security_Recovery-password` | `POST /api/forgot-password` | Recuperación de contraseña | ⚠️ TODO (stub) |
+| `Api_V1_Security_Recovery-password` | `POST /api/forgot-password` | Recuperación de contraseña (genera y envía OTP) | ✅ Implementado |
 | `Authorizer` / `Authorizer2` | (Lambda Authorizer) | Valida JWT en cada request | ⚠️ Permite todo (no valida aún) |
 
-> ✅ La mayoría de las lambdas de seguridad ya están **implementadas y probadas** (ver `08_Pruebas/PruebasSeguridad`). Siguen como **stub** (`# TODO implement`): `Verify-code`, `Refresh-token` y `Recovery-password` (`/api/forgot-password`). El `Authorizer` aún **no valida** el JWT (permite todo). Las lambdas nuevas leen `SECRET_KEY`/`SENDER_EMAIL` desde variables de entorno.
+> ✅ La mayoría de las lambdas de seguridad ya están **implementadas y probadas** (ver `08_Pruebas/PruebasSeguridad`). Siguen como **stub** (`# TODO implement`): `Verify-code` y `Refresh-token`. El `Authorizer` aún **no valida** el JWT (permite todo). Las lambdas nuevas leen `SECRET_KEY`/`SENDER_EMAIL` desde variables de entorno.
 
 ### Template (`/api/...`)
 
@@ -336,7 +336,7 @@ POST /api/email/sent/ondemand
 ## Pendientes conocidos
 
 - [x] Implementadas: `register` (+ activación), `login` (fix), `logout`, `create-otp`, `validate-otp`, `change-password`, `account-activation`
-- [ ] Faltan lambdas de seguridad: `verify-code`, `token/refresh` y `forgot-password` (recovery); endurecer el `Authorizer` para que valide el JWT
+- [ ] Faltan lambdas de seguridad: `verify-code` y `token/refresh`; endurecer el `Authorizer` para que valide el JWT
 - [ ] Mover `SECRET_KEY` del JWT a variable de entorno o Secrets Manager
 - [ ] Configurar CI (GitHub Actions: correr `pytest` en cada push/PR) y CI/CD de despliegue (CodeBuild/CodePipeline)
 - [x] Pruebas de integración de seguridad (pytest + moto) en `08_Pruebas/PruebasSeguridad` — pendiente ampliar cobertura a otros módulos

@@ -46,9 +46,12 @@ export const ForgotPasswordPage = () => {
 
       if (res.status || res.statusCode === 200) {
         setSuccessMessage(
-          'Si el correo está registrado, te enviaremos las instrucciones para restablecer tu contraseña. Revisa tu bandeja de entrada.'
+          'Si el correo está registrado, te enviaremos un código para restablecer tu contraseña. Revisa tu bandeja de entrada.'
         );
-        setEmail('');
+        // Continuar a la pantalla de reseteo llevando el correo (para el OTP + nueva clave).
+        setTimeout(() => {
+          navigate('/reset-password', { state: { email } });
+        }, 1200);
       } else if (res.statusCode === 0) {
         setError(res.description);
       } else {

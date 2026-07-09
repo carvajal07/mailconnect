@@ -48,9 +48,9 @@ Se implementaron/corrigieron estas lambdas de seguridad (ver contratos en §3):
 - `Api_V1_Security_Acount-activation` — implementado (valida la clave, activa la cuenta, redirige 302).
 
 ### Pruebas (`08_Pruebas/PruebasSeguridad`)
-- Suite **pytest + moto** (mock de DynamoDB y SES; no toca AWS). 15 pruebas, todas en verde.
-- Cubre: registro, activación, login, OTP, cambio de contraseña (por OTP y por token) y logout,
-  con casos de error.
+- Suite **pytest + moto** (mock de DynamoDB y SES; no toca AWS). 19 pruebas, todas en verde.
+- Cubre: registro, activación, login, OTP, cambio de contraseña (por OTP y por token),
+  recuperación de contraseña (`forgot-password`) y logout, con casos de error.
 
 ---
 
@@ -67,7 +67,7 @@ Corrige la tabla del README (que marca varias como TODO):
 | `Logout` | `POST /api/logout` | ✅ Implementado |
 | `Create-otp` | `POST /api/create-otp` | ✅ Implementado |
 | `Validate-otp` | `POST /api/validate-otp` | ✅ Implementado |
-| `Recovery-password` | `POST /api/forgot-password` | ⚠️ **Stub** (aún "Hello from Lambda") |
+| `Recovery-password` | `POST /api/forgot-password` | ✅ Implementado (genera y envía OTP; respuesta genérica) |
 | `Verify-code` | `POST /api/verify-code` | ⚠️ **Stub** |
 | `Refresh-token` | `POST /api/token/refresh` | ⚠️ **Stub** |
 | `Authorizer` | (Lambda Authorizer) | ⚠️ Permite todo (aún no valida el JWT) |
@@ -93,8 +93,14 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `account-activation` | query `?qs=<activationKey>` | 302 redirect (éxito/error/expirado) |
 | `create-otp` | `{ user (email) o userId, expiration (min), system, ip }` | 201 `data:{otpId}` (envía el código por correo) |
 | `validate-otp` | `{ otp (número), user o userId, ip }` | 200 válido (consume) · 401 inválido · 410 expirado |
-| `change-password` | `{ user (email), password (nueva), otp? }` + header `Authorization: Bearer` (alternativo) | 200 ok · 401 sin auth · 400 débil · 404 no existe |
+| `change-password` | `{ user (email), password (nueva), otp? }` + header `Authorization: Bearer` (alternativo) | 200 ok · 401 sin auth/OTP · 400 débil · 404 no existe |
+| `forgot-password` | `{ user (email), ip? }` | 200 siempre (genérico, no revela si el correo existe; envía OTP por correo) |
 | `logout` | `{ user (email) }` | 200 (idempotente) |
+
+> **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
+> del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
+> primero la fortaleza de la contraseña (400) **antes** de consumir el OTP, para que una clave
+> débil no gaste el código.
 
 ### Variables de entorno que esperan las lambdas
 - `SECRET_KEY` — firma/validación JWT (login, change-password). **La misma que ya usa login.**
@@ -136,15 +142,16 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [ ] **Fase 3 – Deuda técnica:** limpiar el boilerplate de Vite en `src/index.css`
       (fondo `#242424`, links `#646cff`) y quitar los colores hardcodeados "dark-only"
       de `LoginPage`/`RegisterPage`/`ForgotPasswordPage` (para que el tema claro luzca bien).
-- [ ] **Pantalla de reseteo con OTP** (ingresar código + nueva contraseña) para cerrar
-      la recuperación end-to-end.
+- [x] **Pantalla de reseteo con OTP** (`/reset-password`: código + nueva contraseña) que
+      cierra la recuperación end-to-end (llama a `change-password` con OTP).
 - [ ] Conectar las secciones del panel (`ClientesSection`, `CampanasSection`,
       `PlantillasSection`) a la API real (hoy `config/api.ts` tiene endpoints placeholder).
 
 ### Backend
 - [x] `register` arreglado (+ correo de activación); `login` corregido (`userId`).
 - [x] `change-password`, `logout`, `create-otp`, `validate-otp`, `account-activation`.
-- [ ] Implementar `/forgot-password` como wrapper que cree y envíe el OTP (hoy stub).
+- [x] Implementar `/forgot-password` como wrapper que crea y envía el OTP (con respuesta
+      genérica anti-enumeración). `change-password` ahora valida la clave antes de consumir el OTP.
 - [ ] Implementar `verify-code` y `token/refresh` (hoy stubs).
 - [ ] Endurecer el `Authorizer` para que **valide el JWT** de verdad.
 - [ ] Mover `SECRET_KEY` a variable de entorno / AWS Secrets Manager.
@@ -187,7 +194,8 @@ src/config/api.ts                       (mod)    base + endpoints de auth
 src/App.tsx                             (mod)    ruta / (landing) + /admin protegido
 src/pages/auth/LoginPage.tsx            (mod)    conectado a /login
 src/pages/auth/RegisterPage.tsx         (mod)    +campos phone/company/NIT, /register
-src/pages/auth/ForgotPasswordPage.tsx   (mod)    conectado a /forgot-password
+src/pages/auth/ForgotPasswordPage.tsx   (mod)    envía OTP y navega a /reset-password
+src/pages/auth/ResetPasswordPage.tsx    (nuevo)  reseteo con OTP (código + nueva clave)
 src/pages/admin/AdminPage.tsx           (mod)    logout real + saludo
 .env.example                            (nuevo)  VITE_API_BASE_URL
 ```
@@ -201,11 +209,12 @@ Api_V1_Security_Logout/lambda_function.py            (implementado)
 Api_V1_Security_Create-otp/lambda_function.py        (implementado)
 Api_V1_Security_Validate-otp/lambda_function.py      (implementado)
 Api_V1_Security_Acount-activation/lambda_function.py (implementado)
+Api_V1_Security_Recovery-password/lambda_function.py (implementado: forgot-password)
 ```
 
 **Pruebas** (`08_Pruebas/PruebasSeguridad/`)
 ```
-test_seguridad.py     (15 pruebas pytest + moto)
+test_seguridad.py     (19 pruebas pytest + moto)
 requirements.txt
 README.md
 ```
