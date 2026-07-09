@@ -16,6 +16,7 @@ import {
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { AuthLayout } from '../../components/AuthLayout';
 import { authService, saveSession } from '../../services/authService';
+import { MOCK_ENABLED, DEMO_CREDENTIALS } from '../../services/mockAuth';
 import {
   authCardSx,
   authTitleSx,
@@ -193,6 +194,13 @@ export const LoginPage = () => {
           >
             Ingresa tus credenciales para acceder
           </Typography>
+
+          {MOCK_ENABLED && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Modo demo activo: puedes entrar con cualquier credencial. Sugerida{' '}
+              <strong>{DEMO_CREDENTIALS.email}</strong> / <strong>{DEMO_CREDENTIALS.password}</strong>.
+            </Alert>
+          )}
 
           {submitError && (
             <Alert severity="error" sx={{ mb: 2 }}>

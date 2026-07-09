@@ -120,6 +120,13 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Frontend – API base:** `VITE_API_BASE_URL` (ver `.env.example`). Default = stage `Test`.
 - **Frontend – sesión:** el token y el usuario se guardan en `localStorage`
   (`mc_token`, `mc_user`) desde `authService.ts`.
+- **Frontend – login DEMO (sin backend):** con `VITE_AUTH_MOCK=true` (en `.env`, ver
+  `.env.example`), `authService.login`/`register` se resuelven en el cliente sin pegar a
+  la API: cualquier credencial entra a `/panel` (sugerida `demo@mailconnect.com.co` /
+  `Demo1234`). Útil mientras la API real no está lista. Solo login/registro se simulan;
+  las llamadas del panel siguen siendo reales. **No activar en producción.** Lógica en
+  `src/services/mockAuth.ts`. Los `.env`/`.env.*` están en `.gitignore` (se versiona
+  solo `.env.example`).
 - **Backend – lectura del evento:** las lambdas nuevas soportan tanto integración directa
   (el `event` **es** el body) como proxy (`event['body']` string) vía un helper `_get_payload`.
 - **Backend – OTP:** el código se guarda **hasheado** (sha256); `create-otp` lo envía por
