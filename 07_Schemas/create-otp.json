@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "expiration": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "userId": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "ip": {
+      "type": "string",
+      "format": "ipv4"
+    },
+    "system": {
+      "type": "string"
+    }
+  },
+  "required": ["expiration", "userId", "ip", "system"]
+}

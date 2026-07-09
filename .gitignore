@@ -1,0 +1,77 @@
+# ============================================================
+# CREDENCIALES Y DOCUMENTOS PRIVADOS — nunca subir a GitHub
+# ============================================================
+01_Documentacion/
+
+# ============================================================
+# DISEÑO — archivos binarios pesados (subir manualmente si se necesita)
+# ============================================================
+02_Diseño/
+
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Librerías empaquetadas para Lambda (se instalan con pip, no se versionan)
+04_Backend/librerias/
+04_Backend/lambdas/*/package/
+04_Backend/lambdas-prueba/*/package/
+
+# ============================================================
+# Node / Frontend
+# ============================================================
+node_modules/
+dist/
+.next/
+.nuxt/
+
+# ============================================================
+# Archivos de prueba pesados
+# ============================================================
+08_Pruebas/ArchivoPruebas_100000Registros.csv
+08_Pruebas/ArchivoPruebas_200000Registros_ConMalos.csv
+
+# ============================================================
+# Sistema operativo
+# ============================================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# IDEs
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ============================================================
+# Temporales Word/Office
+# ============================================================
+~$*.docx
+~$*.xlsx
+
+# ============================================================
+# Zips de librerías (ya empaquetadas)
+# ============================================================
+*.zip
+
+# ============================================================
+# Archivos con datos sensibles (URLs, ARNs, IDs de cuenta AWS)
+# ============================================================
+09_Herramientas/
+04_Backend/lambdas/*/lambda_config.json
+04_Backend/lambdas-prueba/*/lambda_config.json
+04_Backend/scripts/Lambdas/

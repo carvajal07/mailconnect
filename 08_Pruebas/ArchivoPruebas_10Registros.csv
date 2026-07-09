@@ -1,0 +1,11 @@
+Identificacion;Nombre;Correo;Celular;Opcional1;Opcional2
+00001;Juan Perez;jperez@email.com;555-1234;OpcionA;Valor1
+00002;Maria Rodriguez;mrodriguez@email.com;555-5678;OpcionB;Valor2
+00003;Carlos Gomez;cgomez@email.com;555-9101;OpcionC;Valor3
+00004;Ana Lopez;alopez@email.com;555-1122;OpcionD;Valor4
+00005;Pedro Hernandez;phernandez@email.com;555-3344;OpcionE;Valor5
+00006;Laura Martinez;lmartinez@email.com;555-5566;OpcionF;Valor6
+00007;Luis Sánchez;lsanchez@email.com;555-7788;OpcionG;Valor7
+00008;Elena Ramirez;eramirez@email.com;555-9900;OpcionH;Valor8
+00009;Fernando Torres;ftorres@email.com;555-1122;OpcionI;Valor9
+00010;Isabel Garcia;igarcia@email.com;555-3344;OpcionJ;Valor10
