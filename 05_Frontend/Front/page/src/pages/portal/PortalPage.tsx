@@ -8,8 +8,9 @@ import {
   IconButton,
   Menu,
   MenuItem,
+  Divider,
+  Avatar,
 } from '@mui/material';
-import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import MenuIcon from '@mui/icons-material/Menu';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
@@ -75,28 +76,38 @@ export const PortalPage = () => {
     <Box sx={{ display: 'flex' }}>
       <AppBar
         position="fixed"
+        elevation={0}
+        color="default"
         sx={{
           width: `calc(100% - ${drawerWidth}px)`,
           ml: `${drawerWidth}px`,
           transition: (t) => t.transitions.create(['width', 'margin'], { duration: t.transitions.duration.shorter }),
+          bgcolor: 'background.paper',
+          color: 'text.primary',
+          borderBottom: '1px solid',
+          borderColor: 'divider',
         }}
       >
         <Toolbar>
-          <IconButton color="inherit" edge="start" onClick={() => setCollapsed((c) => !c)} sx={{ mr: 1 }} aria-label="Contraer menú">
+          <IconButton onClick={() => setCollapsed((c) => !c)} edge="start" sx={{ mr: 1, color: 'text.secondary' }} aria-label="Contraer menú">
             {collapsed ? <MenuIcon /> : <MenuOpenIcon />}
           </IconButton>
-          <Logo height="40px" />
-          <Typography variant="h6" component="div" sx={{ flexGrow: 1, ml: 2 }}>
+          <Logo height="34px" />
+          <Divider orientation="vertical" flexItem sx={{ mx: 2, my: 1.5, display: { xs: 'none', sm: 'block' } }} />
+          <Typography variant="subtitle1" component="div" sx={{ flexGrow: 1, fontWeight: 600, color: 'text.secondary', display: { xs: 'none', sm: 'block' } }}>
             Portal del cliente
           </Typography>
+          <Box sx={{ flexGrow: { xs: 1, sm: 0 } }} />
           {user?.name && (
-            <Typography variant="body2" sx={{ mr: 1, opacity: 0.9 }}>
-              Hola, {user.name}
+            <Typography variant="body2" sx={{ mr: 1.5, color: 'text.secondary', display: { xs: 'none', md: 'block' } }}>
+              Hola, <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>{user.name}</Box>
             </Typography>
           )}
-          <ThemeToggle />
-          <IconButton color="inherit" onClick={(e) => setAnchorEl(e.currentTarget)} sx={{ ml: 2 }}>
-            <AccountCircleIcon />
+          <ThemeToggle sx={{ color: 'text.secondary' }} />
+          <IconButton onClick={(e) => setAnchorEl(e.currentTarget)} sx={{ ml: 0.5 }} aria-label="Cuenta">
+            <Avatar sx={{ width: 32, height: 32, bgcolor: '#0075be', color: '#fff', fontSize: 15 }}>
+              {(user?.name || user?.email || '?').trim().charAt(0).toUpperCase()}
+            </Avatar>
           </IconButton>
           <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)}>
             <MenuItem
