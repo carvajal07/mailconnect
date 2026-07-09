@@ -1,0 +1,138 @@
+name: Desplegar Lambdas
+
+# Despliega automáticamente a AWS SOLO las lambdas que cambiaron.
+# - En cada push a main: detecta las carpetas modificadas bajo 04_Backend/lambdas
+#   y actualiza el código de esas funciones.
+# - Manual (workflow_dispatch): puedes desplegar una función puntual o todas.
+#
+# Requisitos (una sola vez), en Settings → Secrets and variables → Actions:
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (usuario IAM con lambda:UpdateFunctionCode)
+#   AWS_REGION (opcional; por defecto us-east-1)
+# Alternativa más segura: rol OIDC (ver nota al final del archivo).
+#
+# Nombre de la función en AWS = nombre de la carpeta, salvo que exista un mapeo en
+# 04_Backend/lambdas/deploy-map.json  ->  { "NombreCarpeta": "NombreFuncionAWS" }
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '04_Backend/lambdas/**'
+  workflow_dispatch:
+    inputs:
+      function:
+        description: 'Carpeta de una lambda específica (vacío = usar "all")'
+        required: false
+        default: ''
+      all:
+        description: 'Desplegar TODAS las lambdas'
+        type: boolean
+        required: false
+        default: false
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  LAMBDAS_DIR: 04_Backend/lambdas
+
+jobs:
+  deploy:
+    name: Actualizar código de Lambdas
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # para poder comparar con el commit anterior en push
+
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Determinar qué lambdas desplegar
+        id: targets
+        run: |
+          set -euo pipefail
+          DIR="$LAMBDAS_DIR"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "${{ github.event.inputs.function }}" ]; then
+              echo "${{ github.event.inputs.function }}" > folders.txt
+            elif [ "${{ github.event.inputs.all }}" = "true" ]; then
+              ls -1 "$DIR" > folders.txt
+            else
+              echo "Nada que hacer: indica 'function' o marca 'all'." ; : > folders.txt
+            fi
+          else
+            # push: carpetas de lambda cambiadas entre el commit anterior y este
+            git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
+              | grep "^$DIR/" \
+              | sed -E "s#^$DIR/([^/]+)/.*#\1#" \
+              | sort -u > folders.txt || true
+          fi
+
+          echo "Carpetas candidatas:"; cat folders.txt || true
+          echo "count=$(wc -l < folders.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Desplegar
+        if: steps.targets.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          DIR="$LAMBDAS_DIR"
+          MAP="$DIR/deploy-map.json"
+
+          resolve_name() {
+            local folder="$1"
+            if [ -f "$MAP" ]; then
+              local mapped
+              mapped=$(jq -r --arg k "$folder" '.[$k] // empty' "$MAP")
+              [ -n "$mapped" ] && { echo "$mapped"; return; }
+            fi
+            echo "$folder"
+          }
+
+          while read -r folder; do
+            [ -z "$folder" ] && continue
+            src="$DIR/$folder"
+            if [ ! -f "$src/lambda_function.py" ]; then
+              echo "⏭  $folder: sin lambda_function.py, se omite."
+              continue
+            fi
+
+            fn=$(resolve_name "$folder")
+            echo "📦  Empaquetando $folder → función AWS: $fn"
+
+            work=$(mktemp -d)
+            cp -r "$src/." "$work/"
+            # Si la lambda trae dependencias propias, se instalan en el paquete.
+            if [ -f "$work/requirements.txt" ]; then
+              python -m pip install --quiet -r "$work/requirements.txt" -t "$work"
+            fi
+            ( cd "$work" && zip -qr /tmp/lambda.zip . -x '*.pyc' '__pycache__/*' )
+
+            echo "🚀  Actualizando $fn"
+            if aws lambda update-function-code \
+                 --function-name "$fn" \
+                 --zip-file fileb:///tmp/lambda.zip \
+                 --publish >/dev/null; then
+              echo "✅  $fn actualizada."
+            else
+              echo "❌  Falló $fn (¿existe la función? ¿nombre correcto en deploy-map.json?)"
+              exit 1
+            fi
+            rm -rf "$work" /tmp/lambda.zip
+          done < folders.txt
+
+      - name: Nada que desplegar
+        if: steps.targets.outputs.count == '0'
+        run: echo "No hubo cambios en lambdas (o no se indicó función)."
+
+# --- Nota: OIDC en lugar de access keys (recomendado) ---
+# En vez de AWS_ACCESS_KEY_ID/SECRET, crea un rol IAM con confianza en GitHub OIDC
+# (token.actions.githubusercontent.com) y reemplaza el paso de credenciales por:
+#   with:
+#     role-to-assume: arn:aws:iam::873837768806:role/GitHubDeployLambdas
+#     aws-region: us-east-1
+# Así no guardas llaves de larga duración en los secretos.
