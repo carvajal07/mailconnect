@@ -13,11 +13,11 @@ import type { ApiResponse } from './apiClient';
  * la sección mantiene una lista local (de lo creado/consultado en la sesión).
  */
 
-// Endpoints reales de Template (relativos a la base /api).
+// Endpoints reales de Template (módulo /Template).
 export const TEMPLATE_ENDPOINTS = {
-  CREATE: '/create-template',
-  GET: '/get-template',
-  DELETE: '/delete-template',
+  CREATE: '/Template/Create-template',
+  GET: '/Template/Get-template',
+  DELETE: '/Template/Delete-template',
 };
 
 export interface TemplatePayload {

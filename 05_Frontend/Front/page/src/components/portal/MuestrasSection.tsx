@@ -139,9 +139,9 @@ export const MuestrasSection = () => {
       </Typography>
 
       <Alert severity="info" sx={{ mb: 3 }}>
-        El flujo de muestras (configurar → enviar → aprobar) está listo. El endpoint de{' '}
-        <strong>envío real de muestras</strong> aún no está expuesto en el backend; mientras tanto,
-        las muestras quedan registradas aquí para gestionar su aprobación.
+        Flujo de muestras: configurar → enviar → aprobar. El envío usa la ruta real{' '}
+        <code>/Email/Send-batch-template-samples</code>; si el backend responde, se envían, y de
+        todas formas la muestra queda registrada aquí para gestionar su aprobación.
       </Alert>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2, mb: 2 }}>

@@ -16,7 +16,7 @@ import type { ApiResponse } from './apiClient';
  */
 
 export const REPORT_ENDPOINTS = {
-  STATE_REPORT: '/reports/state-report',
+  STATE_REPORT: '/Report',
 };
 
 export interface StateReportPayload {
