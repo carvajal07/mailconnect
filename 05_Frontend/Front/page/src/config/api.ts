@@ -1,11 +1,19 @@
 // Configuración de URLs del backend
 // La base de la API se toma de la variable de entorno VITE_API_BASE_URL
 // (crea un archivo .env con VITE_API_BASE_URL=... ) o usa el valor por defecto.
+//
+// Los endpoints de este archivo son RELATIVOS a la base (ej. "/login",
+// "/create-template", "/email/config/create-campaign"). Por eso la base debe
+// incluir TODO lo anterior a esas rutas. Si tus recursos en API Gateway están
+// bajo "/api", la base termina en "/api".
+//   Dominio propio (prod):  https://api.mailconnect.com.co/V1/api
+//   Stage de pruebas:       https://mtgt9qpb77.execute-api.us-east-1.amazonaws.com/Test/api
 
-/** Base de la API de seguridad/autenticación (AWS API Gateway). */
-export const AUTH_API_BASE =
+/** Base de la API (se le quita la barra final para no duplicar "/"). */
+export const AUTH_API_BASE = (
   import.meta.env.VITE_API_BASE_URL ??
-  'https://mtgt9qpb77.execute-api.us-east-1.amazonaws.com/Test/api';
+  'https://mtgt9qpb77.execute-api.us-east-1.amazonaws.com/Test/api'
+).replace(/\/+$/, '');
 
 /** Endpoints de seguridad (login, registro, activación, OTP, etc.). */
 export const AUTH_ENDPOINTS = {
