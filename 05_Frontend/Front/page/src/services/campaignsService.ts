@@ -4,22 +4,22 @@ import type { ApiResponse } from './apiClient';
 /**
  * Servicio de Campañas — conectado a las lambdas reales.
  *
- * Endpoints disponibles en el backend (integración no-proxy, envelope estándar):
- *  - create-campaign  (POST /email/config/create-campaign)
+ * Endpoints (integración no-proxy, envelope estándar):
+ *  - Create-campaign  (POST /Campaign/Create-campaign)
  *      { customerId, campaignName, channelName, attachmentType, dataPath, template, from }
  *      -> 201 { data: { campaignId } }
- *  - get-urlS3        (POST /get-urlS3)
+ *  - Prefirm-url      (POST /Campaign/Prefirm-url) — URL prefirmada de S3
  *      { customer, documentName, documentType } -> 200 { data: { url, path } }
- *      La `url` es prefirmada para subir el archivo con PUT directo a S3.
+ *  - Send-batch-template-samples (POST /Email/Send-batch-template-samples) — muestras
  *
- * ⚠️ El backend NO expone "listar campañas", "enviar muestras" ni "envío real"
- * como endpoints REST todavía; esas acciones quedan deshabilitadas en la UI.
+ * Aún NO hay rutas para "listar campañas" ni "envío real" confirmado; esas acciones
+ * quedan deshabilitadas o marcadas en la UI.
  */
 
 export const CAMPAIGN_ENDPOINTS = {
-  CREATE: '/email/config/create-campaign',
-  PRESIGN_URL: '/get-urlS3',
-  SEND_SAMPLES: '/campaigns/send-samples', // ⚠️ no existe aún en el backend
+  CREATE: '/Campaign/Create-campaign',
+  PRESIGN_URL: '/Campaign/Prefirm-url',
+  SEND_SAMPLES: '/Email/Send-batch-template-samples',
 };
 
 export interface SamplesPayload {
@@ -58,7 +58,7 @@ export const campaignsService = {
   presignUrl: (payload: PresignPayload): Promise<ApiResponse<{ url?: string; path?: string }>> =>
     apiPost(CAMPAIGN_ENDPOINTS.PRESIGN_URL, payload),
 
-  /** Envía muestras de la campaña (⚠️ endpoint pendiente en el backend). */
+  /** Envía muestras de la campaña (ruta /Email/Send-batch-template-samples). */
   sendSamples: (payload: SamplesPayload): Promise<ApiResponse> =>
     apiPost(CAMPAIGN_ENDPOINTS.SEND_SAMPLES, payload),
 

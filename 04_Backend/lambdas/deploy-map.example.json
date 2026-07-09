@@ -1,0 +1,21 @@
+{
+  "_comment": "Copia este archivo como deploy-map.json y ajusta SOLO los valores cuyo nombre de función en AWS difiera del nombre de la carpeta. Las carpetas que no estén aquí usan su propio nombre. Ejemplo típico: corregir el typo de 'Acount'.",
+  "Api_V1_Security_Acount-activation": "Api_V1_Security_Acount-activation",
+  "Api_V1_Security_Login": "Api_V1_Security_Login",
+  "Api_V1_Security_Register": "Api_V1_Security_Register",
+  "Api_V1_Security_Logout": "Api_V1_Security_Logout",
+  "Api_V1_Security_Change-password": "Api_V1_Security_Change-password",
+  "Api_V1_Security_Create-otp": "Api_V1_Security_Create-otp",
+  "Api_V1_Security_Validate-otp": "Api_V1_Security_Validate-otp",
+  "Api_V1_Security_Recovery-password": "Api_V1_Security_Recovery-password",
+  "Api_V1_Security_Verify-code": "Api_V1_Security_Verify-code",
+  "Api_V1_Security_Refresh-token": "Api_V1_Security_Refresh-token",
+  "Authorizer": "Authorizer",
+  "Authorizer2": "Authorizer2",
+  "Api_V1_Template_Create-template": "Api_V1_Template_Create-template",
+  "Api_V1_Template_Get-template": "Api_V1_Template_Get-template",
+  "Api_V1_Template_Delete-template": "Api_V1_Template_Delete-template",
+  "Api_V1_Campaign_Create-campaign": "Api_V1_Campaign_Create-campaign",
+  "Api_V1_Campaign_Prefirm-url": "Api_V1_Campaign_Prefirm-url",
+  "Api_V1_Reports_state-report": "Api_V1_Reports_state-report"
+}

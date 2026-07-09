@@ -275,7 +275,10 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
       automáticamente en cada `push` y `pull_request` (Python 3.11) vía
       `.github/workflows/tests.yml`, para evitar regresiones.
 - [ ] (Opcional) Añadir al CI el build del frontend (`npm ci && npm run build`).
-- [ ] (Opcional) Migrar a CI/CD de despliegue (CodeBuild/CodePipeline o GH Actions → AWS).
+- [x] **CD de lambdas:** `.github/workflows/deploy-lambdas.yml` despliega a AWS solo las
+      lambdas cambiadas en cada push a `main` (o manual). Requiere los secrets
+      `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (+ `AWS_REGION`) y opcional
+      `04_Backend/lambdas/deploy-map.json` si el nombre AWS difiere del de la carpeta.
 
 ### Seguridad (URGENTE)
 - [ ] **Rotar/revocar** las AWS access keys (`consumoSQS`, `consumoS3`) y contraseñas que
