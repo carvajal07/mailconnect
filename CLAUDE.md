@@ -158,8 +158,9 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [x] **Pantalla de reseteo con OTP** (`/reset-password`: código + nueva contraseña) que
       cierra la recuperación end-to-end (llama a `change-password` con OTP).
 - [~] **Portal del cliente** (`/panel`, destino del login; `/admin` sigue intacto con sus 3
-      secciones para uso interno). Sidebar con tabs: Plantillas HTML, Plantillas PDF, Campañas,
-      Bases de datos, Reportes, Estadísticas, Mi cuenta.
+      secciones para uso interno). Sidebar **colapsable** (riel de solo iconos con tooltips,
+      toggle en el AppBar) con tabs: Plantillas HTML, Plantillas PDF, Campañas, Bases de datos,
+      Reportes, Estadísticas, Mi cuenta.
       - [x] **Plantillas HTML** → constructor drag-and-drop "pro" (tipo Topol): 10 bloques
             (encabezado, texto, imagen, botón, logo, 2 columnas, redes sociales, HTML crudo,
             divisor, espaciador) en paleta agrupada (Contenido/Estructura), reorden por
@@ -172,10 +173,35 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             (columnas que apilan en móvil), ghost tables + condicionales MSO para Outlook,
             fix de Apple Mail, imágenes fluidas y botones bulletproof. Modelo y generación en
             `components/portal/htmlBuilder.ts`; UI en `HtmlBuilderSection.tsx`.
+            **Diseño:** paleta con icono por bloque (Contenido/Estructura) y lienzo tipo "hoja
+            de correo" centrada con sombra; los bloques se renderizan sobre la hoja blanca
+            (colores fijos), de modo que el **modo oscuro** se ve correcto (WYSIWYG legible).
+            **Imágenes:** los bloques imagen/logo tienen "Subir imagen a S3" (get-urlS3 con
+            `documentType=document`), que fija el `src` a la URL pública del objeto.
+            **Plantillas prediseñadas** (`templatePresets.ts`): 5 integradas (Boletín, Promoción,
+            Bienvenida, Anuncio, Evento) con miniatura en vivo; el admin puede crear más con
+            "Guardar plantilla" (se guardan en localStorage). El builder se reusa en `/admin`
+            (sección "Plantillas prediseñadas", `HtmlBuilderSection allowSavePreset`).
       - [x] **Campañas** reutiliza `CampanasSection`. **Mi cuenta** muestra la sesión y permite
             cambiar la contraseña (change-password con token).
-      - [ ] Plantillas PDF, Bases de datos, Reportes y Estadísticas quedan como placeholders
-            (esperan backend). El constructor HTML se irá ampliando (más bloques/estilos).
+      - [x] **Bases de datos** (`BasesDatosSection` + `csv.ts`): carga de CSV con
+            **validación/preview local** (parser propio: detecta delimitador, columnas, total
+            de registros, columna de email, y cuenta válidos/inválidos/duplicados) y subida real
+            a S3 vía `get-urlS3` (`documentType=database`), devolviendo la ruta para usarla como
+            Data Path. Lista de bases de la sesión (backend aún no expone listado/edición/lista negra).
+      - [x] **Estadísticas** (`EstadisticasSection` + `charts.tsx`): tablero con KPIs
+            (pendientes/creadas/enviadas, total envíos, apertura promedio), **dona** de
+            campañas por estado, **embudo** de envío (enviados→entregados→abiertos→clics) y
+            tabla con detalle por campaña. Gráficos en SVG propio (sin dependencias),
+            theme-aware y con paleta validada (dataviz). Datos ilustrativos hasta que el
+            backend exponga métricas agregadas.
+      - [x] **Reportes** (`ReportesSection` + `reportsService`): (a) **exportar resumen** de
+            campañas a CSV al instante (local, sin backend) y (b) **reporte de estado por
+            campaña** vía el endpoint real `state-report` (`{cliente, idProceso}` → `{count,
+            csv_preview, csv_base64|s3_key}`), con vista previa y descarga del CSV desde base64.
+            Datos de campañas compartidos en `campaignData.ts` (los usa Estadísticas también).
+      - [ ] Plantillas PDF queda como placeholder (espera backend). El constructor HTML se
+            irá ampliando (más bloques/estilos).
 - [~] Conectar las secciones del panel a la API real (capa de servicios nueva):
       - [x] **Plantillas** → `create-template`, `get-template`, `delete-template` (reales).
       - [x] **Campañas** → `create-campaign` y `get-urlS3` (URL prefirmada + PUT a S3).
