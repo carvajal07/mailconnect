@@ -1,7 +1,8 @@
 /**
- * Modelo de bloques y generación de HTML para el constructor de plantillas.
- * Versión "pro" (tipo Topol, básico ampliable): bloques que se serializan a HTML
- * "email-safe" (tablas + estilos inline) apto para SES.
+ * Modelo de bloques, ajustes globales y generación de HTML para el constructor
+ * de plantillas (tipo Topol). El HTML resultante es "email-safe" y RESPONSIVE:
+ * tablas + estilos inline, ghost tables para Outlook (MSO), media queries para
+ * móvil, imágenes fluidas y botones bulletproof.
  */
 
 export type BlockType =
@@ -35,6 +36,29 @@ export interface Block {
   links: SocialLinks; // redes sociales
 }
 
+/** Ajustes globales del correo (como el panel "settings" de Topol). */
+export interface EmailSettings {
+  contentWidth: number; // ancho del contenedor (px)
+  pageBg: string; // fondo de la página (fuera del contenedor)
+  emailBg: string; // fondo del contenedor
+  fontFamily: string; // familia tipográfica base
+  textColor: string; // color de texto base
+  linkColor: string; // color de enlaces
+  rounded: boolean; // esquinas redondeadas del contenedor
+  preheader: string; // texto de vista previa (oculto) del correo
+}
+
+export const DEFAULT_SETTINGS: EmailSettings = {
+  contentWidth: 600,
+  pageBg: '#f4f8fc',
+  emailBg: '#ffffff',
+  fontFamily: "Arial, 'Helvetica Neue', Helvetica, sans-serif",
+  textColor: '#333333',
+  linkColor: '#0075be',
+  rounded: true,
+  preheader: '',
+};
+
 let seq = 0;
 export const nextId = () => `b${++seq}_${(seq * 2654435761) % 100000}`;
 
@@ -50,6 +74,12 @@ export const BLOCK_LABELS: Record<BlockType, string> = {
   social: 'Redes sociales',
   html: 'HTML crudo',
 };
+
+/** Agrupación de la paleta (contenido vs estructura), como Topol. */
+export const PALETTE_GROUPS: { label: string; types: BlockType[] }[] = [
+  { label: 'Contenido', types: ['heading', 'text', 'image', 'button', 'logo', 'social', 'html'] },
+  { label: 'Estructura', types: ['columns', 'divider', 'spacer'] },
+];
 
 /** Variables de personalización que el motor de envío reemplaza por destinatario. */
 export const VARIABLES = ['nombre', 'email', 'empresa', 'ciudad'];
@@ -74,7 +104,7 @@ export const createBlock = (type: BlockType): Block => {
     case 'text':
       return { ...b, text: 'Hola {{nombre}}, escribe aquí tu contenido. Edítalo en el panel derecho.' };
     case 'image':
-      return { ...b, url: 'https://via.placeholder.com/600x200?text=Imagen', text: 'Imagen', align: 'center' };
+      return { ...b, url: 'https://via.placeholder.com/600x240?text=Imagen', text: 'Imagen', align: 'center' };
     case 'button':
       return { ...b, text: 'Ver más', url: 'https://', align: 'center', color: '#0075be' };
     case 'logo':
@@ -97,15 +127,30 @@ export const createBlock = (type: BlockType): Block => {
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-const asParagraph = (s: string, align: string) =>
-  `<p style="margin:0;font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#333333;text-align:${align}">${esc(s).replace(/\n/g, '<br>')}</p>`;
+function paragraph(s: string, align: string, st: EmailSettings): string {
+  return `<p style="margin:0;font-family:${st.fontFamily};font-size:15px;line-height:1.6;color:${st.textColor};text-align:${align}">${esc(s).replace(/\n/g, '<br>')}</p>`;
+}
 
-function socialRow(links: SocialLinks): string {
+/** Botón bulletproof: fondo en el <td> (bgcolor + border-radius) y padding en el <a>,
+ *  con mso-padding-alt para que Outlook respete el alto. */
+function buttonHtml(b: Block, st: EmailSettings): string {
+  const bg = b.color || st.linkColor;
+  const alignAttr = b.align || 'left';
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin:${alignAttr === 'center' ? '0 auto' : '0'}"><tr>
+        <td align="center" bgcolor="${bg}" style="border-radius:6px;">
+          <a href="${esc(b.url)}" target="_blank" style="display:inline-block;padding:12px 26px;font-family:${st.fontFamily};font-size:15px;font-weight:bold;line-height:1;color:#ffffff;text-decoration:none;border-radius:6px;mso-padding-alt:0;">
+            <!--[if mso]>&nbsp;&nbsp;<![endif]-->${esc(b.text)}<!--[if mso]>&nbsp;&nbsp;<![endif]-->
+          </a>
+        </td>
+      </tr></table>`;
+}
+
+function socialRow(links: SocialLinks, st: EmailSettings): string {
   const items: string[] = [];
   const push = (label: string, href?: string) => {
     if (href && href.trim()) {
       items.push(
-        `<a href="${esc(href)}" style="color:#0075be;text-decoration:none;font-family:Arial,sans-serif;font-size:14px">${label}</a>`,
+        `<a href="${esc(href)}" target="_blank" style="color:${st.linkColor};text-decoration:none;font-family:${st.fontFamily};font-size:14px">${label}</a>`,
       );
     }
   };
@@ -117,66 +162,119 @@ function socialRow(links: SocialLinks): string {
   return `<p style="margin:0;text-align:center">${items.join(' &nbsp;·&nbsp; ')}</p>`;
 }
 
-/** Serializa un bloque a HTML email-safe. */
-function renderBlock(b: Block): string {
+/** Imagen fluida (100% del contenedor, con tope). */
+function imageHtml(src: string, alt: string, align: string, maxW: number): string {
+  return `<img src="${esc(src)}" alt="${esc(alt)}" width="${maxW}" style="width:100%;max-width:${maxW}px;height:auto;display:block;margin:${align === 'center' ? '0 auto' : '0'};border:0;outline:none;text-decoration:none;" />`;
+}
+
+/** Serializa un bloque a HTML email-safe y responsive. */
+function renderBlock(b: Block, st: EmailSettings): string {
   const align = b.align || 'left';
+  const innerW = st.contentWidth - 48; // contenedor menos padding lateral (24+24)
   switch (b.type) {
     case 'heading':
-      return `<h1 style="margin:0;font-family:Arial,sans-serif;font-size:26px;line-height:1.3;color:${b.color || '#16233f'};text-align:${align}">${esc(b.text)}</h1>`;
+      return `<h1 style="margin:0;font-family:${st.fontFamily};font-size:26px;line-height:1.3;color:${b.color || '#16233f'};text-align:${align}">${esc(b.text)}</h1>`;
     case 'text':
-      return asParagraph(b.text, align);
+      return paragraph(b.text, align, st);
     case 'image':
-      return `<img src="${esc(b.url)}" alt="${esc(b.text)}" style="display:block;max-width:100%;height:auto;margin:${align === 'center' ? '0 auto' : '0'};border:0" />`;
+      return imageHtml(b.url, b.text, align, innerW);
     case 'logo':
-      return `<img src="${esc(b.url)}" alt="logo" style="display:block;max-width:180px;height:auto;margin:${align === 'center' ? '0 auto' : '0'};border:0" />`;
+      return imageHtml(b.url, 'logo', align, 180);
     case 'button':
-      return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:${align === 'center' ? '0 auto' : '0'}"><tr><td style="background:${b.color || '#0075be'};border-radius:6px"><a href="${esc(b.url)}" style="display:inline-block;padding:12px 22px;font-family:Arial,sans-serif;font-size:15px;color:#ffffff;text-decoration:none">${esc(b.text)}</a></td></tr></table>`;
+      return buttonHtml(b, st);
     case 'columns':
-      return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td width="50%" valign="top" style="padding-right:8px">${asParagraph(b.text, 'left')}</td><td width="50%" valign="top" style="padding-left:8px">${asParagraph(b.textRight, 'left')}</td></tr></table>`;
+      return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+        <tr>
+          <td class="mc-col" width="50%" valign="top" style="padding:0 8px 0 0;">${paragraph(b.text, 'left', st)}</td>
+          <td class="mc-col" width="50%" valign="top" style="padding:0 0 0 8px;">${paragraph(b.textRight, 'left', st)}</td>
+        </tr>
+      </table>`;
     case 'social':
-      return socialRow(b.links);
+      return socialRow(b.links, st);
     case 'html':
       return b.text; // HTML crudo, tal cual
     case 'divider':
-      return `<hr style="border:none;border-top:1px solid #e4ebf3;margin:0" />`;
+      return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"><tr><td style="border-top:1px solid #e4ebf3;font-size:0;line-height:0;">&nbsp;</td></tr></table>`;
     case 'spacer':
-      return `<div style="height:${b.height || 24}px;line-height:${b.height || 24}px">&nbsp;</div>`;
+      return `<div style="height:${b.height || 24}px;line-height:${b.height || 24}px;font-size:0;">&nbsp;</div>`;
     default:
       return '';
   }
 }
 
-/** Genera el HTML completo del correo a partir de los bloques. */
-export function generateHtml(blocks: Block[]): string {
-  const rows = blocks
-    .map(
-      (b) =>
-        `      <tr><td style="padding:10px 24px" align="${b.align || 'left'}">${renderBlock(b)}</td></tr>`,
-    )
-    .join('\n');
+/** Genera el correo completo (responsive, cross-client) a partir de bloques + ajustes. */
+export function generateHtml(blocks: Block[], settings: EmailSettings = DEFAULT_SETTINGS): string {
+  const st = { ...DEFAULT_SETTINGS, ...settings };
+  const radius = st.rounded ? 12 : 0;
 
-  return `<!DOCTYPE html>
-<html lang="es">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f4f8fc">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f8fc">
-    <tr><td align="center" style="padding:24px 12px">
-      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden">
-${rows || '      <tr><td style="padding:24px;font-family:Arial,sans-serif;color:#888">Plantilla vacía</td></tr>'}
-      </table>
-    </td></tr>
+  const rows =
+    blocks
+      .map(
+        (b) =>
+          `            <tr><td align="${b.align || 'left'}" style="padding:10px 24px;">${renderBlock(b, st)}</td></tr>`,
+      )
+      .join('\n') ||
+    `            <tr><td style="padding:24px;font-family:${st.fontFamily};color:#888888;">Plantilla vacía</td></tr>`;
+
+  const preheader = st.preheader
+    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${st.emailBg};opacity:0;">${esc(st.preheader)}</div>`
+    : '';
+
+  return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <meta name="format-detection" content="telephone=no, date=no, address=no, email=no" />
+  <title>MailConnect</title>
+  <!--[if mso]>
+  <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+  <![endif]-->
+  <style type="text/css">
+    html, body { margin:0 !important; padding:0 !important; height:100% !important; width:100% !important; }
+    * { -ms-text-size-adjust:100%; -webkit-text-size-adjust:100%; }
+    table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }
+    img { -ms-interpolation-mode:bicubic; border:0; height:auto; line-height:100%; outline:none; text-decoration:none; }
+    a { text-decoration:none; }
+    .mc-container { width:${st.contentWidth}px; }
+    @media screen and (max-width:${st.contentWidth}px) {
+      .mc-container { width:100% !important; }
+      .mc-col { display:block !important; width:100% !important; box-sizing:border-box; padding:8px 0 !important; }
+      .mc-pad { padding-left:16px !important; padding-right:16px !important; }
+      .mc-h1 { font-size:22px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background:${st.pageBg};">
+  ${preheader}
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background:${st.pageBg};">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+        <!--[if mso]><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="${st.contentWidth}"><tr><td><![endif]-->
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" class="mc-container" width="${st.contentWidth}" style="width:${st.contentWidth}px;max-width:100%;background:${st.emailBg};border-radius:${radius}px;overflow:hidden;">
+${rows}
+        </table>
+        <!--[if mso]></td></tr></table><![endif]-->
+      </td>
+    </tr>
   </table>
 </body>
 </html>`;
 }
 
 /* ----------------------------- Borradores locales ----------------------------- */
-// Persistencia en localStorage: permite guardar/cargar el trabajo (modelo de bloques)
-// sin depender del backend. Clave por usuario para no mezclar cuentas.
+// Persistencia en localStorage (modelo de bloques + ajustes) sin depender del backend.
 
 const DRAFTS_KEY = 'mc_html_drafts';
 
-type DraftStore = Record<string, Block[]>;
+export interface Draft {
+  blocks: Block[];
+  settings: EmailSettings;
+}
+
+type DraftStore = Record<string, Draft | Block[]>;
 
 function readStore(): DraftStore {
   try {
@@ -190,14 +288,21 @@ function writeStore(store: DraftStore): void {
   localStorage.setItem(DRAFTS_KEY, JSON.stringify(store));
 }
 
+/** Normaliza borradores viejos (solo array de bloques) al nuevo formato. */
+function normalize(entry: Draft | Block[] | undefined): Draft | null {
+  if (!entry) return null;
+  if (Array.isArray(entry)) return { blocks: entry, settings: { ...DEFAULT_SETTINGS } };
+  return { blocks: entry.blocks ?? [], settings: { ...DEFAULT_SETTINGS, ...entry.settings } };
+}
+
 export const drafts = {
   list: (): string[] => Object.keys(readStore()).sort(),
-  save: (name: string, blocks: Block[]): void => {
+  save: (name: string, blocks: Block[], settings: EmailSettings): void => {
     const store = readStore();
-    store[name] = blocks;
+    store[name] = { blocks, settings };
     writeStore(store);
   },
-  load: (name: string): Block[] | null => readStore()[name] ?? null,
+  load: (name: string): Draft | null => normalize(readStore()[name]),
   remove: (name: string): void => {
     const store = readStore();
     delete store[name];

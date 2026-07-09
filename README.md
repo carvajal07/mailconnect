@@ -341,6 +341,10 @@ POST /api/email/sent/ondemand
 - [x] `SECRET_KEY` del JWT leído desde variable de entorno — [ ] pendiente migrar a AWS Secrets Manager
 - [x] CI con GitHub Actions: `pytest` en cada push/PR (`.github/workflows/tests.yml`) — [ ] pendiente CI/CD de despliegue (CodeBuild/CodePipeline)
 - [x] Pruebas de integración de seguridad (pytest + moto) en `08_Pruebas/PruebasSeguridad` — pendiente ampliar cobertura a otros módulos
+- [ ] **Estimador de costo de envío:** mostrar al cliente un valor estimado de la campaña
+      **antes** de enviar, según cantidad de envíos, si lleva adjunto y su peso, y el tipo
+      (EM / EAU adjunto único / EAP adjunto personalizado PDF o Word). Endpoint sugerido
+      `POST /api/email/estimate` + tarifas configurables. Detalle en `CLAUDE.md` §5.
 - [ ] Implementar lista negra por cliente (`{customer_name}_blackList`)
 - [ ] Validar manejo de archivos CSV grandes (+100k registros) con lectura por partes
 - [ ] Segmentar IPs de envío SES por cliente

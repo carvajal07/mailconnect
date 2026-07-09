@@ -34,6 +34,9 @@ import NoteAddIcon from '@mui/icons-material/NoteAdd';
 import EditNoteIcon from '@mui/icons-material/EditNote';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import DataObjectIcon from '@mui/icons-material/DataObject';
+import TuneIcon from '@mui/icons-material/Tune';
+import DesktopWindowsIcon from '@mui/icons-material/DesktopWindows';
+import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import { getUser } from '../../services/authService';
 import { templatesService } from '../../services/templatesService';
 import { isOk } from '../../services/apiClient';
@@ -41,38 +44,31 @@ import { useFeedback } from '../../hooks/useFeedback';
 import {
   BLOCK_LABELS,
   VARIABLES,
+  PALETTE_GROUPS,
+  DEFAULT_SETTINGS,
   createBlock,
   generateHtml,
   drafts,
   type Block,
   type BlockType,
+  type EmailSettings,
 } from './htmlBuilder';
-
-const PALETTE: BlockType[] = [
-  'heading',
-  'text',
-  'image',
-  'button',
-  'logo',
-  'columns',
-  'social',
-  'divider',
-  'spacer',
-  'html',
-];
 
 export const HtmlBuilderSection = () => {
   const sessionUserId = getUser()?.userId ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
 
   const [blocks, setBlocks] = useState<Block[]>([]);
+  const [settings, setSettings] = useState<EmailSettings>({ ...DEFAULT_SETTINGS });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<'editor' | 'preview'>('editor');
+  const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
   const [draftName, setDraftName] = useState('');
   const dragIndex = useRef<number | null>(null);
 
   const [draftsAnchor, setDraftsAnchor] = useState<null | HTMLElement>(null);
   const [showHtml, setShowHtml] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [loadOpen, setLoadOpen] = useState(false);
   const [loadName, setLoadName] = useState('');
   const [loading, setLoading] = useState(false);
@@ -81,8 +77,11 @@ export const HtmlBuilderSection = () => {
   const [meta, setMeta] = useState({ templateName: '', customerId: '', subject: '' });
   const [draftsVersion, setDraftsVersion] = useState(0);
 
-  const html = useMemo(() => generateHtml(blocks), [blocks]);
+  const html = useMemo(() => generateHtml(blocks, settings), [blocks, settings]);
   const selected = blocks.find((b) => b.id === selectedId) ?? null;
+
+  const setSetting = <K extends keyof EmailSettings>(key: K, value: EmailSettings[K]) =>
+    setSettings((s) => ({ ...s, [key]: value }));
 
   /* ---------------- Bloques ---------------- */
   const addBlock = (type: BlockType) => {
@@ -146,7 +145,7 @@ export const HtmlBuilderSection = () => {
   const handleSaveDraft = () => {
     const name = draftName.trim();
     if (!name) return notify('Escribe un nombre para el borrador.', 'warning');
-    drafts.save(name, blocks);
+    drafts.save(name, blocks, settings);
     setDraftsVersion((v) => v + 1);
     notify(`Borrador "${name}" guardado.`, 'success');
     setDraftsAnchor(null);
@@ -155,7 +154,8 @@ export const HtmlBuilderSection = () => {
   const handleLoadDraft = (name: string) => {
     const loaded = drafts.load(name);
     if (loaded) {
-      setBlocks(loaded);
+      setBlocks(loaded.blocks);
+      setSettings(loaded.settings);
       setSelectedId(null);
       setDraftName(name);
       notify(`Borrador "${name}" cargado.`, 'success');
@@ -173,6 +173,7 @@ export const HtmlBuilderSection = () => {
   const handleNew = () => {
     if (blocks.length && !window.confirm('¿Vaciar el lienzo actual?')) return;
     setBlocks([]);
+    setSettings({ ...DEFAULT_SETTINGS });
     setSelectedId(null);
     setDraftName('');
   };
@@ -253,6 +254,9 @@ export const HtmlBuilderSection = () => {
           <Button size="small" startIcon={<CloudDownloadIcon />} onClick={() => setLoadOpen(true)}>
             Cargar de SES
           </Button>
+          <Button size="small" startIcon={<TuneIcon />} onClick={() => setSettingsOpen(true)}>
+            Ajustes
+          </Button>
           <ToggleButtonGroup size="small" exclusive value={view} onChange={(_, v) => v && setView(v)}>
             <ToggleButton value="editor">
               <EditNoteIcon fontSize="small" sx={{ mr: 0.5 }} /> Editor
@@ -292,40 +296,77 @@ export const HtmlBuilderSection = () => {
       </Menu>
 
       {view === 'preview' ? (
-        <Paper variant="outlined" sx={{ p: 0, overflow: 'hidden' }}>
-          <iframe title="preview" srcDoc={html} style={{ width: '100%', height: '70vh', border: 0 }} />
-        </Paper>
+        <Box>
+          <Stack direction="row" justifyContent="center" mb={1.5}>
+            <ToggleButtonGroup size="small" exclusive value={device} onChange={(_, v) => v && setDevice(v)}>
+              <ToggleButton value="desktop">
+                <DesktopWindowsIcon fontSize="small" sx={{ mr: 0.5 }} /> Escritorio
+              </ToggleButton>
+              <ToggleButton value="mobile">
+                <PhoneAndroidIcon fontSize="small" sx={{ mr: 0.5 }} /> Móvil
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Stack>
+          <Paper variant="outlined" sx={{ p: 2, bgcolor: settings.pageBg, display: 'flex', justifyContent: 'center' }}>
+            <Box
+              sx={{
+                width: device === 'mobile' ? 375 : '100%',
+                maxWidth: device === 'mobile' ? 375 : settings.contentWidth + 48,
+                transition: 'width .3s',
+                boxShadow: device === 'mobile' ? 3 : 0,
+                borderRadius: device === 'mobile' ? 2 : 0,
+                overflow: 'hidden',
+                bgcolor: '#fff',
+              }}
+            >
+              <iframe title="preview" srcDoc={html} style={{ width: '100%', height: '70vh', border: 0, display: 'block' }} />
+            </Box>
+          </Paper>
+        </Box>
       ) : (
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-          {/* Paleta */}
-          <Paper variant="outlined" sx={{ p: 2, width: { md: 180 }, flexShrink: 0 }}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-              Bloques
-            </Typography>
-            <Stack spacing={1}>
-              {PALETTE.map((type) => (
-                <Button
-                  key={type}
-                  size="small"
-                  variant="outlined"
-                  startIcon={<AddIcon />}
-                  onClick={() => addBlock(type)}
-                  sx={{ justifyContent: 'flex-start' }}
-                >
-                  {BLOCK_LABELS[type]}
-                </Button>
-              ))}
-            </Stack>
+          {/* Paleta agrupada */}
+          <Paper variant="outlined" sx={{ p: 2, width: { md: 190 }, flexShrink: 0 }}>
+            {PALETTE_GROUPS.map((group) => (
+              <Box key={group.label} sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                  {group.label}
+                </Typography>
+                <Stack spacing={1}>
+                  {group.types.map((type) => (
+                    <Button
+                      key={type}
+                      size="small"
+                      variant="outlined"
+                      startIcon={<AddIcon />}
+                      onClick={() => addBlock(type)}
+                      sx={{ justifyContent: 'flex-start' }}
+                    >
+                      {BLOCK_LABELS[type]}
+                    </Button>
+                  ))}
+                </Stack>
+              </Box>
+            ))}
           </Paper>
 
-          {/* Lienzo */}
-          <Paper variant="outlined" sx={{ p: 2, flex: 1, minHeight: '60vh', bgcolor: 'background.default' }}>
+          {/* Lienzo (simula el correo: fondo de página + contenedor centrado) */}
+          <Paper variant="outlined" sx={{ p: 2, flex: 1, minHeight: '60vh', bgcolor: settings.pageBg }}>
             {blocks.length === 0 && (
               <Box sx={{ textAlign: 'center', color: 'text.secondary', py: 8 }}>
                 <Typography>Agrega bloques desde la izquierda para empezar.</Typography>
                 <Typography variant="body2">Arrástralos o usa las flechas para reordenarlos.</Typography>
               </Box>
             )}
+            <Box
+              sx={{
+                mx: 'auto',
+                maxWidth: settings.contentWidth,
+                bgcolor: settings.emailBg,
+                borderRadius: settings.rounded ? 2 : 0,
+                overflow: 'hidden',
+              }}
+            >
             <Stack spacing={1}>
               {blocks.map((b, index) => (
                 <Box
@@ -384,6 +425,7 @@ export const HtmlBuilderSection = () => {
                 </Box>
               ))}
             </Stack>
+            </Box>
           </Paper>
 
           {/* Propiedades */}
@@ -417,6 +459,56 @@ export const HtmlBuilderSection = () => {
         <DialogActions>
           <Button onClick={() => { navigator.clipboard?.writeText(html); notify('HTML copiado.', 'info'); }}>Copiar</Button>
           <Button onClick={() => setShowHtml(false)}>Cerrar</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Ajustes globales del correo */}
+      <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Ajustes del correo</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              label="Ancho del contenido (px)"
+              type="number"
+              value={settings.contentWidth}
+              onChange={(e) => setSetting('contentWidth', parseInt(e.target.value) || 600)}
+              fullWidth
+              size="small"
+              helperText="Estándar de email: 600 px"
+            />
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <TextField label="Fondo de página" type="color" value={settings.pageBg} onChange={(e) => setSetting('pageBg', e.target.value)} fullWidth size="small" />
+              <TextField label="Fondo del correo" type="color" value={settings.emailBg} onChange={(e) => setSetting('emailBg', e.target.value)} fullWidth size="small" />
+            </Stack>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <TextField label="Color de texto" type="color" value={settings.textColor} onChange={(e) => setSetting('textColor', e.target.value)} fullWidth size="small" />
+              <TextField label="Color de enlaces" type="color" value={settings.linkColor} onChange={(e) => setSetting('linkColor', e.target.value)} fullWidth size="small" />
+            </Stack>
+            <TextField select label="Fuente" value={settings.fontFamily} onChange={(e) => setSetting('fontFamily', e.target.value)} fullWidth size="small">
+              <MenuItem value="Arial, 'Helvetica Neue', Helvetica, sans-serif">Arial / Helvetica</MenuItem>
+              <MenuItem value="Georgia, 'Times New Roman', serif">Georgia / Times</MenuItem>
+              <MenuItem value="'Trebuchet MS', Tahoma, sans-serif">Trebuchet / Tahoma</MenuItem>
+              <MenuItem value="Verdana, Geneva, sans-serif">Verdana</MenuItem>
+            </TextField>
+            <TextField select label="Esquinas del contenedor" value={settings.rounded ? 'yes' : 'no'} onChange={(e) => setSetting('rounded', e.target.value === 'yes')} fullWidth size="small">
+              <MenuItem value="yes">Redondeadas</MenuItem>
+              <MenuItem value="no">Rectas</MenuItem>
+            </TextField>
+            <TextField
+              label="Texto de vista previa (preheader)"
+              value={settings.preheader}
+              onChange={(e) => setSetting('preheader', e.target.value)}
+              fullWidth
+              size="small"
+              helperText="Se muestra en la bandeja junto al asunto (oculto en el correo)"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSettings({ ...DEFAULT_SETTINGS })}>Restablecer</Button>
+          <Button variant="contained" onClick={() => setSettingsOpen(false)}>
+            Listo
+          </Button>
         </DialogActions>
       </Dialog>
 
