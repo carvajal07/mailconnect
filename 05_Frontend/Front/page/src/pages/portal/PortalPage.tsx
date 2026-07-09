@@ -11,13 +11,13 @@ import {
 } from '@mui/material';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
-import AssessmentIcon from '@mui/icons-material/Assessment';
 import { useNavigate } from 'react-router-dom';
 import { PortalSidebar } from '../../components/portal/PortalSidebar';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
 import { PlaceholderSection } from '../../components/portal/PlaceholderSection';
 import { BasesDatosSection } from '../../components/portal/BasesDatosSection';
 import { EstadisticasSection } from '../../components/portal/EstadisticasSection';
+import { ReportesSection } from '../../components/portal/ReportesSection';
 import { MiCuentaSection } from '../../components/portal/MiCuentaSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
 import { ThemeToggle } from '../../components/ThemeToggle';
@@ -60,13 +60,7 @@ export const PortalPage = () => {
       case 'basesdatos':
         return <BasesDatosSection />;
       case 'reportes':
-        return (
-          <PlaceholderSection
-            title="Reportes"
-            icon={<AssessmentIcon fontSize="inherit" />}
-            description="Descarga reportes por campaña (estados de envío, entregas, rebotes) en CSV/Excel. Pendiente exponer el endpoint de reportes."
-          />
-        );
+        return <ReportesSection />;
       case 'estadisticas':
         return <EstadisticasSection />;
       default:

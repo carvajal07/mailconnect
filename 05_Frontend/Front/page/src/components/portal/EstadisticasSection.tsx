@@ -27,41 +27,20 @@ import SendIcon from '@mui/icons-material/Send';
 import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { StatTile, Donut, Funnel, useStatusColors } from './charts';
+import {
+  DEMO_CAMPAIGNS,
+  ESTADO_LABEL as estadoLabel,
+  rate,
+  type CampaignStat,
+  type Estado,
+} from './campaignData';
 
-type Estado = 'pendiente' | 'creada' | 'enviada';
-
-interface CampaignStat {
-  id: string;
-  name: string;
-  estado: Estado;
-  enviados: number;
-  entregados: number;
-  abiertos: number;
-  clics: number;
-  rebotes: number;
-  quejas: number;
-}
-
-// Datos ILUSTRATIVOS (demo). Se reemplazarán por la respuesta del backend cuando
-// exista el endpoint de métricas (p. ej. Api_V1_Reports_state-report / agregados).
-const DEMO: CampaignStat[] = [
-  { id: '1', name: 'Bienvenida Julio', estado: 'enviada', enviados: 12450, entregados: 12010, abiertos: 5220, clics: 1310, rebotes: 440, quejas: 12 },
-  { id: '2', name: 'Promo Aniversario', estado: 'enviada', enviados: 8300, entregados: 8110, abiertos: 3980, clics: 990, rebotes: 190, quejas: 6 },
-  { id: '3', name: 'Newsletter Agosto', estado: 'enviada', enviados: 15600, entregados: 15020, abiertos: 6110, clics: 1420, rebotes: 580, quejas: 21 },
-  { id: '4', name: 'Reactivación clientes', estado: 'creada', enviados: 0, entregados: 0, abiertos: 0, clics: 0, rebotes: 0, quejas: 0 },
-  { id: '5', name: 'Encuesta satisfacción', estado: 'creada', enviados: 0, entregados: 0, abiertos: 0, clics: 0, rebotes: 0, quejas: 0 },
-  { id: '6', name: 'Lanzamiento producto', estado: 'pendiente', enviados: 0, entregados: 0, abiertos: 0, clics: 0, rebotes: 0, quejas: 0 },
-];
-
-const estadoLabel: Record<Estado, string> = { pendiente: 'Pendiente', creada: 'Creada', enviada: 'Enviada' };
 const estadoColor: Record<Estado, 'warning' | 'info' | 'success'> = { pendiente: 'warning', creada: 'info', enviada: 'success' };
-
-const rate = (num: number, den: number) => (den > 0 ? Math.round((num / den) * 100) : 0);
 
 export const EstadisticasSection = () => {
   const status = useStatusColors();
   const [detail, setDetail] = useState<CampaignStat | null>(null);
-  const campaigns = DEMO;
+  const campaigns = DEMO_CAMPAIGNS;
 
   const kpis = useMemo(() => {
     const by = (e: Estado) => campaigns.filter((c) => c.estado === e).length;

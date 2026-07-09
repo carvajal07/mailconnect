@@ -185,8 +185,13 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             tabla con detalle por campaña. Gráficos en SVG propio (sin dependencias),
             theme-aware y con paleta validada (dataviz). Datos ilustrativos hasta que el
             backend exponga métricas agregadas.
-      - [ ] Plantillas PDF y Reportes quedan como placeholders (esperan backend).
-            El constructor HTML se irá ampliando (más bloques/estilos).
+      - [x] **Reportes** (`ReportesSection` + `reportsService`): (a) **exportar resumen** de
+            campañas a CSV al instante (local, sin backend) y (b) **reporte de estado por
+            campaña** vía el endpoint real `state-report` (`{cliente, idProceso}` → `{count,
+            csv_preview, csv_base64|s3_key}`), con vista previa y descarga del CSV desde base64.
+            Datos de campañas compartidos en `campaignData.ts` (los usa Estadísticas también).
+      - [ ] Plantillas PDF queda como placeholder (espera backend). El constructor HTML se
+            irá ampliando (más bloques/estilos).
 - [~] Conectar las secciones del panel a la API real (capa de servicios nueva):
       - [x] **Plantillas** → `create-template`, `get-template`, `delete-template` (reales).
       - [x] **Campañas** → `create-campaign` y `get-urlS3` (URL prefirmada + PUT a S3).
