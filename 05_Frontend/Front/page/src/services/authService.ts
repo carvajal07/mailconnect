@@ -1,4 +1,5 @@
 import { AUTH_API_BASE, AUTH_ENDPOINTS } from '../config/api';
+import { MOCK_ENABLED, mockLogin } from './mockAuth';
 
 /**
  * Servicio de autenticación de MailConnect.
@@ -92,11 +93,23 @@ async function post<T = unknown>(path: string, body: unknown, useAuth = false): 
 }
 
 export const authService = {
-  login: (user: string, password: string) =>
-    post<LoginData>(AUTH_ENDPOINTS.LOGIN, { user, password }),
+  login: (user: string, password: string): Promise<ApiResponse<LoginData>> => {
+    // Modo demo: pasa el login sin backend (VITE_AUTH_MOCK=true).
+    if (MOCK_ENABLED) return Promise.resolve(mockLogin(user, password));
+    return post<LoginData>(AUTH_ENDPOINTS.LOGIN, { user, password });
+  },
 
-  register: (payload: RegisterPayload) =>
-    post(AUTH_ENDPOINTS.REGISTER, payload),
+  register: (payload: RegisterPayload) => {
+    // En modo demo, el registro "funciona" para poder seguir el flujo.
+    if (MOCK_ENABLED) {
+      return Promise.resolve<ApiResponse>({
+        status: true,
+        statusCode: 201,
+        description: 'Registro simulado (modo demo). Ya puedes iniciar sesión.',
+      });
+    }
+    return post(AUTH_ENDPOINTS.REGISTER, payload);
+  },
 
   /** Verificación de la cuenta por código (activación). Backend pendiente. */
   verifyCode: (user: string, code: number) =>
