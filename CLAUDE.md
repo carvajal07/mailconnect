@@ -188,7 +188,10 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             **validación/preview local** (parser propio: detecta delimitador, columnas, total
             de registros, columna de email, y cuenta válidos/inválidos/duplicados) y subida real
             a S3 vía `get-urlS3` (`documentType=database`), devolviendo la ruta para usarla como
-            Data Path. Lista de bases de la sesión (backend aún no expone listado/edición/lista negra).
+            Data Path. **Valida la estructura obligatoria por posición** (el backend Prepare-batch
+            lee `line[0]`=Identificación numérica, `line[1]`=Correo, `line[2]`=Nombre): el diálogo
+            muestra las 3 columnas requeridas **en orden** con estado ✓/✗ y avisa si no cumplen.
+            Lista de bases de la sesión (backend aún no expone listado/edición/lista negra).
       - [x] **Estadísticas** (`EstadisticasSection` + `charts.tsx`): tablero con KPIs
             (pendientes/creadas/enviadas, total envíos, apertura promedio), **dona** de
             campañas por estado, **embudo** de envío (enviados→entregados→abiertos→clics) y

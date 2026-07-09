@@ -26,10 +26,12 @@ import {
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import StorageIcon from '@mui/icons-material/Storage';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
 import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
-import { analyzeCsv, DELIMITER_LABELS, type CsvAnalysis, type Delimiter } from './csv';
+import { analyzeCsv, DELIMITER_LABELS, REQUIRED_COLUMNS, type CsvAnalysis, type Delimiter } from './csv';
 
 interface BaseDatos {
   id: string;
@@ -189,6 +191,8 @@ export const BasesDatosSection = () => {
         <DialogTitle>Cargar base de datos</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
+            <StructureGuide structure={analysis?.structure} />
+
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
               <TextField
                 label="Nombre del cliente"
@@ -234,10 +238,11 @@ export const BasesDatosSection = () => {
                   )}
                 </Stack>
 
-                {analysis.emailColumnIndex < 0 && (
+                {!analysis.structureOk && (
                   <Alert severity="warning">
-                    No se detectó una columna de correo. Revisa el delimitador o el encabezado
-                    (busca "correo"/"email").
+                    La estructura no cumple el orden requerido. Las 3 primeras columnas deben ser
+                    <strong> Identificación, Correo y Nombre</strong> en ese orden (el backend las
+                    lee por posición). Corrige el archivo o el delimitador antes de subir.
                   </Alert>
                 )}
 
@@ -318,4 +323,45 @@ const PreviewTable = ({ analysis }: { analysis: CsvAnalysis }) => (
       </TableBody>
     </Table>
   </Box>
+);
+
+/* Guía de la estructura obligatoria del CSV. Si se pasa `structure`, marca por
+   posición si cada columna esperada coincide con el archivo cargado. */
+const StructureGuide = ({ structure }: { structure?: CsvAnalysis['structure'] }) => (
+  <Alert severity="info" icon={false} sx={{ '& .MuiAlert-message': { width: '100%' } }}>
+    <Typography variant="subtitle2" gutterBottom>
+      Estructura requerida del CSV — primeras columnas, en este orden:
+    </Typography>
+    <Stack spacing={0.5}>
+      {REQUIRED_COLUMNS.map((col, i) => {
+        const check = structure?.[i];
+        return (
+          <Stack key={col.label} direction="row" alignItems="center" spacing={1}>
+            <Box sx={{ width: 18, fontWeight: 700 }}>{i + 1}.</Box>
+            <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 108 }}>
+              {col.label}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+              ({col.hint})
+            </Typography>
+            {check &&
+              (check.ok ? (
+                <CheckCircleIcon color="success" fontSize="small" />
+              ) : (
+                <Stack direction="row" alignItems="center" spacing={0.5}>
+                  <CancelIcon color="error" fontSize="small" />
+                  <Typography variant="caption" color="error">
+                    {check.actualHeader ? `hay: "${check.actualHeader}"` : 'falta'}
+                  </Typography>
+                </Stack>
+              ))}
+          </Stack>
+        );
+      })}
+    </Stack>
+    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+      Luego puedes añadir columnas opcionales (celular, factura, etc.). Separador: “;”. La
+      Identificación debe ser numérica.
+    </Typography>
+  </Alert>
 );
