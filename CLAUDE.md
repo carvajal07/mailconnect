@@ -174,8 +174,13 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             `components/portal/htmlBuilder.ts`; UI en `HtmlBuilderSection.tsx`.
       - [x] **Campañas** reutiliza `CampanasSection`. **Mi cuenta** muestra la sesión y permite
             cambiar la contraseña (change-password con token).
-      - [ ] Plantillas PDF, Bases de datos, Reportes y Estadísticas quedan como placeholders
-            (esperan backend). El constructor HTML se irá ampliando (más bloques/estilos).
+      - [x] **Bases de datos** (`BasesDatosSection` + `csv.ts`): carga de CSV con
+            **validación/preview local** (parser propio: detecta delimitador, columnas, total
+            de registros, columna de email, y cuenta válidos/inválidos/duplicados) y subida real
+            a S3 vía `get-urlS3` (`documentType=database`), devolviendo la ruta para usarla como
+            Data Path. Lista de bases de la sesión (backend aún no expone listado/edición/lista negra).
+      - [ ] Plantillas PDF, Reportes y Estadísticas quedan como placeholders (esperan backend).
+            El constructor HTML se irá ampliando (más bloques/estilos).
 - [~] Conectar las secciones del panel a la API real (capa de servicios nueva):
       - [x] **Plantillas** → `create-template`, `get-template`, `delete-template` (reales).
       - [x] **Campañas** → `create-campaign` y `get-urlS3` (URL prefirmada + PUT a S3).

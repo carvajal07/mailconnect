@@ -11,13 +11,13 @@ import {
 } from '@mui/material';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
-import StorageIcon from '@mui/icons-material/Storage';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import { useNavigate } from 'react-router-dom';
 import { PortalSidebar } from '../../components/portal/PortalSidebar';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
 import { PlaceholderSection } from '../../components/portal/PlaceholderSection';
+import { BasesDatosSection } from '../../components/portal/BasesDatosSection';
 import { MiCuentaSection } from '../../components/portal/MiCuentaSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
 import { ThemeToggle } from '../../components/ThemeToggle';
@@ -58,13 +58,7 @@ export const PortalPage = () => {
           />
         );
       case 'basesdatos':
-        return (
-          <PlaceholderSection
-            title="Bases de datos"
-            icon={<StorageIcon fontSize="inherit" />}
-            description="Gestión de tus listas de destinatarios y lista negra por cliente. El backend de listar/editar destinatarios aún no está expuesto."
-          />
-        );
+        return <BasesDatosSection />;
       case 'reportes':
         return (
           <PlaceholderSection
