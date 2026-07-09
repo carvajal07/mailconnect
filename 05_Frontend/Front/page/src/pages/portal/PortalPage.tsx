@@ -11,8 +11,10 @@ import {
 } from '@mui/material';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import MenuIcon from '@mui/icons-material/Menu';
+import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import { useNavigate } from 'react-router-dom';
-import { PortalSidebar } from '../../components/portal/PortalSidebar';
+import { PortalSidebar, DRAWER_WIDTH_FULL, DRAWER_WIDTH_MINI } from '../../components/portal/PortalSidebar';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
 import { PlaceholderSection } from '../../components/portal/PlaceholderSection';
 import { BasesDatosSection } from '../../components/portal/BasesDatosSection';
@@ -24,13 +26,14 @@ import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
 import { authService, clearSession, getUser } from '../../services/authService';
 
-const DRAWER_WIDTH = 240;
-
 export const PortalPage = () => {
   const [activeSection, setActiveSection] = useState('html');
+  const [collapsed, setCollapsed] = useState(false);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
   const user = getUser();
+
+  const drawerWidth = collapsed ? DRAWER_WIDTH_MINI : DRAWER_WIDTH_FULL;
 
   const handleLogout = () => {
     setAnchorEl(null);
@@ -70,8 +73,18 @@ export const PortalPage = () => {
 
   return (
     <Box sx={{ display: 'flex' }}>
-      <AppBar position="fixed" sx={{ width: `calc(100% - ${DRAWER_WIDTH}px)`, ml: `${DRAWER_WIDTH}px` }}>
+      <AppBar
+        position="fixed"
+        sx={{
+          width: `calc(100% - ${drawerWidth}px)`,
+          ml: `${drawerWidth}px`,
+          transition: (t) => t.transitions.create(['width', 'margin'], { duration: t.transitions.duration.shorter }),
+        }}
+      >
         <Toolbar>
+          <IconButton color="inherit" edge="start" onClick={() => setCollapsed((c) => !c)} sx={{ mr: 1 }} aria-label="Contraer menú">
+            {collapsed ? <MenuIcon /> : <MenuOpenIcon />}
+          </IconButton>
           <Logo height="40px" />
           <Typography variant="h6" component="div" sx={{ flexGrow: 1, ml: 2 }}>
             Portal del cliente
@@ -99,9 +112,9 @@ export const PortalPage = () => {
         </Toolbar>
       </AppBar>
 
-      <PortalSidebar activeSection={activeSection} onSectionChange={setActiveSection} />
+      <PortalSidebar activeSection={activeSection} onSectionChange={setActiveSection} collapsed={collapsed} />
 
-      <Box component="main" sx={{ flexGrow: 1, p: 3, width: `calc(100% - ${DRAWER_WIDTH}px)` }}>
+      <Box component="main" sx={{ flexGrow: 1, p: 3, width: `calc(100% - ${drawerWidth}px)`, minWidth: 0 }}>
         <Toolbar />
         <Container maxWidth="xl" sx={{ mt: 4 }}>
           {renderSection()}

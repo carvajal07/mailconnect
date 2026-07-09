@@ -20,7 +20,6 @@ import {
   CircularProgress,
   ListItemText,
 } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -37,6 +36,16 @@ import DataObjectIcon from '@mui/icons-material/DataObject';
 import TuneIcon from '@mui/icons-material/Tune';
 import DesktopWindowsIcon from '@mui/icons-material/DesktopWindows';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
+import TitleIcon from '@mui/icons-material/Title';
+import NotesIcon from '@mui/icons-material/Notes';
+import ImageIcon from '@mui/icons-material/Image';
+import SmartButtonIcon from '@mui/icons-material/SmartButton';
+import BrandingWatermarkIcon from '@mui/icons-material/BrandingWatermark';
+import ViewColumnIcon from '@mui/icons-material/ViewColumn';
+import ShareIcon from '@mui/icons-material/Share';
+import HorizontalRuleIcon from '@mui/icons-material/HorizontalRule';
+import HeightIcon from '@mui/icons-material/Height';
+import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
 import { templatesService } from '../../services/templatesService';
 import { isOk } from '../../services/apiClient';
@@ -53,6 +62,19 @@ import {
   type BlockType,
   type EmailSettings,
 } from './htmlBuilder';
+
+const BLOCK_ICONS: Record<BlockType, ReactNode> = {
+  heading: <TitleIcon fontSize="small" />,
+  text: <NotesIcon fontSize="small" />,
+  image: <ImageIcon fontSize="small" />,
+  button: <SmartButtonIcon fontSize="small" />,
+  logo: <BrandingWatermarkIcon fontSize="small" />,
+  columns: <ViewColumnIcon fontSize="small" />,
+  social: <ShareIcon fontSize="small" />,
+  html: <CodeIcon fontSize="small" />,
+  divider: <HorizontalRuleIcon fontSize="small" />,
+  spacer: <HeightIcon fontSize="small" />,
+};
 
 export const HtmlBuilderSection = () => {
   const sessionUserId = getUser()?.userId ?? '';
@@ -324,121 +346,150 @@ export const HtmlBuilderSection = () => {
           </Paper>
         </Box>
       ) : (
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-          {/* Paleta agrupada */}
-          <Paper variant="outlined" sx={{ p: 2, width: { md: 190 }, flexShrink: 0 }}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="flex-start">
+          {/* Paleta agrupada (con icono por bloque) */}
+          <Paper variant="outlined" sx={{ p: 1.5, width: { md: 200 }, flexShrink: 0, position: { md: 'sticky' }, top: { md: 88 } }}>
             {PALETTE_GROUPS.map((group) => (
-              <Box key={group.label} sx={{ mb: 2 }}>
-                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+              <Box key={group.label} sx={{ mb: 1.5 }}>
+                <Typography variant="overline" color="text.secondary" sx={{ px: 0.5, letterSpacing: 0.6 }}>
                   {group.label}
                 </Typography>
-                <Stack spacing={1}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.75, mt: 0.5 }}>
                   {group.types.map((type) => (
                     <Button
                       key={type}
-                      size="small"
                       variant="outlined"
-                      startIcon={<AddIcon />}
                       onClick={() => addBlock(type)}
-                      sx={{ justifyContent: 'flex-start' }}
+                      sx={{
+                        flexDirection: 'column',
+                        gap: 0.25,
+                        py: 1,
+                        textTransform: 'none',
+                        fontSize: 11,
+                        lineHeight: 1.2,
+                        color: 'text.primary',
+                        borderColor: 'divider',
+                        '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover' },
+                      }}
                     >
+                      {BLOCK_ICONS[type]}
                       {BLOCK_LABELS[type]}
                     </Button>
                   ))}
-                </Stack>
+                </Box>
               </Box>
             ))}
           </Paper>
 
-          {/* Lienzo (simula el correo: fondo de página + contenedor centrado) */}
-          <Paper variant="outlined" sx={{ p: 2, flex: 1, minHeight: '60vh', bgcolor: settings.pageBg }}>
-            {blocks.length === 0 && (
-              <Box sx={{ textAlign: 'center', color: 'text.secondary', py: 8 }}>
-                <Typography>Agrega bloques desde la izquierda para empezar.</Typography>
-                <Typography variant="body2">Arrástralos o usa las flechas para reordenarlos.</Typography>
-              </Box>
-            )}
+          {/* Lienzo: hoja de correo centrada sobre un backdrop (theme-aware) */}
+          <Box
+            sx={{
+              flex: 1,
+              minWidth: 0,
+              borderRadius: 2,
+              p: { xs: 1.5, md: 3 },
+              minHeight: '72vh',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'flex-start',
+              bgcolor: (t) => (t.palette.mode === 'dark' ? '#0b1220' : '#eef2f7'),
+            }}
+          >
             <Box
               sx={{
-                mx: 'auto',
-                maxWidth: settings.contentWidth,
+                width: settings.contentWidth,
+                maxWidth: '100%',
                 bgcolor: settings.emailBg,
+                color: '#333333',
                 borderRadius: settings.rounded ? 2 : 0,
+                boxShadow: '0 8px 30px rgba(16,35,63,.16)',
                 overflow: 'hidden',
               }}
             >
-            <Stack spacing={1}>
-              {blocks.map((b, index) => (
-                <Box
-                  key={b.id}
-                  draggable
-                  onDragStart={() => (dragIndex.current = index)}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={() => onDrop(index)}
-                  onClick={() => setSelectedId(b.id)}
-                  sx={{
-                    position: 'relative',
-                    border: '2px solid',
-                    borderColor: selectedId === b.id ? 'primary.main' : 'transparent',
-                    borderRadius: 1,
-                    bgcolor: 'background.paper',
-                    cursor: 'pointer',
-                    '&:hover .block-tools': { opacity: 1 },
-                  }}
-                >
-                  <Stack
-                    direction="row"
-                    className="block-tools"
+              {blocks.length === 0 ? (
+                <Box sx={{ textAlign: 'center', py: 10, px: 3 }}>
+                  <Typography sx={{ color: '#334155', fontWeight: 700 }}>Tu correo está vacío</Typography>
+                  <Typography variant="body2" sx={{ color: '#94a3b8' }}>
+                    Agrega bloques desde la paleta. Arrástralos o usa las flechas para ordenarlos.
+                  </Typography>
+                </Box>
+              ) : (
+                blocks.map((b, index) => (
+                  <Box
+                    key={b.id}
+                    draggable
+                    onDragStart={() => (dragIndex.current = index)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => onDrop(index)}
+                    onClick={() => setSelectedId(b.id)}
                     sx={{
-                      position: 'absolute',
-                      top: 4,
-                      right: 4,
-                      opacity: selectedId === b.id ? 1 : 0,
-                      transition: 'opacity .2s',
-                      bgcolor: 'background.paper',
-                      borderRadius: 1,
-                      boxShadow: 1,
-                      zIndex: 1,
+                      position: 'relative',
+                      cursor: 'pointer',
+                      outline: '2px solid',
+                      outlineOffset: '-2px',
+                      outlineColor: selectedId === b.id ? 'primary.main' : 'transparent',
+                      transition: 'outline-color .15s',
+                      '&:hover': { outlineColor: selectedId === b.id ? 'primary.main' : 'rgba(0,117,190,.35)' },
+                      '&:hover .block-tools': { opacity: 1 },
                     }}
                   >
-                    <Tooltip title="Arrastra para reordenar">
-                      <IconButton size="small" sx={{ cursor: 'grab' }}>
-                        <DragIndicatorIcon fontSize="small" />
+                    <Stack
+                      direction="row"
+                      className="block-tools"
+                      sx={{
+                        position: 'absolute',
+                        top: 6,
+                        right: 6,
+                        opacity: selectedId === b.id ? 1 : 0,
+                        transition: 'opacity .2s',
+                        bgcolor: '#ffffff',
+                        color: '#0075be',
+                        border: '1px solid #e4ebf3',
+                        borderRadius: 1,
+                        boxShadow: 3,
+                        zIndex: 2,
+                      }}
+                    >
+                      <Tooltip title="Arrastra para reordenar">
+                        <IconButton size="small" color="inherit" sx={{ cursor: 'grab' }}>
+                          <DragIndicatorIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <IconButton size="small" color="inherit" onClick={(e) => { e.stopPropagation(); move(index, -1); }} disabled={index === 0}>
+                        <ArrowUpwardIcon fontSize="small" />
                       </IconButton>
-                    </Tooltip>
-                    <IconButton size="small" onClick={(e) => { e.stopPropagation(); move(index, -1); }} disabled={index === 0}>
-                      <ArrowUpwardIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton size="small" onClick={(e) => { e.stopPropagation(); move(index, 1); }} disabled={index === blocks.length - 1}>
-                      <ArrowDownwardIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton size="small" onClick={(e) => { e.stopPropagation(); duplicateBlock(b.id); }}>
-                      <ContentCopyIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton size="small" color="error" onClick={(e) => { e.stopPropagation(); removeBlock(b.id); }}>
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
-                  </Stack>
-                  <Box sx={{ p: 2 }}>
-                    <BlockPreview block={b} />
+                      <IconButton size="small" color="inherit" onClick={(e) => { e.stopPropagation(); move(index, 1); }} disabled={index === blocks.length - 1}>
+                        <ArrowDownwardIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton size="small" color="inherit" onClick={(e) => { e.stopPropagation(); duplicateBlock(b.id); }}>
+                        <ContentCopyIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton size="small" color="error" onClick={(e) => { e.stopPropagation(); removeBlock(b.id); }}>
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Stack>
+                    <Box sx={{ p: 2 }}>
+                      <BlockPreview block={b} />
+                    </Box>
                   </Box>
-                </Box>
-              ))}
-            </Stack>
+                ))
+              )}
             </Box>
-          </Paper>
+          </Box>
 
           {/* Propiedades */}
-          <Paper variant="outlined" sx={{ p: 2, width: { md: 300 }, flexShrink: 0 }}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+          <Paper variant="outlined" sx={{ p: 2, width: { md: 300 }, flexShrink: 0, position: { md: 'sticky' }, top: { md: 88 } }}>
+            <Typography variant="overline" color="text.secondary" sx={{ letterSpacing: 0.6 }}>
               Propiedades
             </Typography>
             {!selected ? (
-              <Typography variant="body2" color="text.secondary">
-                Selecciona un bloque para editarlo.
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                Selecciona un bloque en el lienzo para editar sus propiedades.
               </Typography>
             ) : (
-              <BlockEditor block={selected} onChange={updateSelected} onInsertVariable={insertVariable} />
+              <Box sx={{ mt: 1 }}>
+                <BlockEditor block={selected} onChange={updateSelected} onInsertVariable={insertVariable} />
+              </Box>
             )}
           </Paper>
         </Stack>
@@ -609,11 +660,11 @@ const BlockPreview = ({ block: b }: { block: Block }) => {
       );
     }
     case 'html':
-      return <Box sx={{ fontSize: 13, color: 'text.secondary' }} dangerouslySetInnerHTML={{ __html: b.text }} />;
+      return <Box sx={{ fontSize: 13, color: '#555555' }} dangerouslySetInnerHTML={{ __html: b.text }} />;
     case 'divider':
       return <Box sx={{ borderTop: '1px solid #e4ebf3' }} />;
     case 'spacer':
-      return <Box sx={{ height: b.height, bgcolor: 'action.hover', borderRadius: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'text.disabled', fontSize: 12 }}>{b.height}px</Box>;
+      return <Box sx={{ height: b.height, bgcolor: '#eef2f7', border: '1px dashed #cbd5e1', borderRadius: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 12 }}>{b.height}px</Box>;
     default:
       return null;
   }

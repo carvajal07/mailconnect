@@ -158,8 +158,9 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [x] **Pantalla de reseteo con OTP** (`/reset-password`: código + nueva contraseña) que
       cierra la recuperación end-to-end (llama a `change-password` con OTP).
 - [~] **Portal del cliente** (`/panel`, destino del login; `/admin` sigue intacto con sus 3
-      secciones para uso interno). Sidebar con tabs: Plantillas HTML, Plantillas PDF, Campañas,
-      Bases de datos, Reportes, Estadísticas, Mi cuenta.
+      secciones para uso interno). Sidebar **colapsable** (riel de solo iconos con tooltips,
+      toggle en el AppBar) con tabs: Plantillas HTML, Plantillas PDF, Campañas, Bases de datos,
+      Reportes, Estadísticas, Mi cuenta.
       - [x] **Plantillas HTML** → constructor drag-and-drop "pro" (tipo Topol): 10 bloques
             (encabezado, texto, imagen, botón, logo, 2 columnas, redes sociales, HTML crudo,
             divisor, espaciador) en paleta agrupada (Contenido/Estructura), reorden por
@@ -172,6 +173,9 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             (columnas que apilan en móvil), ghost tables + condicionales MSO para Outlook,
             fix de Apple Mail, imágenes fluidas y botones bulletproof. Modelo y generación en
             `components/portal/htmlBuilder.ts`; UI en `HtmlBuilderSection.tsx`.
+            **Diseño:** paleta con icono por bloque (Contenido/Estructura) y lienzo tipo "hoja
+            de correo" centrada con sombra; los bloques se renderizan sobre la hoja blanca
+            (colores fijos), de modo que el **modo oscuro** se ve correcto (WYSIWYG legible).
       - [x] **Campañas** reutiliza `CampanasSection`. **Mi cuenta** muestra la sesión y permite
             cambiar la contraseña (change-password con token).
       - [x] **Bases de datos** (`BasesDatosSection` + `csv.ts`): carga de CSV con
