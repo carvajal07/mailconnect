@@ -14,6 +14,7 @@ import {
 import CodeIcon from '@mui/icons-material/Code';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import CampaignIcon from '@mui/icons-material/Campaign';
+import RateReviewIcon from '@mui/icons-material/RateReview';
 import StorageIcon from '@mui/icons-material/Storage';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import BarChartIcon from '@mui/icons-material/BarChart';
@@ -30,6 +31,7 @@ export const PORTAL_TABS: PortalTab[] = [
   { id: 'html', label: 'Plantillas HTML', icon: <CodeIcon /> },
   { id: 'pdf', label: 'Plantillas PDF', icon: <PictureAsPdfIcon /> },
   { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },
+  { id: 'muestras', label: 'Muestras', icon: <RateReviewIcon /> },
   { id: 'basesdatos', label: 'Bases de datos', icon: <StorageIcon /> },
   { id: 'reportes', label: 'Reportes', icon: <AssessmentIcon /> },
   { id: 'estadisticas', label: 'Estadísticas', icon: <BarChartIcon /> },

@@ -19,7 +19,20 @@ import type { ApiResponse } from './apiClient';
 export const CAMPAIGN_ENDPOINTS = {
   CREATE: '/email/config/create-campaign',
   PRESIGN_URL: '/get-urlS3',
+  SEND_SAMPLES: '/campaigns/send-samples', // ⚠️ no existe aún en el backend
 };
+
+export interface SamplesPayload {
+  customerName: string;
+  campaignName: string;
+  userId: string;
+  template: string;
+  templateVersion: number;
+  quantitySamples: number;
+  selectiveSamples: boolean;
+  recipients: string[];
+  identifications: string[];
+}
 
 export interface CampaignPayload {
   customerId: string;
@@ -44,6 +57,10 @@ export const campaignsService = {
   /** Solicita una URL prefirmada de S3 para subir el archivo (CSV/documento). */
   presignUrl: (payload: PresignPayload): Promise<ApiResponse<{ url?: string; path?: string }>> =>
     apiPost(CAMPAIGN_ENDPOINTS.PRESIGN_URL, payload),
+
+  /** Envía muestras de la campaña (⚠️ endpoint pendiente en el backend). */
+  sendSamples: (payload: SamplesPayload): Promise<ApiResponse> =>
+    apiPost(CAMPAIGN_ENDPOINTS.SEND_SAMPLES, payload),
 
   /** Sube el archivo a S3 con la URL prefirmada (PUT directo). Devuelve true si OK. */
   uploadToS3: async (url: string, file: File): Promise<boolean> => {

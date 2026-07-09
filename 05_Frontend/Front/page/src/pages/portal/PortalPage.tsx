@@ -19,6 +19,7 @@ import { PortalSidebar, DRAWER_WIDTH_FULL, DRAWER_WIDTH_MINI } from '../../compo
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
 import { PlaceholderSection } from '../../components/portal/PlaceholderSection';
 import { BasesDatosSection } from '../../components/portal/BasesDatosSection';
+import { MuestrasSection } from '../../components/portal/MuestrasSection';
 import { EstadisticasSection } from '../../components/portal/EstadisticasSection';
 import { ReportesSection } from '../../components/portal/ReportesSection';
 import { MiCuentaSection } from '../../components/portal/MiCuentaSection';
@@ -51,6 +52,8 @@ export const PortalPage = () => {
         return <HtmlBuilderSection />;
       case 'campanas':
         return <CampanasSection />;
+      case 'muestras':
+        return <MuestrasSection />;
       case 'cuenta':
         return <MiCuentaSection />;
       case 'pdf':
