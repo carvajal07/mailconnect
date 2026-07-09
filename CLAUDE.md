@@ -150,6 +150,20 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
       (`src/theme/authStyles.ts`): glow cyan en oscuro, sombras suaves en claro.
 - [x] **Pantalla de reseteo con OTP** (`/reset-password`: código + nueva contraseña) que
       cierra la recuperación end-to-end (llama a `change-password` con OTP).
+- [~] **Portal del cliente** (`/panel`, destino del login; `/admin` sigue intacto con sus 3
+      secciones para uso interno). Sidebar con tabs: Plantillas HTML, Plantillas PDF, Campañas,
+      Bases de datos, Reportes, Estadísticas, Mi cuenta.
+      - [x] **Plantillas HTML** → constructor drag-and-drop "pro" (tipo Topol): 10 bloques
+            (encabezado, texto, imagen, botón, logo, 2 columnas, redes sociales, HTML crudo,
+            divisor, espaciador), reorden por arrastre + flechas, duplicar/eliminar, panel de
+            propiedades, variables de personalización `{{nombre}}`, vista previa (iframe),
+            "Ver HTML", **borradores** en localStorage (guardar/cargar/eliminar), **cargar de
+            SES** (get-template → bloque HTML editable) y **publicar** vía `create-template`.
+            HTML generado "email-safe" (tablas + estilos inline). Fuente: `components/portal/`.
+      - [x] **Campañas** reutiliza `CampanasSection`. **Mi cuenta** muestra la sesión y permite
+            cambiar la contraseña (change-password con token).
+      - [ ] Plantillas PDF, Bases de datos, Reportes y Estadísticas quedan como placeholders
+            (esperan backend). El constructor HTML se irá ampliando (más bloques/estilos).
 - [~] Conectar las secciones del panel a la API real (capa de servicios nueva):
       - [x] **Plantillas** → `create-template`, `get-template`, `delete-template` (reales).
       - [x] **Campañas** → `create-campaign` y `get-urlS3` (URL prefirmada + PUT a S3).
@@ -214,6 +228,12 @@ src/services/apiClient.ts               (nuevo)  cliente HTTP autenticado + enve
 src/services/templatesService.ts        (nuevo)  create/get/delete-template (reales)
 src/services/campaignsService.ts        (nuevo)  create-campaign + get-urlS3 (S3 PUT)
 src/hooks/useFeedback.tsx               (nuevo)  Snackbar de feedback reutilizable
+src/pages/portal/PortalPage.tsx         (nuevo)  portal del cliente (/panel) + tabs
+src/components/portal/PortalSidebar.tsx (nuevo)  sidebar de tabs del portal
+src/components/portal/HtmlBuilderSection.tsx (nuevo) constructor HTML drag-and-drop
+src/components/portal/htmlBuilder.ts    (nuevo)  modelo de bloques + generación de HTML
+src/components/portal/MiCuentaSection.tsx (nuevo) perfil + cambio de contraseña
+src/components/portal/PlaceholderSection.tsx (nuevo) secciones "próximamente"
 src/components/admin/PlantillasSection.tsx (mod) conectada a templatesService
 src/components/admin/CampanasSection.tsx   (mod) conectada a campaignsService
 src/config/api.ts                       (mod)    endpoints reales + placeholders marcados

@@ -144,14 +144,14 @@ export const LoginPage = () => {
       const res = await authService.login(formData.email, formData.password);
 
       if (res.status && res.statusCode === 200 && res.data) {
-        // Guardar sesión (token + datos del usuario) y entrar al panel
+        // Guardar sesión (token + datos del usuario) y entrar al portal del cliente
         saveSession(res.data.token, {
           userId: res.data.userId,
           name: res.data.name,
           customer: res.data.customer,
           email: formData.email,
         });
-        navigate('/admin');
+        navigate('/panel');
         return;
       }
 
