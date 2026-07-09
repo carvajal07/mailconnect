@@ -113,11 +113,20 @@ jobs:
 
             work=$(mktemp -d)
             cp -r "$src/." "$work/"
-            # Si la lambda trae dependencias propias, se instalan en el paquete.
+            # Instala dependencias SOLO si requirements.txt trae líneas reales
+            # (no comentarios ni vacías). Los requirements.txt del repo suelen ser
+            # placeholders en Latin-1 (comentados) y las deps van por layer.
             if [ -f "$work/requirements.txt" ]; then
-              python -m pip install --quiet -r "$work/requirements.txt" -t "$work"
+              real=$(grep -a -Ev '^[[:space:]]*(#|$)' "$work/requirements.txt" | grep -a -c '.' || true)
+              [ -z "$real" ] && real=0
+              if [ "$real" -gt 0 ]; then
+                echo "   Instalando $real dependencia(s) de requirements.txt"
+                python -m pip install --quiet -r "$work/requirements.txt" -t "$work"
+              else
+                echo "   requirements.txt sin dependencias reales; se omite pip."
+              fi
             fi
-            ( cd "$work" && zip -qr /tmp/lambda.zip . -x '*.pyc' '__pycache__/*' )
+            ( cd "$work" && zip -qr /tmp/lambda.zip . -x '*.pyc' '__pycache__/*' 'requirements.txt' )
 
             echo "🚀  Actualizando $fn"
             if aws lambda update-function-code \
