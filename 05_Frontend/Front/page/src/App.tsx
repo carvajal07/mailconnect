@@ -6,6 +6,7 @@ import { RegisterPage } from './pages/auth/RegisterPage';
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage';
 import { AdminPage } from './pages/admin/AdminPage';
+import { PortalPage } from './pages/portal/PortalPage';
 import { RequireAuth } from './components/RequireAuth';
 import { ThemeProvider } from './contexts/ThemeContext';
 
@@ -24,7 +25,17 @@ function App() {
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-          {/* Ruta de administración (protegida) */}
+          {/* Portal del cliente (protegido) — destino del login */}
+          <Route
+            path="/panel"
+            element={
+              <RequireAuth>
+                <PortalPage />
+              </RequireAuth>
+            }
+          />
+
+          {/* Ruta de administración interna (protegida) */}
           <Route
             path="/admin"
             element={
