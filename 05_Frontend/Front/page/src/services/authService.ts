@@ -180,3 +180,51 @@ export function clearSession(): void {
 export function isAuthenticated(): boolean {
   return !!getToken();
 }
+
+/* --------------------- Expiración y cierre de sesión --------------------- */
+
+/** Decodifica el payload del JWT SIN validar la firma (solo para leer `exp`). */
+function decodeJwtPayload(token: string): { exp?: number } | null {
+  try {
+    const part = token.split('.')[1];
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(decodeURIComponent(escape(atob(b64)))) as { exp?: number };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ¿El token de la sesión ya venció? (con 30 s de margen para evitar mandar
+ * peticiones que van a morir en el Authorizer). Sin token o token ilegible → true.
+ */
+export function isTokenExpired(): boolean {
+  const token = getToken();
+  if (!token) return true;
+  const payload = decodeJwtPayload(token);
+  if (!payload?.exp) return false; // token sin exp: se deja pasar (el backend decide)
+  return Date.now() / 1000 > payload.exp - 30;
+}
+
+export type LogoutReason = 'expired' | 'inactive';
+
+const LOGOUT_REASON_KEY = 'mc_logout_reason';
+
+/** Motivo del último cierre de sesión automático (lo lee la pantalla de login). */
+export function consumeLogoutReason(): LogoutReason | null {
+  const reason = sessionStorage.getItem(LOGOUT_REASON_KEY) as LogoutReason | null;
+  sessionStorage.removeItem(LOGOUT_REASON_KEY);
+  return reason;
+}
+
+/**
+ * Cierra la sesión automáticamente (token vencido / inactividad) y lleva al login.
+ * Usa navegación dura para limpiar cualquier estado en memoria del panel.
+ */
+export function sessionExpired(reason: LogoutReason): void {
+  clearSession();
+  try { sessionStorage.setItem(LOGOUT_REASON_KEY, reason); } catch { /* sin sessionStorage */ }
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.assign('/login');
+  }
+}

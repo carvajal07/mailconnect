@@ -1,8 +1,12 @@
 '''
 Lambda para realizar el envio de emails en lotes (Email marketing)
 '''
+import os
 import json
+import hmac
 import uuid
+import base64
+import hashlib
 from datetime import datetime
 
 import boto3
@@ -13,6 +17,21 @@ from botocore.exceptions import ClientError
 #C0301 -> line too long
 REGION = 'us-east-1'
 QUANTITY_BATCH = 50
+
+# Desuscripción: URL pública de la lambda Unsubscribe y clave para firmar el token.
+# El builder agrega al pie de cada plantilla un enlace con la variable
+# {{unsubscribeUrl}}; aquí se llena por destinatario. Enviar el dato SIEMPRE es
+# seguro: si la plantilla no usa la variable, SES ignora el campo extra.
+UNSUBSCRIBE_URL = os.environ.get('UNSUBSCRIBE_URL', 'https://api.mailconnect.com.co/V1/Email/Unsubscribe')
+SECRET_KEY = os.environ.get('SECRET_KEY', '')
+
+
+def build_unsubscribe_url(customer, email):
+    """Token firmado (HMAC-SHA256) que la lambda Unsubscribe valida."""
+    payload = json.dumps({'c': customer, 'e': email}, separators=(',', ':'))
+    payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode().rstrip('=')
+    signature = hmac.new(SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{UNSUBSCRIBE_URL}?t={payload_b64}.{signature}"
 
 global customer_name
 global template_name
@@ -160,6 +179,8 @@ def send_bulk(data:list, headers:list, start:int, end:int, default_tags:dict)->N
         unique_ids.append(unique_id)
         #print(email)
         json_dict = dict(zip(headers,register))
+        # Enlace de desuscripción por destinatario (variable {{unsubscribeUrl}}).
+        json_dict['unsubscribeUrl'] = build_unsubscribe_url(customer_name, email)
         json_string = json.dumps(json_dict)
         destinations.append({
             "Destination":{"ToAddresses": [email]},

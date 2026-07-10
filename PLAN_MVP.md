@@ -112,11 +112,23 @@ admin de clientes, verify-code.
 ### Fase 1 — MVP correo en producción (1–2 semanas) 🔴🟠
 
 **Backend/código:**
-- [ ] `[C]` **Desuscripción end-to-end:** lambda `Api_V1_Email_Unsubscribe` (GET público con token firmado por destinatario/campaña → inserta en `{customer}_unsubscribe` → página/redirect de confirmación); el builder agrega el link de baja automáticamente al pie; los Send agregan header `List-Unsubscribe`.
-- [ ] `[C]` **`POST /Campaign/List`** (por `customerId`, devuelve campañas con estado) + conectar Campañas/Muestras (selector en vez de texto libre) y Estadísticas.
-- [ ] `[C]` **Manejo de 401 en `apiClient`** → limpiar sesión + redirect a `/login`.
+- [x] `[C]` **Desuscripción end-to-end:** lambda `Api_V1_Email_Unsubscribe` (GET/POST público,
+      token firmado HMAC con `SECRET_KEY`, inserta en `{customer}_unsubscribe` con PK `email`,
+      página HTML de confirmación); el builder agrega el pie de baja automáticamente
+      (`{{unsubscribeUrl}}`); Send-EM llena la variable por destinatario y Send-EAU además
+      agrega los headers `List-Unsubscribe`/`List-Unsubscribe-Post` (RFC 8058). Se arregló el
+      chequeo de desuscritos de Prepare-batch (estaba muerto por una bandera que siempre quedaba
+      True) y `check_unsubscribes`/`check_blacklist` ahora trocean el BatchGet (100 llaves) y no
+      tumban el envío si el esquema no coincide. ⚠️ EAP pendiente (mismo patrón que EAU).
+- [x] `[C]` **`POST /Campaign/List`** (por `customerId`) + **`POST /Template/List`** (SES filtrado
+      por prefijo del cliente). Conectados: Campañas (tabla real con estado + selector de
+      plantilla), Muestras (selección de campaña con estado y plantilla, ya no texto libre) y el
+      builder ("Cargar de SES" con selector).
+- [x] `[C]` **Manejo de 401/expiración en `apiClient`** → limpia sesión + redirect a `/login` con
+      aviso; **cierre por inactividad** (`VITE_IDLE_MINUTES`, default 15 min) en `RequireAuth`.
 - [ ] `[C]` **GSI de lista negra** (código `check_blacklist` por índice `email`).
-- [ ] `[C]` Ampliar pruebas: unsubscribe, campaign-list, prepare-batch (muestras selectivas ya corregidas).
+- [x] `[C]` Ampliar pruebas: desuscripción (4 pruebas: token válido/alterado/idempotente/sin token;
+      29 en total). Pendiente: campaign-list y prepare-batch.
 
 **Consola AWS `[J]`:**
 - [ ] Crear tabla `databaseFile` (PK `databaseFileId`) + lambdas `Api_V1_Database_Register-file` y `Api_V1_Database_List` + rutas `/Database/*` con CORS + permisos DynamoDB.
@@ -125,7 +137,17 @@ admin de clientes, verify-code.
 - [ ] Env vars: `SECRET_KEY` (nueva), `SENDER_EMAIL`, `ACTIVATION_URL`, `ACTIVATION_SUCCESS/ERROR/EXPIRED_URL`, `OTP_EXPIRATION_MIN`.
 - [ ] Verificar mapeo de rutas `/Email/Send-batch-template(-samples)` → `Prepare-batch-template`; revisar que `Api_V1_Email_Send-batch-template` (stub) no esté en uso y restaurar versión si algo la usa.
 - [ ] **SES production access** + dominio verificado + DKIM + SPF + DMARC (GoDaddy).
-- [ ] Ruta pública `GET /Email/Unsubscribe` (cuando `[C]` entregue la lambda).
+- [ ] Crear las lambdas nuevas en AWS: `Api_V1_Email_Unsubscribe`, `Api_V1_Campaign_List`,
+      `Api_V1_Template_List` (el CD las actualizará en adelante) + rutas: `GET/POST
+      /Email/Unsubscribe` (**proxy, SIN authorizer, pública**), `POST /Campaign/List` y
+      `POST /Template/List` (con authorizer + CORS) + redeploy del stage.
+- [ ] Env vars de desuscripción: `SECRET_KEY` en `Api_V1_Email_Unsubscribe`,
+      `Api_V1_Email_Send-batch-template-EM` y `-EAU` (y `UNSUBSCRIBE_URL` si difiere del
+      default `https://api.mailconnect.com.co/V1/Email/Unsubscribe`). Permisos: la lambda
+      Unsubscribe necesita `dynamodb:CreateTable/PutItem/DescribeTable`; `Template_List`
+      necesita `ses:ListTemplates`.
+- [ ] ⚠️ Si ya existen tablas `{customer}_unsubscribe` viejas (PK `unsubscribeId`), eliminarlas
+      para que se recreen con PK `email` (estaban vacías: el flujo nunca escribió en ellas).
 - [ ] DLQ para las 3 colas SQS + alarmas CloudWatch (errores lambda, bounce/complaint rate, presupuesto).
 - [ ] PITR en tablas globales DynamoDB.
 - [ ] Hosting del front: S3+CloudFront (o Amplify) en `www.mailconnect.com.co`, `VITE_API_BASE_URL=https://api.mailconnect.com.co/V1`, certificado ACM.

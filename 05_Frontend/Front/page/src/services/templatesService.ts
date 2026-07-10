@@ -18,7 +18,14 @@ export const TEMPLATE_ENDPOINTS = {
   CREATE: '/Template/Create-template',
   GET: '/Template/Get-template',
   DELETE: '/Template/Delete-template',
+  LIST: '/Template/List',
 };
+
+/** Plantilla como la devuelve POST /Template/List (SES filtrado por cliente). */
+export interface TemplateSummary {
+  name: string;
+  created: string;
+}
 
 export interface TemplatePayload {
   userId: string;
@@ -43,6 +50,10 @@ export type GetTemplateResponse = ApiResponse & { template?: SesTemplate };
 
 export const templatesService = {
   create: (payload: TemplatePayload) => apiPost(TEMPLATE_ENDPOINTS.CREATE, payload),
+
+  /** Lista las plantillas SES del cliente (por nombre de empresa o customerId). */
+  list: (customer: string, customerId?: string): Promise<ApiResponse<{ templates?: TemplateSummary[]; count?: number }>> =>
+    apiPost(TEMPLATE_ENDPOINTS.LIST, customer ? { customer } : { customerId }),
 
   get: (userId: string, templateName: string): Promise<GetTemplateResponse> =>
     apiPost(TEMPLATE_ENDPOINTS.GET, { userId, templateName }) as Promise<GetTemplateResponse>,

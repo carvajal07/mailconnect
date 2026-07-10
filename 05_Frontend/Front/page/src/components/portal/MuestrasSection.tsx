@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -29,8 +29,12 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import ApartmentIcon from '@mui/icons-material/Apartment';
+import MenuItem from '@mui/material/MenuItem';
 import { getUser } from '../../services/authService';
 import { campaignsService } from '../../services/campaignsService';
+import type { CampaignSummary } from '../../services/campaignsService';
+import { templatesService } from '../../services/templatesService';
+import type { TemplateSummary } from '../../services/templatesService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 
@@ -72,9 +76,44 @@ export const MuestrasSection = () => {
 
   // El cliente (empresa) se toma de la sesión, no se captura en el formulario.
   const cliente = user?.customer ?? '';
+  const customerId = user?.customerId ?? '';
   const [campaign, setCampaign] = useState('');
   const [template, setTemplate] = useState('');
   const [version, setVersion] = useState(1);
+
+  // Listas del backend: la campaña SE SELECCIONA (no se escribe a mano).
+  const [campaignOptions, setCampaignOptions] = useState<CampaignSummary[]>([]);
+  const [templateOptions, setTemplateOptions] = useState<TemplateSummary[]>([]);
+  const [loadingLists, setLoadingLists] = useState(false);
+
+  const loadLists = useCallback(async () => {
+    if (!customerId && !cliente) return;
+    setLoadingLists(true);
+    const [resCampaigns, resTemplates] = await Promise.all([
+      customerId ? campaignsService.list(customerId) : Promise.resolve(null),
+      templatesService.list(cliente, customerId),
+    ]);
+    setLoadingLists(false);
+    if (resCampaigns && isOk(resCampaigns) && resCampaigns.data?.campaigns) {
+      setCampaignOptions(resCampaigns.data.campaigns);
+    }
+    if (isOk(resTemplates) && resTemplates.data?.templates) {
+      setTemplateOptions(resTemplates.data.templates);
+    }
+  }, [customerId, cliente]);
+
+  useEffect(() => {
+    loadLists();
+  }, [loadLists]);
+
+  /** Solo se pueden probar campañas en estado Pendiente o Muestras (regla del backend). */
+  const isSendable = (c: CampaignSummary) => c.campaignState === 'Pendiente' || c.campaignState === 'Muestras';
+
+  const selectCampaign = (name: string) => {
+    setCampaign(name);
+    const found = campaignOptions.find((c) => c.campaignName === name);
+    if (found?.template) setTemplate(found.template);
+  };
 
   const [tipo, setTipo] = useState<TipoMuestra>('aleatorias');
   const [quantity, setQuantity] = useState(1);
@@ -191,9 +230,55 @@ export const MuestrasSection = () => {
           <SectionTitle icon={<CampaignIcon color="primary" />} title="Campaña a probar" />
           <Stack spacing={2} sx={{ mt: 2 }}>
             <ClienteSesion cliente={cliente} />
-            <TextField label="Campaña" value={campaign} onChange={(e) => setCampaign(e.target.value)} fullWidth size="small" />
+            <TextField
+              select
+              label="Campaña"
+              value={campaign}
+              onChange={(e) => selectCampaign(e.target.value)}
+              fullWidth
+              size="small"
+              helperText={
+                loadingLists
+                  ? 'Cargando campañas…'
+                  : campaignOptions.length === 0
+                    ? 'No hay campañas registradas; crea una en la pestaña Campañas.'
+                    : 'Solo se pueden probar campañas en estado Pendiente o Muestras.'
+              }
+            >
+              {campaignOptions.length === 0 && (
+                <MenuItem value="" disabled>
+                  {loadingLists ? 'Cargando…' : 'Sin campañas'}
+                </MenuItem>
+              )}
+              {campaignOptions.map((c) => (
+                <MenuItem key={c.campaignId} value={c.campaignName} disabled={!isSendable(c)}>
+                  {c.campaignName} — {c.channel} · {c.campaignState}
+                </MenuItem>
+              ))}
+            </TextField>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-              <TextField label="Plantilla" value={template} onChange={(e) => setTemplate(e.target.value)} fullWidth size="small" />
+              <TextField
+                select
+                label="Plantilla (SES)"
+                value={template}
+                onChange={(e) => setTemplate(e.target.value)}
+                fullWidth
+                size="small"
+              >
+                {template && !templateOptions.some((t) => t.name === template) && (
+                  <MenuItem value={template}>{template}</MenuItem>
+                )}
+                {templateOptions.length === 0 && !template && (
+                  <MenuItem value="" disabled>
+                    {loadingLists ? 'Cargando…' : 'Sin plantillas'}
+                  </MenuItem>
+                )}
+                {templateOptions.map((t) => (
+                  <MenuItem key={t.name} value={t.name}>
+                    {t.name}
+                  </MenuItem>
+                ))}
+              </TextField>
               <TextField
                 label="Versión de plantilla"
                 type="number"

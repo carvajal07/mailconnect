@@ -103,6 +103,11 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `change-password` | `{ user (email), password (nueva), otp? }` + header `Authorization: Bearer` (alternativo) | 200 ok · 401 sin auth/OTP · 400 débil · 404 no existe |
 | `forgot-password` | `{ user (email), ip? }` | 200 siempre (genérico, no revela si el correo existe; envía OTP por correo) |
 | `logout` | `{ user (email) }` | 200 (idempotente) |
+| `Campaign/List` | `{ customerId }` | 200 `data:{campaigns[], count}` (orden desc por fecha; incluye `campaignState`) |
+| `Template/List` | `{ customer }` o `{ customerId }` | 200 `data:{templates:[{name, created}], count}` (SES filtrado por prefijo `{customer}_`) |
+| `Email/Unsubscribe` | **GET/POST público (proxy, sin authorizer)** `?t=<token HMAC>` | 200 página HTML (confirmación / enlace inválido). El token lo firman las lambdas Send con `SECRET_KEY`; inserta en `{customer}_unsubscribe` (PK `email`) |
+| `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, ... }` | 201 `data:{databaseFileId}` |
+| `Database/List` | `{ customerId }` | 200 `data:{files[], count}` |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -115,6 +120,28 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - `ACTIVATION_URL` — endpoint público de activación que va en el correo (register).
 - `ACTIVATION_SUCCESS_URL` / `ACTIVATION_ERROR_URL` / `ACTIVATION_EXPIRED_URL` — redirects (account-activation).
 - `OTP_EXPIRATION_MIN` — minutos de validez del OTP (create-otp, default 5).
+- `UNSUBSCRIBE_URL` — URL pública de la lambda Unsubscribe (Send-EM/EAU; default
+  `https://api.mailconnect.com.co/V1/Email/Unsubscribe`).
+- `SECRET_KEY` **también** en `Api_V1_Email_Unsubscribe`, `Send-batch-template-EM` y `-EAU`
+  (firma/validación del token de desuscripción — la misma clave del JWT).
+
+### Desuscripción (cómo funciona)
+1. El builder agrega SIEMPRE un pie con `{{unsubscribeUrl}}` al HTML generado (no removible).
+2. Send-EM llena esa variable por destinatario (token HMAC `base64url({c,e}).firma`);
+   Send-EAU además agrega headers `List-Unsubscribe` + `List-Unsubscribe-Post` (RFC 8058).
+3. La lambda `Api_V1_Email_Unsubscribe` (pública) valida la firma e inserta el email en
+   `{customer}_unsubscribe` (PK `email`) y muestra una página de confirmación con la marca.
+4. Prepare-batch filtra contra esa tabla en el envío real (chequeo reparado: antes nunca corría).
+   ⚠️ EAP aún no reemplaza la variable (pendiente, mismo patrón que EAU).
+
+### Sesión del front
+- El JWT se decodifica en el cliente para conocer `exp`: si venció, `apiClient` corta antes de
+  llamar a la API y cualquier 401/403 del Authorizer limpia la sesión y redirige a `/login`
+  con aviso ("Tu sesión expiró").
+- **Inactividad:** `RequireAuth` marca actividad (mouse/teclado/scroll/touch, compartida entre
+  pestañas vía `localStorage.mc_last_activity`) y cada 30 s verifica: si pasan más de
+  `VITE_IDLE_MINUTES` (default 15) sin actividad → cierre automático con aviso
+  ("Cerramos tu sesión por inactividad").
 
 ---
 

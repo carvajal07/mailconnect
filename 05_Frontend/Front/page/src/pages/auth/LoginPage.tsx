@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -15,7 +15,7 @@ import {
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { AuthLayout } from '../../components/AuthLayout';
-import { authService, saveSession } from '../../services/authService';
+import { authService, saveSession, consumeLogoutReason } from '../../services/authService';
 import { MOCK_ENABLED, DEMO_CREDENTIALS } from '../../services/mockAuth';
 import {
   authCardSx,
@@ -50,6 +50,14 @@ export const LoginPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [sessionNotice, setSessionNotice] = useState('');
+
+  // Aviso cuando la sesión se cerró sola (token vencido o inactividad).
+  useEffect(() => {
+    const reason = consumeLogoutReason();
+    if (reason === 'expired') setSessionNotice('Tu sesión expiró. Inicia sesión nuevamente.');
+    if (reason === 'inactive') setSessionNotice('Cerramos tu sesión por inactividad. Inicia sesión nuevamente.');
+  }, []);
 
   // Validación de email
   const validateEmail = (email: string): string | undefined => {
@@ -201,6 +209,12 @@ export const LoginPage = () => {
             <Alert severity="info" sx={{ mb: 2 }}>
               Modo demo activo: puedes entrar con cualquier credencial. Sugerida{' '}
               <strong>{DEMO_CREDENTIALS.email}</strong> / <strong>{DEMO_CREDENTIALS.password}</strong>.
+            </Alert>
+          )}
+
+          {sessionNotice && (
+            <Alert severity="info" sx={{ mb: 2 }} onClose={() => setSessionNotice('')}>
+              {sessionNotice}
             </Alert>
           )}
 

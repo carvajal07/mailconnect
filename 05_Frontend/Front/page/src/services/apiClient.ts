@@ -1,5 +1,5 @@
 import { AUTH_API_BASE } from '../config/api';
-import { getToken } from './authService';
+import { getToken, isTokenExpired, sessionExpired } from './authService';
 
 /**
  * Cliente HTTP compartido para los módulos del panel (plantillas, campañas...).
@@ -28,6 +28,12 @@ async function request<T = unknown>(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (useAuth) {
     const token = getToken();
+    // Si el JWT ya venció, no vale la pena pegarle a la API: se cierra la
+    // sesión y se redirige al login con el aviso correspondiente.
+    if (token && isTokenExpired()) {
+      sessionExpired('expired');
+      return { status: false, statusCode: 401, description: 'Tu sesión expiró. Inicia sesión nuevamente.' };
+    }
     if (token) headers['Authorization'] = `Bearer ${token}`;
   }
 
@@ -44,6 +50,12 @@ async function request<T = unknown>(
       statusCode: 0,
       description: 'No se pudo conectar con el servidor. Verifica tu conexión.',
     };
+  }
+
+  // Rechazo del Authorizer (token vencido/ inválido): cerrar sesión y volver al login.
+  if ((res.status === 401 || res.status === 403) && useAuth && getToken()) {
+    sessionExpired('expired');
+    return { status: false, statusCode: 401, description: 'Tu sesión expiró. Inicia sesión nuevamente.' };
   }
 
   let json: unknown;

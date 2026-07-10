@@ -354,65 +354,54 @@ def get_blacklist_emails() -> set:
 def filtrar_emails_validos(lista_emails: list[str], blacklist: set[str]) -> list[str]:
     return [email for email in lista_emails if email not in blacklist]
 
-def check_blacklist(keys:list)->list:
+def _batch_get_emails(table_name:str, keys:list)->set:
     """
-    Esta función se encarga de consultar los email en la lista negra del cliente
+    Consulta por lotes qué emails de `keys` existen en la tabla `table_name`
+    (cuya PK debe ser 'email'). BatchGetItem admite máximo 100 llaves y no
+    acepta duplicados, así que se deduplica y se trocea. Si la tabla no existe
+    o su esquema no coincide (tablas viejas con otra PK), devuelve vacío y
+    registra el error en lugar de tumbar el envío.
 
     Args:
-        keys (list): lista de llaves con los email a consultar
+        table_name (str): Nombre de la tabla (PK 'email')
+        keys (list): Lista de llaves [{'email': ...}]
 
     Returns:
-        list: Retorna la lista con los email que estan en la lista negra del cliente
+        set: Emails encontrados en la tabla
     """
-    # La tabla de lista negra del cliente se llama '{customer}_blackList' (con L
-    # mayúscula): así la crea este mismo proceso (ver check_and_create_table más
-    # abajo) y así la escribe ReceptionStatus. Debe coincidir en TODOS lados.
-    table_name_blacklist = f'{customer_name}_blackList'
-    request_items = {
-        table_name_blacklist: {
-            'Keys': keys
-        }
-    }
+    found = set()
+    unique_keys = list({k['email']: k for k in keys}.values())
+    try:
+        for start in range(0, len(unique_keys), 100):
+            chunk = unique_keys[start:start + 100]
+            request_items = {table_name: {'Keys': chunk, 'ProjectionExpression': 'email'}}
+            while request_items:
+                response = dynamodb.batch_get_item(RequestItems=request_items)
+                for item in response.get('Responses', {}).get(table_name, []):
+                    found.add(item['email'])
+                # Reintentar las llaves que DynamoDB no alcanzó a procesar.
+                request_items = response.get('UnprocessedKeys') or None
+    except Exception as e:
+        print(f'No se pudo consultar la tabla {table_name} (se continúa sin filtrar): {e}')
+        return set()
+    return found
 
-    # BatchGetItem se hace a nivel del recurso (no de la Table).
-    response = dynamodb.batch_get_item(RequestItems=request_items)
-
-    # Obtener los correos electrónicos que están en la lista negra
-    blacklisted_emails = set()
-    for item in response.get('Responses', {}).get(table_name_blacklist, []):
-        blacklisted_emails.add(item['email'])
-
-    return blacklisted_emails
-
-def check_unsubscribes(keys:list)->list:
+def check_blacklist(keys:list)->set:
     """
-    Esta función se encarga de traer todos los registros que se encuentran en la tabla de desinscritos del cliente.
-
-    Args:
-        keys (list): lista con los email a consultar en la tabla
-
-    Returns:
-        list: Lista con los email desinscritos
+    Consulta los email en la lista negra del cliente.
+    Nota: la tabla '{customer}_blackList' histórica tiene PK 'blackListId', por lo
+    que esta consulta por email solo funciona en tablas nuevas con PK 'email' (o
+    cuando se agregue el GSI por email). Si el esquema no coincide, devuelve
+    vacío sin interrumpir el envío.
     """
-    # Realizar una consulta a la tabla de unsubscribes
-    # Construir la solicitud BatchGetItem
+    return _batch_get_emails(f'{customer_name}_blackList', keys)
 
-    table_unsubscribe = dynamodb.Table(f'{customer_name}_unsubscribe')
-    request_items = {
-        table_unsubscribe: {
-            'Keys': keys
-        }
-    }
-
-    # Realizar la consulta BatchGetItem
-    response = table_unsubscribe.batch_get_item(RequestItems=request_items)
-
-    # Obtener los correos electrónicos que están en la lista de unsubscribes
-    unsubscribed_emails = set()
-    for item in response.get('Responses', {}).get(table_unsubscribe, []):
-        unsubscribed_emails.add(item['email'])
-
-    return unsubscribed_emails
+def check_unsubscribes(keys:list)->set:
+    """
+    Consulta los email desuscritos del cliente. La tabla '{customer}_unsubscribe'
+    se crea con PK 'email' (igual que la escribe la lambda Unsubscribe).
+    """
+    return _batch_get_emails(f'{customer_name}_unsubscribe', keys)
 
 def insert_mails_status(emails:list,state:str,description:str)->None:
     """
@@ -672,30 +661,27 @@ def lambda_handler(event, context):
                 # Define los detalles de la tabla processDetail
                 table = f'{customer_name}_processDetail'
                 id = 'processDetailId'
-                was_created_table = check_and_create_table(table,id)
+                check_and_create_table(table,id)
 
-                if was_created_table:
-                    #Tabla de unsubscribe
-                    table = f'{customer_name}_unsubscribe'
-                    id = 'unsubscribeId'
-                    was_created_table = check_and_create_table(table,id)
-                if was_created_table:
-                    #Tabla de blacklist
-                    table = f'{customer_name}_blackList'
-                    id = 'blackListId'
-                    was_created_table = check_and_create_table(table,id)
+                # Tabla de desuscritos: PK 'email' (así la escribe la lambda
+                # Unsubscribe y así la consulta check_unsubscribes). Si la tabla
+                # ya existía, hay que FILTRAR contra ella en el envío real.
+                unsubscribe_existed = not check_and_create_table(f'{customer_name}_unsubscribe','email')
 
+                # Tabla de lista negra (PK histórica 'blackListId'; el filtrado
+                # por email quedará efectivo cuando se agregue el GSI por email).
+                blacklist_existed = not check_and_create_table(f'{customer_name}_blackList','blackListId')
 
                 #Estas tablas siempre se deben crear
                 # Define los detalles de la tabla sendDetail
                 table = f'{customer_name}_sendDetail_{process_id}'
                 id = 'sendDetailId'
-                was_created_table = check_and_create_table(table,id)
+                check_and_create_table(table,id)
 
                 # Define los detalles de la tabla sendDetail
                 table = f'{customer_name}_sendStatus_{process_id}'
                 id = 'sendStatusId'
-                was_created_table = check_and_create_table(table,id)
+                check_and_create_table(table,id)
                 #Realizar la creacion de la cola para el cliente
                 #Configurar la cola como disparador
                 
@@ -943,13 +929,17 @@ def lambda_handler(event, context):
                                         emails_error.append(line)
                             print("Finaliza lectura del archivo spool para validar registros con estructura de email incorrecta")
                             #consultar registros en unsubscribe y blacklist
-                            #Solo consulto si la tabla de unsubscribe o blacklist ya existia, ya que si es el primer proceso no debe existir ningun registro en las tablas
-                            blacklist_emails = []
-                            unsubscribes_emails = []
-                            if not was_created_table:
+                            #Solo se consulta si la tabla ya existía (si es el primer
+                            #proceso del cliente, las tablas recién creadas están vacías).
+                            #Antes esta condición usaba una bandera que siempre quedaba
+                            #True (las tablas sendStatus_{proceso} siempre son nuevas) y
+                            #el filtrado nunca corría.
+                            blacklist_emails = set()
+                            unsubscribes_emails = set()
+                            if unsubscribe_existed:
                                 unsubscribes_emails = check_unsubscribes(keys)
                                 quantity_unsubscribe = len(unsubscribes_emails)
-
+                            if blacklist_existed:
                                 blacklist_emails = check_blacklist(keys)
                                 quantity_blacklist = len(blacklist_emails)
 

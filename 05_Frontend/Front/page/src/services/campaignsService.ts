@@ -18,10 +18,25 @@ import type { ApiResponse } from './apiClient';
 
 export const CAMPAIGN_ENDPOINTS = {
   CREATE: '/Campaign/Create-campaign',
+  LIST: '/Campaign/List',
   PRESIGN_URL: '/Campaign/Prefirm-url',
   SEND_SAMPLES: '/Email/Send-batch-template-samples',
   SEND_REAL: '/Email/Send-batch-template',
 };
+
+/** Campaña como la devuelve POST /Campaign/List (tabla `campaign`). */
+export interface CampaignSummary {
+  campaignId: string;
+  customerId: string;
+  campaignName: string;
+  consecutive: string;
+  channel: string;
+  campaignState: string;
+  dataPath: string;
+  template: string;
+  originEmail: string;
+  date: string;
+}
 
 export interface SamplesPayload {
   customerName: string;
@@ -68,6 +83,10 @@ export interface PresignPayload {
 export const campaignsService = {
   create: (payload: CampaignPayload): Promise<ApiResponse<{ campaignId?: string }>> =>
     apiPost(CAMPAIGN_ENDPOINTS.CREATE, payload),
+
+  /** Lista las campañas del cliente (ruta /Campaign/List). */
+  list: (customerId: string): Promise<ApiResponse<{ campaigns?: CampaignSummary[]; count?: number }>> =>
+    apiPost(CAMPAIGN_ENDPOINTS.LIST, { customerId }),
 
   /** Solicita una URL prefirmada de S3 para subir el archivo (CSV/documento). */
   presignUrl: (payload: PresignPayload): Promise<ApiResponse<{ url?: string; path?: string }>> =>

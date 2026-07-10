@@ -1,0 +1,77 @@
+'''
+Lambda para listar las campañas de un cliente.
+
+Ruta: POST /Campaign/List  (integración no-proxy, envelope estándar)
+Request:  { customerId }
+Respuesta: 200 { data: { campaigns: [...], count } } ordenadas por fecha (desc)
+
+Cada campaña incluye: campaignId, campaignName, consecutive, channel,
+campaignState, dataPath, template, originEmail, date.
+'''
+import json
+import boto3
+from decimal import Decimal
+from boto3.dynamodb.conditions import Attr
+
+dynamodb = boto3.resource('dynamodb')
+table_campaign = dynamodb.Table('campaign')
+
+
+def _get_payload(event):
+    """Soporta integración directa (event = body) y Lambda-proxy (event['body'])."""
+    if isinstance(event, dict) and isinstance(event.get('body'), str):
+        try:
+            return json.loads(event['body'])
+        except Exception:
+            return {}
+    return event if isinstance(event, dict) else {}
+
+
+def _clean(item):
+    """DynamoDB devuelve los números como Decimal; se pasan a int para el JSON."""
+    out = {}
+    for key, value in item.items():
+        out[key] = int(value) if isinstance(value, Decimal) else value
+    return out
+
+
+def lambda_handler(event, context):
+    payload = _get_payload(event)
+    customer_id = payload.get('customerId')
+
+    if not customer_id:
+        return {
+            'status': False,
+            'statusCode': 400,
+            'description': 'Indica el customerId.',
+            'data': {'campaigns': [], 'count': 0}
+        }
+
+    try:
+        items = []
+        scan_kwargs = {'FilterExpression': Attr('customerId').eq(customer_id)}
+        while True:
+            response = table_campaign.scan(**scan_kwargs)
+            items.extend(_clean(i) for i in response.get('Items', []))
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+            scan_kwargs['ExclusiveStartKey'] = last_key
+
+        # Orden descendente por fecha ('YYYY-MM-DD HH:MM:SS' ordena como texto).
+        items.sort(key=lambda x: x.get('date', ''), reverse=True)
+
+        return {
+            'status': True,
+            'statusCode': 200,
+            'description': 'Campañas del cliente',
+            'data': {'campaigns': items, 'count': len(items)}
+        }
+    except Exception as e:
+        print('Error listando campañas: {}'.format(e))
+        return {
+            'status': False,
+            'statusCode': 500,
+            'description': 'Error no controlado al listar las campañas',
+            'data': {'campaigns': [], 'count': 0}
+        }
