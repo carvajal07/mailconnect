@@ -30,6 +30,7 @@ REGISTERS_FOR_EAU:int = 250
 REGISTERS_FOR_EAP:int = 100
 REGISTERS_FOR_SMS:int = 100
 REGISTERS_FOR_WSP:int = 100
+REGISTERS_FOR_VOICE:int = 50
 
 URL_SQS_EM = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-template-EM'
 URL_SQS_EAU = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-raw-EAU'
@@ -39,6 +40,8 @@ URL_SQS_EAP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Template_Combina
 URL_SQS_SMS = 'https://sqs.us-east-1.amazonaws.com/873837768806/Sms_Send-batch'
 # Canal WhatsApp: cola que consume la lambda Api_V1_Wsp_Send-batch (End User Messaging Social).
 URL_SQS_WSP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Wsp_Send-batch'
+# Canal Voz: cola que consume la lambda Api_V1_Voice_Send-batch (End User Messaging Voice).
+URL_SQS_VOICE = 'https://sqs.us-east-1.amazonaws.com/873837768806/Voice_Send-batch'
 REGION = 'us-east-1'
 DELIMITER = ';'          # delimitador por defecto si no se puede detectar
 CANDIDATE_DELIMITERS = [';', ',', '\t', '|']
@@ -67,6 +70,7 @@ global campaign_id
 global customer_id
 global sms_body
 global wsp_template
+global voice_message
 global customer_name
 global formatted_date
 global from_email
@@ -241,6 +245,8 @@ def prepare_message(data:str,part:int)-> list:
             "smsBody":sms_body,
             # Nombre de la plantilla HSM (solo canal WSP; vacío para el resto). Lo usa Send-batch-WSP.
             "wspTemplate":wsp_template,
+            # Texto a leer por TTS (solo canal VOZ; vacío para el resto). Lo usa Send-batch-Voice.
+            "voiceMessage":voice_message,
             "part":part,
             "data":data
         }
@@ -665,6 +671,7 @@ def lambda_handler(event, context):
     global attachment
     global sms_body
     global wsp_template
+    global voice_message
 
     status = True
     description = "Campaña enviandose correctamente"
@@ -733,6 +740,8 @@ def lambda_handler(event, context):
                 # Para WhatsApp el campo 'template' guarda el NOMBRE de la plantilla HSM
                 # aprobada por Meta. Para el resto de canales queda vacío y no se usa.
                 wsp_template = response_campaign['Items'][0].get("template", "") if channel_name == "WSP" else ""
+                # Para Voz el campo 'template' guarda el TEXTO a leer por TTS.
+                voice_message = response_campaign['Items'][0].get("template", "") if channel_name == "VOZ" else ""
 
                 # Define los detalles de la tabla processDetail
                 table = f'{customer_name}_processDetail'
@@ -784,6 +793,9 @@ def lambda_handler(event, context):
                 elif channel_name == "WSP":
                     attachment = False
                     url_sqs = URL_SQS_WSP
+                elif channel_name == "VOZ":
+                    attachment = False
+                    url_sqs = URL_SQS_VOICE
                 else:
                     attachment = False
                     url_sqs = URL_SQS_EM
@@ -1009,6 +1021,8 @@ def lambda_handler(event, context):
                             registers_for_message = REGISTERS_FOR_SMS
                         if (channel_name == "WSP"):
                             registers_for_message = REGISTERS_FOR_WSP
+                        if (channel_name == "VOZ"):
+                            registers_for_message = REGISTERS_FOR_VOICE
                         global_counter_message = 0
 
                         keys = []       

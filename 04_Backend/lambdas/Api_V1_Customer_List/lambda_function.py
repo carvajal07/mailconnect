@@ -18,6 +18,15 @@ dynamodb = boto3.resource('dynamodb')
 table_customer = dynamodb.Table('customer')
 
 
+def _is_admin(event):
+    """El rol viaja en el context del Authorizer (event.requestContext.authorizer.role).
+    Solo un administrador puede usar este endpoint."""
+    if not isinstance(event, dict):
+        return False
+    auth = (event.get('requestContext') or {}).get('authorizer') or {}
+    return str(auth.get('role', '')).lower() == 'admin'
+
+
 def _clean(item):
     """Normaliza el item para JSON: Decimal → int, y realSendEnabled por defecto True."""
     out = {}
@@ -29,6 +38,13 @@ def _clean(item):
 
 
 def lambda_handler(event, context):
+    if not _is_admin(event):
+        return {
+            'status': False,
+            'statusCode': 403,
+            'description': 'Acceso restringido a administradores.',
+            'data': {'customers': [], 'count': 0}
+        }
     try:
         items = []
         scan_kwargs = {

@@ -161,6 +161,7 @@ export const LoginPage = () => {
           customerId: res.data.customerId,
           nit: res.data.companyTin,
           realSendEnabled: res.data.realSendEnabled,
+          role: res.data.role,
           email: formData.email,
         });
         navigate('/panel');

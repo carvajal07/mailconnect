@@ -189,6 +189,7 @@ export const RegisterPage = () => {
         company: formData.company.trim(),
         companyTin: Number(formData.companyTin),
         password: formData.password,
+        acceptedTerms: acceptedTerms,
       });
 
       if (res.status && (res.statusCode === 201 || res.statusCode === 200)) {

@@ -161,6 +161,7 @@ export const CampanasSection = () => {
 
   const isSms = formData.channelName === 'SMS';
   const isWsp = formData.channelName === 'WSP';
+  const isVoice = formData.channelName === 'VOZ';
   // Solo EAU/EAP llevan documento adjunto (el resto no).
   const isAttachment = formData.channelName === 'EAU' || formData.channelName === 'EAP';
 
@@ -344,6 +345,7 @@ export const CampanasSection = () => {
                   <li><strong>EAU</strong>: correo con un <em>adjunto único</em> (el mismo archivo para todos).</li>
                   <li><strong>EAP</strong>: correo con <em>adjunto personalizado</em> (documento .docx combinado por destinatario).</li>
                   <li><strong>SMS</strong> / <strong>WSP</strong>: mensaje de texto / plantilla de WhatsApp (sin adjunto).</li>
+                  <li><strong>VOZ</strong>: llamada telefónica que lee un mensaje por texto a voz (sin adjunto).</li>
                 </Box>
                 <Typography variant="body2" component="div" sx={{ mt: 0.5 }}>
                   <strong>Entrega del adjunto</strong> (solo EAU/EAP):
@@ -382,6 +384,7 @@ export const CampanasSection = () => {
                     <MenuItem value="EAP">EAP — Adjunto personalizado</MenuItem>
                     <MenuItem value="SMS">SMS — Mensaje de texto</MenuItem>
                     <MenuItem value="WSP">WSP — WhatsApp (plantilla)</MenuItem>
+                    <MenuItem value="VOZ">VOZ — Llamada con mensaje de voz</MenuItem>
                   </Select>
                 </FormControl>
                 <FormControl fullWidth disabled={!isAttachment}>
@@ -485,6 +488,17 @@ export const CampanasSection = () => {
                     helperText="Nombre exacto de la plantilla de marketing pre-aprobada por Meta. Los parámetros {{1}}, {{2}}… se toman de las columnas del CSV desde 'Nombre' en adelante. La columna 2 del CSV es el celular (E.164, +57…)."
                   />
                 </>
+              ) : isVoice ? (
+                <TextField
+                  fullWidth
+                  multiline
+                  minRows={3}
+                  label="Mensaje de voz (se lee por teléfono)"
+                  value={formData.template}
+                  onChange={(e) => handleInputChange('template', e.target.value)}
+                  placeholder="Hola {{Nombre}}, le recordamos que…"
+                  helperText="Texto que se convierte a voz (TTS) y se reproduce en la llamada. Admite variables {{columna}} del CSV. En Voz la columna 2 del CSV es el celular (E.164, +57…)."
+                />
               ) : (
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                   <FormControl fullWidth>

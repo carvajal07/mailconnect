@@ -69,12 +69,13 @@ def lambda_handler(event, context):
         print('Refresh-token: token inválido: {}'.format(e))
         return {'status': False, 'statusCode': 401, 'description': 'Token inválido.'}
 
-    # Reemitir con los mismos claims y un exp fresco.
+    # Reemitir con los mismos claims (incluido el rol) y un exp fresco.
     new_payload = {
         'user': decoded.get('user', ''),
         'customerId': decoded.get('customerId', ''),
         'customer': decoded.get('customer', ''),
         'userId': decoded.get('userId', ''),
+        'role': decoded.get('role', 'client'),
         'exp': datetime.utcnow() + timedelta(days=TOKEN_TTL_DAYS),
     }
     new_token = jwt.encode(new_payload, SECRET_KEY, algorithm='HS256')

@@ -38,7 +38,17 @@ def _customer_exists(customer_id):
     return bool(response['Items'])
 
 
+def _is_admin(event):
+    """Solo un administrador (rol en el context del Authorizer) puede usar este endpoint."""
+    if not isinstance(event, dict):
+        return False
+    auth = (event.get('requestContext') or {}).get('authorizer') or {}
+    return str(auth.get('role', '')).lower() == 'admin'
+
+
 def lambda_handler(event, context):
+    if not _is_admin(event):
+        return {'status': False, 'statusCode': 403, 'description': 'Acceso restringido a administradores.'}
     payload = _get_payload(event)
     customer_id = payload.get('customerId')
     raw_flag = payload.get('realSendEnabled')

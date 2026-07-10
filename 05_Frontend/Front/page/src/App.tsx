@@ -39,11 +39,11 @@ function App() {
             }
           />
 
-          {/* Ruta de administración interna (protegida) */}
+          {/* Ruta de administración interna (protegida, solo rol admin) */}
           <Route
             path="/admin"
             element={
-              <RequireAuth>
+              <RequireAuth requireAdmin>
                 <AdminPage />
               </RequireAuth>
             }

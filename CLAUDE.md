@@ -95,7 +95,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 
 | Endpoint | Request (body) | Respuesta clave |
 |----------|----------------|-----------------|
-| `login` | `{ user (email), password }` | 200 `data:{token, userId, name, customer, customerId, companyTin, realSendEnabled}` · 404 credenciales · 423 inactiva |
+| `login` | `{ user (email), password }` | 200 `data:{token, userId, name, customer, customerId, companyTin, realSendEnabled, role}` · 404 credenciales · 423 inactiva |
 | `register` | `{ name, phone, email, company, companyTin (número), password }` | 201 ok · 409 email existe · 400 datos inválidos |
 | `account-activation` | query `?qs=<activationKey>` | 302 redirect (éxito/error/expirado) |
 | `create-otp` | `{ user (email) o userId, expiration (min), system, ip }` | 201 `data:{otpId}` (envía el código por correo) |
@@ -215,6 +215,36 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   mapea `WSP → WHATSAPP` (y `VOZ → VOICE`).
 - ⚠️ `[J]`: crear la cola `Wsp_Send-batch` + trigger, registrar el número/WABA en End User
   Messaging Social y aprobar las plantillas HSM con Meta.
+
+### Canal Voz (jul 2026, base)
+- **Envío:** `Api_V1_Voice_Send-batch` (trigger cola `Voice_Send-batch`) hace una llamada y
+  reproduce un mensaje con **texto a voz (TTS)** vía **AWS End User Messaging Voice**
+  (`pinpoint-sms-voice-v2` → `send_voice_message`, voz de Amazon Polly). Registra el estado en
+  `{customer}_sendStatus_{proceso}` (igual que email/SMS/WhatsApp). Env:
+  `VOICE_ORIGINATION_IDENTITY` (obligatoria), `VOICE_ID` (default `LUPE`, español),
+  `VOICE_CONFIGURATION_SET` (opc), `VOICE_BODY_TEXT_TYPE` (`TEXT`|`SSML`, default `TEXT`).
+- **Enrutamiento:** `Prepare-batch` enruta `channel="VOZ"` a `URL_SQS_VOICE` (lotes de 50) y
+  agrega `voiceMessage` = campo `template` de la campaña (para Voz, `template` guarda el TEXTO
+  a leer). Admite variables `{{columna}}` del CSV. Columna 2 = celular E.164.
+- **Front:** el form de campaña tiene el canal **VOZ** con un campo de texto del mensaje; el
+  estimador mapea `VOZ → VOICE`.
+- ⚠️ `[J]`: crear la cola `Voice_Send-batch` + trigger y habilitar el origen de voz en End User
+  Messaging (número con capacidad de voz).
+
+### Roles (admin/client) (jul 2026)
+- **Modelo:** dos roles — **`admin`** (personal interno de MailConnect: gestiona clientes,
+  tarifas, config global) y **`client`** (default, usuario de una empresa). Dentro de un cliente
+  no hay sub-roles todavía (futuro: owner/member).
+- **Backend:** campo `role` en la tabla `user` (default `client` en `Register`). `Login` lo
+  embebe en el JWT y lo devuelve en `data.role`; `Authorizer`/`Authorizer2` lo reenvían en el
+  context (`event.requestContext.authorizer.role`); `Refresh-token` lo preserva. Los endpoints
+  **admin** (`Customer_List`, `Customer_Update`) exigen `role=admin` (403 si no).
+- **Front:** la sesión guarda `role`; `isAdmin(user)` en `authService`. `RequireAuth requireAdmin`
+  protege `/admin` (un `client` autenticado se redirige a `/panel`).
+- **Provisión de admins:** `Register` siempre crea `client`. Un admin se crea cambiando el campo
+  `role` a `admin` en la tabla `user` (consola/script). ⚠️ `[J]`: promover el/los usuarios admin.
+- **Aceptación de términos:** `Register` guarda `termsAccepted` (bool) + `termsAcceptedAt` +
+  `termsVersion` (evidencia Ley 1581); el front envía `acceptedTerms` desde la casilla del registro.
 
 ### Límite de muestras y bloqueo de envíos por cliente (jul 2026)
 - **Límite de muestras (5 por campaña):** cada operación de `Send-batch-template-samples`
@@ -492,6 +522,13 @@ se puede leer del objeto ya subido a S3.)
       - **`Api_V1_Database_Delete`** + ruta `/Database/Delete` (authorizer + CORS) + permiso
         `dynamodb:DeleteItem`/`GetItem` sobre `databaseFile`. Campo **`columns`** en `databaseFile`
         (lo escribe Register-file; List lo devuelve).
+      - **Canal Voz:** cola `Voice_Send-batch` + trigger a `Api_V1_Voice_Send-batch` (crear la
+        función vacía antes del CD) + origen de voz en End User Messaging + permiso
+        `sms-voice:SendVoiceMessage`. Env `VOICE_ORIGINATION_IDENTITY`.
+      - **Roles:** campo `role` en la tabla `user` (default `client`; Register lo escribe). Los
+        Authorizers deben reenviar `role` en el context (proxy directo; en no-proxy, el mapping
+        template debe inyectar `$context.authorizer.role`). **Promover manualmente** al menos un
+        usuario a `role='admin'`. Campos `termsAccepted`/`termsAcceptedAt`/`termsVersion` en `user`.
 - [ ] Sacar **SES del sandbox** y verificar remitente/dominio.
 - [ ] Configurar las **variables de entorno** de §3 en cada lambda.
 - [ ] Definir `VITE_API_BASE_URL` de producción en el front.
