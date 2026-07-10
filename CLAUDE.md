@@ -10,6 +10,11 @@
 >
 > Si hay conflicto de "estado" entre ambos, **manda este archivo** (el README trae
 > algunas lambdas de seguridad marcadas como TODO que ya fueron implementadas).
+>
+> - **`PLAN_MVP.md`** (raíz) → **plan maestro de salida a producción**: definición
+>   del MVP, brechas (gaps) por severidad, plan por fases con responsables, y el
+>   diseño de los canales **SMS / WhatsApp / Voz**. El roadmap de §5 de este archivo
+>   queda subordinado a ese plan.
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
@@ -147,6 +152,10 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 ---
 
 ## 5. Plan de trabajo (roadmap / lista de tareas)
+
+> **⭐ El plan vigente para salir a producción es `PLAN_MVP.md`** (fases 0–3,
+> responsables `[C]`/`[J]`, canales SMS/WhatsApp/Voz). Lo de abajo es el detalle
+> histórico por área; ante conflicto manda `PLAN_MVP.md`.
 
 Marcado `[x]` = hecho, `[ ]` = pendiente.
 
@@ -301,9 +310,14 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
       `04_Backend/lambdas/deploy-map.json` si el nombre AWS difiere del de la carpeta.
 
 ### Seguridad (URGENTE)
-- [ ] **Rotar/revocar** las AWS access keys (`consumoSQS`, `consumoS3`) y contraseñas que
-      están en texto plano en `01_Documentacion/Tecnica/DatosTrabajo.txt`, y sacar ese
-      archivo del control de versiones (`.gitignore`).
+- [ ] **Rotar la `SECRET_KEY` del JWT**: está en texto plano en
+      `04_Backend/scripts/prueba genera JWT.py` y `prueba jwt.py`, y **el repo de
+      GitHub es público** → cualquiera puede forjar tokens válidos. Además es débil
+      (14 bytes; usar 32+). Rotar, actualizar env de Login/Authorizers/Change-password,
+      limpiar los scripts y valorar hacer el repo privado (Fase 0 de `PLAN_MVP.md`).
+- [ ] Rotar por precaución las AWS access keys (`consumoSQS`, `consumoS3`).
+      Nota: `01_Documentacion/Tecnica/DatosTrabajo.txt` **no está en el repo**
+      (verificado — esa carpeta nunca se versionó); el riesgo real son los scripts.
 
 ---
 
@@ -373,6 +387,7 @@ README.md
 ---
 
 ## 7. Referencias rápidas
+- **Plan de salida a producción (MVP) y canales SMS/WhatsApp/Voz: `PLAN_MVP.md`** (raíz).
 - Arquitectura completa y catálogo: **`README.md`** (raíz).
 - Contrato de la API: **`09_Herramientas/01-MailConnect.postman_collection.json`**.
 - Base de la API (Test): `https://mtgt9qpb77.execute-api.us-east-1.amazonaws.com/Test/api`
