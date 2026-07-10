@@ -10,6 +10,11 @@
 >
 > Si hay conflicto de "estado" entre ambos, **manda este archivo** (el README trae
 > algunas lambdas de seguridad marcadas como TODO que ya fueron implementadas).
+>
+> - **`PLAN_MVP.md`** (raíz) → **plan maestro de salida a producción**: definición
+>   del MVP, brechas (gaps) por severidad, plan por fases con responsables, y el
+>   diseño de los canales **SMS / WhatsApp / Voz**. El roadmap de §5 de este archivo
+>   queda subordinado a ese plan.
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
@@ -90,7 +95,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 
 | Endpoint | Request (body) | Respuesta clave |
 |----------|----------------|-----------------|
-| `login` | `{ user (email), password }` | 200 `data:{token, userId, name, customer}` · 404 credenciales · 423 inactiva |
+| `login` | `{ user (email), password }` | 200 `data:{token, userId, name, customer, customerId, companyTin}` · 404 credenciales · 423 inactiva |
 | `register` | `{ name, phone, email, company, companyTin (número), password }` | 201 ok · 409 email existe · 400 datos inválidos |
 | `account-activation` | query `?qs=<activationKey>` | 302 redirect (éxito/error/expirado) |
 | `create-otp` | `{ user (email) o userId, expiration (min), system, ip }` | 201 `data:{otpId}` (envía el código por correo) |
@@ -119,7 +124,13 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   de tokens al inicio de `src/pages/landing/landing.css` (variables `--brand`, `--ink`, etc.).
 - **Frontend – API base:** `VITE_API_BASE_URL` (ver `.env.example`). Default = stage `Test`.
 - **Frontend – sesión:** el token y el usuario se guardan en `localStorage`
-  (`mc_token`, `mc_user`) desde `authService.ts`.
+  (`mc_token`, `mc_user`) desde `authService.ts`. `login` devuelve y la sesión
+  almacena **`customer`** (nombre de empresa), **`customerId`** (uuid) y **`nit`**
+  (companyTin). **Convención:** el cliente/empresa **NO se captura en formularios**;
+  se toma de la sesión. Muestras, Reportes y Bases de datos muestran la empresa como
+  chip de solo lectura; el builder HTML usa `customerId` de la sesión para
+  `create-template` (ya no pide "Customer ID"). El bucket de una base es
+  `{customer}.database` (derivado del `customer` de la sesión).
 - **Frontend – login DEMO (sin backend):** con `VITE_AUTH_MOCK=true` (en `.env`, ver
   `.env.example`), `authService.login`/`register` se resuelven en el cliente sin pegar a
   la API: cualquier credencial entra a `/panel` (sugerida `demo@mailconnect.com.co` /
@@ -141,6 +152,10 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 ---
 
 ## 5. Plan de trabajo (roadmap / lista de tareas)
+
+> **⭐ El plan vigente para salir a producción es `PLAN_MVP.md`** (fases 0–3,
+> responsables `[C]`/`[J]`, canales SMS/WhatsApp/Voz). Lo de abajo es el detalle
+> histórico por área; ante conflicto manda `PLAN_MVP.md`.
 
 Marcado `[x]` = hecho, `[ ]` = pendiente.
 
@@ -184,12 +199,20 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             (sección "Plantillas prediseñadas", `HtmlBuilderSection allowSavePreset`).
       - [x] **Campañas** reutiliza `CampanasSection`. **Mi cuenta** muestra la sesión y permite
             cambiar la contraseña (change-password con token).
-      - [x] **Muestras** (`MuestrasSection`): flujo de prueba/aprobación previo al envío real.
-            Configuración de la campaña, **slider 1–5** que habilita dinámicamente los campos de
-            correo, selector **Aleatorias/Selectivas** (en selectivas, campo de **identificación**
-            por muestra), y apartado de **aprobación** (Aprobar/Rechazar → habilita "Enviar
-            campaña real"). El endpoint `send-samples` no existe aún; las muestras se registran
-            localmente para gestionar la aprobación (`campaignsService.sendSamples` marcado).
+      - [x] **Muestras** (`MuestrasSection`): flujo de prueba/aprobación **conectado end-to-end**
+            a la Lambda `Prepare-batch-template` (es la misma para muestras y envío real; distingue
+            por `event["resource"]`). Configuración de la campaña, **slider 1–5** que habilita
+            dinámicamente los campos de correo, selector **Aleatorias/Selectivas** (en selectivas,
+            campo de **identificación** por muestra). **Enviar muestras** → `POST
+            /Email/Send-batch-template-samples` (la Lambda reemplaza el correo real por el de prueba
+            y deja la campaña en estado `Muestras`); solo si responde OK se registra el lote para
+            aprobación. **Aprobar** habilita **Enviar campaña real** → `POST
+            /Email/Send-batch-template` (misma Lambda, sin "samples" → envío a toda la base, estado
+            `Enviando`). Servicios `campaignsService.sendSamples` / `sendReal`. Requiere que la
+            campaña esté en estado `Pendiente` o `Muestras`. **Fix backend:** en muestras selectivas
+            la comparación de identificación era `int(line[0]) == identificación(str)` y nunca hacía
+            match; ahora compara como texto normalizado. **Fix front:** `apiClient` normaliza también
+            el envelope con `status_code` (snake_case) que devuelve esta Lambda (proxy).
       - [x] **Bases de datos** (`BasesDatosSection` + `csv.ts`): carga de CSV con
             **validación/preview local** (parser propio: detecta delimitador, columnas, total
             de registros, columna de email, y cuenta válidos/inválidos/duplicados) y subida real
@@ -197,7 +220,11 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             Data Path. **Valida la estructura obligatoria por posición** (el backend Prepare-batch
             lee `line[0]`=Identificación numérica, `line[1]`=Correo, `line[2]`=Nombre): el diálogo
             muestra las 3 columnas requeridas **en orden** con estado ✓/✗ y avisa si no cumplen.
-            Lista de bases de la sesión (backend aún no expone listado/edición/lista negra).
+            **Historial persistente:** tras subir a S3 se registra la metadata (nombre, ruta,
+            registros, válidos/inválidos, fecha) vía `POST /Database/Register-file`, y la tabla se
+            carga con `POST /Database/List` (por `customerId`). La vista previa del contenido solo
+            está para las bases cargadas en la sesión. Servicio `databaseService.ts`; tabla
+            DynamoDB `databaseFile`. (Lista negra por cliente sigue pendiente.)
       - [x] **Estadísticas** (`EstadisticasSection` + `charts.tsx`): tablero con KPIs
             (pendientes/creadas/enviadas, total envíos, apertura promedio), **dona** de
             campañas por estado, **embudo** de envío (enviados→entregados→abiertos→clics) y
@@ -214,8 +241,10 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [~] Conectar las secciones del panel a la API real (capa de servicios nueva):
       - [x] **Plantillas** → `create-template`, `get-template`, `delete-template` (reales).
       - [x] **Campañas** → `create-campaign` y `get-urlS3` (URL prefirmada + PUT a S3).
+      - [x] **Muestras/Envío real** → `Send-batch-template-samples` (muestras) y
+            `Send-batch-template` (envío real tras aprobación), ambos a `Prepare-batch-template`.
       - [ ] **Clientes** → solo existe `register`; falta backend de listar/editar/eliminar.
-      - Nota: el backend aún no expone listar/buscar/muestras/envío-real, así que las
+      - Nota: el backend aún no expone listar/buscar campañas, así que las
         tablas muestran lo creado/consultado en la sesión y esas acciones están deshabilitadas.
         Los servicios viven en `src/services/{apiClient,templatesService,campaignsService}.ts`.
 
@@ -281,9 +310,14 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
       `04_Backend/lambdas/deploy-map.json` si el nombre AWS difiere del de la carpeta.
 
 ### Seguridad (URGENTE)
-- [ ] **Rotar/revocar** las AWS access keys (`consumoSQS`, `consumoS3`) y contraseñas que
-      están en texto plano en `01_Documentacion/Tecnica/DatosTrabajo.txt`, y sacar ese
-      archivo del control de versiones (`.gitignore`).
+- [ ] **Rotar la `SECRET_KEY` del JWT**: está en texto plano en
+      `04_Backend/scripts/prueba genera JWT.py` y `prueba jwt.py`, y **el repo de
+      GitHub es público** → cualquiera puede forjar tokens válidos. Además es débil
+      (14 bytes; usar 32+). Rotar, actualizar env de Login/Authorizers/Change-password,
+      limpiar los scripts y valorar hacer el repo privado (Fase 0 de `PLAN_MVP.md`).
+- [ ] Rotar por precaución las AWS access keys (`consumoSQS`, `consumoS3`).
+      Nota: `01_Documentacion/Tecnica/DatosTrabajo.txt` **no está en el repo**
+      (verificado — esa carpeta nunca se versionó); el riesgo real son los scripts.
 
 ---
 
@@ -353,6 +387,7 @@ README.md
 ---
 
 ## 7. Referencias rápidas
+- **Plan de salida a producción (MVP) y canales SMS/WhatsApp/Voz: `PLAN_MVP.md`** (raíz).
 - Arquitectura completa y catálogo: **`README.md`** (raíz).
 - Contrato de la API: **`09_Herramientas/01-MailConnect.postman_collection.json`**.
 - Base de la API (Test): `https://mtgt9qpb77.execute-api.us-east-1.amazonaws.com/Test/api`

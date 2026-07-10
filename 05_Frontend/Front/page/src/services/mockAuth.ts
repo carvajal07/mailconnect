@@ -48,6 +48,8 @@ export function mockLogin(user: string, _password: string): ApiResponse<LoginDat
     data: {
       token: fakeJwt(email),
       customer: 'Empresa Demo',
+      customerId: 'mock-customer-1',
+      companyTin: '900123456',
       userId: 'mock-user-1',
       name: email.split('@')[0] || 'Usuario Demo',
     },

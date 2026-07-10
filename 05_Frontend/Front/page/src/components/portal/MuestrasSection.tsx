@@ -28,13 +28,14 @@ import BadgeIcon from '@mui/icons-material/Badge';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import ApartmentIcon from '@mui/icons-material/Apartment';
 import { getUser } from '../../services/authService';
 import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 
 type TipoMuestra = 'aleatorias' | 'selectivas';
-type EstadoLote = 'enviada' | 'aprobada' | 'rechazada';
+type EstadoLote = 'enviada' | 'aprobada' | 'rechazada' | 'enviada_real';
 
 interface Recipient {
   email: string;
@@ -43,7 +44,10 @@ interface Recipient {
 
 interface Lote {
   id: string;
+  cliente: string;
   campaign: string;
+  template: string;
+  version: number;
   tipo: TipoMuestra;
   recipients: Recipient[];
   estado: EstadoLote;
@@ -55,17 +59,19 @@ const MAX = 5;
 const emptyRecipients = (n: number): Recipient[] =>
   Array.from({ length: n }, () => ({ email: '', identificacion: '' }));
 
-const estadoChip: Record<EstadoLote, { label: string; color: 'info' | 'success' | 'error' }> = {
+const estadoChip: Record<EstadoLote, { label: string; color: 'info' | 'success' | 'error' | 'default' }> = {
   enviada: { label: 'Enviada · pendiente de aprobación', color: 'info' },
-  aprobada: { label: 'Aprobada', color: 'success' },
+  aprobada: { label: 'Aprobada · lista para envío real', color: 'success' },
   rechazada: { label: 'Rechazada', color: 'error' },
+  enviada_real: { label: 'Campaña real enviada', color: 'success' },
 };
 
 export const MuestrasSection = () => {
   const user = getUser();
   const { notify, FeedbackSnackbar } = useFeedback();
 
-  const [cliente, setCliente] = useState(user?.customer ?? '');
+  // El cliente (empresa) se toma de la sesión, no se captura en el formulario.
+  const cliente = user?.customer ?? '';
   const [campaign, setCampaign] = useState('');
   const [template, setTemplate] = useState('');
   const [version, setVersion] = useState(1);
@@ -74,6 +80,7 @@ export const MuestrasSection = () => {
   const [quantity, setQuantity] = useState(1);
   const [recipients, setRecipients] = useState<Recipient[]>(emptyRecipients(1));
   const [sending, setSending] = useState(false);
+  const [sendingRealId, setSendingRealId] = useState<string | null>(null);
   const [lotes, setLotes] = useState<Lote[]>([]);
 
   const selective = tipo === 'selectivas';
@@ -93,8 +100,11 @@ export const MuestrasSection = () => {
   };
 
   const handleSend = async () => {
-    if (!cliente.trim() || !campaign.trim()) {
-      return notify('Indica el cliente y la campaña a probar.', 'warning');
+    if (!cliente.trim()) {
+      return notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
+    }
+    if (!campaign.trim()) {
+      return notify('Indica la campaña a probar.', 'warning');
     }
     for (let i = 0; i < recipients.length; i++) {
       const r = recipients[i];
@@ -116,20 +126,50 @@ export const MuestrasSection = () => {
     });
     setSending(false);
 
-    // Registramos el lote localmente para el flujo de aprobación (el backend de
-    // envío de muestras aún no está expuesto; si responde OK, mejor).
-    setLotes((prev) => [
-      { id: `${Date.now()}`, campaign: campaign.trim(), tipo, recipients: recipients.map((r) => ({ ...r })), estado: 'enviada' },
-      ...prev,
-    ]);
-    notify(
-      isOk(res) ? 'Muestras enviadas correctamente.' : 'Muestra registrada para aprobación (envío real pendiente del backend).',
-      isOk(res) ? 'success' : 'info',
-    );
+    // Solo registramos el lote para aprobación si el backend aceptó las muestras.
+    // Guardamos los datos de la campaña para poder disparar el envío real luego.
+    if (isOk(res)) {
+      setLotes((prev) => [
+        {
+          id: `${Date.now()}`,
+          cliente: cliente.trim(),
+          campaign: campaign.trim(),
+          template: template.trim(),
+          version,
+          tipo,
+          recipients: recipients.map((r) => ({ ...r })),
+          estado: 'enviada',
+        },
+        ...prev,
+      ]);
+      notify('Muestras enviadas correctamente. Revísalas y aprueba para el envío real.', 'success');
+    } else {
+      notify(res.description || 'No se pudieron enviar las muestras. Revisa los datos e intenta de nuevo.', 'error');
+    }
   };
 
   const setEstado = (id: string, estado: EstadoLote) =>
     setLotes((prev) => prev.map((l) => (l.id === id ? { ...l, estado } : l)));
+
+  /** Dispara el envío REAL de la campaña aprobada (ruta /Email/Send-batch-template). */
+  const handleSendReal = async (l: Lote) => {
+    setSendingRealId(l.id);
+    const res = await campaignsService.sendReal({
+      customerName: l.cliente,
+      campaignName: l.campaign,
+      userId: user?.userId ?? '',
+      template: l.template,
+      templateVersion: l.version,
+    });
+    setSendingRealId(null);
+
+    if (isOk(res)) {
+      setEstado(l.id, 'enviada_real');
+      notify(`Campaña "${l.campaign}" enviada. La base completa entró al proceso de envío.`, 'success');
+    } else {
+      notify(res.description || 'No se pudo iniciar el envío real de la campaña.', 'error');
+    }
+  };
 
   return (
     <Box>
@@ -139,9 +179,10 @@ export const MuestrasSection = () => {
       </Typography>
 
       <Alert severity="info" sx={{ mb: 3 }}>
-        Flujo de muestras: configurar → enviar → aprobar. El envío usa la ruta real{' '}
-        <code>/Email/Send-batch-template-samples</code>; si el backend responde, se envían, y de
-        todas formas la muestra queda registrada aquí para gestionar su aprobación.
+        Flujo: <strong>configurar → enviar muestras → revisar → aprobar → envío real</strong>. Las
+        muestras usan <code>/Email/Send-batch-template-samples</code> (reemplaza el correo real por
+        el de prueba) y, al aprobar, el envío real usa <code>/Email/Send-batch-template</code> sobre
+        toda la base. La campaña debe estar en estado <em>Pendiente</em> o <em>Muestras</em>.
       </Alert>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2, mb: 2 }}>
@@ -149,10 +190,8 @@ export const MuestrasSection = () => {
         <Paper variant="outlined" sx={{ p: 3 }}>
           <SectionTitle icon={<CampaignIcon color="primary" />} title="Campaña a probar" />
           <Stack spacing={2} sx={{ mt: 2 }}>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-              <TextField label="Cliente" value={cliente} onChange={(e) => setCliente(e.target.value)} fullWidth size="small" />
-              <TextField label="Campaña" value={campaign} onChange={(e) => setCampaign(e.target.value)} fullWidth size="small" />
-            </Stack>
+            <ClienteSesion cliente={cliente} />
+            <TextField label="Campaña" value={campaign} onChange={(e) => setCampaign(e.target.value)} fullWidth size="small" />
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
               <TextField label="Plantilla" value={template} onChange={(e) => setTemplate(e.target.value)} fullWidth size="small" />
               <TextField
@@ -281,13 +320,22 @@ export const MuestrasSection = () => {
                         </Button>
                       </>
                     ) : l.estado === 'aprobada' ? (
-                      <Tooltip title="Disponible cuando el backend exponga el envío real">
+                      <Tooltip title="Envía la campaña a TODA la base de datos (envío real).">
                         <span>
-                          <Button size="small" variant="contained" startIcon={<RocketLaunchIcon />} disabled>
-                            Enviar campaña real
+                          <Button
+                            size="small"
+                            variant="contained"
+                            color="success"
+                            startIcon={sendingRealId === l.id ? <CircularProgress size={16} color="inherit" /> : <RocketLaunchIcon />}
+                            disabled={sendingRealId !== null}
+                            onClick={() => handleSendReal(l)}
+                          >
+                            {sendingRealId === l.id ? 'Enviando…' : 'Enviar campaña real'}
                           </Button>
                         </span>
                       </Tooltip>
+                    ) : l.estado === 'enviada_real' ? (
+                      <Chip size="small" color="success" icon={<RocketLaunchIcon />} label="En proceso de envío" />
                     ) : (
                       <Button size="small" variant="text" onClick={() => setEstado(l.id, 'enviada')}>
                         Reabrir
@@ -305,6 +353,22 @@ export const MuestrasSection = () => {
     </Box>
   );
 };
+
+/** Muestra la empresa activa de la sesión (el "customer" ya no se captura a mano). */
+const ClienteSesion = ({ cliente }: { cliente: string }) => (
+  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+    <ApartmentIcon fontSize="small" color="action" />
+    <Typography variant="body2" color="text.secondary">
+      Empresa:&nbsp;
+    </Typography>
+    <Chip
+      size="small"
+      label={cliente || 'sin empresa en la sesión'}
+      color={cliente ? 'primary' : 'default'}
+      variant="outlined"
+    />
+  </Box>
+);
 
 const SectionTitle = ({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle?: string }) => (
   <Box>

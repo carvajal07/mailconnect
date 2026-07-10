@@ -48,14 +48,16 @@ def create_Session(userId,ipAddress,device,numberAttemps):
     )
     
 def select_client(customerId):
-    projectionCustomer_expression = 'company'  # Lista de campos a consultar
+    # Traemos el nombre de la empresa y el NIT para exponerlos en la sesión.
+    projectionCustomer_expression = 'company, companyTin'  # Lista de campos a consultar
 
     response = table_customer.scan(
         FilterExpression="customerId = :value",
         ExpressionAttributeValues={":value": customerId},
         ProjectionExpression=projectionCustomer_expression
     )
-    return response['Items'][0]['company']
+    item = response['Items'][0]
+    return item.get('company', ''), item.get('companyTin', '')
     
 def select_name(userDataId):
     projectionName_expression = 'userName'  # Lista de campos a consultar
@@ -72,6 +74,8 @@ def lambda_handler(event, context):
     description = "Usuario logueado correctamente"
     statusCode = 201
     customer = ""
+    customerId = ""
+    companyTin = ""
     name = ""
     token = ""
     userId = ""
@@ -136,7 +140,7 @@ def lambda_handler(event, context):
                         token = generate_jwt(user)
                         customerId = responseUser['Items'][0]['customerId']
                         userId = responseUser['Items'][0]['userId']
-                        customer = select_client(customerId)
+                        customer, companyTin = select_client(customerId)
                         userDataId = responseUser['Items'][0]['userDataId']
                         name = select_name(userDataId)
                         print(name)
@@ -169,6 +173,8 @@ def lambda_handler(event, context):
             'data':{
                 'token': token,
                 'customer': customer,
+                'customerId': customerId,
+                'companyTin': str(companyTin) if companyTin != "" else "",
                 'userId': userId,
                 'name': name
             }

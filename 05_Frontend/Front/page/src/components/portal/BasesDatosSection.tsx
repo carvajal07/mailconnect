@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -28,7 +28,11 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import StorageIcon from '@mui/icons-material/Storage';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
+import ApartmentIcon from '@mui/icons-material/Apartment';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { campaignsService } from '../../services/campaignsService';
+import { databaseService, type DatabaseFile } from '../../services/databaseService';
+import { getUser } from '../../services/authService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { analyzeCsv, DELIMITER_LABELS, REQUIRED_COLUMNS, type CsvAnalysis, type Delimiter } from './csv';
@@ -38,8 +42,33 @@ interface BaseDatos {
   name: string;
   customer: string;
   path: string;
-  analysis: CsvAnalysis;
+  totalRecords: number;
+  validEmails: number;
+  invalidEmails: number;
+  uploadDate: string;
+  delimiter: string;
+  // Solo presente para las bases cargadas en esta sesión (para la vista previa).
+  analysis?: CsvAnalysis;
 }
+
+/** Adapta la metadata del backend (DatabaseFile) al modelo de la tabla. */
+const fromApi = (f: DatabaseFile): BaseDatos => ({
+  id: f.databaseFileId,
+  name: f.fileName,
+  customer: f.customer,
+  path: f.s3Path,
+  totalRecords: f.totalRecords ?? 0,
+  validEmails: f.validEmails ?? 0,
+  invalidEmails: f.invalidEmails ?? 0,
+  uploadDate: f.uploadDate ?? '',
+  delimiter: f.delimiter ?? ';',
+});
+
+const fmtDate = (iso: string) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString();
+};
 
 const formatBytes = (n: number) => {
   if (n < 1024) return `${n} B`;
@@ -54,12 +83,31 @@ export const BasesDatosSection = () => {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [viewBase, setViewBase] = useState<BaseDatos | null>(null);
 
-  const [customer, setCustomer] = useState('');
+  // El cliente (empresa) se toma de la sesión; define el bucket {customer}.database.
+  const customer = getUser()?.customer ?? '';
+  const customerId = getUser()?.customerId ?? '';
+  const userId = getUser()?.userId ?? '';
   const [file, setFile] = useState<File | null>(null);
   const [fileText, setFileText] = useState('');
   const [delimiter, setDelimiter] = useState<Delimiter>(';');
   const [analysis, setAnalysis] = useState<CsvAnalysis | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [loadingList, setLoadingList] = useState(false);
+
+  // Carga el historial de bases del cliente desde el backend.
+  const loadBases = useCallback(async () => {
+    if (!customerId && !customer) return;
+    setLoadingList(true);
+    const res = await databaseService.list(customerId, customer);
+    setLoadingList(false);
+    if (isOk(res) && res.data?.files) {
+      setBases(res.data.files.map(fromApi));
+    }
+  }, [customerId, customer]);
+
+  useEffect(() => {
+    loadBases();
+  }, [loadBases]);
 
   const resetUpload = () => {
     setFile(null);
@@ -89,8 +137,12 @@ export const BasesDatosSection = () => {
   };
 
   const handleUpload = async () => {
-    if (!file || !customer.trim()) {
-      notify('Indica el nombre del cliente y selecciona un archivo.', 'warning');
+    if (!customer.trim()) {
+      notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
+      return;
+    }
+    if (!file) {
+      notify('Selecciona un archivo CSV.', 'warning');
       return;
     }
     setUploading(true);
@@ -105,35 +157,75 @@ export const BasesDatosSection = () => {
       return;
     }
     const ok = await campaignsService.uploadToS3(presign.data.url, file);
-    setUploading(false);
-    if (ok && analysis) {
-      const path = presign.data.path ?? '';
-      setBases((prev) => [
-        { id: `${Date.now()}`, name: file.name, customer: customer.trim(), path, analysis },
-        ...prev,
-      ]);
-      notify(`Base subida a S3: ${path}`, 'success');
-      setUploadOpen(false);
-      resetUpload();
-    } else {
+    if (!ok || !analysis) {
+      setUploading(false);
       notify('La base no se pudo subir a S3.', 'error');
+      return;
     }
+    const path = presign.data.path ?? '';
+
+    // Registrar la metadata en el backend (tabla databaseFile).
+    const reg = await databaseService.registerFile({
+      customerId,
+      customer: customer.trim(),
+      fileName: file.name,
+      s3Path: path,
+      totalRecords: analysis.totalRows,
+      validEmails: analysis.validEmails,
+      invalidEmails: analysis.invalidEmails,
+      duplicates: analysis.duplicateEmails,
+      delimiter,
+      uploadedBy: userId,
+    });
+    setUploading(false);
+
+    // Mostramos la base recién cargada de inmediato (con su análisis para la vista
+    // previa), aunque el registro de metadata falle; luego refrescamos del backend.
+    const nowIso = new Date().toISOString();
+    setBases((prev) => [
+      {
+        id: reg.data?.databaseFileId ?? `${Date.now()}`,
+        name: file.name,
+        customer: customer.trim(),
+        path,
+        totalRecords: analysis.totalRows,
+        validEmails: analysis.validEmails,
+        invalidEmails: analysis.invalidEmails,
+        uploadDate: nowIso,
+        delimiter,
+        analysis,
+      },
+      ...prev,
+    ]);
+    notify(
+      isOk(reg) ? `Base subida y registrada: ${path}` : `Base subida a S3 (${path}). No se pudo registrar su metadata.`,
+      isOk(reg) ? 'success' : 'warning',
+    );
+    setUploadOpen(false);
+    resetUpload();
+    if (isOk(reg)) loadBases();
   };
 
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1}>
         <Typography variant="h4">Bases de datos</Typography>
-        <Button variant="contained" startIcon={<CloudUploadIcon />} onClick={() => setUploadOpen(true)}>
-          Cargar base de datos
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button variant="outlined" startIcon={loadingList ? <CircularProgress size={16} /> : <RefreshIcon />} onClick={loadBases} disabled={loadingList}>
+            Actualizar
+          </Button>
+          <Button variant="contained" startIcon={<CloudUploadIcon />} onClick={() => setUploadOpen(true)}>
+            Cargar base de datos
+          </Button>
+        </Stack>
       </Stack>
 
       <Alert severity="info" sx={{ mb: 2 }}>
         Sube tus listas de destinatarios (CSV). Antes de subir, validamos el archivo en tu
-        navegador (columnas, total de registros, correos válidos/duplicados). La subida real va a
-        S3 vía URL prefirmada. El backend aún no expone listar/editar destinatarios ni la lista
-        negra por cliente, así que la tabla muestra lo cargado en esta sesión.
+        navegador (columnas, total de registros, correos válidos/duplicados). La subida va a S3 vía
+        URL prefirmada y su <strong>metadata queda registrada</strong> (nombre, ruta, registros,
+        fecha) para verla en el historial. La vista previa solo está disponible para las bases
+        cargadas en esta sesión.
       </Alert>
 
       <TableContainer component={Paper}>
@@ -145,6 +237,7 @@ export const BasesDatosSection = () => {
               <TableCell align="right">Registros</TableCell>
               <TableCell align="right">Válidos</TableCell>
               <TableCell align="right">Inválidos</TableCell>
+              <TableCell>Cargada</TableCell>
               <TableCell>Ruta S3</TableCell>
               <TableCell align="right">Acciones</TableCell>
             </TableRow>
@@ -152,8 +245,8 @@ export const BasesDatosSection = () => {
           <TableBody>
             {bases.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} align="center" sx={{ py: 4, color: 'text.secondary' }}>
-                  Aún no has cargado bases de datos en esta sesión.
+                <TableCell colSpan={8} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                  {loadingList ? 'Cargando…' : 'Aún no hay bases de datos registradas para tu empresa.'}
                 </TableCell>
               </TableRow>
             )}
@@ -161,17 +254,18 @@ export const BasesDatosSection = () => {
               <TableRow key={b.id}>
                 <TableCell>{b.name}</TableCell>
                 <TableCell>{b.customer}</TableCell>
-                <TableCell align="right">{b.analysis.totalRows}</TableCell>
+                <TableCell align="right">{b.totalRecords}</TableCell>
                 <TableCell align="right">
-                  <Chip label={b.analysis.validEmails} size="small" color="success" variant="outlined" />
+                  <Chip label={b.validEmails} size="small" color="success" variant="outlined" />
                 </TableCell>
                 <TableCell align="right">
-                  {b.analysis.invalidEmails > 0 ? (
-                    <Chip label={b.analysis.invalidEmails} size="small" color="error" variant="outlined" />
+                  {b.invalidEmails > 0 ? (
+                    <Chip label={b.invalidEmails} size="small" color="error" variant="outlined" />
                   ) : (
                     0
                   )}
                 </TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>{fmtDate(b.uploadDate)}</TableCell>
                 <TableCell sx={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   <code>{b.path}</code>
                 </TableCell>
@@ -193,15 +287,22 @@ export const BasesDatosSection = () => {
           <Stack spacing={2} sx={{ mt: 1 }}>
             <StructureGuide structure={analysis?.structure} />
 
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-              <TextField
-                label="Nombre del cliente"
-                value={customer}
-                onChange={(e) => setCustomer(e.target.value)}
-                placeholder="Ej: merkacaldas"
-                fullWidth
-                helperText="Define el bucket destino: {cliente}.database"
-              />
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
+                <ApartmentIcon fontSize="small" color="action" />
+                <Typography variant="body2" color="text.secondary">Empresa:&nbsp;</Typography>
+                <Chip
+                  size="small"
+                  label={customer || 'sin empresa en la sesión'}
+                  color={customer ? 'primary' : 'default'}
+                  variant="outlined"
+                />
+                {customer && (
+                  <Typography variant="caption" color="text.secondary">
+                    → bucket <code>{customer.toLowerCase()}.database</code>
+                  </Typography>
+                )}
+              </Box>
               <TextField
                 select
                 label="Delimitador"
@@ -272,8 +373,12 @@ export const BasesDatosSection = () => {
             <Stack spacing={2} sx={{ mt: 1 }}>
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                 <Chip label={`Cliente: ${viewBase.customer}`} variant="outlined" />
-                <Chip icon={<StorageIcon />} label={`${viewBase.analysis.totalRows} registros`} />
-                <Chip label={`${viewBase.analysis.validEmails} válidos`} color="success" variant="outlined" />
+                <Chip icon={<StorageIcon />} label={`${viewBase.totalRecords} registros`} />
+                <Chip label={`${viewBase.validEmails} válidos`} color="success" variant="outlined" />
+                {viewBase.invalidEmails > 0 && (
+                  <Chip label={`${viewBase.invalidEmails} inválidos`} color="error" variant="outlined" />
+                )}
+                <Chip label={`Cargada: ${fmtDate(viewBase.uploadDate)}`} variant="outlined" />
               </Stack>
               <Typography variant="body2">
                 <strong>Ruta S3:</strong> <code>{viewBase.path}</code>
@@ -282,7 +387,14 @@ export const BasesDatosSection = () => {
                 Usa esta ruta como <strong>Data Path</strong> al crear la campaña.
               </Typography>
               <Divider />
-              <PreviewTable analysis={viewBase.analysis} />
+              {viewBase.analysis ? (
+                <PreviewTable analysis={viewBase.analysis} />
+              ) : (
+                <Alert severity="info" variant="outlined">
+                  La vista previa del contenido solo está disponible para las bases cargadas en
+                  esta sesión. Esta base se registró previamente; su archivo está en S3.
+                </Alert>
+              )}
             </Stack>
           )}
         </DialogContent>

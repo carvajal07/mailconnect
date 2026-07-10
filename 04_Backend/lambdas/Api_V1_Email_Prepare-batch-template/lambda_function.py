@@ -364,20 +364,22 @@ def check_blacklist(keys:list)->list:
     Returns:
         list: Retorna la lista con los email que estan en la lista negra del cliente
     """
-    # Realizar una consulta a la tabla de lista negra
-    table_blacklist = dynamodb.Table(f'{customer_name}_blacklist')
+    # La tabla de lista negra del cliente se llama '{customer}_blackList' (con L
+    # mayúscula): así la crea este mismo proceso (ver check_and_create_table más
+    # abajo) y así la escribe ReceptionStatus. Debe coincidir en TODOS lados.
+    table_name_blacklist = f'{customer_name}_blackList'
     request_items = {
-        'blacklist': {
+        table_name_blacklist: {
             'Keys': keys
         }
     }
 
-    # Realizar la consulta BatchGetItem
-    response = table_blacklist.batch_get_item(RequestItems=request_items)
+    # BatchGetItem se hace a nivel del recurso (no de la Table).
+    response = dynamodb.batch_get_item(RequestItems=request_items)
 
     # Obtener los correos electrónicos que están en la lista negra
     blacklisted_emails = set()
-    for item in response.get('Responses', {}).get('blacklist', []):
+    for item in response.get('Responses', {}).get(table_name_blacklist, []):
         blacklisted_emails.add(item['email'])
 
     return blacklisted_emails
@@ -532,7 +534,7 @@ def insert_mails_blacklist(emails:list,state:str,description:str)->None:
             'type2': {'S': description}
         })
 
-    table_name_blacklist = f'{customer_name}_blacklist'
+    table_name_blacklist = f'{customer_name}_blackList'
     table_blacklist = dynamodb.Table(table_name_blacklist)
 
     # Realiza la inserción en lotes utilizando el método batch_write_item
@@ -771,11 +773,14 @@ def lambda_handler(event, context):
                                 #No se realizara el proceso de completar la cantidad de muestras
 
                                 try:
-                                    sample_identifications = data["identifications"]
-                                    sample_identifications = set(sample_identifications)
+                                    # Las identificaciones llegan del front como texto; el
+                                    # spool trae line[0] numérico. Normalizamos ambos a texto
+                                    # (sin espacios) para que la comparación haga match
+                                    # (antes int == str nunca coincidía y no se enviaba nada).
+                                    sample_identifications = set(str(i).strip() for i in data["identifications"])
                                     index_recipient = 0
-                                    samples_count = 0                                
-                                    print(f"Identificaciones para las muestras: {samples}")  
+                                    samples_count = 0
+                                    print(f"Identificaciones para las muestras: {sample_identifications}")
 
                                     #Opcion 2
                                     print('Inicio lectura del archivo para filtrar los registros de muestras selectivas y reemplazar el email real con el de muestras')
@@ -793,7 +798,7 @@ def lambda_handler(event, context):
                                             if samples_count == quantity_samples:
                                                 print("Salgo del bucle porque ya encontre todas las muestras solicitadas")
                                                 break
-                                            id = int(line[0])
+                                            id = str(line[0]).strip()
                                             #print(id)
                                             for identification in sample_identifications:
                                                 if id == identification:

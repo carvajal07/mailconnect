@@ -23,7 +23,9 @@ import DownloadIcon from '@mui/icons-material/Download';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import TableViewIcon from '@mui/icons-material/TableView';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ApartmentIcon from '@mui/icons-material/Apartment';
 import { isOk } from '../../services/apiClient';
+import { getUser } from '../../services/authService';
 import { useFeedback } from '../../hooks/useFeedback';
 import {
   reportsService,
@@ -47,8 +49,9 @@ interface GeneratedReport {
 export const ReportesSection = () => {
   const { notify, FeedbackSnackbar } = useFeedback();
 
+  // El cliente (empresa) se toma de la sesión, no se captura en el formulario.
+  const cliente = getUser()?.customer ?? '';
   // Reporte de estado (backend).
-  const [cliente, setCliente] = useState('');
   const [idProceso, setIdProceso] = useState('');
   const [s3Bucket, setS3Bucket] = useState('');
   const [s3Prefix, setS3Prefix] = useState('');
@@ -77,8 +80,12 @@ export const ReportesSection = () => {
 
   /* ------- Reporte de estado por campaña (backend state-report) ------- */
   const generarReporte = async () => {
-    if (!cliente.trim() || !idProceso.trim()) {
-      notify('Indica el cliente y el ID de proceso de la campaña.', 'warning');
+    if (!cliente.trim()) {
+      notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
+      return;
+    }
+    if (!idProceso.trim()) {
+      notify('Indica el ID de proceso de la campaña.', 'warning');
       return;
     }
     setGenerating(true);
@@ -149,10 +156,12 @@ export const ReportesSection = () => {
             </Typography>
           </Stack>
           <Stack spacing={2}>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-              <TextField label="Cliente" value={cliente} onChange={(e) => setCliente(e.target.value)} fullWidth size="small" placeholder="Ej: merkacaldas" />
-              <TextField label="ID de proceso" value={idProceso} onChange={(e) => setIdProceso(e.target.value)} fullWidth size="small" placeholder="Ej: 0001" />
-            </Stack>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <ApartmentIcon fontSize="small" color="action" />
+              <Typography variant="body2" color="text.secondary">Empresa:&nbsp;</Typography>
+              <Chip size="small" label={cliente || 'sin empresa en la sesión'} color={cliente ? 'primary' : 'default'} variant="outlined" />
+            </Box>
+            <TextField label="ID de proceso" value={idProceso} onChange={(e) => setIdProceso(e.target.value)} fullWidth size="small" placeholder="Ej: 0001" />
             <Button size="small" endIcon={<ExpandMoreIcon sx={{ transform: advanced ? 'rotate(180deg)' : 'none', transition: '.2s' }} />} onClick={() => setAdvanced((a) => !a)} sx={{ alignSelf: 'flex-start' }}>
               Opciones de S3 (opcional)
             </Button>

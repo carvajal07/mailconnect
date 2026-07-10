@@ -11,8 +11,13 @@ import {
   Alert,
   InputAdornment,
   IconButton,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from '@mui/material';
-import { Visibility, VisibilityOff } from '@mui/icons-material';
+import { Visibility, VisibilityOff, MarkEmailReadOutlined } from '@mui/icons-material';
 import { AuthLayout } from '../../components/AuthLayout';
 import { authService } from '../../services/authService';
 import {
@@ -58,7 +63,8 @@ export const RegisterPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('');
+  const [successOpen, setSuccessOpen] = useState(false);
+  const [registeredEmail, setRegisteredEmail] = useState('');
   const [submitError, setSubmitError] = useState('');
 
   // Validaciones
@@ -161,7 +167,6 @@ export const RegisterPage = () => {
     if (!validateForm()) return;
 
     setIsSubmitting(true);
-    setSuccessMessage('');
     setSubmitError('');
 
     try {
@@ -175,8 +180,9 @@ export const RegisterPage = () => {
       });
 
       if (res.status && (res.statusCode === 201 || res.statusCode === 200)) {
-        setSuccessMessage('¡Cuenta creada! Revisa tu correo para activarla y luego inicia sesión.');
-        setTimeout(() => navigate('/login'), 2500);
+        // Popup que espera la confirmación del usuario antes de ir al login.
+        setRegisteredEmail(formData.email);
+        setSuccessOpen(true);
         return;
       }
 
@@ -217,11 +223,6 @@ export const RegisterPage = () => {
             Completa el formulario para registrarte
           </Typography>
 
-          {successMessage && (
-            <Alert severity="success" sx={{ mb: 2 }}>
-              {successMessage}
-            </Alert>
-          )}
           {submitError && (
             <Alert severity="error" sx={{ mb: 2 }}>
               {submitError}
@@ -377,6 +378,51 @@ export const RegisterPage = () => {
             </Typography>
           </Box>
         </Paper>
+
+        <Dialog
+          open={successOpen}
+          onClose={() => {}}
+          disableEscapeKeyDown
+          aria-labelledby="registro-exitoso-titulo"
+          PaperProps={{ sx: { borderRadius: 3, px: 1, py: 1, maxWidth: 440 } }}
+        >
+          <DialogTitle
+            id="registro-exitoso-titulo"
+            sx={{ display: 'flex', alignItems: 'center', gap: 1.2, fontWeight: 'bold' }}
+          >
+            <MarkEmailReadOutlined color="success" />
+            ¡Cuenta creada!
+          </DialogTitle>
+          <DialogContent>
+            <DialogContentText component="div">
+              Tu cuenta fue registrada correctamente. Te enviamos un correo de
+              activación a{' '}
+              <Box component="strong" sx={{ color: 'text.primary' }}>
+                {registeredEmail}
+              </Box>
+              .
+              <Box sx={{ mt: 1.5 }}>
+                Haz clic en el enlace del correo para <strong>activar tu cuenta</strong> y
+                luego inicia sesión. Si no lo ves en unos minutos, revisa la carpeta de
+                <strong> spam / correo no deseado</strong>.
+              </Box>
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button
+              variant="contained"
+              size="large"
+              fullWidth
+              onClick={() => {
+                setSuccessOpen(false);
+                navigate('/login');
+              }}
+              sx={authSubmitSx}
+            >
+              Entendido, ir a iniciar sesión
+            </Button>
+          </DialogActions>
+        </Dialog>
     </AuthLayout>
   );
 };
