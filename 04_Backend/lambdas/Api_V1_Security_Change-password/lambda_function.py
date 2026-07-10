@@ -17,6 +17,31 @@ table_otp = dynamodb.Table('oneTimePassword')
 
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
 
+# Headers de la respuesta. Con integración Lambda-proxy, API Gateway NO agrega
+# CORS ni Content-Type por su cuenta: los debe poner la Lambda.
+_HEADERS = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+    'Access-Control-Allow-Methods': 'POST,OPTIONS',
+}
+
+
+def _reply(status, statusCode, description):
+    """Respuesta con forma DUAL:
+    - campos de nivel superior (status/statusCode/description) para invocación
+      directa e integración no-proxy (y para las pruebas), y
+    - 'statusCode' + 'body' (string) + 'headers' para integración Lambda-proxy,
+      que exige exactamente ese formato (si no, API Gateway responde 502).
+    """
+    return {
+        'status': status,
+        'statusCode': statusCode,
+        'description': description,
+        'headers': _HEADERS,
+        'body': json.dumps({'status': status, 'statusCode': statusCode, 'description': description}),
+    }
+
 
 def _get_payload(event):
     if isinstance(event, dict) and isinstance(event.get('body'), str):
@@ -109,25 +134,25 @@ def lambda_handler(event, context):
         new_password = payload['password']
         otp = payload.get('otp')
     except Exception:
-        return {'status': False, 'statusCode': 400, 'description': "Faltan campos requeridos (user, password)"}
+        return _reply(False, 400, "Faltan campos requeridos (user, password)")
 
     try:
         user = _find_user_by_email(email)
         if not user:
-            return {'status': False, 'statusCode': 404, 'description': "Usuario no encontrado"}
+            return _reply(False, 404, "Usuario no encontrado")
 
         # Validar la contraseña ANTES de autorizar. El camino por OTP consume el
         # código durante la autorización, así que si la clave es débil rechazamos
         # primero y el OTP sigue disponible para reintentar.
         if not _valid_password(new_password):
-            return {'status': False, 'statusCode': 400,
-                    'description': "La contraseña no cumple los requisitos mínimos (8+ caracteres, mayúscula, minúscula y número)."}
+            return _reply(False, 400,
+                          "La contraseña no cumple los requisitos mínimos (8+ caracteres, mayúscula, minúscula y número).")
 
         # Autorización: token de sesión O un OTP válido (recuperación)
         authorized = _authorized_by_token(event, payload, email) or _authorized_by_otp(user['userId'], otp)
         if not authorized:
-            return {'status': False, 'statusCode': 401,
-                    'description': "No autorizado. Se requiere sesión válida o un OTP correcto."}
+            return _reply(False, 401,
+                          "No autorizado. Se requiere sesión válida o un OTP correcto.")
 
         # Nuevo salt + hash
         salt = str(uuid.uuid4())
@@ -144,4 +169,4 @@ def lambda_handler(event, context):
         statusCode = 500
         description = "Error no controlado en el servicio"
 
-    return {'status': status, 'statusCode': statusCode, 'description': description}
+    return _reply(status, statusCode, description)

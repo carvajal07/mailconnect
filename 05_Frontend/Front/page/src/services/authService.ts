@@ -143,12 +143,22 @@ export const authService = {
    * Cambiar contraseña. Si se pasa `otp` es una recuperación (no requiere sesión);
    * sin `otp` requiere un token de sesión válido (Authorization: Bearer).
    */
-  changePassword: (user: string, password: string, otp?: number) =>
-    post(
+  changePassword: (user: string, password: string, otp?: number) => {
+    // Recuperación (con OTP): no requiere sesión.
+    if (otp !== undefined) {
+      return post(AUTH_ENDPOINTS.CHANGE_PASSWORD, { user, password, otp }, false);
+    }
+    // Logueado (sin OTP): autoriza por token de sesión. Lo mandamos en el header
+    // Authorization Y en el body (`token`), porque si el endpoint está en
+    // integración no-proxy en API Gateway el header no llega a la Lambda; la
+    // Lambda ya acepta el token por cualquiera de las dos vías.
+    const token = getToken();
+    return post(
       AUTH_ENDPOINTS.CHANGE_PASSWORD,
-      otp !== undefined ? { user, password, otp } : { user, password },
-      otp === undefined,
-    ),
+      token ? { user, password, token } : { user, password },
+      true,
+    );
+  },
 
   refreshToken: () => post(AUTH_ENDPOINTS.REFRESH_TOKEN, {}, true),
 
