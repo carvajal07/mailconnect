@@ -51,6 +51,7 @@ import AddPhotoAlternateIcon from '@mui/icons-material/AddPhotoAlternate';
 import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
 import { templatesService } from '../../services/templatesService';
+import type { TemplateSummary } from '../../services/templatesService';
 import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
@@ -101,6 +102,18 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loadOpen, setLoadOpen] = useState(false);
   const [loadName, setLoadName] = useState('');
+  const [sesTemplates, setSesTemplates] = useState<TemplateSummary[]>([]);
+  const [loadingSesList, setLoadingSesList] = useState(false);
+
+  /** Abre el diálogo de carga y trae la lista de plantillas SES del cliente. */
+  const openLoadDialog = async () => {
+    setLoadOpen(true);
+    if (!sessionCustomer && !sessionCustomerId) return;
+    setLoadingSesList(true);
+    const res = await templatesService.list(sessionCustomer, sessionCustomerId);
+    setLoadingSesList(false);
+    if (isOk(res) && res.data?.templates) setSesTemplates(res.data.templates);
+  };
   const [loading, setLoading] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -348,7 +361,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
           <Button size="small" startIcon={<FolderIcon />} onClick={(e) => setDraftsAnchor(e.currentTarget)}>
             Borradores
           </Button>
-          <Button size="small" startIcon={<CloudDownloadIcon />} onClick={() => setLoadOpen(true)}>
+          <Button size="small" startIcon={<CloudDownloadIcon />} onClick={openLoadDialog}>
             Cargar de SES
           </Button>
           <Button size="small" startIcon={<TuneIcon />} onClick={() => setSettingsOpen(true)}>
@@ -717,12 +730,27 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
-              label="Nombre exacto de la plantilla en SES"
+              select
+              label="Plantilla del cliente en SES"
               value={loadName}
               onChange={(e) => setLoadName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleLoadFromSes()}
               fullWidth
-            />
+              helperText={loadingSesList ? 'Cargando plantillas…' : undefined}
+            >
+              {loadName && !sesTemplates.some((t) => t.name === loadName) && (
+                <MenuItem value={loadName}>{loadName}</MenuItem>
+              )}
+              {sesTemplates.length === 0 && !loadName && (
+                <MenuItem value="" disabled>
+                  {loadingSesList ? 'Cargando…' : 'No hay plantillas del cliente en SES'}
+                </MenuItem>
+              )}
+              {sesTemplates.map((t) => (
+                <MenuItem key={t.name} value={t.name}>
+                  {t.name}
+                </MenuItem>
+              ))}
+            </TextField>
             <Typography variant="caption" color="text.secondary">
               La plantilla se importa como un bloque <strong>HTML crudo</strong> para poder editarla
               y volver a publicarla.

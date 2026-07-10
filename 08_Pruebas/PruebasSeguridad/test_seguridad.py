@@ -389,5 +389,54 @@ def test_logout_ok(ctx):
     assert resp['statusCode'] == 200
 
 
+# ============================ DESUSCRIPCIÓN ============================
+# La lambda Unsubscribe valida un token HMAC firmado por las lambdas de envío
+# (build_unsubscribe_url) e inserta el email en {customer}_unsubscribe (PK email).
+
+def _load_unsubscribe_mods():
+    unsub = _load_lambda('unsubscribe', 'Api_V1_Email_Unsubscribe')
+    send_em = _load_lambda('send_em', 'Api_V1_Email_Send-batch-template-EM')
+    return unsub, send_em
+
+
+def test_unsubscribe_token_valido_inserta_email(ctx):
+    unsub, send_em = _load_unsubscribe_mods()
+    url = send_em.build_unsubscribe_url('empresatest', 'baja@test.com')
+    token = url.split('?t=')[1]
+    resp = unsub.lambda_handler({'queryStringParameters': {'t': token}}, None)
+    assert resp['statusCode'] == 200
+    assert 'Suscripci' in resp['body']  # página de confirmación
+    item = boto3.resource('dynamodb', region_name='us-east-1').Table(
+        'empresatest_unsubscribe').get_item(Key={'email': 'baja@test.com'})
+    assert 'Item' in item
+
+
+def test_unsubscribe_es_idempotente(ctx):
+    unsub, send_em = _load_unsubscribe_mods()
+    url = send_em.build_unsubscribe_url('empresatest', 'baja2@test.com')
+    token = url.split('?t=')[1]
+    assert unsub.lambda_handler({'queryStringParameters': {'t': token}}, None)['statusCode'] == 200
+    assert unsub.lambda_handler({'queryStringParameters': {'t': token}}, None)['statusCode'] == 200
+
+
+def test_unsubscribe_token_alterado_no_inserta(ctx):
+    unsub, send_em = _load_unsubscribe_mods()
+    url = send_em.build_unsubscribe_url('empresatest', 'victima@test.com')
+    payload_b64 = url.split('?t=')[1].split('.')[0]
+    resp = unsub.lambda_handler(
+        {'queryStringParameters': {'t': payload_b64 + '.firma-falsa'}}, None)
+    assert 'inv' in resp['body'].lower()  # página de enlace inválido
+    item = boto3.resource('dynamodb', region_name='us-east-1').Table(
+        'empresatest_unsubscribe').get_item(Key={'email': 'victima@test.com'})
+    assert 'Item' not in item
+
+
+def test_unsubscribe_sin_token_no_revienta(ctx):
+    unsub, _ = _load_unsubscribe_mods()
+    resp = unsub.lambda_handler({'queryStringParameters': None}, None)
+    assert resp['statusCode'] == 200
+    assert 'inv' in resp['body'].lower()
+
+
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__, '-v']))

@@ -4,6 +4,9 @@ Lambda para realizar el envio de emails en lotes (Email con adjunto unico)
 El email con adjunto unico es cuando a todos los destinatarios se les envia el mismo email, sin realizar ningun tipo de personalizacion
 '''
 import os
+import hmac
+import base64
+import hashlib
 import boto3
 import json
 import uuid
@@ -23,6 +26,20 @@ from email.mime.application import MIMEApplication
 CHARSET = "ISO-8859-1"
 REGION = 'us-east-1'
 QUANTITY_BATCH = 25
+
+# Desuscripción: URL de la lambda Unsubscribe y clave para firmar el token.
+# En EAU el correo es MIME crudo, así que además del enlace en el HTML
+# ({{unsubscribeUrl}}) se agrega el header estándar List-Unsubscribe (RFC 8058).
+UNSUBSCRIBE_URL = os.environ.get('UNSUBSCRIBE_URL', 'https://api.mailconnect.com.co/V1/Email/Unsubscribe')
+SECRET_KEY = os.environ.get('SECRET_KEY', '')
+
+
+def build_unsubscribe_url(customer, email):
+    """Token firmado (HMAC-SHA256) que la lambda Unsubscribe valida."""
+    payload = json.dumps({'c': customer, 'e': email}, separators=(',', ':'))
+    payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode().rstrip('=')
+    signature = hmac.new(SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{UNSUBSCRIBE_URL}?t={payload_b64}.{signature}"
 
 #Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb')
@@ -293,6 +310,13 @@ def send_bulk(data:list, headers:list, start:int, end:int, tags:dict)->None:
         unique_ids.append(unique_id)
         msg['To'] = email
 
+        # Desuscripción por destinatario: header estándar + variable del HTML.
+        unsubscribe_url = build_unsubscribe_url(customer_name, email)
+        del msg['List-Unsubscribe']
+        del msg['List-Unsubscribe-Post']
+        msg['List-Unsubscribe'] = f'<{unsubscribe_url}>'
+        msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+
         if personalized_subject:
             for item in personalized_subjects_list:
                 index = item["Index"]
@@ -324,6 +348,11 @@ def send_bulk(data:list, headers:list, start:int, end:int, tags:dict)->None:
         #print(html_new)
         print("Prueba")
 
+
+        # Reemplazar la variable de desuscripción en el cuerpo (el builder la
+        # incluye en el pie de todas las plantillas).
+        html_new = (html_new or "").replace('{{unsubscribeUrl}}', unsubscribe_url)
+        text_new = (text_new or "").replace('{{unsubscribeUrl}}', unsubscribe_url)
 
         textpart = MIMEText(text_new or "", 'plain', 'utf-8')
         htmlpart = MIMEText(html_new or "", 'html', 'utf-8')
