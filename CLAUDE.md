@@ -211,7 +211,11 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             Data Path. **Valida la estructura obligatoria por posición** (el backend Prepare-batch
             lee `line[0]`=Identificación numérica, `line[1]`=Correo, `line[2]`=Nombre): el diálogo
             muestra las 3 columnas requeridas **en orden** con estado ✓/✗ y avisa si no cumplen.
-            Lista de bases de la sesión (backend aún no expone listado/edición/lista negra).
+            **Historial persistente:** tras subir a S3 se registra la metadata (nombre, ruta,
+            registros, válidos/inválidos, fecha) vía `POST /Database/Register-file`, y la tabla se
+            carga con `POST /Database/List` (por `customerId`). La vista previa del contenido solo
+            está para las bases cargadas en la sesión. Servicio `databaseService.ts`; tabla
+            DynamoDB `databaseFile`. (Lista negra por cliente sigue pendiente.)
       - [x] **Estadísticas** (`EstadisticasSection` + `charts.tsx`): tablero con KPIs
             (pendientes/creadas/enviadas, total envíos, apertura promedio), **dona** de
             campañas por estado, **embudo** de envío (enviados→entregados→abiertos→clics) y
