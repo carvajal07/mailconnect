@@ -1,37 +1,35 @@
-import jwt
-import hashlib
+"""
+Script de prueba: genera y verifica un JWT como lo hace la Lambda de Login.
+
+La clave NUNCA va en el código (este repo es público). Se toma de la variable
+de entorno SECRET_KEY (la misma configurada en las lambdas):
+
+    set SECRET_KEY=...   (Windows)  |  export SECRET_KEY=...  (Linux/Mac)
+    python "prueba genera JWT.py"
+"""
+import os
 import datetime
 
+import jwt
+
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    raise SystemExit('Define la variable de entorno SECRET_KEY antes de ejecutar.')
+
 user = 'Jhon.carvajal'
-SECRET_KEY = ''
 
 
 def generate_jwt(username):
-    # Configurar la información del token (puedes incluir más información según tus necesidades)
-
     payload = {
-        'userId': 123,
-        'username':username,
+        'user': username,
         'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)
     }
-
-    payload = {
-        'userId': 123,
-        'username':username,
-        'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
-    }
-
-    # Generar el token JWT
     token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
-    return token
+    return token if isinstance(token, str) else token.decode()
+
 
 token = generate_jwt(user)
 print(token)
-##No valido
-##token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEyMywidXNlcm5hbWUiOiJKaG9uLmNhcnZhamFsMiIsImV4cCI6MTcwMjE0MjcyMX0=.jcbgDcxAzfJNYudWsVvoPcs8YHCSYsTBkXhPn7dlMDM'
-
-##Expirado
-token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEyMywidXNlcm5hbWUiOiJKaG9uLmNhcnZhamFsIiwiZXhwIjoxNzA4Mzc4Mjc3fQ.xJ0uqQ1ApHa8NSf840039jzeTIcB_qKV5rfC0m2ZWcQ'
 
 # Verificar el token usando la misma clave secreta
 try:

@@ -169,6 +169,8 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   (el `event` **es** el body) como proxy (`event['body']` string) vía un helper `_get_payload`.
 - **Backend – OTP:** el código se guarda **hasheado** (sha256); `create-otp` lo envía por
   correo, `validate-otp` lo consume. `change-password` acepta OTP (recuperación) **o** token (logueado).
+  ⚠️ La tabla real en AWS se llama **`oneTimePassword`** (PK `oneTimePasswordId`), NO `otp`;
+  las 4 lambdas ya apuntan al nombre correcto (también existe `oneTimePasswordAudit`, sin uso).
 - **Seguridad JWT:** el `Authorizer` ahora **valida** el JWT (HS256) con `SECRET_KEY`
   y deniega por defecto (fail-closed). `Login` y las lambdas nuevas leen `SECRET_KEY`
   desde variable de entorno. Pendiente: mover `SECRET_KEY` a AWS Secrets Manager.
@@ -337,14 +339,11 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
       `04_Backend/lambdas/deploy-map.json` si el nombre AWS difiere del de la carpeta.
 
 ### Seguridad (URGENTE)
-- [ ] **Rotar la `SECRET_KEY` del JWT**: está en texto plano en
-      `04_Backend/scripts/prueba genera JWT.py` y `prueba jwt.py`, y **el repo de
-      GitHub es público** → cualquiera puede forjar tokens válidos. Además es débil
-      (14 bytes; usar 32+). Rotar, actualizar env de Login/Authorizers/Change-password,
-      limpiar los scripts y valorar hacer el repo privado (Fase 0 de `PLAN_MVP.md`).
-- [ ] Rotar por precaución las AWS access keys (`consumoSQS`, `consumoS3`).
-      Nota: `01_Documentacion/Tecnica/DatosTrabajo.txt` **no está en el repo**
-      (verificado — esa carpeta nunca se versionó); el riesgo real son los scripts.
+- [x] Scripts `prueba genera JWT.py` / `prueba jwt.py` limpios: leen `SECRET_KEY` de env (jul 2026).
+- [ ] **Confirmar que la `SECRET_KEY` en uso sea NUEVA** (32+ bytes): la clave vieja quedó en el
+      **historial git** del repo público; si no se rotó el valor, sigue comprometida.
+- [ ] Hacer el repo **privado** (o limpiar el historial con BFG/filter-repo).
+- [x] AWS access keys y `DatosTrabajo.txt` gestionados por Jhon (jul 2026).
 
 ---
 

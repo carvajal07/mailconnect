@@ -13,7 +13,7 @@ except ImportError:
 
 dynamodb = boto3.resource('dynamodb')
 table_user = dynamodb.Table('user')
-table_otp = dynamodb.Table('otp')
+table_otp = dynamodb.Table('oneTimePassword')
 
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
 
@@ -83,13 +83,13 @@ def _authorized_by_otp(user_id, otp):
     response = table_otp.scan(
         FilterExpression="userId = :u AND active = :a",
         ExpressionAttributeValues={":u": user_id, ":a": True},
-        ProjectionExpression='otpId, otpHash, expirationTime'
+        ProjectionExpression='oneTimePasswordId, otpHash, expirationTime'
     )
     for item in response['Items']:
         if item.get('otpHash') == otp_hash and int(item.get('expirationTime', 0)) > now:
             # Consumir el OTP
             table_otp.update_item(
-                Key={'otpId': item['otpId']},
+                Key={'oneTimePasswordId': item['oneTimePasswordId']},
                 UpdateExpression='SET active = :f',
                 ExpressionAttributeValues={':f': False}
             )

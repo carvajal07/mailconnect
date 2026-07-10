@@ -66,7 +66,8 @@ TABLES = {
     'userData': 'userDataId',
     'customer': 'customerId',
     'userActivation': 'userActivationId',
-    'otp': 'otpId',
+    # La tabla real en AWS se llama 'oneTimePassword' (PK 'oneTimePasswordId').
+    'oneTimePassword': 'oneTimePasswordId',
     'session': 'sessionId',
 }
 
@@ -139,7 +140,7 @@ class Ctx:
         """OTPs activos del usuario (para verificar consumo)."""
         uid = self.user_id(email)
         return [
-            i for i in self.tables['otp'].scan(
+            i for i in self.tables['oneTimePassword'].scan(
                 FilterExpression='userId = :u',
                 ExpressionAttributeValues={':u': uid},
             )['Items']

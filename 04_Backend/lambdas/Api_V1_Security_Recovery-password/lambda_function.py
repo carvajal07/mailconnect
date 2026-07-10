@@ -7,7 +7,7 @@ import secrets
 import boto3
 
 dynamodb = boto3.resource('dynamodb')
-table_otp = dynamodb.Table('otp')
+table_otp = dynamodb.Table('oneTimePassword')
 table_user = dynamodb.Table('user')
 
 ses = boto3.client('ses')
@@ -97,7 +97,7 @@ def _create_and_send_otp(user_id, email, ip, expiration_min):
 
     table_otp.put_item(
         Item={
-            'otpId': otp_id,
+            'oneTimePasswordId': otp_id,
             'userId': user_id,
             'otpHash': otp_hash,
             'expirationTime': expiration_time,
