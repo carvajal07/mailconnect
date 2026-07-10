@@ -229,50 +229,28 @@ def prepare_message(data:str,part:int)-> list:
     Returns:
         list: Lista con el append de cada mensaje de SQS
     """ 
-    epoch_time = int(round(time.time() * 1000))
-    #epoch_timestamp = time.time() - 621673600
-    try:
-        body = {
-            "customerId":customer_id,
-            "customerName":customer_name,
-            "processId":process_id,
-            "campaignId":campaign_id,
-            "attachment":attachment,
-            "fromEmail":from_email,
-            "headers":headers,
-            "templateName":template_name,
-            # Texto del SMS (solo para canal SMS; vacío para email). Lo usa Send-batch-SMS.
-            "smsBody":sms_body,
-            # Nombre de la plantilla HSM (solo canal WSP; vacío para el resto). Lo usa Send-batch-WSP.
-            "wspTemplate":wsp_template,
-            # Texto a leer por TTS (solo canal VOZ; vacío para el resto). Lo usa Send-batch-Voice.
-            "voiceMessage":voice_message,
-            "part":part,
-            "data":data
-        }
-        json_string = json.dumps(body)
-        '''
-        message = {
-            "Id":str(epoch_time),
-            "MessageBody":str(body)
-        }
-        #Para colas fifo
-        
-        message = {
-            "Id":str(part),
-            "MessageBody":str(body),
-            "MessageGroupId": "my-message-group-id",  # Optional: Use a message group ID for message ordering
-            "MessageDeduplicationId": "my-deduplication-id-1",  # Optional: Use a message deduplication ID to prevent duplicates
-        }
-        '''
-        
-        #messages.append(message)
-        
-    except Exception as e:
-        print(e)
-    #return messages
-    #return str(body)
-    return json_string
+    # Se construye el dict SIN try (antes, si esto fallaba, `json_string` quedaba sin
+    # asignar y el `return json_string` reventaba con UnboundLocalError). Si falta un
+    # dato, que falle acá con un error claro y que lo maneje quien llama.
+    body = {
+        "customerId":customer_id,
+        "customerName":customer_name,
+        "processId":process_id,
+        "campaignId":campaign_id,
+        "attachment":attachment,
+        "fromEmail":from_email,
+        "headers":headers,
+        "templateName":template_name,
+        # Texto del SMS (solo para canal SMS; vacío para email). Lo usa Send-batch-SMS.
+        "smsBody":sms_body,
+        # Nombre de la plantilla HSM (solo canal WSP; vacío para el resto). Lo usa Send-batch-WSP.
+        "wspTemplate":wsp_template,
+        # Texto a leer por TTS (solo canal VOZ; vacío para el resto). Lo usa Send-batch-Voice.
+        "voiceMessage":voice_message,
+        "part":part,
+        "data":data
+    }
+    return json.dumps(body)
 
 def send_sqs_batch(url_sqs:str,messages:list)->None:
     """
@@ -286,17 +264,13 @@ def send_sqs_batch(url_sqs:str,messages:list)->None:
         dict: Nombre de la campaña
     """
     print("Url: " + url_sqs)
-    try:
-        response = sqs.send_message_batch(
-            QueueUrl=url_sqs,
-            Entries=messages
-        )
-        print(response)
-        print("Mensaje enviado")
-    except Exception as e:
-        print(e)
-
-    #Validar la posibilidad de reintentos si no se puede encolar
+    # OJO: antes esta función atrapaba la excepción y solo hacía print → si el encolado
+    # fallaba, la campaña quedaba "Enviando"/"Procesando" pero los mensajes NO salían y
+    # nadie se enteraba. Ahora el error se PROPAGA para que el bloque que llama marque la
+    # campaña en Error.
+    response = sqs.send_message_batch(QueueUrl=url_sqs, Entries=messages)
+    print(response)
+    print("Mensaje enviado")
 
 def send_sqs(url_sqs:str,message:list)->None:
     """
@@ -310,75 +284,10 @@ def send_sqs(url_sqs:str,message:list)->None:
         dict: Nombre de la campaña
     """
 
-    try:
-        response = sqs.send_message(
-            QueueUrl=url_sqs,
-            MessageBody=message
-        )
-        print(response)
-
-    except Exception as e:
-        print(e)
-
-    #Validar la posibilidad de reintentos si no se puede encolar
-
-#Funcion no se usa en este proceso
-def search_samples(file_in:str,samples:str,recipients:str,quantity_samples:int,quantity_recipients:int)->list:
-    """
-    Esta función obtiene los datos de la campaña.
-
-    Args:
-        campaign_name (str): Nombre de la campana
-
-    Returns:
-        dict: Nombre de la campaña
-    """
-    records_found = []
-    samples_Count = 0
-    index_recipient = 0
-    print(samples)
-    with open(file_in, 'r') as file:
-        reader = csv.reader(file, delimiter=DELIMITER)
-        next(reader) #Omito la primer linea que pertenece al encabezado
-        for line in reader:
-        #for line in file:
-            #Reviso si ya asigne la cantidad total de muestras para no seguir recorriendo las lineas
-            if samples_count == quantity_samples:
-                break
-            id = int(line[0])
-            #print(id)
-
-            #V1
-            for sample in samples:
-                print(sample)
-                if id == sample:
-                    samples_count += 1
-                    print("Entro")
-                    #Reemplazar email real
-                    if index_recipient == quantity_recipients:
-                        index_recipient = 0
-                    #Reemplazar el email real por el email de muestras
-                    new_email = recipients[index_recipient]
-                    real_email = line[1]
-                    line = line.replace(real_email,new_email)
-                    records_found.append(line)
-                    index_recipient += 1
-                    break
-
-            #V2
-            if id in samples:
-                samples_count += 1
-                print("Entro")
-                #Reemplazar email real
-                if index_recipient == quantity_recipients:
-                    index_recipient = 0
-                #Reemplazar el email real por el email de muestras
-                new_email = recipients[index_recipient]
-                real_email = line[1]
-                line = line.replace(real_email,new_email)
-                records_found.append(line)
-                index_recipient += 1
-    return records_found
+    # Igual que send_sqs_batch: el error se PROPAGA (antes se tragaba con un print) para
+    # que el bloque que llama marque la campaña en Error si no se pudo encolar.
+    response = sqs.send_message(QueueUrl=url_sqs, MessageBody=message)
+    print(response)
 
 def check_and_create_table(table_name:str, id:str)->bool:
     """
@@ -1111,7 +1020,10 @@ def lambda_handler(event, context):
                                 #upload_s3
                                 send_sqs(url_sqs,message)
 
-                            registers_to_send = len(registers_correct)
+                            # Los REALMENTE encolados = estructuralmente válidos MENOS los
+                            # que se filtraron por lista negra y desuscritos (antes se
+                            # reportaba len(registers_correct), que los incluía de más).
+                            registers_to_send = len(registers_correct) - len(registers_blacklist) - len(registers_unsubscribe)
                         except Exception as e:
                             update_campaign_status("Error")
                             print(e)

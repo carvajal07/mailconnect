@@ -9,6 +9,7 @@ y no está instalado en CI.
 """
 import os
 import sys
+import json
 import types
 import importlib.util
 from pathlib import Path
@@ -80,3 +81,32 @@ def test_batch_get_dedup_y_troceo(pb):
 def test_tabla_inexistente_no_revienta(pb):
     # Si la tabla no existe, devuelve vacío en vez de tumbar el envío.
     assert pb._batch_get_emails('empresa_noexiste_unsubscribe', [{'email': 'a@test.com'}]) == set()
+
+
+# ---- Fase 0: quick wins ----
+
+def test_prepare_message_devuelve_json_valido(pb):
+    # Antes: si el dict fallaba, json_string quedaba sin asignar → UnboundLocalError.
+    # Ahora siempre devuelve un JSON válido con la data y la parte.
+    pb.customer_id = 'CU1'; pb.customer_name = 'empresa'; pb.process_id = 'P1'
+    pb.campaign_id = 'K1'; pb.attachment = False; pb.from_email = 'a@b.com'
+    pb.headers = ['Id', 'Correo', 'Nombre']; pb.template_name = 'T'
+    pb.sms_body = ''; pb.wsp_template = ''; pb.voice_message = ''
+    out = pb.prepare_message([['1', 'a@b.com', 'Ana']], 3)
+    parsed = json.loads(out)
+    assert parsed['processId'] == 'P1'
+    assert parsed['part'] == 3
+    assert parsed['data'] == [['1', 'a@b.com', 'Ana']]
+
+
+def test_send_sqs_propaga_error(pb):
+    # Antes se tragaba la excepción (print) → el envío quedaba "Enviando" sin encolar.
+    # Ahora el error se PROPAGA para que el bloque que llama marque Error.
+    import pytest as _pytest
+    with _pytest.raises(Exception):
+        pb.send_sqs('https://sqs.us-east-1.amazonaws.com/000000000000/cola-inexistente', 'x')
+
+
+def test_search_samples_eliminado(pb):
+    # Código muerto y con bugs: ya no debe existir.
+    assert not hasattr(pb, 'search_samples')
