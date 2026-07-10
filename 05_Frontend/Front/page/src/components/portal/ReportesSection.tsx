@@ -34,7 +34,8 @@ import {
   toCsv,
   type StateReportResult,
 } from '../../services/reportsService';
-import { DEMO_CAMPAIGNS, ESTADO_LABEL, rate } from './campaignData';
+import { statsService } from '../../services/statsService';
+import { ESTADO_LABEL, rate } from './campaignData';
 
 interface GeneratedReport {
   id: string;
@@ -51,6 +52,8 @@ export const ReportesSection = () => {
 
   // El cliente (empresa) se toma de la sesión, no se captura en el formulario.
   const cliente = getUser()?.customer ?? '';
+  const customerId = getUser()?.customerId ?? '';
+  const [exporting, setExporting] = useState(false);
   // Reporte de estado (backend).
   const [idProceso, setIdProceso] = useState('');
   const [s3Bucket, setS3Bucket] = useState('');
@@ -60,22 +63,38 @@ export const ReportesSection = () => {
   const [last, setLast] = useState<{ result: StateReportResult; filename: string } | null>(null);
   const [reports, setReports] = useState<GeneratedReport[]>([]);
 
-  /* ------- Exportar resumen de campañas (local, sin backend) ------- */
-  const exportResumen = () => {
+  /* ------- Exportar resumen de campañas (datos reales de estadísticas) ------- */
+  const exportResumen = async () => {
+    if (!customerId || !cliente) {
+      notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
+      return;
+    }
+    setExporting(true);
+    const res = await statsService.statistics(customerId, cliente);
+    setExporting(false);
+    if (!isOk(res) || !res.data?.campaigns) {
+      notify(res.description || 'No se pudieron obtener las campañas para el resumen.', 'error');
+      return;
+    }
+    const campaigns = res.data.campaigns;
+    if (campaigns.length === 0) {
+      notify('Aún no hay campañas para exportar.', 'info');
+      return;
+    }
     const headers = ['Campaña', 'Estado', 'Envíos', 'Entregas', 'Aperturas', 'Clics', 'Rebotes', 'Quejas', 'Apertura %'];
-    const rows = DEMO_CAMPAIGNS.map((c) => [
+    const rows = campaigns.map((c) => [
       c.name,
-      ESTADO_LABEL[c.estado],
+      c.rawState || ESTADO_LABEL[c.estado],
       c.enviados,
       c.entregados,
       c.abiertos,
       c.clics,
       c.rebotes,
       c.quejas,
-      c.estado === 'enviada' ? rate(c.abiertos, c.entregados) : 0,
+      rate(c.abiertos, c.entregados),
     ]);
     downloadCsv('resumen_campanas.csv', toCsv(headers, rows));
-    notify('Resumen de campañas descargado.', 'success');
+    notify(`Resumen de ${campaigns.length} campaña(s) descargado.`, 'success');
   };
 
   /* ------- Reporte de estado por campaña (backend state-report) ------- */
@@ -123,10 +142,9 @@ export const ReportesSection = () => {
       </Typography>
 
       <Alert severity="info" sx={{ mb: 2 }}>
-        Puedes <strong>exportar el resumen de campañas</strong> al instante (CSV) y generar el{' '}
-        <strong>reporte de estado por campaña</strong> (detalle por destinatario) con el backend.
-        El reporte de estado usa el endpoint real <code>state-report</code>; si aún no está
-        desplegado/enrutado, verás un aviso.
+        Puedes <strong>exportar el resumen de campañas</strong> (métricas reales agregadas) y
+        generar el <strong>reporte de estado por campaña</strong> (detalle por destinatario). Ambos
+        usan endpoints reales del backend (<code>Statistics</code> y <code>state-report</code>).
       </Alert>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2, mb: 3 }}>
@@ -139,11 +157,16 @@ export const ReportesSection = () => {
             </Typography>
           </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Descarga un CSV con las métricas agregadas de tus campañas (envíos, entregas,
-            aperturas, clics, rebotes y tasa de apertura). Disponible al instante.
+            Descarga un CSV con las métricas <strong>reales</strong> agregadas de tus campañas
+            (envíos, entregas, aperturas, clics, rebotes, quejas y tasa de apertura).
           </Typography>
-          <Button variant="contained" startIcon={<DownloadIcon />} onClick={exportResumen}>
-            Descargar resumen (CSV)
+          <Button
+            variant="contained"
+            startIcon={exporting ? <CircularProgress size={16} color="inherit" /> : <DownloadIcon />}
+            onClick={exportResumen}
+            disabled={exporting}
+          >
+            {exporting ? 'Generando…' : 'Descargar resumen (CSV)'}
           </Button>
         </Paper>
 

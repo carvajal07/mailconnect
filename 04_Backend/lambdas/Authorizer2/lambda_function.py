@@ -71,4 +71,11 @@ def lambda_handler(event, context):
         print("Authorizer2: el token no contiene 'user'.")
         raise Exception('Unauthorized')
 
-    return _build_policy(user, 'Allow', resource, context={'user': str(user)})
+    # Reenviar la identidad del tenant en el context (ver Authorizer).
+    ctx = {
+        'user': str(user),
+        'customerId': str(decoded.get('customerId', '') or ''),
+        'customer': str(decoded.get('customer', '') or ''),
+        'userId': str(decoded.get('userId', '') or ''),
+    }
+    return _build_policy(user, 'Allow', resource, context=ctx)

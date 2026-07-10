@@ -27,6 +27,18 @@ def _get_payload(event):
     return event if isinstance(event, dict) else {}
 
 
+def _tenant_from_authorizer(event):
+    """customerId/customer que el Authorizer inyecta en el context (CONFIABLE).
+    Con integración proxy llega en event.requestContext.authorizer; en no-proxy
+    depende de que el mapping template reenvíe $context.authorizer.*. Se prefiere
+    sobre el body para evitar que un cliente consulte datos de otro (multi-tenant).
+    """
+    if not isinstance(event, dict):
+        return {}
+    auth = (event.get('requestContext') or {}).get('authorizer') or {}
+    return auth if isinstance(auth, dict) else {}
+
+
 def _clean(item):
     """DynamoDB devuelve los números como Decimal; se pasan a int para el JSON."""
     out = {}
@@ -37,7 +49,8 @@ def _clean(item):
 
 def lambda_handler(event, context):
     payload = _get_payload(event)
-    customer_id = payload.get('customerId')
+    # Preferir la identidad del token (Authorizer) sobre lo que mande el body.
+    customer_id = _tenant_from_authorizer(event).get('customerId') or payload.get('customerId')
 
     if not customer_id:
         return {

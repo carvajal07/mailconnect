@@ -76,7 +76,7 @@ Corrige la tabla del README (que marca varias como TODO):
 | `Validate-otp` | `POST /api/validate-otp` | ✅ Implementado |
 | `Recovery-password` | `POST /api/forgot-password` | ✅ Implementado (genera y envía OTP; respuesta genérica) |
 | `Verify-code` | `POST /api/verify-code` | ⚠️ **Stub** |
-| `Refresh-token` | `POST /api/token/refresh` | ⚠️ **Stub** |
+| `Refresh-token` | `POST /api/token/refresh` | ✅ Implementado (renueva el JWT con los mismos claims) |
 | `Authorizer` / `Authorizer2` | (Lambda Authorizer) | ✅ Valida el JWT (HS256) con `SECRET_KEY`; deniega por defecto |
 
 ---
@@ -133,6 +133,19 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
    `{customer}_unsubscribe` (PK `email`) y muestra una página de confirmación con la marca.
 4. Prepare-batch filtra contra esa tabla en el envío real (chequeo reparado: antes nunca corría).
    ⚠️ EAP aún no reemplaza la variable (pendiente, mismo patrón que EAU).
+
+### Multi-tenant y refresh (jul 2026)
+- **Claims en el JWT:** `Login` embebe `customerId`, `customer` y `userId` en el token.
+  El `Authorizer`/`Authorizer2` los reenvían en el **context** de la policy.
+- **Enforcement:** las read-lambdas (`Campaign_List`, `Template_List`, `Database_List`,
+  `Reports_Statistics`) **prefieren el `customerId`/`customer` del context del Authorizer**
+  (`event.requestContext.authorizer.*`) sobre el body → un cliente no puede consultar datos
+  de otro. ⚠️ Para que el context llegue en integración **no-proxy**, el mapping template de
+  esas rutas debe inyectar `$context.authorizer.customerId` (y `customer`) al body, o pasarlas
+  a **proxy**. En proxy ya funciona directo. Sin eso, cae al body (comportamiento legacy).
+- **Refresh token:** `Api_V1_Security_Refresh-token` valida el token vigente y reemite uno con
+  los mismos claims y `exp` fresco (sesión deslizante). El front lo renueva en segundo plano
+  (`RequireAuth`) cuando el usuario está activo y al token le queda < 1 h.
 
 ### Sesión del front
 - El JWT se decodifica en el cliente para conocer `exp`: si venció, `apiClient` corta antes de

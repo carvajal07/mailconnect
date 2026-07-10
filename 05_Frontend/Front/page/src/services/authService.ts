@@ -160,7 +160,11 @@ export const authService = {
     );
   },
 
-  refreshToken: () => post(AUTH_ENDPOINTS.REFRESH_TOKEN, {}, true),
+  /** Renueva el JWT. Manda el token en header y en body (para integración no-proxy). */
+  refreshToken: (): Promise<ApiResponse<{ token?: string }>> => {
+    const token = getToken();
+    return post<{ token?: string }>(AUTH_ENDPOINTS.REFRESH_TOKEN, token ? { token } : {}, true);
+  },
 
   logout: (user?: string) => post(AUTH_ENDPOINTS.LOGOUT, { user }),
 };
@@ -214,6 +218,38 @@ export function isTokenExpired(): boolean {
   const payload = decodeJwtPayload(token);
   if (!payload?.exp) return false; // token sin exp: se deja pasar (el backend decide)
   return Date.now() / 1000 > payload.exp - 30;
+}
+
+/** Segundos hasta que expire el token (Infinity si no tiene exp; 0 si venció/no hay). */
+export function secondsUntilExpiry(): number {
+  const token = getToken();
+  if (!token) return 0;
+  const payload = decodeJwtPayload(token);
+  if (!payload?.exp) return Infinity;
+  return Math.max(0, payload.exp - Date.now() / 1000);
+}
+
+let refreshing = false;
+
+/**
+ * Renueva el token de forma proactiva (sesión deslizante). Solo intenta una vez a
+ * la vez y solo si el token sigue vigente. Devuelve true si se renovó.
+ */
+export async function refreshSession(): Promise<boolean> {
+  if (refreshing || isTokenExpired()) return false;
+  refreshing = true;
+  try {
+    const res = await authService.refreshToken();
+    if (res.status && res.statusCode === 200 && res.data?.token) {
+      localStorage.setItem(TOKEN_KEY, res.data.token);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    refreshing = false;
+  }
 }
 
 export type LogoutReason = 'expired' | 'inactive';
