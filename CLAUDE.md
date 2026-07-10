@@ -146,6 +146,16 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   cliente (del contexto), no un texto libre; al elegir una se fija su `s3Path`.
 - **Delimitador del CSV:** `Prepare-batch` ahora **detecta** el delimitador (`; , tab |`) leyendo
   el encabezado, así el cliente puede subir la base con cualquiera de los 4 (antes asumía `;`).
+- **Bases por canal:** la carga de base tiene un selector de **Canal** (Correo/SMS/WhatsApp/Voz).
+  Define el **tipo de contacto** de la columna 2: correo (EMAIL) o celular E.164 (SMS/WhatsApp/Voz).
+  `csv.ts` valida en consecuencia (`channelContactType`, `requiredColumns(contact)`,
+  `analyzeCsv(text, delim, contact)`); el canal se guarda en `databaseFile.channel`.
+- **Modal de progreso de subida:** la carga a S3 abre un popup con 2 checks (crear URL prefirmada,
+  carga a S3) y botón Aceptar.
+- **Listado de bases (fix):** `Database/List` cae a buscar por **nombre de empresa** (`customer`)
+  si el `customerId` no coincide (robustez ante desalineación del `customerId` entre registro y
+  consulta, p. ej. por el mapping template del Authorizer). `Register-file` también prefiere el
+  `customerId` del context del Authorizer para quedar consistente con List.
 
 ### Canal SMS (jul 2026, base)
 - **Envío:** `Api_V1_Sms_Send-batch` (trigger cola `Sms_Send-batch`) manda cada SMS con

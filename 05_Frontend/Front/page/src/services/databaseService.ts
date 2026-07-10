@@ -28,6 +28,8 @@ export interface RegisterFilePayload {
   invalidEmails?: number;
   duplicates?: number;
   delimiter?: string;
+  /** Canal para el que se validó la base: EMAIL | SMS | WHATSAPP | VOICE. */
+  channel?: string;
   uploadedBy?: string;
 }
 
@@ -42,6 +44,7 @@ export interface DatabaseFile {
   invalidEmails: number;
   duplicates: number;
   delimiter: string;
+  channel?: string;
   uploadedBy: string;
   uploadDate: string;
   status: string;
@@ -52,7 +55,8 @@ export const databaseService = {
   registerFile: (payload: RegisterFilePayload): Promise<ApiResponse<{ databaseFileId?: string }>> =>
     apiPost(DATABASE_ENDPOINTS.REGISTER_FILE, payload),
 
-  /** Lista las bases de datos registradas para un cliente. */
+  /** Lista las bases de datos del cliente. Envía customerId Y customer (el backend
+   *  cae a buscar por nombre de empresa si el customerId no coincide). */
   list: (customerId: string, customer?: string): Promise<ApiResponse<{ files?: DatabaseFile[]; count?: number }>> =>
-    apiPost(DATABASE_ENDPOINTS.LIST, customerId ? { customerId } : { customer }),
+    apiPost(DATABASE_ENDPOINTS.LIST, { customerId, customer }),
 };

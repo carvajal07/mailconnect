@@ -28,6 +28,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import StorageIcon from '@mui/icons-material/Storage';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
+import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { campaignsService } from '../../services/campaignsService';
@@ -36,7 +37,7 @@ import { getUser } from '../../services/authService';
 import { isOk } from '../../services/apiClient';
 import { usePortalData } from '../../context/PortalDataContext';
 import { useFeedback } from '../../hooks/useFeedback';
-import { analyzeCsv, DELIMITER_LABELS, REQUIRED_COLUMNS, type CsvAnalysis, type Delimiter } from './csv';
+import { analyzeCsv, DELIMITER_LABELS, requiredColumns, channelContactType, type CsvAnalysis, type ContactType, type Delimiter } from './csv';
 
 interface BaseDatos {
   id: string;
@@ -103,12 +104,23 @@ export const BasesDatosSection = () => {
   const [delimiter, setDelimiter] = useState<Delimiter>(';');
   const [analysis, setAnalysis] = useState<CsvAnalysis | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Canal para el que se valida la base: define si la columna 2 es correo o celular.
+  const [channel, setChannel] = useState('EMAIL');
+  const contact = channelContactType(channel);
+
+  // Modal de progreso de la subida (2 pasos).
+  type StepState = 'pending' | 'loading' | 'done' | 'error';
+  const [progressOpen, setProgressOpen] = useState(false);
+  const [stepPresign, setStepPresign] = useState<StepState>('pending');
+  const [stepUpload, setStepUpload] = useState<StepState>('pending');
+  const [progressMsg, setProgressMsg] = useState('');
 
   const resetUpload = () => {
     setFile(null);
     setFileText('');
     setAnalysis(null);
     setDelimiter(';');
+    setChannel('EMAIL');
   };
 
   const handleFile = (f: File | null) => {
@@ -119,16 +131,22 @@ export const BasesDatosSection = () => {
     reader.onload = () => {
       const text = String(reader.result ?? '');
       setFileText(text);
-      const a = analyzeCsv(text);
+      const a = analyzeCsv(text, undefined, contact);
       setDelimiter(a.delimiter);
       setAnalysis(a);
     };
     reader.readAsText(f);
   };
 
+  // Al cambiar el canal, re-analiza con el tipo de contacto correspondiente.
+  const changeChannel = (ch: string) => {
+    setChannel(ch);
+    if (fileText) setAnalysis(analyzeCsv(fileText, delimiter, channelContactType(ch)));
+  };
+
   const changeDelimiter = (d: Delimiter) => {
     setDelimiter(d);
-    if (fileText) setAnalysis(analyzeCsv(fileText, d));
+    if (fileText) setAnalysis(analyzeCsv(fileText, d, contact));
   };
 
   const handleUpload = async () => {
@@ -136,30 +154,45 @@ export const BasesDatosSection = () => {
       notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
       return;
     }
-    if (!file) {
+    if (!file || !analysis) {
       notify('Selecciona un archivo CSV.', 'warning');
       return;
     }
+
+    // Abrir el modal de progreso con los 2 pasos.
+    setProgressOpen(true);
+    setProgressMsg('');
+    setStepPresign('loading');
+    setStepUpload('pending');
     setUploading(true);
+
+    // Paso 1: URL prefirmada.
     const presign = await campaignsService.presignUrl({
       customer: customer.trim(),
       documentName: file.name,
       documentType: 'database',
     });
     if (!isOk(presign) || !presign.data?.url) {
+      setStepPresign('error');
+      setProgressMsg(presign.description || 'No se pudo obtener la URL de carga.');
       setUploading(false);
-      notify(presign.description || 'No se pudo obtener la URL de carga.', 'error');
       return;
     }
+    setStepPresign('done');
+
+    // Paso 2: carga a S3.
+    setStepUpload('loading');
     const ok = await campaignsService.uploadToS3(presign.data.url, file);
-    if (!ok || !analysis) {
+    if (!ok) {
+      setStepUpload('error');
+      setProgressMsg('El archivo no se pudo subir a S3.');
       setUploading(false);
-      notify('La base no se pudo subir a S3.', 'error');
       return;
     }
+    setStepUpload('done');
     const path = presign.data.path ?? '';
 
-    // Registrar la metadata en el backend (tabla databaseFile).
+    // Registrar la metadata en el backend (no es uno de los 2 checks visibles).
     const reg = await databaseService.registerFile({
       customerId,
       customer: customer.trim(),
@@ -170,21 +203,28 @@ export const BasesDatosSection = () => {
       invalidEmails: analysis.invalidEmails,
       duplicates: analysis.duplicateEmails,
       delimiter,
+      channel,
       uploadedBy: userId,
     });
     setUploading(false);
 
-    // Guardamos el análisis local (para la vista previa) asociado al id de la base,
-    // y refrescamos el contexto para que la tabla muestre la metadata del backend.
+    // Guardamos el análisis local (vista previa) y refrescamos el contexto.
     const newId = reg.data?.databaseFileId;
     if (newId) setAnalysisById((prev) => ({ ...prev, [newId]: analysis }));
-    notify(
-      isOk(reg) ? `Base subida y registrada: ${path}` : `Base subida a S3 (${path}). No se pudo registrar su metadata.`,
-      isOk(reg) ? 'success' : 'warning',
-    );
-    setUploadOpen(false);
-    resetUpload();
+    if (!isOk(reg)) setProgressMsg('La base se subió a S3, pero no se pudo registrar su metadata.');
     if (isOk(reg)) refreshDatabases();
+  };
+
+  /** Cierra el modal de progreso y el diálogo de carga (botón Aceptar). */
+  const closeProgress = () => {
+    setProgressOpen(false);
+    setStepPresign('pending');
+    setStepUpload('pending');
+    setProgressMsg('');
+    if (stepUpload === 'done') {
+      setUploadOpen(false);
+      resetUpload();
+    }
   };
 
   return (
@@ -266,24 +306,38 @@ export const BasesDatosSection = () => {
         <DialogTitle>Cargar base de datos</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
-            <StructureGuide structure={analysis?.structure} />
+            <StructureGuide structure={analysis?.structure} contact={contact} />
 
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
-                <ApartmentIcon fontSize="small" color="action" />
-                <Typography variant="body2" color="text.secondary">Empresa:&nbsp;</Typography>
-                <Chip
-                  size="small"
-                  label={customer || 'sin empresa en la sesión'}
-                  color={customer ? 'primary' : 'default'}
-                  variant="outlined"
-                />
-                {customer && (
-                  <Typography variant="caption" color="text.secondary">
-                    → bucket <code>{customer.toLowerCase()}.database</code>
-                  </Typography>
-                )}
-              </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <ApartmentIcon fontSize="small" color="action" />
+              <Typography variant="body2" color="text.secondary">Empresa:&nbsp;</Typography>
+              <Chip
+                size="small"
+                label={customer || 'sin empresa en la sesión'}
+                color={customer ? 'primary' : 'default'}
+                variant="outlined"
+              />
+              {customer && (
+                <Typography variant="caption" color="text.secondary">
+                  → bucket <code>{customer.toLowerCase()}.database</code>
+                </Typography>
+              )}
+            </Box>
+
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <TextField
+                select
+                label="Canal"
+                value={channel}
+                onChange={(e) => changeChannel(e.target.value)}
+                fullWidth
+                helperText={contact === 'phone' ? 'La columna 2 debe ser el celular (E.164)' : 'La columna 2 debe ser el correo'}
+              >
+                <MenuItem value="EMAIL">Correo (email)</MenuItem>
+                <MenuItem value="SMS">SMS</MenuItem>
+                <MenuItem value="WHATSAPP">WhatsApp</MenuItem>
+                <MenuItem value="VOICE">Voz</MenuItem>
+              </TextField>
               <TextField
                 select
                 label="Delimitador"
@@ -311,7 +365,7 @@ export const BasesDatosSection = () => {
                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                   <Chip icon={<StorageIcon />} label={`${analysis.totalRows} registros`} />
                   <Chip label={`${analysis.headers.length} columnas`} variant="outlined" />
-                  <Chip label={`${analysis.validEmails} correos válidos`} color="success" variant="outlined" />
+                  <Chip label={`${analysis.validEmails} ${contact === 'phone' ? 'celulares' : 'correos'} válidos`} color="success" variant="outlined" />
                   {analysis.invalidEmails > 0 && (
                     <Chip label={`${analysis.invalidEmails} inválidos`} color="error" variant="outlined" />
                   )}
@@ -323,8 +377,8 @@ export const BasesDatosSection = () => {
                 {!analysis.structureOk && (
                   <Alert severity="warning">
                     La estructura no cumple el orden requerido. Las 3 primeras columnas deben ser
-                    <strong> Identificación, Correo y Nombre</strong> en ese orden (el backend las
-                    lee por posición). Corrige el archivo o el delimitador antes de subir.
+                    <strong> Identificación, {contact === 'phone' ? 'Celular' : 'Correo'} y Nombre</strong> en ese
+                    orden (el backend las lee por posición). Corrige el archivo, el canal o el delimitador antes de subir.
                   </Alert>
                 )}
 
@@ -384,10 +438,49 @@ export const BasesDatosSection = () => {
         </DialogActions>
       </Dialog>
 
+      {/* Modal de progreso de la subida (2 pasos) */}
+      <Dialog open={progressOpen} onClose={() => {}} maxWidth="xs" fullWidth disableEscapeKeyDown>
+        <DialogTitle>Subiendo base de datos</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ mt: 1 }}>
+            <ProgressStep state={stepPresign} label="Crear URL prefirmada" />
+            <ProgressStep state={stepUpload} label="Carga a S3 correcta" />
+            {progressMsg && (
+              <Alert severity={stepUpload === 'done' ? 'warning' : 'error'} sx={{ mt: 1 }}>
+                {progressMsg}
+              </Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button variant="contained" onClick={closeProgress} disabled={uploading}>
+            {uploading ? <CircularProgress size={20} color="inherit" /> : 'Aceptar'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {FeedbackSnackbar}
     </Box>
   );
 };
+
+/** Un paso del modal de progreso con su check / spinner / error. */
+const ProgressStep = ({ state, label }: { state: 'pending' | 'loading' | 'done' | 'error'; label: string }) => (
+  <Stack direction="row" spacing={1.5} alignItems="center">
+    {state === 'loading' ? (
+      <CircularProgress size={22} />
+    ) : state === 'done' ? (
+      <CheckCircleIcon color="success" />
+    ) : state === 'error' ? (
+      <CancelIcon color="error" />
+    ) : (
+      <RadioButtonUncheckedIcon color="disabled" />
+    )}
+    <Typography variant="body2" color={state === 'pending' ? 'text.secondary' : 'text.primary'}>
+      {label}
+    </Typography>
+  </Stack>
+);
 
 /* Tabla de vista previa (con scroll horizontal si hay muchas columnas). */
 const PreviewTable = ({ analysis }: { analysis: CsvAnalysis }) => (
@@ -420,13 +513,13 @@ const PreviewTable = ({ analysis }: { analysis: CsvAnalysis }) => (
 
 /* Guía de la estructura obligatoria del CSV. Si se pasa `structure`, marca por
    posición si cada columna esperada coincide con el archivo cargado. */
-const StructureGuide = ({ structure }: { structure?: CsvAnalysis['structure'] }) => (
+const StructureGuide = ({ structure, contact }: { structure?: CsvAnalysis['structure']; contact: ContactType }) => (
   <Alert severity="info" icon={false} sx={{ '& .MuiAlert-message': { width: '100%' } }}>
     <Typography variant="subtitle2" gutterBottom>
       Estructura requerida del CSV — primeras columnas, en este orden:
     </Typography>
     <Stack spacing={0.5}>
-      {REQUIRED_COLUMNS.map((col, i) => {
+      {requiredColumns(contact).map((col, i) => {
         const check = structure?.[i];
         return (
           <Stack key={col.label} direction="row" alignItems="center" spacing={1}>
@@ -453,8 +546,8 @@ const StructureGuide = ({ structure }: { structure?: CsvAnalysis['structure'] })
       })}
     </Stack>
     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-      Luego puedes añadir columnas opcionales (celular, factura, etc.). Separador: “;”. La
-      Identificación debe ser numérica.
+      Luego puedes añadir columnas opcionales. La Identificación debe ser numérica.
+      {contact === 'phone' && ' El celular debe ir en formato E.164 (+57…).'}
     </Typography>
   </Alert>
 );

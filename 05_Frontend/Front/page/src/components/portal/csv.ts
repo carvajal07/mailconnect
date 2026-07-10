@@ -16,15 +16,38 @@ export const isValidPhone = (raw: string): boolean =>
 export type Delimiter = ';' | ',' | '\t' | '|';
 
 /**
- * Columnas OBLIGATORIAS y su ORDEN. El backend (Prepare-batch) lee por posición:
- * line[0] = Identificación (numérica), line[1] = Correo, line[2] = Nombre.
- * Por eso el orden importa; después pueden ir columnas opcionales.
+ * Tipo de contacto de la columna 2 según el CANAL de la campaña:
+ *  - EMAIL → correo electrónico.
+ *  - SMS / WHATSAPP / VOICE → celular (E.164).
  */
-export const REQUIRED_COLUMNS = [
-  { label: 'Identificación', hint: 'número de documento', numeric: true, synonyms: ['identificacion', 'cedula', 'documento', 'id', 'nit', 'nrodocumento'] },
-  { label: 'Correo', hint: 'correo electrónico', numeric: false, synonyms: ['correo', 'email', 'emails', 'mail', 'correoelectronico'] },
-  { label: 'Nombre', hint: 'nombre del destinatario', numeric: false, synonyms: ['nombre', 'nombres', 'name'] },
-] as const;
+export type ContactType = 'email' | 'phone';
+
+/** Canal de la campaña → tipo de contacto que se valida en la columna 2. */
+export const channelContactType = (channel: string): ContactType =>
+  channel === 'EMAIL' || channel === 'EM' || channel === 'EAU' || channel === 'EAP' ? 'email' : 'phone';
+
+interface ColumnSpec {
+  label: string;
+  hint: string;
+  numeric: boolean;
+  synonyms: readonly string[];
+}
+
+const COL_ID: ColumnSpec = { label: 'Identificación', hint: 'número de documento', numeric: true, synonyms: ['identificacion', 'cedula', 'documento', 'id', 'nit', 'nrodocumento'] };
+const COL_EMAIL: ColumnSpec = { label: 'Correo', hint: 'correo electrónico', numeric: false, synonyms: ['correo', 'email', 'emails', 'mail', 'correoelectronico'] };
+const COL_PHONE: ColumnSpec = { label: 'Celular', hint: 'celular E.164 (+57…)', numeric: false, synonyms: ['celular', 'telefono', 'movil', 'phone', 'cel', 'tel', 'numero', 'whatsapp', 'msisdn'] };
+const COL_NAME: ColumnSpec = { label: 'Nombre', hint: 'nombre del destinatario', numeric: false, synonyms: ['nombre', 'nombres', 'name'] };
+
+/**
+ * Columnas OBLIGATORIAS y su ORDEN según el tipo de contacto. El backend
+ * (Prepare-batch) lee por posición: line[0] = Identificación, line[1] = contacto
+ * (correo o celular), line[2] = Nombre.
+ */
+export const requiredColumns = (contact: ContactType): ColumnSpec[] =>
+  [COL_ID, contact === 'phone' ? COL_PHONE : COL_EMAIL, COL_NAME];
+
+/** Compat: columnas para email (canal por defecto). */
+export const REQUIRED_COLUMNS = requiredColumns('email');
 
 /** Normaliza un encabezado: minúsculas, sin acentos ni signos. */
 export const normHeader = (s: string) =>
@@ -40,12 +63,13 @@ export interface ColumnCheck {
 
 export interface CsvAnalysis {
   delimiter: Delimiter;
+  contactType: ContactType; // qué se validó en la columna 2 (email o celular)
   headers: string[];
   totalRows: number; // filas de datos (sin encabezado)
-  emailColumnIndex: number; // -1 si no se detecta
-  validEmails: number;
-  invalidEmails: number;
-  duplicateEmails: number;
+  emailColumnIndex: number; // índice de la columna de contacto; -1 si no se detecta
+  validEmails: number; // contactos válidos (correos o celulares)
+  invalidEmails: number; // contactos inválidos
+  duplicateEmails: number; // contactos duplicados
   structure: ColumnCheck[]; // estado de las 3 columnas obligatorias (por posición)
   structureOk: boolean; // las 3 obligatorias están en el orden correcto
   sample: string[][]; // primeras filas para la vista previa
@@ -112,18 +136,19 @@ export function parseCsv(text: string, delimiter: Delimiter): string[][] {
   return rows.filter((r) => r.some((cell) => cell.trim() !== ''));
 }
 
-/** Heurística: elige la columna de email por nombre de encabezado o por contenido. */
-function findEmailColumn(headers: string[], dataRows: string[][]): number {
-  const byName = headers.findIndex((h) => /correo|email|e-mail|mail/i.test(h));
+/** Heurística: elige la columna de contacto por nombre de encabezado o por contenido. */
+function findContactColumn(headers: string[], dataRows: string[][], contact: ContactType): number {
+  const nameRe = contact === 'phone' ? /celular|telefono|movil|phone|cel|whatsapp/i : /correo|email|e-mail|mail/i;
+  const isValid = contact === 'phone' ? isValidPhone : (v: string) => EMAIL_RE.test(v);
+  const byName = headers.findIndex((h) => nameRe.test(h));
   if (byName >= 0) return byName;
-  // Por contenido: la columna con más celdas que parecen email en una muestra.
+  // Por contenido: la columna con más celdas que parecen del tipo esperado.
   const sample = dataRows.slice(0, 50);
   let bestCol = -1;
   let bestHits = 0;
-  const cols = headers.length;
-  for (let c = 0; c < cols; c++) {
+  for (let c = 0; c < headers.length; c++) {
     let hits = 0;
-    for (const r of sample) if (r[c] && EMAIL_RE.test(r[c].trim())) hits++;
+    for (const r of sample) if (r[c] && isValid(r[c].trim())) hits++;
     if (hits > bestHits) {
       bestHits = hits;
       bestCol = c;
@@ -132,36 +157,42 @@ function findEmailColumn(headers: string[], dataRows: string[][]): number {
   return bestHits > 0 ? bestCol : -1;
 }
 
-/** Analiza el texto CSV completo y devuelve un resumen para la UI. */
-export function analyzeCsv(text: string, forcedDelimiter?: Delimiter): CsvAnalysis {
+/**
+ * Analiza el texto CSV completo y devuelve un resumen para la UI. `contact` define
+ * qué se valida en la columna 2: 'email' (canal EMAIL) o 'phone' (SMS/WhatsApp/Voz).
+ */
+export function analyzeCsv(text: string, forcedDelimiter?: Delimiter, contact: ContactType = 'email'): CsvAnalysis {
   const delimiter = forcedDelimiter ?? detectDelimiter(text);
   const all = parseCsv(text, delimiter);
   const headers = all[0] ?? [];
   const dataRows = all.slice(1);
 
   // Validación de estructura obligatoria por POSICIÓN (así lo lee el backend).
-  const structure: ColumnCheck[] = REQUIRED_COLUMNS.map((col, i) => {
+  const cols = requiredColumns(contact);
+  const structure: ColumnCheck[] = cols.map((col, i) => {
     const actualHeader = headers[i] ?? '';
-    const ok = (col.synonyms as readonly string[]).includes(normHeader(actualHeader));
+    const ok = col.synonyms.includes(normHeader(actualHeader));
     return { label: col.label, hint: col.hint, position: i + 1, actualHeader, ok };
   });
   const structureOk = structure.every((c) => c.ok);
 
-  // Correo = posición 2 si la estructura es correcta; si no, se intenta detectar.
-  const emailColumnIndex = structure[1]?.ok ? 1 : findEmailColumn(headers, dataRows);
+  // Columna de contacto = posición 2 si la estructura es correcta; si no, se detecta.
+  const contactColumnIndex = structure[1]?.ok ? 1 : findContactColumn(headers, dataRows, contact);
+  const isValidContact = contact === 'phone' ? isValidPhone : (v: string) => EMAIL_RE.test(v);
+  const norm = (v: string) => (contact === 'phone' ? v.replace(/[\s()-]/g, '') : v.toLowerCase());
 
   let validEmails = 0;
   let invalidEmails = 0;
   let duplicateEmails = 0;
-  if (emailColumnIndex >= 0) {
+  if (contactColumnIndex >= 0) {
     const seen = new Set<string>();
     for (const r of dataRows) {
-      const raw = (r[emailColumnIndex] ?? '').trim().toLowerCase();
+      const raw = norm((r[contactColumnIndex] ?? '').trim());
       if (!raw) {
         invalidEmails++;
         continue;
       }
-      if (EMAIL_RE.test(raw)) {
+      if (isValidContact(raw)) {
         if (seen.has(raw)) duplicateEmails++;
         else {
           seen.add(raw);
@@ -175,9 +206,10 @@ export function analyzeCsv(text: string, forcedDelimiter?: Delimiter): CsvAnalys
 
   return {
     delimiter,
+    contactType: contact,
     headers,
     totalRows: dataRows.length,
-    emailColumnIndex,
+    emailColumnIndex: contactColumnIndex,
     validEmails,
     invalidEmails,
     duplicateEmails,
