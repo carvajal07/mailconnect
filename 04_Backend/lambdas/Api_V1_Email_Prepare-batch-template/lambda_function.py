@@ -88,6 +88,15 @@ ses = boto3.client('ses', region_name=REGION)
 
 table_process = dynamodb.Table('process')
 table_campaign = dynamodb.Table('campaign')
+table_customer = dynamodb.Table('customer')
+
+# Máximo de OPERACIONES de envío de muestras permitidas por campaña (acumulado en toda
+# la vida de la campaña). Cada llamada a Send-batch-template-samples cuenta como 1.
+MAX_SAMPLE_SENDS:int = 5
+
+
+class RealSendDisabled(Exception):
+    """El cliente tiene deshabilitados los envíos reales (campo realSendEnabled=false)."""
 
 message:str = ""
 body:str = ""
@@ -167,7 +176,7 @@ def select_campaign(campaign_name:str)->dict:
     Returns:
         dict: Nombre de la campaña
     """
-    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template'  # Lista de campos a consultar
+    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, samplesSentCount'  # Lista de campos a consultar
 
     response_campaign = table_campaign.scan(
         FilterExpression="campaignName = :value",
@@ -175,6 +184,35 @@ def select_campaign(campaign_name:str)->dict:
         ProjectionExpression=projection_campaign_expression
     )
     return response_campaign
+
+
+def increment_samples_count()->int:
+    """Suma 1 (atómico) al contador de envíos de muestras de la campaña actual y
+    devuelve el nuevo valor. Usa la variable global campaign_id."""
+    response = table_campaign.update_item(
+        Key={'campaignId': campaign_id},
+        UpdateExpression='SET samplesSentCount = if_not_exists(samplesSentCount, :zero) + :one',
+        ExpressionAttributeValues={':one': 1, ':zero': 0},
+        ReturnValues='UPDATED_NEW'
+    )
+    return int(response['Attributes'].get('samplesSentCount', 0))
+
+
+def is_real_send_enabled(customer_id_value:str)->bool:
+    """¿El cliente tiene habilitados los envíos reales? Lee el campo realSendEnabled
+    de la tabla customer. Si falta el campo (clientes antiguos) se asume HABILITADO
+    (fail-open, para no bloquear a nadie por una migración pendiente)."""
+    try:
+        response = table_customer.scan(
+            FilterExpression="customerId = :value",
+            ExpressionAttributeValues={":value": customer_id_value},
+            ProjectionExpression='realSendEnabled'
+        )
+        if response['Items']:
+            return bool(response['Items'][0].get('realSendEnabled', True))
+    except Exception as e:
+        print("No se pudo verificar realSendEnabled ({}); se asume habilitado".format(e))
+    return True
 
 def prepare_message(data:str,part:int)-> list:
     """
@@ -795,9 +833,23 @@ def lambda_handler(event, context):
                             if not re.match(patron_email, email):
                                 invalid_mail = True
                                 invalid_mails += email
-                                
-                        if invalid_mail:
-                            description = f'Error en las direcciones email enviadas para las muestras, emails con error: {invalid_mails}'                            
+
+                        # Límite de envíos de muestras por campaña (acumulado). Cada
+                        # operación de muestras cuenta 1; al llegar a MAX_SAMPLE_SENDS
+                        # se bloquea (evita abuso/costos con envíos de prueba repetidos).
+                        samples_sent_before = int(response_campaign['Items'][0].get('samplesSentCount', 0))
+                        limit_reached = samples_sent_before >= MAX_SAMPLE_SENDS
+                        print(f"Muestras enviadas antes: {samples_sent_before}/{MAX_SAMPLE_SENDS}")
+
+                        if limit_reached:
+                            description = (f'Se alcanzó el máximo de {MAX_SAMPLE_SENDS} envíos de '
+                                           f'muestras para esta campaña. Aprueba y envía la campaña '
+                                           f'real o crea una nueva campaña.')
+                            status = False
+                            print(description)
+                            status_code = 429
+                        elif invalid_mail:
+                            description = f'Error en las direcciones email enviadas para las muestras, emails con error: {invalid_mails}'
                             status = False
                             print(description)
                             status_code = 400
@@ -931,8 +983,20 @@ def lambda_handler(event, context):
                             print("Finaliza insercion en la tabla de procesos")
                             update_campaign_status("Muestras")
                             print("Finaliza actualizacion de la tabla de estado de la campaña")
+                            # Solo se cuenta la operación de muestras si salió bien.
+                            if status:
+                                nuevo_conteo = increment_samples_count()
+                                print(f"Envíos de muestras usados: {nuevo_conteo}/{MAX_SAMPLE_SENDS}")
                     else:
                         print("Inicia proceso de envio real")
+                        # Bloqueo por cliente: si el cliente tiene deshabilitados los
+                        # envíos reales, no se procesa la campaña real (las muestras sí).
+                        # Se lanza RealSendDisabled y se atrapa abajo (mantiene el 403 y
+                        # NO marca la campaña en Error).
+                        if not is_real_send_enabled(customer_id):
+                            raise RealSendDisabled(
+                                'Los envíos reales están deshabilitados para este cliente. '
+                                'Contacta al administrador de MailConnect.')
                         update_campaign_status("Enviando")
                         
                         if (channel_name == "EM"):
@@ -1069,8 +1133,14 @@ def lambda_handler(event, context):
             print(description)
             status_code = 404
             update_campaign_status("Error")
+    except RealSendDisabled as e:
+        # Cliente con envíos reales deshabilitados: 403 claro, sin marcar Error.
+        description = str(e)
+        status = False
+        status_code = 403
+        print(description)
     except Exception as e:
-        description = "Error no controlado en el servicio"        
+        description = "Error no controlado en el servicio"
         status = False
         status_code = 500
         print(description)

@@ -48,7 +48,12 @@ export interface CampaignSummary {
   template: string;
   originEmail: string;
   date: string;
+  /** Envíos de muestras ya realizados (máx. 5 por campaña; lo controla el backend). */
+  samplesSentCount?: number;
 }
+
+/** Máximo de envíos de muestras por campaña (debe coincidir con MAX_SAMPLE_SENDS del backend). */
+export const MAX_SAMPLE_SENDS = 5;
 
 export interface SamplesPayload {
   customerName: string;

@@ -31,7 +31,7 @@ import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import MenuItem from '@mui/material/MenuItem';
 import { getUser } from '../../services/authService';
-import { campaignsService } from '../../services/campaignsService';
+import { campaignsService, MAX_SAMPLE_SENDS } from '../../services/campaignsService';
 import type { CampaignSummary } from '../../services/campaignsService';
 import { templatesService } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
@@ -116,8 +116,18 @@ export const MuestrasSection = () => {
     if (found?.template) setTemplate(found.template);
   };
 
+  // Campaña seleccionada + límite de envíos de muestras (máx. MAX_SAMPLE_SENDS por campaña).
+  const selectedCampaign = campaignOptions.find((c) => c.campaignName === campaign);
+  const samplesSent = selectedCampaign?.samplesSentCount ?? 0;
+  const samplesRemaining = Math.max(0, MAX_SAMPLE_SENDS - samplesSent);
+  const samplesLimitReached = !!campaign && samplesRemaining <= 0;
+
+  // ¿El cliente tiene habilitados los envíos reales? (lo define el admin; el backend
+  // también lo bloquea). Si falta el dato en la sesión se asume habilitado.
+  const realSendEnabled = user?.realSendEnabled !== false;
+
   // Canal de la campaña seleccionada → parámetros del estimador de costo.
-  const selectedChannel = campaignOptions.find((c) => c.campaignName === campaign)?.channel ?? 'EM';
+  const selectedChannel = selectedCampaign?.channel ?? 'EM';
   const estimatorChannel =
     selectedChannel === 'SMS' ? 'SMS' : selectedChannel === 'WSP' ? 'WHATSAPP' : selectedChannel === 'VOZ' ? 'VOICE' : 'EMAIL';
   const estimatorMode = (['EM', 'EAU', 'EAP'].includes(selectedChannel) ? selectedChannel : 'EM') as 'EM' | 'EAU' | 'EAP';
@@ -151,6 +161,9 @@ export const MuestrasSection = () => {
     }
     if (!campaign.trim()) {
       return notify('Indica la campaña a probar.', 'warning');
+    }
+    if (samplesLimitReached) {
+      return notify(`Alcanzaste el máximo de ${MAX_SAMPLE_SENDS} envíos de muestras para esta campaña.`, 'warning');
     }
     for (let i = 0; i < recipients.length; i++) {
       const r = recipients[i];
@@ -189,6 +202,7 @@ export const MuestrasSection = () => {
         ...prev,
       ]);
       notify('Muestras enviadas correctamente. Revísalas y aprueba para el envío real.', 'success');
+      loadLists(); // refresca el contador de muestras usadas de la campaña
     } else {
       notify(res.description || 'No se pudieron enviar las muestras. Revisa los datos e intenta de nuevo.', 'error');
     }
@@ -199,6 +213,9 @@ export const MuestrasSection = () => {
 
   /** Dispara el envío REAL de la campaña aprobada (ruta /Email/Send-batch-template). */
   const handleSendReal = async (l: Lote) => {
+    if (!realSendEnabled) {
+      return notify('Los envíos reales están deshabilitados para tu cuenta.', 'warning');
+    }
     setSendingRealId(l.id);
     const res = await campaignsService.sendReal({
       customerName: l.cliente,
@@ -230,6 +247,14 @@ export const MuestrasSection = () => {
         el de prueba) y, al aprobar, el envío real usa <code>/Email/Send-batch-template</code> sobre
         toda la base. La campaña debe estar en estado <em>Pendiente</em> o <em>Muestras</em>.
       </Alert>
+
+      {!realSendEnabled && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          Los <strong>envíos reales están deshabilitados</strong> para tu cuenta. Puedes enviar y
+          revisar muestras, pero el envío a toda la base está bloqueado. Contacta al administrador de
+          MailConnect para habilitarlo.
+        </Alert>
+      )}
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2, mb: 2 }}>
         {/* Campaña a probar */}
@@ -377,9 +402,34 @@ export const MuestrasSection = () => {
         </Stack>
 
         <Divider sx={{ my: 2.5 }} />
-        <Button variant="contained" startIcon={sending ? undefined : <SendIcon />} onClick={handleSend} disabled={sending}>
-          {sending ? <CircularProgress size={22} /> : 'Enviar muestras'}
-        </Button>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
+          <Button
+            variant="contained"
+            startIcon={sending ? undefined : <SendIcon />}
+            onClick={handleSend}
+            disabled={sending || samplesLimitReached}
+          >
+            {sending ? <CircularProgress size={22} /> : 'Enviar muestras'}
+          </Button>
+          {campaign && (
+            <Chip
+              size="small"
+              variant="outlined"
+              color={samplesLimitReached ? 'error' : samplesRemaining <= 1 ? 'warning' : 'default'}
+              label={
+                samplesLimitReached
+                  ? `Límite alcanzado (${MAX_SAMPLE_SENDS}/${MAX_SAMPLE_SENDS})`
+                  : `Envíos de muestra: ${samplesSent}/${MAX_SAMPLE_SENDS} · quedan ${samplesRemaining}`
+              }
+            />
+          )}
+        </Stack>
+        {samplesLimitReached && (
+          <Typography variant="caption" color="error" sx={{ mt: 1, display: 'block' }}>
+            Alcanzaste el máximo de {MAX_SAMPLE_SENDS} envíos de muestras para esta campaña. Aprueba y
+            envía la campaña real, o crea una nueva campaña.
+          </Typography>
+        )}
       </Paper>
 
       {/* Estimador de costo (antes de aprobar y enviar la campaña real) */}
@@ -417,14 +467,14 @@ export const MuestrasSection = () => {
                         </Button>
                       </>
                     ) : l.estado === 'aprobada' ? (
-                      <Tooltip title="Envía la campaña a TODA la base de datos (envío real).">
+                      <Tooltip title={realSendEnabled ? 'Envía la campaña a TODA la base de datos (envío real).' : 'Envíos reales deshabilitados para tu cuenta.'}>
                         <span>
                           <Button
                             size="small"
                             variant="contained"
                             color="success"
                             startIcon={sendingRealId === l.id ? <CircularProgress size={16} color="inherit" /> : <RocketLaunchIcon />}
-                            disabled={sendingRealId !== null}
+                            disabled={sendingRealId !== null || !realSendEnabled}
                             onClick={() => handleSendReal(l)}
                           >
                             {sendingRealId === l.id ? 'Enviando…' : 'Enviar campaña real'}

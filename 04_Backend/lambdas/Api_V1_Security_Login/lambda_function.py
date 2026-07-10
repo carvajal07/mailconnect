@@ -70,8 +70,8 @@ def create_Session(userId,ipAddress,device,numberAttemps):
     )
     
 def select_client(customerId):
-    # Traemos el nombre de la empresa y el NIT para exponerlos en la sesión.
-    projectionCustomer_expression = 'company, companyTin'  # Lista de campos a consultar
+    # Traemos el nombre de la empresa, el NIT y el estado de envíos reales para la sesión.
+    projectionCustomer_expression = 'company, companyTin, realSendEnabled'  # Lista de campos a consultar
 
     response = table_customer.scan(
         FilterExpression="customerId = :value",
@@ -79,7 +79,8 @@ def select_client(customerId):
         ProjectionExpression=projectionCustomer_expression
     )
     item = response['Items'][0]
-    return item.get('company', ''), item.get('companyTin', '')
+    # Si el cliente es antiguo y no tiene el campo, se asume habilitado (fail-open).
+    return item.get('company', ''), item.get('companyTin', ''), bool(item.get('realSendEnabled', True))
     
 def select_name(userDataId):
     projectionName_expression = 'userName'  # Lista de campos a consultar
@@ -101,6 +102,7 @@ def lambda_handler(event, context):
     name = ""
     token = ""
     userId = ""
+    realSendEnabled = True
     try:
         # Obtener datos del evento
         user = event['user']
@@ -161,7 +163,7 @@ def lambda_handler(event, context):
                     if (inputHashed == userHash):
                         customerId = responseUser['Items'][0]['customerId']
                         userId = responseUser['Items'][0]['userId']
-                        customer, companyTin = select_client(customerId)
+                        customer, companyTin, realSendEnabled = select_client(customerId)
                         userDataId = responseUser['Items'][0]['userDataId']
                         name = select_name(userDataId)
                         # Token con los claims del tenant (para multi-tenant vía Authorizer).
@@ -205,7 +207,8 @@ def lambda_handler(event, context):
                 'customerId': customerId,
                 'companyTin': str(companyTin) if companyTin != "" else "",
                 'userId': userId,
-                'name': name
+                'name': name,
+                'realSendEnabled': realSendEnabled
             }
         }
 

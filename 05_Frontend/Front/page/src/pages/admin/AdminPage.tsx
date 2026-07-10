@@ -13,6 +13,7 @@ import {
 } from '@mui/material';
 import { Sidebar } from '../../components/admin/Sidebar';
 import { ClientesSection } from '../../components/admin/ClientesSection';
+import { EnviosClientesSection } from '../../components/admin/EnviosClientesSection';
 import { PlantillasSection } from '../../components/admin/PlantillasSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
@@ -51,6 +52,8 @@ export const AdminPage = () => {
     switch (activeSection) {
       case 'clientes':
         return <ClientesSection />;
+      case 'envios-clientes':
+        return <EnviosClientesSection />;
       case 'plantillas':
         return <PlantillasSection />;
       case 'plantillas-pre':

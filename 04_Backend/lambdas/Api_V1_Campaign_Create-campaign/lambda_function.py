@@ -100,6 +100,8 @@ def insert_campaign(customerId,campaignName,numeration,channel,dataPath,template
             'template': template,
             'originEmail': source,
             'campaignState': 'Pendiente',
+            # Contador de envíos de muestras (máx. MAX_SAMPLE_SENDS en Prepare-batch).
+            'samplesSentCount': 0,
             'date': date
         }
     )

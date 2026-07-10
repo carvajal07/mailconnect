@@ -175,6 +175,10 @@ def lambda_handler(event, context):
                                 'customerId': customerId,
                                 'company': company,
                                 'companyTin': companyTin,
+                                # Envíos reales habilitados por defecto. El admin puede
+                                # deshabilitarlos (Customer/Update) para bloquear el envío
+                                # real de este cliente (Prepare-batch lo verifica).
+                                'realSendEnabled': True,
                                 'date': formattedDate
                             }
                         )
