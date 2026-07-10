@@ -116,7 +116,11 @@ def lambda_handler(event, context):
         email = payload['email']
         phone = payload['phone']
         company = payload['company']
-        companyTin = payload['companyTin']
+        # La tabla 'customer' define companyTin como String (S) en el índice
+        # companyTin-date. El front lo envía como número, así que lo normalizamos
+        # a str para que coincida con el tipo del índice (evita ValidationException
+        # "Type mismatch for Index Key companyTin") y para que los scan comparen S==S.
+        companyTin = str(payload['companyTin'])
 
         print("Inicio validación de los datos del payload")
 
