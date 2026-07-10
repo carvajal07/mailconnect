@@ -28,11 +28,14 @@ from botocore.exceptions import ClientError
 REGISTERS_FOR_EM:int = 250
 REGISTERS_FOR_EAU:int = 250
 REGISTERS_FOR_EAP:int = 100
+REGISTERS_FOR_SMS:int = 100
 
 URL_SQS_EM = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-template-EM'
 URL_SQS_EAU = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-raw-EAU'
 #URL_SQS_EAP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-raw-EAP'
 URL_SQS_EAP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Template_Combination-EAP'
+# Canal SMS: cola que consume la lambda Api_V1_Sms_Send-batch (AWS End User Messaging).
+URL_SQS_SMS = 'https://sqs.us-east-1.amazonaws.com/873837768806/Sms_Send-batch'
 REGION = 'us-east-1'
 DELIMITER = ';'
 ENCODING = 'utf-8'
@@ -40,6 +43,7 @@ ENCODING = 'utf-8'
 global process_id
 global campaign_id
 global customer_id
+global sms_body
 global customer_name
 global formatted_date
 global from_email
@@ -140,7 +144,7 @@ def select_campaign(campaign_name:str)->dict:
     Returns:
         dict: Nombre de la campaña
     """
-    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail'  # Lista de campos a consultar
+    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template'  # Lista de campos a consultar
 
     response_campaign = table_campaign.scan(
         FilterExpression="campaignName = :value",
@@ -172,6 +176,8 @@ def prepare_message(data:str,part:int)-> list:
             "fromEmail":from_email,
             "headers":headers,
             "templateName":template_name,
+            # Texto del SMS (solo para canal SMS; vacío para email). Lo usa Send-batch-SMS.
+            "smsBody":sms_body,
             "part":part,
             "data":data
         }
@@ -594,6 +600,7 @@ def lambda_handler(event, context):
     global headers
     global template_name
     global attachment
+    global sms_body
 
     status = True
     description = "Campaña enviandose correctamente"
@@ -656,7 +663,10 @@ def lambda_handler(event, context):
                 channel_name = response_campaign['Items'][0]["channel"]
                 data_path = response_campaign['Items'][0]["dataPath"]
                 from_email = response_campaign['Items'][0]["originEmail"]
-                
+                # Para SMS el campo 'template' de la campaña guarda el TEXTO del mensaje
+                # (no un template de SES). Para email queda vacío y no se usa.
+                sms_body = response_campaign['Items'][0].get("template", "") if channel_name == "SMS" else ""
+
                 # Define los detalles de la tabla processDetail
                 table = f'{customer_name}_processDetail'
                 id = 'processDetailId'
@@ -701,6 +711,9 @@ def lambda_handler(event, context):
                 elif channel_name == "EAP":
                     attachment = True
                     url_sqs = URL_SQS_EAP
+                elif channel_name == "SMS":
+                    attachment = False
+                    url_sqs = URL_SQS_SMS
                 else:
                     attachment = False
                     url_sqs = URL_SQS_EM
@@ -887,12 +900,14 @@ def lambda_handler(event, context):
                         print("Inicia proceso de envio real")
                         update_campaign_status("Enviando")
                         
-                        if (channel_name == "EM"): 
-                            registers_for_message = REGISTERS_FOR_EM         
-                        if (channel_name == "EAU"): 
+                        if (channel_name == "EM"):
+                            registers_for_message = REGISTERS_FOR_EM
+                        if (channel_name == "EAU"):
                             registers_for_message = REGISTERS_FOR_EAU
-                        if (channel_name == "EAP"): 
+                        if (channel_name == "EAP"):
                             registers_for_message = REGISTERS_FOR_EAP
+                        if (channel_name == "SMS"):
+                            registers_for_message = REGISTERS_FOR_SMS
                         global_counter_message = 0 
 
                         keys = []       

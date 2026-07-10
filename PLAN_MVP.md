@@ -166,8 +166,16 @@ admin de clientes, verify-code.
       inyectar `$context.authorizer.customerId`/`customer` en el mapping template de
       `/Campaign/List`, `/Template/List`, `/Database/List`, `/Report/Statistics` (o pasarlas a proxy).
 - [x] `[C]` Estadísticas con datos reales (lambda `Api_V1_Reports_Statistics`, sin Bedrock). ← hecho en Fase 1.
-- [ ] `[C+J]` **Canal SMS** (diseño en §5.2): lambda Send-SMS + cola + estados + front (form campaña con canal SMS y validación de celular en CSV).
-- [ ] `[C]` Estimador de costos (email + SMS) según criterio de `CLAUDE.md` §5.
+- [~] `[C]` **Canal SMS** (diseño en §5.2): `Api_V1_Sms_Send-batch` (AWS End User Messaging
+      `SendTextMessage`), Prepare-batch enruta el canal SMS a la cola `Sms_Send-batch` y pasa el
+      texto (`smsBody` = campo `template` de la campaña), estados en `{customer}_sendStatus_{proc}`
+      (igual que email). Front: canal SMS en el form de campaña (con campo de texto + contador de
+      segmentos) y validador `isValidPhone` (E.164) en `csv.ts`. ⚠️ `[J]`: crear la cola
+      `Sms_Send-batch` + trigger a la lambda, env `SMS_ORIGINATION_IDENTITY` (sender/número en
+      End User Messaging) y `SMS_CONFIGURATION_SET` (opcional, para estados). Pendiente `[C]`:
+      validación de la columna celular por canal en la carga de bases + estados de entrega SMS
+      por event destinations (ReceptionStatus-SMS).
+- [x] `[C]` Estimador de costos (los 4 canales) según criterio de `CLAUDE.md` §5.
 - [ ] `[J]` Decidir proveedor SMS definitivo con costos reales (AWS vs local) tras piloto.
 
 ### Fase 3 — WhatsApp y Voz (según demanda comercial) 🟡

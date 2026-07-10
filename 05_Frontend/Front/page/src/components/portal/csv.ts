@@ -5,6 +5,13 @@
  */
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Celular en formato E.164 (recomendado para SMS/WhatsApp/Voz): +<indicativo><número>.
+// Se aceptan 8 a 15 dígitos tras el '+'. Ej.: +573001234567.
+const PHONE_E164_RE = /^\+?[1-9]\d{7,14}$/;
+
+/** ¿Es un celular válido (E.164)? Para campañas SMS/WhatsApp/Voz la columna 2 es el celular. */
+export const isValidPhone = (raw: string): boolean =>
+  PHONE_E164_RE.test((raw || '').replace(/[\s()-]/g, ''));
 
 export type Delimiter = ';' | ',' | '\t' | '|';
 

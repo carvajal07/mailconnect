@@ -134,6 +134,20 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 4. Prepare-batch filtra contra esa tabla en el envío real (chequeo reparado: antes nunca corría).
    ⚠️ EAP aún no reemplaza la variable (pendiente, mismo patrón que EAU).
 
+### Canal SMS (jul 2026, base)
+- **Envío:** `Api_V1_Sms_Send-batch` (trigger cola `Sms_Send-batch`) manda cada SMS con
+  **AWS End User Messaging** (`pinpoint-sms-voice-v2` → `SendTextMessage`) y registra el
+  estado en `{customer}_sendStatus_{proceso}` (mismo patrón que email → reportes/estadísticas
+  funcionan igual). Env: `SMS_ORIGINATION_IDENTITY` (obligatoria), `SMS_CONFIGURATION_SET` (opc).
+- **Enrutamiento:** `Prepare-batch` enruta `channel="SMS"` a `URL_SQS_SMS` (lotes de 100) y
+  agrega `smsBody` al mensaje = **campo `template` de la campaña** (para SMS, `template` guarda
+  el TEXTO del mensaje, no un template de SES). Admite variables `{{columna}}` del CSV.
+- **CSV en SMS:** la **columna 2** (line[1]) es el **celular E.164** (`+57…`), no el correo.
+  `csv.ts` exporta `isValidPhone`. ⚠️ La validación por canal en la carga de bases queda pendiente.
+- **Front:** el form de campaña (`CampanasSection`) tiene el canal **SMS** con campo de texto
+  (contador de segmentos) en vez del selector de plantilla SES.
+- ⚠️ `[J]`: crear la cola `Sms_Send-batch` + trigger, y configurar origen en End User Messaging.
+
 ### Multi-tenant y refresh (jul 2026)
 - **Claims en el JWT:** `Login` embebe `customerId`, `customer` y `userId` en el token.
   El `Authorizer`/`Authorizer2` los reenvían en el **context** de la policy.
