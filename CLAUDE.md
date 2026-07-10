@@ -305,36 +305,45 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [ ] Mover `SECRET_KEY` a **AWS Secrets Manager** (hoy es variable de entorno).
 - [ ] Lista negra por cliente; manejo de CSV grandes por partes; segmentar IPs SES por cliente.
 
-### Producto – Estimador de costo de envío (criterio para más adelante)
-> **Objetivo:** antes de que el cliente confirme un envío, mostrarle un **estimado del
-> valor** de esa campaña, para que decida con el costo a la vista (no cobrar a ciegas).
+### Producto – Estimador de costo de envío (✅ implementado, jul 2026)
+> **Objetivo:** antes de confirmar un envío, mostrarle al cliente un **estimado del valor**
+> de la campaña (los **4 canales**), con desglose, para que decida con el costo a la vista.
 
-- [ ] **Mostrar un costo estimado en el flujo de envío** (pantalla previa a "Enviar"),
-      recalculado en vivo según los parámetros de la campaña.
-- **Factores que entran en el cálculo:**
-  - **Cantidad de envíos** (nº de destinatarios del CSV / segmento).
-  - **¿Lleva adjunto?** (sí/no) y **peso aproximado** del adjunto (por tramos de MB).
-  - **Tipo de adjunto / canal:**
-    - `EM` (sin adjunto) → costo base por correo.
-    - `EAU` (adjunto único, mismo para todos) → base + recargo por peso del adjunto.
-    - `EAP` (adjunto personalizado por destinatario) → base + costo de **combinación**
-      por destinatario, **distinto si el documento es PDF o Word/.docx** (la generación
-      y renderizado personalizado cuesta más y pesa más).
-- **Dónde va:**
-  - **Backend:** una tabla/JSON de **tarifas** (configurable, idealmente por cliente) y
-    un endpoint tipo `POST /api/email/estimate` que reciba `{ channel, recipients,
-    hasAttachment, attachmentSizeMB, attachmentType (pdf|docx), personalized }` y
-    devuelva `{ estimatedCost, currency, breakdown }`. El desglose debe explicar cada
-    componente (base × envíos, recargo por peso, recargo por personalización, etc.).
-  - **Frontend:** en `CampanasSection`/portal, tras cargar el CSV y elegir opciones,
-    llamar al estimador y mostrar el valor + desglose **antes** del botón de enviar,
-    con la aclaración de que es un **estimado** (el cobro real puede variar).
-- **Pendiente de definir:**
-  - Modelo de precios y **moneda (COP)**: ¿tarifa plana por correo + recargos, o por tramos?
-  - Cómo obtener el **peso del adjunto** (del archivo ya subido a S3 vía `get-urlS3`, o
-    declarado por el usuario) y cómo estimarlo para `EAP` antes de generar los documentos.
-  - Costos AWS de referencia (SES por correo, almacenamiento/tráfico S3, cómputo de la
-    combinación docx/PDF) para calibrar la tarifa; redondeo, impuestos y mínimo por campaña.
+**Endpoint:** `POST /Cost/Estimate` (lambda `Api_V1_Cost_Estimate`, no-proxy, envelope).
+- Request: `{ customerId, channel, recipients, emailMode?, attachmentSizeMB?, attachmentType?,
+  smsSegments?, voiceMinutes? }`.
+- Response `data`: `{ currency:'COP', channel, recipients, unitCost, subtotal, taxRate, tax,
+  estimatedCost, appliedMinimum, breakdown:[{concept,detail,amount}], isEstimate, note }`.
+
+**Tabla de tarifas `pricingRate`** (DynamoDB — **PK `customerId` (String) + SK `channel`
+(String)**; `customerId='*'` = tarifa **global** por defecto). La lambda trae DEFAULT_RATES
+embebidas, así funciona aunque la tabla no exista; si existe, el ítem `('*',canal)` y luego
+`(cliente,canal)` **sobreescriben** los defaults (tarifa por cliente). Valores en **COP**.
+
+Campos por canal (todos configurables en `pricingRate`):
+- **EMAIL:** `baseEM`, `baseEAU`, `baseEAP`, `attachmentPerMB`, `personalizedPdf`, `personalizedDocx`.
+- **SMS:** `baseSms` (por SMS y por segmento de 160 GSM-7 / 70 unicode).
+- **WHATSAPP:** `baseMarketing` (por mensaje de plantilla de marketing).
+- **VOICE:** `basePerMinute`, `avgMinutes`.
+- **Comunes:** `taxRate` (IVA, default 0.19), `minCampaign` (mínimo por campaña, default $5000).
+
+**Criterios de cálculo** (unit = costo por destinatario; subtotal = unit × destinatarios):
+- EMAIL·EM → `baseEM`. EMAIL·EAU → `baseEAU + MB×attachmentPerMB`.
+  EMAIL·EAP → `baseEAP + MB×attachmentPerMB + (pdf? personalizedPdf : personalizedDocx)`.
+- SMS → `baseSms × segmentos`. WHATSAPP → `baseMarketing`. VOICE → `basePerMinute × minutos`.
+- Se aplica `max(subtotal, minCampaign)`, luego IVA. `breakdown` explica cada componente.
+
+**Frontend:** `costService.ts` + componente **`CostEstimate`** (interactivo, los 4 canales),
+integrado en **Muestras** (antes de aprobar/enviar), con el canal preseleccionado según la
+campaña. Muestra total, costo unitario, desglose e IVA, y la aclaración de "estimado".
+
+**Tarifas por defecto (COP, INDICATIVAS — calibrar `[J]`):** EM 8 · EAU 15 · EAP 40 ·
+adjunto 5/MB · pers. PDF 25 / DOCX 35 · SMS 60 · WhatsApp 90 · Voz 120/min · mín. $5000 · IVA 19%.
+
+**Pendiente `[J]`:** crear la tabla `pricingRate` + ruta `/Cost/Estimate` (authorizer+CORS) +
+permiso `dynamodb:GetItem`; calibrar tarifas con costos reales (SES/SNS/Meta/AWS EUM) y cargar
+overrides por cliente. (El peso del adjunto hoy lo declara el usuario en el estimador; a futuro
+se puede leer del objeto ya subido a S3.)
 
 ### Infraestructura / despliegue
 - [ ] Desplegar las lambdas nuevas y **crear sus rutas** en API Gateway
