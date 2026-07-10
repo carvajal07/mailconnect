@@ -28,6 +28,7 @@ import BadgeIcon from '@mui/icons-material/Badge';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import ApartmentIcon from '@mui/icons-material/Apartment';
 import { getUser } from '../../services/authService';
 import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
@@ -69,7 +70,8 @@ export const MuestrasSection = () => {
   const user = getUser();
   const { notify, FeedbackSnackbar } = useFeedback();
 
-  const [cliente, setCliente] = useState(user?.customer ?? '');
+  // El cliente (empresa) se toma de la sesión, no se captura en el formulario.
+  const cliente = user?.customer ?? '';
   const [campaign, setCampaign] = useState('');
   const [template, setTemplate] = useState('');
   const [version, setVersion] = useState(1);
@@ -98,8 +100,11 @@ export const MuestrasSection = () => {
   };
 
   const handleSend = async () => {
-    if (!cliente.trim() || !campaign.trim()) {
-      return notify('Indica el cliente y la campaña a probar.', 'warning');
+    if (!cliente.trim()) {
+      return notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
+    }
+    if (!campaign.trim()) {
+      return notify('Indica la campaña a probar.', 'warning');
     }
     for (let i = 0; i < recipients.length; i++) {
       const r = recipients[i];
@@ -185,10 +190,8 @@ export const MuestrasSection = () => {
         <Paper variant="outlined" sx={{ p: 3 }}>
           <SectionTitle icon={<CampaignIcon color="primary" />} title="Campaña a probar" />
           <Stack spacing={2} sx={{ mt: 2 }}>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-              <TextField label="Cliente" value={cliente} onChange={(e) => setCliente(e.target.value)} fullWidth size="small" />
-              <TextField label="Campaña" value={campaign} onChange={(e) => setCampaign(e.target.value)} fullWidth size="small" />
-            </Stack>
+            <ClienteSesion cliente={cliente} />
+            <TextField label="Campaña" value={campaign} onChange={(e) => setCampaign(e.target.value)} fullWidth size="small" />
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
               <TextField label="Plantilla" value={template} onChange={(e) => setTemplate(e.target.value)} fullWidth size="small" />
               <TextField
@@ -350,6 +353,22 @@ export const MuestrasSection = () => {
     </Box>
   );
 };
+
+/** Muestra la empresa activa de la sesión (el "customer" ya no se captura a mano). */
+const ClienteSesion = ({ cliente }: { cliente: string }) => (
+  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+    <ApartmentIcon fontSize="small" color="action" />
+    <Typography variant="body2" color="text.secondary">
+      Empresa:&nbsp;
+    </Typography>
+    <Chip
+      size="small"
+      label={cliente || 'sin empresa en la sesión'}
+      color={cliente ? 'primary' : 'default'}
+      variant="outlined"
+    />
+  </Box>
+);
 
 const SectionTitle = ({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle?: string }) => (
   <Box>

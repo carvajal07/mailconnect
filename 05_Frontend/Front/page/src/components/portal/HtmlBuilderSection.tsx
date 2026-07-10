@@ -84,6 +84,8 @@ const BLOCK_ICONS: Record<BlockType, ReactNode> = {
 export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePreset?: boolean } = {}) => {
   const sessionUserId = getUser()?.userId ?? '';
   const sessionCustomer = getUser()?.customer ?? '';
+  // customerId (uuid) para create-template: viene de la sesión, no se pide en el formulario.
+  const sessionCustomerId = getUser()?.customerId ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
 
   const [blocks, setBlocks] = useState<Block[]>([]);
@@ -102,7 +104,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [loading, setLoading] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [meta, setMeta] = useState({ templateName: '', customerId: '', subject: '' });
+  const [meta, setMeta] = useState({ templateName: '', subject: '' });
   const [draftsVersion, setDraftsVersion] = useState(0);
   const [presetsOpen, setPresetsOpen] = useState(false);
   const [presetsVersion, setPresetsVersion] = useState(0);
@@ -233,14 +235,17 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
 
   /* ---------------- Publicar (create-template) ---------------- */
   const handleSave = async () => {
-    if (!meta.templateName || !meta.customerId || !meta.subject) {
-      return notify('Nombre, Customer ID y Asunto son obligatorios.', 'warning');
+    if (!meta.templateName || !meta.subject) {
+      return notify('Nombre y Asunto son obligatorios.', 'warning');
+    }
+    if (!sessionCustomerId) {
+      return notify('Tu sesión no tiene un cliente asociado. Vuelve a iniciar sesión.', 'warning');
     }
     if (blocks.length === 0) return notify('Agrega al menos un bloque antes de guardar.', 'warning');
     setSaving(true);
     const res = await templatesService.create({
       userId: sessionUserId,
-      customerId: meta.customerId,
+      customerId: sessionCustomerId,
       channel: 1,
       templateName: meta.templateName,
       subject: meta.subject,
@@ -740,11 +745,12 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField label="Nombre de la plantilla" value={meta.templateName} onChange={(e) => setMeta((m) => ({ ...m, templateName: e.target.value }))} fullWidth />
-            <TextField label="Customer ID" value={meta.customerId} onChange={(e) => setMeta((m) => ({ ...m, customerId: e.target.value }))} fullWidth />
             <TextField label="Asunto" value={meta.subject} onChange={(e) => setMeta((m) => ({ ...m, subject: e.target.value }))} fullWidth />
             <Divider />
             <Typography variant="caption" color="text.secondary">
-              Se publica con el endpoint real create-template (canal Email). userId: {sessionUserId || '—'}
+              Se publica con el endpoint real create-template (canal Email) para{' '}
+              <strong>{sessionCustomer || 'tu empresa'}</strong>. El cliente se toma de tu sesión
+              {sessionCustomerId ? '' : ' (no disponible: vuelve a iniciar sesión)'}.
             </Typography>
           </Stack>
         </DialogContent>

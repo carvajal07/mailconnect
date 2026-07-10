@@ -80,6 +80,7 @@ export const MiCuentaSection = () => {
             <Row label="Correo" value={user?.email} />
             <Row label="User ID" value={user?.userId} />
             <Row label="Empresa" value={user?.customer} />
+            <Row label="NIT" value={user?.nit} />
           </Stack>
         </Paper>
 

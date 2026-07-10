@@ -150,6 +150,8 @@ export const LoginPage = () => {
           userId: res.data.userId,
           name: res.data.name,
           customer: res.data.customer,
+          customerId: res.data.customerId,
+          nit: res.data.companyTin,
           email: formData.email,
         });
         navigate('/panel');

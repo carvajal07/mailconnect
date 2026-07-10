@@ -90,7 +90,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 
 | Endpoint | Request (body) | Respuesta clave |
 |----------|----------------|-----------------|
-| `login` | `{ user (email), password }` | 200 `data:{token, userId, name, customer}` · 404 credenciales · 423 inactiva |
+| `login` | `{ user (email), password }` | 200 `data:{token, userId, name, customer, customerId, companyTin}` · 404 credenciales · 423 inactiva |
 | `register` | `{ name, phone, email, company, companyTin (número), password }` | 201 ok · 409 email existe · 400 datos inválidos |
 | `account-activation` | query `?qs=<activationKey>` | 302 redirect (éxito/error/expirado) |
 | `create-otp` | `{ user (email) o userId, expiration (min), system, ip }` | 201 `data:{otpId}` (envía el código por correo) |
@@ -119,7 +119,13 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   de tokens al inicio de `src/pages/landing/landing.css` (variables `--brand`, `--ink`, etc.).
 - **Frontend – API base:** `VITE_API_BASE_URL` (ver `.env.example`). Default = stage `Test`.
 - **Frontend – sesión:** el token y el usuario se guardan en `localStorage`
-  (`mc_token`, `mc_user`) desde `authService.ts`.
+  (`mc_token`, `mc_user`) desde `authService.ts`. `login` devuelve y la sesión
+  almacena **`customer`** (nombre de empresa), **`customerId`** (uuid) y **`nit`**
+  (companyTin). **Convención:** el cliente/empresa **NO se captura en formularios**;
+  se toma de la sesión. Muestras, Reportes y Bases de datos muestran la empresa como
+  chip de solo lectura; el builder HTML usa `customerId` de la sesión para
+  `create-template` (ya no pide "Customer ID"). El bucket de una base es
+  `{customer}.database` (derivado del `customer` de la sesión).
 - **Frontend – login DEMO (sin backend):** con `VITE_AUTH_MOCK=true` (en `.env`, ver
   `.env.example`), `authService.login`/`register` se resuelven en el cliente sin pegar a
   la API: cualquier credencial entra a `/panel` (sugerida `demo@mailconnect.com.co` /

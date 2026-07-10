@@ -28,7 +28,9 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import StorageIcon from '@mui/icons-material/Storage';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
+import ApartmentIcon from '@mui/icons-material/Apartment';
 import { campaignsService } from '../../services/campaignsService';
+import { getUser } from '../../services/authService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { analyzeCsv, DELIMITER_LABELS, REQUIRED_COLUMNS, type CsvAnalysis, type Delimiter } from './csv';
@@ -54,7 +56,8 @@ export const BasesDatosSection = () => {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [viewBase, setViewBase] = useState<BaseDatos | null>(null);
 
-  const [customer, setCustomer] = useState('');
+  // El cliente (empresa) se toma de la sesión; define el bucket {customer}.database.
+  const customer = getUser()?.customer ?? '';
   const [file, setFile] = useState<File | null>(null);
   const [fileText, setFileText] = useState('');
   const [delimiter, setDelimiter] = useState<Delimiter>(';');
@@ -89,8 +92,12 @@ export const BasesDatosSection = () => {
   };
 
   const handleUpload = async () => {
-    if (!file || !customer.trim()) {
-      notify('Indica el nombre del cliente y selecciona un archivo.', 'warning');
+    if (!customer.trim()) {
+      notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
+      return;
+    }
+    if (!file) {
+      notify('Selecciona un archivo CSV.', 'warning');
       return;
     }
     setUploading(true);
@@ -193,15 +200,22 @@ export const BasesDatosSection = () => {
           <Stack spacing={2} sx={{ mt: 1 }}>
             <StructureGuide structure={analysis?.structure} />
 
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-              <TextField
-                label="Nombre del cliente"
-                value={customer}
-                onChange={(e) => setCustomer(e.target.value)}
-                placeholder="Ej: merkacaldas"
-                fullWidth
-                helperText="Define el bucket destino: {cliente}.database"
-              />
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
+                <ApartmentIcon fontSize="small" color="action" />
+                <Typography variant="body2" color="text.secondary">Empresa:&nbsp;</Typography>
+                <Chip
+                  size="small"
+                  label={customer || 'sin empresa en la sesión'}
+                  color={customer ? 'primary' : 'default'}
+                  variant="outlined"
+                />
+                {customer && (
+                  <Typography variant="caption" color="text.secondary">
+                    → bucket <code>{customer.toLowerCase()}.database</code>
+                  </Typography>
+                )}
+              </Box>
               <TextField
                 select
                 label="Delimitador"

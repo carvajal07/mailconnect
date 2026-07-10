@@ -24,6 +24,10 @@ export interface ApiResponse<T = unknown> {
 export interface LoginData {
   token: string;
   customer: string;
+  /** Id del cliente (uuid) — necesario para crear plantillas/campañas. */
+  customerId?: string;
+  /** NIT de la empresa. */
+  companyTin?: string;
   userId: string;
   name: string;
 }
@@ -40,7 +44,12 @@ export interface RegisterPayload {
 export interface SessionUser {
   userId: string;
   name: string;
+  /** Nombre de la empresa (customer). Define buckets/tablas: {customer}.database, {customer}_... */
   customer: string;
+  /** Id del cliente (uuid) — para crear plantillas/campañas sin pedirlo en el formulario. */
+  customerId?: string;
+  /** NIT de la empresa. */
+  nit?: string;
   email: string;
 }
 
