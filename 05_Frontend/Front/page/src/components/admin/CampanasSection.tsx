@@ -21,13 +21,11 @@ import {
   Select,
   MenuItem,
   Chip,
-  Alert,
   CircularProgress,
   IconButton,
   Tooltip,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
-import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import EditIcon from '@mui/icons-material/Edit';
@@ -90,9 +88,7 @@ export const CampanasSection = () => {
 
   const [openDialog, setOpenDialog] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null); // null = crear, id = editar
-  const [openUploadDialog, setOpenUploadDialog] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [formData, setFormData] = useState<CampaignForm>(emptyForm(sessionEmail));
 
   // Plantillas SES del cliente (para el selector del formulario).
@@ -101,11 +97,6 @@ export const CampanasSection = () => {
 
   // Plantillas de mensaje guardadas (SMS/WSP) para prellenar el campo del canal.
   const [msgTemplates, setMsgTemplates] = useState<MessageTemplate[]>([]);
-
-  // Carga de CSV / documento a S3 (URL prefirmada).
-  const [csvFile, setCsvFile] = useState<File | null>(null);
-  const [csvDocumentType, setCsvDocumentType] = useState<'database' | 'document'>('database');
-  const [lastUploadPath, setLastUploadPath] = useState('');
 
   const loadCampaigns = refreshCampaigns;
 
@@ -151,7 +142,6 @@ export const CampanasSection = () => {
   const handleCloseDialog = () => {
     setOpenDialog(false);
     setEditingId(null);
-    setOpenUploadDialog(false);
   };
 
   const isSms = formData.channelName === 'SMS';
@@ -203,40 +193,6 @@ export const CampanasSection = () => {
     }
   };
 
-  const handleUploadCSV = async () => {
-    if (!customer) {
-      notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
-      return;
-    }
-    if (!csvFile) {
-      notify('Selecciona un archivo.', 'warning');
-      return;
-    }
-    setUploading(true);
-    // 1) Pedir URL prefirmada al backend.
-    const presign = await campaignsService.presignUrl({
-      customer,
-      documentName: csvFile.name,
-      documentType: csvDocumentType,
-    });
-    if (!isOk(presign) || !presign.data?.url) {
-      setUploading(false);
-      notify(presign.description || 'No se pudo obtener la URL de carga.', 'error');
-      return;
-    }
-    // 2) Subir el archivo directo a S3 con PUT.
-    const ok = await campaignsService.uploadToS3(presign.data.url, csvFile);
-    setUploading(false);
-    if (ok) {
-      const path = presign.data.path ?? '';
-      setLastUploadPath(path);
-      notify(`Archivo subido a S3${path ? `: ${path}` : ''}. Usa esa ruta como "Data Path".`, 'success');
-      setCsvFile(null);
-    } else {
-      notify('El archivo no se pudo subir a S3.', 'error');
-    }
-  };
-
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3} flexWrap="wrap" gap={1}>
@@ -250,20 +206,11 @@ export const CampanasSection = () => {
           >
             Actualizar
           </Button>
-          <Button variant="outlined" startIcon={<CloudUploadIcon />} onClick={() => setOpenUploadDialog(true)}>
-            Cargar CSV
-          </Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenDialog}>
             Crear Campaña
           </Button>
         </Stack>
       </Stack>
-
-      {lastUploadPath && (
-        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setLastUploadPath('')}>
-          Último archivo subido: <strong>{lastUploadPath}</strong>
-        </Alert>
-      )}
 
       <TableContainer component={Paper}>
         <Table>
@@ -496,61 +443,6 @@ export const CampanasSection = () => {
           </Button>
           <Button variant="contained" onClick={handleSubmit} disabled={submitting}>
             {submitting ? <CircularProgress size={22} /> : editingId ? 'Guardar cambios' : 'Crear Campaña'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Dialog para cargar CSV */}
-      <Dialog open={openUploadDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
-        <DialogTitle>Cargar Archivo</DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 2 }}>
-            <Stack spacing={2}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <ApartmentIcon fontSize="small" color="action" />
-                <Typography variant="body2" color="text.secondary">Empresa:&nbsp;</Typography>
-                <Chip
-                  size="small"
-                  label={customer || 'sin empresa en la sesión'}
-                  color={customer ? 'primary' : 'default'}
-                  variant="outlined"
-                />
-                {customer && (
-                  <Typography variant="caption" color="text.secondary">
-                    → bucket <code>{customer.toLowerCase()}.{csvDocumentType}</code>
-                  </Typography>
-                )}
-              </Box>
-              <FormControl fullWidth>
-                <InputLabel>Tipo de Documento</InputLabel>
-                <Select
-                  value={csvDocumentType}
-                  label="Tipo de Documento"
-                  onChange={(e) => setCsvDocumentType(e.target.value as 'database' | 'document')}
-                >
-                  <MenuItem value="database">Database (CSV de destinatarios)</MenuItem>
-                  <MenuItem value="document">Document (adjunto)</MenuItem>
-                </Select>
-              </FormControl>
-              <Button variant="outlined" component="label" fullWidth startIcon={<CloudUploadIcon />}>
-                Seleccionar Archivo
-                <input
-                  type="file"
-                  accept=".csv,.pdf,.docx,.xlsx"
-                  hidden
-                  onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
-                />
-              </Button>
-              {csvFile && <Typography variant="body2">Archivo seleccionado: {csvFile.name}</Typography>}
-            </Stack>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleCloseDialog} disabled={uploading}>
-            Cancelar
-          </Button>
-          <Button variant="contained" onClick={handleUploadCSV} disabled={!csvFile || uploading}>
-            {uploading ? <CircularProgress size={22} /> : 'Subir Archivo'}
           </Button>
         </DialogActions>
       </Dialog>

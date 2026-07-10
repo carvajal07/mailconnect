@@ -155,8 +155,16 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   Define el **tipo de contacto** de la columna 2: correo (EMAIL) o celular E.164 (SMS/WhatsApp/Voz).
   `csv.ts` valida en consecuencia (`channelContactType`, `requiredColumns(contact)`,
   `analyzeCsv(text, delim, contact)`); el canal se guarda en `databaseFile.channel`.
-- **Modal de progreso de subida:** la carga a S3 abre un popup con 2 checks (crear URL prefirmada,
-  carga a S3) y botón Aceptar.
+- **Modal de progreso de subida:** la carga a S3 abre un popup con **3 checks** (crear URL
+  prefirmada, cargar a S3, **registrar la base en el sistema**) y botón Aceptar. El 3er paso
+  es el que hace que la base aparezca en el tab/selectores (`Database/Register-file`); si falla,
+  se muestra en rojo con el detalle (antes era invisible → la base subía a S3 pero no se
+  registraba y "desaparecía"). El diálogo solo se cierra si el registro quedó OK.
+- **Tabla de bases (jul 2026):** se quitaron las columnas **Cliente** y **Ruta S3** (quedan en el
+  detalle). Columnas: Archivo · Registros · Válidos · Inválidos · Cargada · Acciones.
+- **Botón "Cargar CSV" de Campañas eliminado (jul 2026):** subía a S3 **sin registrar** la base
+  (no aparecía en el tab) → confundía. El flujo único es: subir en **Bases de datos** (valida +
+  registra) y elegir la base del **selector** al crear la campaña.
 - **Listado de bases (fix):** `Database/List` cae a buscar por **nombre de empresa** (`customer`)
   si el `customerId` no coincide (robustez ante desalineación del `customerId` entre registro y
   consulta, p. ej. por el mapping template del Authorizer). `Register-file` también prefiere el

@@ -113,6 +113,7 @@ export const BasesDatosSection = () => {
   const [progressOpen, setProgressOpen] = useState(false);
   const [stepPresign, setStepPresign] = useState<StepState>('pending');
   const [stepUpload, setStepUpload] = useState<StepState>('pending');
+  const [stepRegister, setStepRegister] = useState<StepState>('pending');
   const [progressMsg, setProgressMsg] = useState('');
 
   const resetUpload = () => {
@@ -159,11 +160,12 @@ export const BasesDatosSection = () => {
       return;
     }
 
-    // Abrir el modal de progreso con los 2 pasos.
+    // Abrir el modal de progreso con los 3 pasos.
     setProgressOpen(true);
     setProgressMsg('');
     setStepPresign('loading');
     setStepUpload('pending');
+    setStepRegister('pending');
     setUploading(true);
 
     // Paso 1: URL prefirmada.
@@ -192,7 +194,10 @@ export const BasesDatosSection = () => {
     setStepUpload('done');
     const path = presign.data.path ?? '';
 
-    // Registrar la metadata en el backend (no es uno de los 2 checks visibles).
+    // Paso 3: registrar la metadata en el sistema (tabla databaseFile). Es lo que hace
+    // que la base APAREZCA en este tab y en los selectores; si falla, la base quedó en
+    // S3 pero NO registrada. Se muestra como 3er check para que el error sea visible.
+    setStepRegister('loading');
     const reg = await databaseService.registerFile({
       customerId,
       customer: customer.trim(),
@@ -213,8 +218,17 @@ export const BasesDatosSection = () => {
     // Guardamos el análisis local (vista previa) y refrescamos el contexto.
     const newId = reg.data?.databaseFileId;
     if (newId) setAnalysisById((prev) => ({ ...prev, [newId]: analysis }));
-    if (!isOk(reg)) setProgressMsg('La base se subió a S3, pero no se pudo registrar su metadata.');
-    if (isOk(reg)) refreshDatabases();
+    if (isOk(reg)) {
+      setStepRegister('done');
+      refreshDatabases();
+    } else {
+      setStepRegister('error');
+      setProgressMsg(
+        reg.description
+          ? `La base se subió a S3 pero NO se registró en el sistema: ${reg.description}`
+          : 'La base se subió a S3 pero NO se registró en el sistema (revisa la ruta /Database/Register-file y los permisos de la Lambda).',
+      );
+    }
   };
 
   /** Cierra el modal de progreso y el diálogo de carga (botón Aceptar). */
@@ -222,8 +236,11 @@ export const BasesDatosSection = () => {
     setProgressOpen(false);
     setStepPresign('pending');
     setStepUpload('pending');
+    setStepRegister('pending');
     setProgressMsg('');
-    if (stepUpload === 'done') {
+    // Solo se cierra el diálogo de carga si la base quedó REGISTRADA (todo el flujo OK).
+    // Si el registro falló, se deja abierto para reintentar sin volver a elegir el archivo.
+    if (stepRegister === 'done') {
       setUploadOpen(false);
       resetUpload();
     }
@@ -256,19 +273,17 @@ export const BasesDatosSection = () => {
           <TableHead>
             <TableRow>
               <TableCell>Archivo</TableCell>
-              <TableCell>Cliente</TableCell>
               <TableCell align="right">Registros</TableCell>
               <TableCell align="right">Válidos</TableCell>
               <TableCell align="right">Inválidos</TableCell>
               <TableCell>Cargada</TableCell>
-              <TableCell>Ruta S3</TableCell>
               <TableCell align="right">Acciones</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {bases.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                <TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>
                   {loadingList ? 'Cargando…' : 'Aún no hay bases de datos registradas para tu empresa.'}
                 </TableCell>
               </TableRow>
@@ -276,7 +291,6 @@ export const BasesDatosSection = () => {
             {bases.map((b) => (
               <TableRow key={b.id}>
                 <TableCell>{b.name}</TableCell>
-                <TableCell>{b.customer}</TableCell>
                 <TableCell align="right">{b.totalRecords}</TableCell>
                 <TableCell align="right">
                   <Chip label={b.validEmails} size="small" color="success" variant="outlined" />
@@ -289,9 +303,6 @@ export const BasesDatosSection = () => {
                   )}
                 </TableCell>
                 <TableCell sx={{ whiteSpace: 'nowrap' }}>{fmtDate(b.uploadDate)}</TableCell>
-                <TableCell sx={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  <code>{b.path}</code>
-                </TableCell>
                 <TableCell align="right">
                   <IconButton color="info" onClick={() => setViewBase(b)}>
                     <VisibilityIcon />
@@ -446,10 +457,16 @@ export const BasesDatosSection = () => {
         <DialogContent>
           <Stack spacing={1.5} sx={{ mt: 1 }}>
             <ProgressStep state={stepPresign} label="Crear URL prefirmada" />
-            <ProgressStep state={stepUpload} label="Carga a S3 correcta" />
+            <ProgressStep state={stepUpload} label="Cargar el archivo a S3" />
+            <ProgressStep state={stepRegister} label="Registrar la base en el sistema" />
             {progressMsg && (
-              <Alert severity={stepUpload === 'done' ? 'warning' : 'error'} sx={{ mt: 1 }}>
+              <Alert severity="error" sx={{ mt: 1 }}>
                 {progressMsg}
+              </Alert>
+            )}
+            {stepRegister === 'done' && (
+              <Alert severity="success" sx={{ mt: 1 }}>
+                Base registrada. Ya aparece en la lista y en los selectores de campaña/plantilla.
               </Alert>
             )}
           </Stack>
