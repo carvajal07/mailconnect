@@ -3,7 +3,7 @@ import hashlib
 import datetime
 
 user = 'Jhon.carvajal'
-SECRET_KEY = '$&ULCq$=M1;{{#":&S/kj&0!W|ROoQMC'
+SECRET_KEY = ''
 
 
 def generate_jwt(username):
