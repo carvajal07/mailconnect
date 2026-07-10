@@ -364,20 +364,22 @@ def check_blacklist(keys:list)->list:
     Returns:
         list: Retorna la lista con los email que estan en la lista negra del cliente
     """
-    # Realizar una consulta a la tabla de lista negra
-    table_blacklist = dynamodb.Table(f'{customer_name}_blacklist')
+    # La tabla de lista negra del cliente se llama '{customer}_blackList' (con L
+    # mayúscula): así la crea este mismo proceso (ver check_and_create_table más
+    # abajo) y así la escribe ReceptionStatus. Debe coincidir en TODOS lados.
+    table_name_blacklist = f'{customer_name}_blackList'
     request_items = {
-        'blacklist': {
+        table_name_blacklist: {
             'Keys': keys
         }
     }
 
-    # Realizar la consulta BatchGetItem
-    response = table_blacklist.batch_get_item(RequestItems=request_items)
+    # BatchGetItem se hace a nivel del recurso (no de la Table).
+    response = dynamodb.batch_get_item(RequestItems=request_items)
 
     # Obtener los correos electrónicos que están en la lista negra
     blacklisted_emails = set()
-    for item in response.get('Responses', {}).get('blacklist', []):
+    for item in response.get('Responses', {}).get(table_name_blacklist, []):
         blacklisted_emails.add(item['email'])
 
     return blacklisted_emails
@@ -532,7 +534,7 @@ def insert_mails_blacklist(emails:list,state:str,description:str)->None:
             'type2': {'S': description}
         })
 
-    table_name_blacklist = f'{customer_name}_blacklist'
+    table_name_blacklist = f'{customer_name}_blackList'
     table_blacklist = dynamodb.Table(table_name_blacklist)
 
     # Realiza la inserción en lotes utilizando el método batch_write_item
