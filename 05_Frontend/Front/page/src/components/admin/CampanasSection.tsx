@@ -37,6 +37,8 @@ import { campaignsService } from '../../services/campaignsService';
 import type { CampaignSummary } from '../../services/campaignsService';
 import { templatesService } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
+import { messageTemplatesService } from '../../services/messageTemplatesService';
+import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { usePortalData } from '../../context/PortalDataContext';
@@ -97,6 +99,9 @@ export const CampanasSection = () => {
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
 
+  // Plantillas de mensaje guardadas (SMS/WSP) para prellenar el campo del canal.
+  const [msgTemplates, setMsgTemplates] = useState<MessageTemplate[]>([]);
+
   // Carga de CSV / documento a S3 (URL prefirmada).
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvDocumentType, setCsvDocumentType] = useState<'database' | 'document'>('database');
@@ -112,11 +117,19 @@ export const CampanasSection = () => {
     if (isOk(res) && res.data?.templates) setTemplates(res.data.templates);
   }, [customer, customerId]);
 
+  // Carga las plantillas SMS + WhatsApp guardadas (para reutilizarlas en la campaña).
+  const loadMsgTemplates = useCallback(async () => {
+    if (!customerId) return;
+    const res = await messageTemplatesService.list(customerId);
+    if (isOk(res) && res.data?.templates) setMsgTemplates(res.data.templates);
+  }, [customerId]);
+
   const handleOpenDialog = () => {
     setEditingId(null);
     setFormData(emptyForm(sessionEmail));
     setOpenDialog(true);
     loadTemplates();
+    loadMsgTemplates();
   };
 
   /** Abre el diálogo precargado con los datos de una campaña para editarla. */
@@ -132,6 +145,7 @@ export const CampanasSection = () => {
     });
     setOpenDialog(true);
     loadTemplates();
+    loadMsgTemplates();
   };
 
   const handleCloseDialog = () => {
@@ -362,25 +376,63 @@ export const CampanasSection = () => {
                 </FormControl>
               </Stack>
               {isSms ? (
-                <TextField
-                  fullWidth
-                  multiline
-                  minRows={3}
-                  label="Texto del SMS"
-                  value={formData.template}
-                  onChange={(e) => handleInputChange('template', e.target.value)}
-                  placeholder="Hola {{Nombre}}, tu mensaje aquí…"
-                  helperText={`Admite variables {{columna}} del CSV. ${formData.template.length} caracteres (~${Math.max(1, Math.ceil(formData.template.length / 160))} segmento(s)). En SMS la columna 2 del CSV es el celular (E.164, +57…).`}
-                />
+                <>
+                  {msgTemplates.some((t) => t.channel === 'SMS') && (
+                    <TextField
+                      select
+                      fullWidth
+                      size="small"
+                      label="Usar plantilla SMS guardada (opcional)"
+                      value=""
+                      onChange={(e) => {
+                        const t = msgTemplates.find((m) => m.messageTemplateId === e.target.value);
+                        if (t?.body) handleInputChange('template', t.body);
+                      }}
+                    >
+                      {msgTemplates.filter((t) => t.channel === 'SMS').map((t) => (
+                        <MenuItem key={t.messageTemplateId} value={t.messageTemplateId}>{t.name}</MenuItem>
+                      ))}
+                    </TextField>
+                  )}
+                  <TextField
+                    fullWidth
+                    multiline
+                    minRows={3}
+                    label="Texto del SMS"
+                    value={formData.template}
+                    onChange={(e) => handleInputChange('template', e.target.value)}
+                    placeholder="Hola {{Nombre}}, tu mensaje aquí…"
+                    helperText={`Admite variables {{columna}} del CSV. ${formData.template.length} caracteres (~${Math.max(1, Math.ceil(formData.template.length / 160))} segmento(s)). En SMS la columna 2 del CSV es el celular (E.164, +57…).`}
+                  />
+                </>
               ) : isWsp ? (
-                <TextField
-                  fullWidth
-                  label="Plantilla de WhatsApp (HSM)"
-                  value={formData.template}
-                  onChange={(e) => handleInputChange('template', e.target.value)}
-                  placeholder="nombre_de_la_plantilla_aprobada"
-                  helperText="Nombre exacto de la plantilla de marketing pre-aprobada por Meta. Los parámetros {{1}}, {{2}}… se toman de las columnas del CSV desde 'Nombre' en adelante. La columna 2 del CSV es el celular (E.164, +57…)."
-                />
+                <>
+                  {msgTemplates.some((t) => t.channel === 'WSP') && (
+                    <TextField
+                      select
+                      fullWidth
+                      size="small"
+                      label="Usar plantilla WhatsApp guardada (opcional)"
+                      value=""
+                      onChange={(e) => {
+                        const t = msgTemplates.find((m) => m.messageTemplateId === e.target.value);
+                        if (t?.hsmName) handleInputChange('template', t.hsmName);
+                      }}
+                    >
+                      {msgTemplates.filter((t) => t.channel === 'WSP').map((t) => (
+                        <MenuItem key={t.messageTemplateId} value={t.messageTemplateId}>{t.name} · {t.hsmName}</MenuItem>
+                      ))}
+                    </TextField>
+                  )}
+                  <TextField
+                    fullWidth
+                    label="Plantilla de WhatsApp (HSM)"
+                    value={formData.template}
+                    onChange={(e) => handleInputChange('template', e.target.value)}
+                    placeholder="nombre_de_la_plantilla_aprobada"
+                    helperText="Nombre exacto de la plantilla de marketing pre-aprobada por Meta. Los parámetros {{1}}, {{2}}… se toman de las columnas del CSV desde 'Nombre' en adelante. La columna 2 del CSV es el celular (E.164, +57…)."
+                  />
+                </>
               ) : (
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                   <FormControl fullWidth>

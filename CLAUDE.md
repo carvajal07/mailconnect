@@ -95,7 +95,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 
 | Endpoint | Request (body) | Respuesta clave |
 |----------|----------------|-----------------|
-| `login` | `{ user (email), password }` | 200 `data:{token, userId, name, customer, customerId, companyTin}` · 404 credenciales · 423 inactiva |
+| `login` | `{ user (email), password }` | 200 `data:{token, userId, name, customer, customerId, companyTin, realSendEnabled}` · 404 credenciales · 423 inactiva |
 | `register` | `{ name, phone, email, company, companyTin (número), password }` | 201 ok · 409 email existe · 400 datos inválidos |
 | `account-activation` | query `?qs=<activationKey>` | 302 redirect (éxito/error/expirado) |
 | `create-otp` | `{ user (email) o userId, expiration (min), system, ip }` | 201 `data:{otpId}` (envía el código por correo) |
@@ -109,6 +109,11 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Email/Unsubscribe` | **GET/POST público (proxy, sin authorizer)** `?t=<token HMAC>` | 200 página HTML (confirmación / enlace inválido). El token lo firman las lambdas Send con `SECRET_KEY`; inserta en `{customer}_unsubscribe` (PK `email`) |
 | `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, ... }` | 201 `data:{databaseFileId}` |
 | `Database/List` | `{ customerId }` | 200 `data:{files[], count}` |
+| `Customer/List` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, realSendEnabled}], count}` |
+| `Customer/Update` | `{ customerId, realSendEnabled (bool) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales |
+| `MessageTemplate/Create` | `{ channel:SMS\|WSP\|DOCX, name, body?/hsmName?+language?+params?/s3Path?+params? }` | 201 `data:{messageTemplateId}` · 400 datos. SMS necesita `body`, WSP `hsmName`, DOCX `s3Path` |
+| `MessageTemplate/List` | `{ customerId, channel? }` | 200 `data:{templates[], count}` (desc por fecha; filtra por canal si se envía) |
+| `MessageTemplate/Delete` | `{ messageTemplateId }` | 200 ok · 403 otro cliente · 404 no existe |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -190,6 +195,38 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   mapea `WSP → WHATSAPP` (y `VOZ → VOICE`).
 - ⚠️ `[J]`: crear la cola `Wsp_Send-batch` + trigger, registrar el número/WABA en End User
   Messaging Social y aprobar las plantillas HSM con Meta.
+
+### Límite de muestras y bloqueo de envíos por cliente (jul 2026)
+- **Límite de muestras (5 por campaña):** cada operación de `Send-batch-template-samples`
+  cuenta 1 en `campaign.samplesSentCount` (contador atómico); al llegar a `MAX_SAMPLE_SENDS`
+  (5) Prepare-batch bloquea (429). `Create-campaign` inicializa el contador y `Campaign/List`
+  lo devuelve. Front (`MuestrasSection`): chip "usados/quedan" y botón deshabilitado al límite.
+- **Deshabilitar envíos reales por cliente:** campo `customer.realSendEnabled` (default `true`
+  en `Register`; fail-open si falta). Prepare-batch, en el **envío real** (no muestras),
+  lanza `RealSendDisabled` → 403 si está deshabilitado. `Login` devuelve `realSendEnabled` →
+  sesión; el portal deshabilita "Enviar campaña real" con aviso.
+- **Panel admin:** lambdas `Api_V1_Customer_List` y `Api_V1_Customer_Update` (togglea
+  `realSendEnabled`) + sección `/admin` **"Envíos por cliente"** (tabla con switch por cliente).
+  ⚠️ Son endpoints administrativos (afectan a todos los clientes): restringir a **rol admin**
+  en el despliegue (pendiente seguridad).
+
+### Plantillas multicanal: SMS / DOCX / WhatsApp (jul 2026)
+- Las plantillas de **correo HTML** siguen en **SES** (`Template/Create-template`, `Template/List`).
+  Los otros 3 canales usan una tabla nueva **`messageTemplate`** (PK `messageTemplateId`) y las
+  lambdas `Api_V1_MessageTemplate_{Create,List,Delete}` (multi-tenant: `customerId` del context).
+- **Modelo por canal** (campo `channel` = `SMS|WSP|DOCX`):
+  - **SMS:** `name` + `body` (texto con `{{variables}}`).
+  - **WSP:** `name` + `hsmName` (plantilla HSM de Meta) + `language` (default `es`) + `params`
+    (etiquetas de `{{1}},{{2}}…`). El contenido real vive en Meta; aquí solo el mapeo.
+  - **DOCX:** `name` + `s3Path` (.docx subido a S3 con `get-urlS3` documentType=document) +
+    `params` (campos de combinación). La combinación real la hace el backend al enviar (EAP).
+- **Gotcha `_get_payload` en Create:** el canal SMS trae un campo `body` que **colisiona** con
+  la convención Lambda-proxy (`event['body']`=JSON string). El helper solo trata `event['body']`
+  como proxy si **parsea a un dict**; si es texto plano (SMS), `event` ES el payload.
+- **Front:** services `messageTemplatesService.ts`; secciones del portal **Plantillas SMS**,
+  **Plantillas WhatsApp** (componente genérico `MessageTemplatesSection`) y **Plantillas DOCX**
+  (`DocxTemplatesSection`, sube el .docx y registra la metadata) — reemplazan el placeholder PDF.
+  Al crear campaña SMS/WSP hay un selector "Usar plantilla guardada" que prellena el campo.
 
 ### Multi-tenant y refresh (jul 2026)
 - **Claims en el JWT:** `Login` embebe `customerId`, `customer` y `userId` en el token.
@@ -338,8 +375,10 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             campaña** vía el endpoint real `state-report` (`{cliente, idProceso}` → `{count,
             csv_preview, csv_base64|s3_key}`), con vista previa y descarga del CSV desde base64.
             Datos de campañas compartidos en `campaignData.ts` (los usa Estadísticas también).
-      - [ ] Plantillas PDF queda como placeholder (espera backend). El constructor HTML se
-            irá ampliando (más bloques/estilos).
+      - [x] **Plantillas multicanal** (SMS / WhatsApp / DOCX): tabla `messageTemplate` +
+            lambdas Create/List/Delete + secciones del portal. El placeholder "Plantillas PDF"
+            se reemplazó por **Plantillas DOCX** (combinación de correspondencia: sube el .docx
+            + metadata). El constructor HTML se irá ampliando (más bloques/estilos).
 - [~] Conectar las secciones del panel a la API real (capa de servicios nueva):
       - [x] **Plantillas** → `create-template`, `get-template`, `delete-template` (reales).
       - [x] **Campañas** → `create-campaign` y `get-urlS3` (URL prefirmada + PUT a S3).
@@ -406,6 +445,17 @@ se puede leer del objeto ya subido a S3.)
 - [ ] Desplegar las lambdas nuevas y **crear sus rutas** en API Gateway
       (`/change-password`, `/logout`, `/create-otp`, `/validate-otp`, `/account-activation`).
 - [ ] **Habilitar CORS** en API Gateway para los endpoints que llama el navegador.
+- [ ] **Nuevas de esta sesión** `[J]`:
+      - Tabla DynamoDB **`messageTemplate`** (PK `messageTemplateId`) + permisos
+        `PutItem/Scan/GetItem/DeleteItem`.
+      - Campo **`realSendEnabled`** en la tabla `customer` (lo escriben Register/Customer_Update;
+        Login/Prepare-batch lo leen). Para clientes existentes se asume `true` (fail-open).
+      - Campo **`samplesSentCount`** en la tabla `campaign` (lo maneja Prepare-batch; default 0).
+      - Rutas API Gateway (authorizer + CORS): `/Customer/List`, `/Customer/Update`,
+        `/MessageTemplate/Create`, `/MessageTemplate/List`, `/MessageTemplate/Delete`.
+        ⚠️ `/Customer/*` son **admin** (afectan a todos los clientes): restringir a rol admin.
+      - Desplegar las lambdas nuevas: `Api_V1_Customer_List`, `Api_V1_Customer_Update`,
+        `Api_V1_MessageTemplate_{Create,List,Delete}` (crear la función vacía antes del CD).
 - [ ] Sacar **SES del sandbox** y verificar remitente/dominio.
 - [ ] Configurar las **variables de entorno** de §3 en cada lambda.
 - [ ] Definir `VITE_API_BASE_URL` de producción en el front.

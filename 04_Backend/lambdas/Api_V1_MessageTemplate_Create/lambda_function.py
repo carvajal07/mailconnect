@@ -1,0 +1,114 @@
+'''
+Lambda para crear plantillas de MENSAJE por canal no-SES: SMS, WhatsApp (WSP) y
+DOCX (combinación de correspondencia). Las plantillas de correo HTML siguen viviendo
+en SES (Template/Create-template); esta tabla es para los otros 3 canales.
+
+Ruta: POST /MessageTemplate/Create  (integración no-proxy, envelope estándar)
+
+Request (según canal):
+  - SMS:  { channel:'SMS',  name, body }                 body = texto con {{variables}}
+  - WSP:  { channel:'WSP',  name, hsmName, language?, params? }
+                                                          hsmName = plantilla HSM de Meta
+                                                          params  = etiquetas de {{1}},{{2}}…
+  - DOCX: { channel:'DOCX', name, s3Path, params? }      s3Path = .docx ya subido a S3
+                                                          params  = campos de combinación
+  customerId/customer se prefieren del context del Authorizer (multi-tenant).
+
+Respuesta: 201 { data: { messageTemplateId } } · 400 datos inválidos
+
+Tabla DynamoDB: messageTemplate (PK messageTemplateId).
+'''
+import json
+import uuid
+import boto3
+from datetime import datetime
+
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('messageTemplate')
+
+VALID_CHANNELS = ('SMS', 'WSP', 'DOCX')
+
+
+def _get_payload(event):
+    # OJO: el canal SMS trae un campo 'body' (el texto del mensaje) que colisiona con
+    # la convención Lambda-proxy (event['body'] = JSON string). Solo se interpreta como
+    # proxy si event['body'] parsea a un DICT; si es texto plano (SMS), event ES el payload.
+    if isinstance(event, dict) and isinstance(event.get('body'), str):
+        try:
+            parsed = json.loads(event['body'])
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    return event if isinstance(event, dict) else {}
+
+
+def _tenant_from_authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    auth = (event.get('requestContext') or {}).get('authorizer') or {}
+    return auth if isinstance(auth, dict) else {}
+
+
+def lambda_handler(event, context):
+    payload = _get_payload(event)
+    auth = _tenant_from_authorizer(event)
+
+    customer_id = auth.get('customerId') or payload.get('customerId')
+    customer = auth.get('customer') or payload.get('customer', '')
+    channel = str(payload.get('channel', '')).upper()
+    name = str(payload.get('name', '')).strip()
+
+    if not customer_id:
+        return {'status': False, 'statusCode': 400, 'description': 'Falta el customerId.'}
+    if channel not in VALID_CHANNELS:
+        return {'status': False, 'statusCode': 400,
+                'description': 'channel inválido. Usa SMS, WSP o DOCX.'}
+    if not name:
+        return {'status': False, 'statusCode': 400, 'description': 'Indica el nombre de la plantilla.'}
+
+    # Validaciones y campos por canal.
+    body = str(payload.get('body', ''))
+    hsm_name = str(payload.get('hsmName', '')).strip()
+    language = str(payload.get('language', 'es')).strip() or 'es'
+    s3_path = str(payload.get('s3Path', '')).strip()
+    params = payload.get('params', [])
+    if not isinstance(params, list):
+        params = []
+    params = [str(p) for p in params]
+
+    if channel == 'SMS' and not body.strip():
+        return {'status': False, 'statusCode': 400, 'description': 'La plantilla SMS necesita el texto (body).'}
+    if channel == 'WSP' and not hsm_name:
+        return {'status': False, 'statusCode': 400, 'description': 'La plantilla WhatsApp necesita el nombre HSM.'}
+    if channel == 'DOCX' and not s3_path:
+        return {'status': False, 'statusCode': 400, 'description': 'La plantilla DOCX necesita el s3Path del archivo.'}
+
+    message_template_id = str(uuid.uuid4())
+    now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+    item = {
+        'messageTemplateId': message_template_id,
+        'customerId': customer_id,
+        'customer': customer,
+        'channel': channel,
+        'name': name,
+        'body': body,
+        'hsmName': hsm_name,
+        'language': language,
+        's3Path': s3_path,
+        'params': params,
+        'created': now,
+    }
+
+    try:
+        table.put_item(Item=item)
+        return {
+            'status': True,
+            'statusCode': 201,
+            'description': 'Plantilla creada correctamente',
+            'data': {'messageTemplateId': message_template_id}
+        }
+    except Exception as e:
+        print('Error creando la plantilla de mensaje: {}'.format(e))
+        return {'status': False, 'statusCode': 500, 'description': 'Error no controlado al crear la plantilla'}
