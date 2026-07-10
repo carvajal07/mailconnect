@@ -21,10 +21,13 @@ import {
   MenuItem,
   IconButton,
   Divider,
+  Tooltip,
   CircularProgress,
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import DeleteIcon from '@mui/icons-material/Delete';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import StorageIcon from '@mui/icons-material/Storage';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -87,6 +90,7 @@ export const BasesDatosSection = () => {
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [viewBase, setViewBase] = useState<BaseDatos | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const loadingList = databases.loading;
   const bases: BaseDatos[] = databases.items.map((f) => {
@@ -122,6 +126,19 @@ export const BasesDatosSection = () => {
     setAnalysis(null);
     setDelimiter(';');
     setChannel('EMAIL');
+  };
+
+  const handleDelete = async (b: BaseDatos) => {
+    if (!window.confirm(`¿Eliminar la base "${b.name}"? Se quita del listado (el archivo en S3 no se borra).`)) return;
+    setDeletingId(b.id);
+    const res = await databaseService.delete(b.id);
+    setDeletingId(null);
+    if (isOk(res)) {
+      notify('Base de datos eliminada.', 'success');
+      refreshDatabases();
+    } else {
+      notify(res.description || 'No se pudo eliminar la base de datos.', 'error');
+    }
   };
 
   const handleFile = (f: File | null) => {
@@ -262,10 +279,11 @@ export const BasesDatosSection = () => {
 
       <Alert severity="info" sx={{ mb: 2 }}>
         Sube tus listas de destinatarios (CSV). Antes de subir, validamos el archivo en tu
-        navegador (columnas, total de registros, correos válidos/duplicados). La subida va a S3 vía
-        URL prefirmada y su <strong>metadata queda registrada</strong> (nombre, ruta, registros,
-        fecha) para verla en el historial. La vista previa solo está disponible para las bases
-        cargadas en esta sesión.
+        navegador y contamos: <strong>Válidos</strong> (contacto de la columna 2 con formato
+        correcto y sin duplicar) e <strong>Inválidos</strong> (contacto vacío o con formato
+        inválido para el canal: correo mal escrito, o celular que no es E.164). La subida va a S3
+        vía URL prefirmada y su <strong>metadata queda registrada</strong> para verla en el
+        historial. La vista previa solo está disponible para las bases cargadas en esta sesión.
       </Alert>
 
       <TableContainer component={Paper}>
@@ -274,8 +292,20 @@ export const BasesDatosSection = () => {
             <TableRow>
               <TableCell>Archivo</TableCell>
               <TableCell align="right">Registros</TableCell>
-              <TableCell align="right">Válidos</TableCell>
-              <TableCell align="right">Inválidos</TableCell>
+              <TableCell align="right">
+                <Tooltip title="Filas con un contacto (correo o celular, según el canal) con formato correcto y sin duplicar.">
+                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, cursor: 'help' }}>
+                    Válidos <InfoOutlinedIcon sx={{ fontSize: 15 }} color="disabled" />
+                  </Box>
+                </Tooltip>
+              </TableCell>
+              <TableCell align="right">
+                <Tooltip title="Filas cuyo contacto (columna 2) está vacío o tiene formato inválido para el canal (correo mal escrito, o celular que no es E.164 +57…). Los duplicados se cuentan aparte y no entran aquí.">
+                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, cursor: 'help' }}>
+                    Inválidos <InfoOutlinedIcon sx={{ fontSize: 15 }} color="disabled" />
+                  </Box>
+                </Tooltip>
+              </TableCell>
               <TableCell>Cargada</TableCell>
               <TableCell align="right">Acciones</TableCell>
             </TableRow>
@@ -304,9 +334,18 @@ export const BasesDatosSection = () => {
                 </TableCell>
                 <TableCell sx={{ whiteSpace: 'nowrap' }}>{fmtDate(b.uploadDate)}</TableCell>
                 <TableCell align="right">
-                  <IconButton color="info" onClick={() => setViewBase(b)}>
-                    <VisibilityIcon />
-                  </IconButton>
+                  <Tooltip title="Ver detalle">
+                    <IconButton color="info" onClick={() => setViewBase(b)}>
+                      <VisibilityIcon />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Eliminar base">
+                    <span>
+                      <IconButton color="error" onClick={() => handleDelete(b)} disabled={deletingId === b.id}>
+                        {deletingId === b.id ? <CircularProgress size={20} /> : <DeleteIcon />}
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                 </TableCell>
               </TableRow>
             ))}

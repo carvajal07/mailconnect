@@ -128,7 +128,9 @@ def insert_attachment(campaignId,attachment_type,documentPath,variableDocument,d
         Item={
             'documentId': documentId,
             'campaignId': campaignId,
-            "attachmentType": "attachment_type",
+            # Antes guardaba el literal "attachment_type" (bug): la lambda de envío EAU
+            # leía siempre un valor incorrecto y el ONFILE/ONLINE no funcionaba.
+            'attachmentType': attachment_type,
             'documentPath': documentPath,
             'variableDocument': variableDocument,
             'date': date
