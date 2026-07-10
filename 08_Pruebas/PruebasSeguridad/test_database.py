@@ -59,6 +59,21 @@ def test_guarda_channel(db):
     assert resp['data']['files'][0]['channel'] == 'SMS'
 
 
+def test_guarda_y_lista_columns(db):
+    # Los encabezados del CSV se guardan como campos usables en plantillas.
+    reg, lst = db
+    _register(reg, columns=['Identificacion', 'Correo', 'Nombre', 'Ciudad'])
+    resp = lst.lambda_handler({'customerId': 'CU1'}, None)
+    assert resp['data']['files'][0]['columns'] == ['Identificacion', 'Correo', 'Nombre', 'Ciudad']
+
+
+def test_columns_por_defecto_lista_vacia(db):
+    reg, lst = db
+    _register(reg)  # sin columns
+    resp = lst.lambda_handler({'customerId': 'CU1'}, None)
+    assert resp['data']['files'][0]['columns'] == []
+
+
 def test_fallback_por_empresa_cuando_customerid_no_coincide(db):
     # Registrada con CU1; se lista con un customerId distinto (p. ej. desalineado por
     # el mapping template del Authorizer) pero MISMA empresa → el fallback la encuentra.

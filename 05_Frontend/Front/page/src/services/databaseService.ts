@@ -30,6 +30,8 @@ export interface RegisterFilePayload {
   delimiter?: string;
   /** Canal para el que se validó la base: EMAIL | SMS | WHATSAPP | VOICE. */
   channel?: string;
+  /** Encabezados del CSV: campos usables como {{variables}} en las plantillas. */
+  columns?: string[];
   uploadedBy?: string;
 }
 
@@ -45,6 +47,8 @@ export interface DatabaseFile {
   duplicates: number;
   delimiter: string;
   channel?: string;
+  /** Encabezados del CSV (campos usables como {{variables}} en las plantillas). */
+  columns?: string[];
   uploadedBy: string;
   uploadDate: string;
   status: string;

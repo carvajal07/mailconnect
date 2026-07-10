@@ -204,6 +204,8 @@ export const BasesDatosSection = () => {
       duplicates: analysis.duplicateEmails,
       delimiter,
       channel,
+      // Encabezados del CSV → campos usables como {{variables}} en las plantillas.
+      columns: analysis.headers,
       uploadedBy: userId,
     });
     setUploading(false);

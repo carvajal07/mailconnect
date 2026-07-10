@@ -56,6 +56,7 @@ import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { allPresets, customPresets, cloneBlocks, type TemplatePreset } from './templatePresets';
+import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 import {
   BLOCK_LABELS,
   VARIABLES,
@@ -95,6 +96,8 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [view, setView] = useState<'editor' | 'preview'>('editor');
   const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
   const [draftName, setDraftName] = useState('');
+  // Campos de la base seleccionada (para las variables {{campo}}). Vacío = usa las por defecto.
+  const [dbFields, setDbFields] = useState<string[]>([]);
   const dragIndex = useRef<number | null>(null);
 
   const [draftsAnchor, setDraftsAnchor] = useState<null | HTMLElement>(null);
@@ -576,9 +579,14 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               </Typography>
             ) : (
               <Box sx={{ mt: 1 }}>
-                <BlockEditor block={selected} onChange={updateSelected} onInsertVariable={insertVariable} onUploadImage={uploadImage} />
+                <BlockEditor block={selected} onChange={updateSelected} onInsertVariable={insertVariable} onUploadImage={uploadImage} variableFields={dbFields} />
               </Box>
             )}
+            {/* Campos desde una base: alimentan el menú "Insertar variable" y permiten
+                insertar directamente en el bloque de texto seleccionado. */}
+            <Box sx={{ mt: 2 }}>
+              <DatabaseFieldPicker compact onFieldsChange={setDbFields} onInsert={insertVariable} />
+            </Box>
           </Paper>
         </Stack>
       )}
@@ -853,11 +861,14 @@ const BlockEditor = ({
   onChange,
   onInsertVariable,
   onUploadImage,
+  variableFields,
 }: {
   block: Block;
   onChange: (patch: Partial<Block>) => void;
   onInsertVariable: (v: string) => void;
   onUploadImage: (file: File) => Promise<string | null>;
+  /** Campos de la base seleccionada; si hay, reemplazan a las variables por defecto. */
+  variableFields: string[];
 }) => {
   const [varAnchor, setVarAnchor] = useState<null | HTMLElement>(null);
   const [uploadingImg, setUploadingImg] = useState(false);
@@ -897,7 +908,7 @@ const BlockEditor = ({
               Insertar variable
             </Button>
             <Menu anchorEl={varAnchor} open={Boolean(varAnchor)} onClose={() => setVarAnchor(null)}>
-              {VARIABLES.map((v) => (
+              {(variableFields.length ? variableFields : VARIABLES).map((v) => (
                 <MenuItem key={v} onClick={() => { onInsertVariable(v); setVarAnchor(null); }}>
                   {`{{${v}}}`}
                 </MenuItem>

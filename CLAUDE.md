@@ -107,7 +107,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Campaign/Update` | `{ campaignId, campaignName?, channelName?, attachmentType?, dataPath?, template?, from? }` | 200 ok · 409 no-Pendiente · 403 otro cliente · 404 no existe. Solo edita campañas en estado `Pendiente`; toma el cliente del context del Authorizer |
 | `Template/List` | `{ customer }` o `{ customerId }` | 200 `data:{templates:[{name, created}], count}` (SES filtrado por prefijo `{customer}_`) |
 | `Email/Unsubscribe` | **GET/POST público (proxy, sin authorizer)** `?t=<token HMAC>` | 200 página HTML (confirmación / enlace inválido). El token lo firman las lambdas Send con `SECRET_KEY`; inserta en `{customer}_unsubscribe` (PK `email`) |
-| `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, ... }` | 201 `data:{databaseFileId}` |
+| `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`) |
 | `Database/List` | `{ customerId }` | 200 `data:{files[], count}` |
 | `Customer/List` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, realSendEnabled}], count}` |
 | `Customer/Update` | `{ customerId, realSendEnabled (bool) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales |
@@ -227,6 +227,19 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   **Plantillas WhatsApp** (componente genérico `MessageTemplatesSection`) y **Plantillas DOCX**
   (`DocxTemplatesSection`, sube el .docx y registra la metadata) — reemplazan el placeholder PDF.
   Al crear campaña SMS/WSP hay un selector "Usar plantilla guardada" que prellena el campo.
+
+### Variables de plantilla desde la base (jul 2026)
+- Al subir una base, `Database/Register-file` guarda ahora **`columns`** (los encabezados del
+  CSV; el front los toma de `analyzeCsv().headers`). `Database/List` los devuelve.
+- Componente reusable **`DatabaseFieldPicker`** (autónomo, carga las bases con `databaseService`
+  → funciona en portal y `/admin`): elige **1 base** y muestra sus campos como chips. `onInsert(f)`
+  recibe el **nombre** del campo (sin llaves) y cada consumidor decide el formato; sin `onInsert`
+  copia `{{campo}}` al portapapeles. `onFieldsChange(fields)` expone los campos a menús externos.
+- Integrado en la creación de plantillas: **HTML builder** (alimenta el menú "Insertar variable"
+  y permite insertar en el bloque seleccionado; si no hay base elegida usa las variables por
+  defecto de `htmlBuilder.ts`), **SMS** (inserta `{{campo}}` en el texto), **WhatsApp** y **DOCX**
+  (agregan el campo a la lista de parámetros/campos de combinación).
+- Bases cargadas **antes** de esta función no tienen `columns` → el picker avisa "vuelve a subirla".
 
 ### Multi-tenant y refresh (jul 2026)
 - **Claims en el JWT:** `Login` embebe `customerId`, `customer` y `userId` en el token.

@@ -8,7 +8,6 @@ import {
   IconButton,
   Menu,
   MenuItem,
-  Divider,
   Avatar,
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -96,11 +95,7 @@ export const PortalPage = () => {
             {collapsed ? <MenuIcon /> : <MenuOpenIcon />}
           </IconButton>
           <Logo height="34px" />
-          <Divider orientation="vertical" flexItem sx={{ mx: 2, my: 1.5, display: { xs: 'none', sm: 'block' } }} />
-          <Typography variant="subtitle1" component="div" sx={{ flexGrow: 1, fontWeight: 600, color: 'text.secondary', display: { xs: 'none', sm: 'block' } }}>
-            Portal del cliente
-          </Typography>
-          <Box sx={{ flexGrow: { xs: 1, sm: 0 } }} />
+          <Box sx={{ flexGrow: 1 }} />
           {user?.name && (
             <Typography variant="body2" sx={{ mr: 1.5, color: 'text.secondary', display: { xs: 'none', md: 'block' } }}>
               Hola, <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>{user.name}</Box>

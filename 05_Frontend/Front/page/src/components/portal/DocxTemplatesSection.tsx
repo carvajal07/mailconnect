@@ -29,6 +29,7 @@ import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 
 /**
  * Plantillas DOCX (combinación de correspondencia) para el canal de adjunto
@@ -159,6 +160,16 @@ export const DocxTemplatesSection = () => {
             fullWidth
             placeholder="Nombre, Identificación, Valor"
             helperText="Nombres de los campos que se reemplazan por cada destinatario."
+          />
+          <DatabaseFieldPicker
+            compact
+            onInsert={(f) =>
+              setParamsText((p) => {
+                const arr = p.split(',').map((s) => s.trim()).filter(Boolean);
+                if (!arr.includes(f)) arr.push(f);
+                return arr.join(', ');
+              })
+            }
           />
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
             <Button variant="outlined" component="label" startIcon={<UploadFileIcon />}>

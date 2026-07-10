@@ -9,8 +9,10 @@ Request:
     {
       customerId, customer, fileName, s3Path,
       totalRecords?, validEmails?, invalidEmails?, duplicates?,
-      delimiter?, uploadedBy?
+      delimiter?, channel?, columns?, uploadedBy?
     }
+`columns` es la lista de encabezados del CSV (los campos usables como variables
+`{{campo}}` en las plantillas). El front la toma del análisis del archivo al subirlo.
 Respuesta: 201 { data: { databaseFileId } }
 '''
 import uuid
@@ -60,6 +62,10 @@ def lambda_handler(event, context):
     payload = _get_payload(event)
     auth = _tenant_from_authorizer(event)
 
+    # Encabezados del CSV (campos usables como {{variables}}). Se normaliza a lista de str.
+    raw_columns = payload.get('columns', [])
+    columns = [str(c) for c in raw_columns] if isinstance(raw_columns, list) else []
+
     # Campos obligatorios (customerId/customer prefieren el context del Authorizer).
     try:
         customer_id = auth.get('customerId') or payload['customerId']
@@ -91,6 +97,9 @@ def lambda_handler(event, context):
                 # Canal para el que se validó la base (EMAIL/SMS/WHATSAPP/VOICE).
                 # Define qué es la columna 2 (correo o celular).
                 'channel': payload.get('channel', 'EMAIL'),
+                # Encabezados del CSV: los campos que se pueden usar como {{variables}}
+                # en las plantillas. Se guardan como texto para reusarlos sin releer el CSV.
+                'columns': columns,
                 'uploadedBy': payload.get('uploadedBy', ''),
                 'uploadDate': formatted_date,
                 'status': 'activa'

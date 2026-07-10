@@ -28,6 +28,7 @@ import { messageTemplatesService } from '../../services/messageTemplatesService'
 import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 
 /**
  * Sección de plantillas de mensaje para SMS y WhatsApp (WSP). Un mismo componente
@@ -156,7 +157,11 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
               placeholder="Hola {{Nombre}}, tu mensaje aquí…"
               helperText={`${body.length} caracteres · ~${segments} segmento(s). Admite variables {{Columna}}.`}
             />
-          ) : (
+          ) : null}
+          {isSms && (
+            <DatabaseFieldPicker compact onInsert={(f) => setBody((b) => `${b}{{${f}}}`)} />
+          )}
+          {!isSms && (
             <>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                 <TextField
@@ -184,6 +189,16 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
                 fullWidth
                 placeholder="Nombre, Empresa, Valor"
                 helperText="Etiquetas para {{1}}, {{2}}… en orden. Se toman de las columnas del CSV desde 'Nombre'."
+              />
+              <DatabaseFieldPicker
+                compact
+                onInsert={(f) =>
+                  setParamsText((p) => {
+                    const arr = p.split(',').map((s) => s.trim()).filter(Boolean);
+                    if (!arr.includes(f)) arr.push(f);
+                    return arr.join(', ');
+                  })
+                }
               />
             </>
           )}
