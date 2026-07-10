@@ -61,10 +61,20 @@ tablas en DynamoDB._
 
 ## Plan de ataque por fases (orden de ejecución)
 
-- [ ] **Fase 0 — Quick wins (bajo riesgo):** #5 `prepare_message`, #4 `send_sqs` propaga/marca
-      Error, #10 borrar `search_samples`, #9 métrica `registers_to_send`.
-- [ ] **Fase 1 — Tabla única `sendStatus`** (#1): esquema `{customer}_sendStatus` PK `processId`
-      + SK `sendStatusId`; actualizar TODOS los escritores y lectores; pruebas por lambda.
+- [x] **Fase 0 — Quick wins (bajo riesgo):** #5 `prepare_message`, #4 `send_sqs` propaga/marca
+      Error, #10 borrar `search_samples`, #9 métrica `registers_to_send`. ✅
+- [x] **Fase 1 — Tabla única `sendStatus`** (#1): `{customer}_sendStatus` PK `processId` + SK
+      `sendStatusId`. Actualizados **escritores** (Prepare-batch `ensure_status_table` +
+      `insert_mails_status`; Send SMS/Voice/WSP; ReceptionStatus Email + Messaging) y **lectores**
+      (Statistics, state-report, Agent_Reports → `query` por `processId`). Pruebas: 118 en verde
+      (incluye `test_sendstatus_single` que prueba que 2 procesos conviven en 1 tabla y el query
+      los aísla). ✅
+      - ⚠️ **Pendiente 1b:** `{customer}_sendDetail_{proceso}` sigue siendo tabla-por-proceso
+        (mismo anti-patrón, menor impacto: solo lo escribe Prepare-batch y lo lee state-report).
+        Colapsar con el mismo esquema en un commit aparte.
+      - ⚠️ **Migración/`[J]`:** las tablas viejas `{customer}_sendStatus_{uuid}` quedan huérfanas
+        (pre-prod = datos de prueba, no se migran). En AWS: dar a Prepare-batch permiso
+        `CreateTable` para `{customer}_sendStatus` (llave compuesta) y a los lectores `Query`.
 - [ ] **Fase 2 — Idempotencia** (#2): persistir/derivar `processId` estable por (campaña,versión).
 - [ ] **Fase 3 — Partir el handler** (#8, #7, #11): `preparar_muestras()`/`preparar_real()` +
       helpers, quitar globals, pruebas del flujo.

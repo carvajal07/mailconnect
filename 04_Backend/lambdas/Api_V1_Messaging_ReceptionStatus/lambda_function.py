@@ -83,7 +83,9 @@ def _iter_events(event):
 
 
 def _record_status(customer_name, process_id, item):
-    table = dynamodb.Table(f'{customer_name}_sendStatus_{process_id}')
+    # Tabla ÚNICA {customer}_sendStatus (PK processId + SK sendStatusId).
+    item['processId'] = process_id
+    table = dynamodb.Table(f'{customer_name}_sendStatus')
     table.put_item(Item=item)
 
 

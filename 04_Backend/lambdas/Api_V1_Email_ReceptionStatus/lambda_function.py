@@ -154,11 +154,13 @@ def insert_status(type1:str,type2:str)->None:
         dict: Nombre de la campaña
     """
     send_status_id = str(uuid.uuid4())
-    table_send_status = dynamodb.Table(f'{customer_name}_sendStatus_{process_id}')
+    # Tabla ÚNICA {customer}_sendStatus (PK processId + SK sendStatusId); antes era una
+    # tabla por proceso ({customer}_sendStatus_{proceso}).
+    table_send_status = dynamodb.Table(f'{customer_name}_sendStatus')
 
-    # Insertar datos en la tabla de lista negra
     table_send_status.put_item(
         Item={
+            'processId': process_id,
             'sendStatusId': send_status_id,
             'messageId': message_id,
             'date': timestamp,

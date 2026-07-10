@@ -42,15 +42,17 @@ def _event(customer, process_id, template, data):
 def wsp():
     with mock_aws():
         boto3.client('dynamodb', region_name='us-east-1').create_table(
-            TableName='empresa_sendStatus_P1',
-            KeySchema=[{'AttributeName': 'sendStatusId', 'KeyType': 'HASH'}],
-            AttributeDefinitions=[{'AttributeName': 'sendStatusId', 'AttributeType': 'S'}],
+            TableName='empresa_sendStatus',
+            KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'},
+                       {'AttributeName': 'sendStatusId', 'KeyType': 'RANGE'}],
+            AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'},
+                                  {'AttributeName': 'sendStatusId', 'AttributeType': 'S'}],
             BillingMode='PAY_PER_REQUEST')
         yield _load()
 
 
 def _status_items():
-    return boto3.resource('dynamodb', region_name='us-east-1').Table('empresa_sendStatus_P1').scan()['Items']
+    return boto3.resource('dynamodb', region_name='us-east-1').Table('empresa_sendStatus').scan()['Items']
 
 
 def test_wsp_envia_y_registra_estado(wsp, monkeypatch):

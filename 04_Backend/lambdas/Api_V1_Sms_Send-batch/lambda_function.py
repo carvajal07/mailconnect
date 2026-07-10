@@ -50,10 +50,12 @@ def _personalize(text, headers, row):
 
 
 def _record_status(customer_name, process_id, rows):
-    """Inserta los estados de envío en {customer}_sendStatus_{proceso} por lotes."""
-    table = dynamodb.Table(f'{customer_name}_sendStatus_{process_id}')
+    """Inserta los estados de envío en la tabla ÚNICA {customer}_sendStatus por lotes.
+    processId es la PK (una partición por proceso) y sendStatusId la SK."""
+    table = dynamodb.Table(f'{customer_name}_sendStatus')
     with table.batch_writer() as batch:
         for item in rows:
+            item['processId'] = process_id
             batch.put_item(Item=item)
 
 

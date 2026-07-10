@@ -180,7 +180,26 @@ def query_table_by_key(table: str, key_name: str, key_value: str,
         raise
 
 
-def scan_full_table_with_pagination(table_name: str, 
+def query_status_by_process(customer_name: str, process_id: str) -> List[Dict]:
+    """Estados de UN proceso desde la tabla única {customer}_sendStatus (PK processId).
+    Reemplaza el scan de la antigua tabla-por-proceso {customer}_sendStatus_{proceso}."""
+    table = dynamodb.Table(f'{customer_name}_sendStatus')
+    items: List[Dict] = []
+    kwargs = {'KeyConditionExpression': Key('processId').eq(process_id)}
+    try:
+        while True:
+            resp = table.query(**kwargs)
+            items.extend(resp.get('Items', []))
+            last_key = resp.get('LastEvaluatedKey')
+            if not last_key:
+                break
+            kwargs['ExclusiveStartKey'] = last_key
+    except Exception as exc:
+        print(f"[QUERY_STATUS] ⚠ {customer_name}_sendStatus proceso {process_id}: {exc}")
+    return items
+
+
+def scan_full_table_with_pagination(table_name: str,
                                      projection: Optional[str] = None) -> List[Dict]:
     """
     Escanea una tabla completa (SOLO para tablas pequeñas como sendStatus).
@@ -407,13 +426,10 @@ def collect_campaign_metrics(campaign_id: str, customer_name: str,
                 
                 print(f"[COLLECT_METRICS] {process_id}: toSend={to_send}, onSpool={on_spool}")
 
-                # Obtener tabla de estados para este proceso
-                status_table_name = f'{customer_name}_sendStatus_{process_id}'
-                print(f"[COLLECT_METRICS] Escaneando estados: {status_table_name}")
-                
+                # Estados de este proceso desde la tabla única {customer}_sendStatus.
+                print(f"[COLLECT_METRICS] Consultando estados del proceso {process_id}")
                 try:
-                    # sendStatus es pequeña, escanear está bien
-                    status_records = scan_full_table_with_pagination(status_table_name)
+                    status_records = query_status_by_process(customer_name, process_id)
                     print(f"[COLLECT_METRICS] {len(status_records)} registros de estado")
                     
                     current_states = get_current_state_per_message(status_records)
@@ -606,12 +622,10 @@ def report_full_records(campaign_id: str, customer_name: str, customer_id: str,
                     print(f"[REPORT_FULL_RECORDS] ⚠ Fallo con projection, intentando sin ella: {str(exc)}")
                     send_details = scan_full_table_with_pagination(send_details_table)
 
-                # Obtener estados para este proceso
+                # Estados de este proceso desde la tabla única {customer}_sendStatus.
                 try:
-                    status_table = f'{customer_name}_sendStatus_{process_id}'
-                    print(f"[REPORT_FULL_RECORDS] Escaneando estados: {status_table}")
-                    
-                    status_records = scan_full_table_with_pagination(status_table)
+                    print(f"[REPORT_FULL_RECORDS] Consultando estados del proceso {process_id}")
+                    status_records = query_status_by_process(customer_name, process_id)
                     print(f"[REPORT_FULL_RECORDS] {len(status_records)} estados obtenidos")
                     
                     current_states = get_current_state_per_message(status_records)

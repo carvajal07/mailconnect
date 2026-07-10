@@ -330,6 +330,34 @@ def check_and_create_table(table_name:str, id:str)->bool:
             print("Error al crear la tabla:", e)
     return was_created
 
+
+def ensure_status_table(customer_name:str)->str:
+    """Crea (si no existe) la tabla ÚNICA de estados del cliente {customer}_sendStatus con
+    llave compuesta PK 'processId' + SK 'sendStatusId', y devuelve su nombre.
+
+    Reemplaza al anti-patrón de una tabla por proceso ({customer}_sendStatus_{uuid}): ahora
+    hay UNA tabla por cliente y cada proceso es una partición (query por processId)."""
+    table_name = f'{customer_name}_sendStatus'
+    try:
+        dynamodb.create_table(
+            TableName=table_name,
+            KeySchema=[
+                {'AttributeName': 'processId', 'KeyType': 'HASH'},
+                {'AttributeName': 'sendStatusId', 'KeyType': 'RANGE'},
+            ],
+            AttributeDefinitions=[
+                {'AttributeName': 'processId', 'AttributeType': 'S'},
+                {'AttributeName': 'sendStatusId', 'AttributeType': 'S'},
+            ],
+            BillingMode='PAY_PER_REQUEST')
+        print(f"La tabla '{table_name}' ha sido creada con éxito.")
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceInUseException':
+            print(f"La tabla '{table_name}' ya existe.")
+        else:
+            print("Error al crear la tabla de estados:", e)
+    return table_name
+
 def get_blacklist_emails() -> set:
     table_blacklist = dynamodb.Table('cliente_blacklist')
     response = table_blacklist.scan(ProjectionExpression='email')
@@ -422,8 +450,9 @@ def insert_mails_status(emails:list,state:str,description:str)->None:
             'date': formatted_date
         })
 
-        #Data para insertar en los estados
+        #Data para insertar en los estados. processId = PK (tabla única {customer}_sendStatus).
         data_to_insert_send_status.append({
+            'processId': process_id,
             'sendStatusId': id,
             'sendDetailId': id,
             'date': formatted_date,
@@ -441,106 +470,14 @@ def insert_mails_status(emails:list,state:str,description:str)->None:
         for item in data_to_insert_send_detail:
             batch.put_item(Item=item)
 
-    table_name_status= f'{customer_name}_sendStatus_{process_id}'
-    table_status = dynamodb.Table(table_name_status)
-
+    # Tabla ÚNICA de estados del cliente (antes: una por proceso).
+    table_status = dynamodb.Table(f'{customer_name}_sendStatus')
     with table_status.batch_writer() as batch:
         for item in data_to_insert_send_status:
             batch.put_item(Item=item)
     end_time = time.time()
     tiempo = (end_time - start_time) * 1000
-    print(f"{tiempo:.2f} milisegundos")    
-
-def insert_mails_blacklist(emails:list,state:str,description:str)->None:
-    """
-    Función encargada de insertar los detalles de cada envio a la base de datos con su respectivo estado. Aplica solo para los registros con error en la estructura del email
-
-    Args:
-        emails (list): Lista con los email con error en la estructura que se van a insertar a la base de datos
-        state (str): Estado 11 (Email invalido)
-        description (str): Descripcion de email invalido
-        
-    Returns:
-        None: No retorna resultados
-    """
-    data_to_insert_blacklist = []
-    data_to_insert_send_detail = []
-    data_to_insert_send_status = []
-    # Define los datos que deseas insertar
-    for register in emails:
-        id = str(uuid.uuid4())
-
-        #data_list = register.split(";")
-        #unique_id = data_list[0]
-        #email = data_list[1]
-
-        unique_id = register[0]
-        email = register[1]
-        
-        #Data para insertar en la lista negra
-        data_to_insert_blacklist.append({
-            'blacklistId': {'S': id},
-            'date': {'S': formatted_date},
-            'email': {'S': email},
-            'rejectionType': {'S': state},
-            'description': {'S': description}
-        })
-
-        #Data para insertar en los datos de envios
-        data_to_insert_send_detail.append({
-            'sendDetailId': {'S': id},
-            'processDetailId': {'S': id},
-            'uniqueId': {'S': unique_id},
-            'email': {'S': email},
-            'data': {'S': register},
-            'date': {'S': formatted_date}
-        })
-
-        #Data para insertar en los estados
-        data_to_insert_send_status.append({
-            'sendStatusId': {'S': id},
-            'sendDetailId': {'S': id},
-            'date': {'S': formatted_date},
-            'state': {'N': 11},
-            'type1': {'S': description},
-            'type2': {'S': description}
-        })
-
-    table_name_blacklist = f'{customer_name}_blackList'
-    table_blacklist = dynamodb.Table(table_name_blacklist)
-
-    # Realiza la inserción en lotes utilizando el método batch_write_item
-    with table_blacklist.batch_write_item(RequestItems={table_name_blacklist: [{'PutRequest': {'Item': item}} for item in data_to_insert_blacklist]}) as response:
-        pass  # La inserción se realiza en el bloque 'with'
-    # Verifica si hubo errores en la inserción
-    if response.get('UnprocessedItems'):
-        print('Hubo elementos no procesados:', response['UnprocessedItems'])
-    else:
-        print('Todos los elementos se insertaron correctamente.')
-
-    table_name_details = f'{customer_name}_sendDetail_{process_id}'
-    table_details = dynamodb.Table(table_name_details)
-
-    # Realiza la inserción en lotes utilizando el método batch_write_item
-    with table_details.batch_write_item(RequestItems={table_name_details: [{'PutRequest': {'Item': item}} for item in data_to_insert_send_detail]}) as response:
-        pass  # La inserción se realiza en el bloque 'with'
-    # Verifica si hubo errores en la inserción
-    if response.get('UnprocessedItems'):
-        print('Hubo elementos no procesados:', response['UnprocessedItems'])
-    else:
-        print('Todos los elementos se insertaron correctamente.')
-
-    table_name_status= f'{customer_name}_sendStatus_{process_id}'
-    table_status = dynamodb.Table(table_name_status)
-
-    # Realiza la inserción en lotes utilizando el método batch_write_item
-    with table_status.batch_write_item(RequestItems={table_name_status: [{'PutRequest': {'Item': item}} for item in data_to_insert_send_status]}) as response:
-        pass  # La inserción se realiza en el bloque 'with'
-    # Verifica si hubo errores en la inserción
-    if response.get('UnprocessedItems'):
-        print('Hubo elementos no procesados:', response['UnprocessedItems'])
-    else:
-        print('Todos los elementos se insertaron correctamente.')
+    print(f"{tiempo:.2f} milisegundos")
 
 def upload_s3(bucket_name:str,object_key:str,data:any) ->None:
     try:
@@ -675,10 +612,9 @@ def lambda_handler(event, context):
                 id = 'sendDetailId'
                 check_and_create_table(table,id)
 
-                # Define los detalles de la tabla sendDetail
-                table = f'{customer_name}_sendStatus_{process_id}'
-                id = 'sendStatusId'
-                check_and_create_table(table,id)
+                # Tabla ÚNICA de estados del cliente (PK processId + SK sendStatusId).
+                # Antes se creaba una tabla por proceso ({customer}_sendStatus_{uuid}).
+                ensure_status_table(customer_name)
                 #Realizar la creacion de la cola para el cliente
                 #Configurar la cola como disparador
                 

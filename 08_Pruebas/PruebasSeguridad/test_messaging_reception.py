@@ -30,9 +30,11 @@ def _load():
 def recep():
     with mock_aws():
         boto3.client('dynamodb', region_name='us-east-1').create_table(
-            TableName='empresa_sendStatus_P1',
-            KeySchema=[{'AttributeName': 'sendStatusId', 'KeyType': 'HASH'}],
-            AttributeDefinitions=[{'AttributeName': 'sendStatusId', 'AttributeType': 'S'}],
+            TableName='empresa_sendStatus',
+            KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'},
+                       {'AttributeName': 'sendStatusId', 'KeyType': 'RANGE'}],
+            AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'},
+                                  {'AttributeName': 'sendStatusId', 'AttributeType': 'S'}],
             BillingMode='PAY_PER_REQUEST')
         yield _load()
 
@@ -53,7 +55,7 @@ def _eum(event_type, message_id='MID-1'):
 
 
 def _items():
-    return boto3.resource('dynamodb', region_name='us-east-1').Table('empresa_sendStatus_P1').scan()['Items']
+    return boto3.resource('dynamodb', region_name='us-east-1').Table('empresa_sendStatus').scan()['Items']
 
 
 def test_sms_entregado_registra_estado_2(recep):
