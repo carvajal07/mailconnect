@@ -171,6 +171,26 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   (contador de segmentos) en vez del selector de plantilla SES.
 - ⚠️ `[J]`: crear la cola `Sms_Send-batch` + trigger, y configurar origen en End User Messaging.
 
+### Canal WhatsApp (jul 2026, base)
+- **Envío:** `Api_V1_Wsp_Send-batch` (trigger cola `Wsp_Send-batch`) manda cada mensaje con
+  **AWS End User Messaging Social** (`socialmessaging` → `send_whatsapp_message`, WhatsApp
+  Business Platform) y registra el estado en `{customer}_sendStatus_{proceso}` (mismo patrón
+  que email/SMS → reportes/estadísticas funcionan igual). Env:
+  `WSP_ORIGINATION_PHONE_NUMBER_ID` (obligatoria), `WSP_TEMPLATE_LANGUAGE` (default `es`),
+  `WSP_META_API_VERSION` (default `v20.0`).
+- **Plantilla (HSM):** WhatsApp de marketing **exige una plantilla pre-aprobada por Meta**; el
+  campo `template` de la campaña guarda el **NOMBRE** de esa plantilla (no un template SES ni un
+  texto libre). Los parámetros del cuerpo (`{{1}}`, `{{2}}`, …) se toman de las columnas del CSV
+  desde "Nombre" en adelante (`row[2:]`): `{{1}}`=Nombre, `{{2}}`=opcional 1, …
+- **Enrutamiento:** `Prepare-batch` enruta `channel="WSP"` a `URL_SQS_WSP` (lotes de 100) y
+  agrega `wspTemplate` al mensaje = campo `template` de la campaña.
+- **CSV en WhatsApp:** la **columna 2** (line[1]) es el **celular E.164** (`+57…`), igual que SMS.
+- **Front:** el form de campaña (`CampanasSection`) tiene el canal **WSP** con un campo para el
+  **nombre de la plantilla HSM** en vez del selector de plantilla SES. El estimador de costo
+  mapea `WSP → WHATSAPP` (y `VOZ → VOICE`).
+- ⚠️ `[J]`: crear la cola `Wsp_Send-batch` + trigger, registrar el número/WABA en End User
+  Messaging Social y aprobar las plantillas HSM con Meta.
+
 ### Multi-tenant y refresh (jul 2026)
 - **Claims en el JWT:** `Login` embebe `customerId`, `customer` y `userId` en el token.
   El `Authorizer`/`Authorizer2` los reenvían en el **context** de la policy.

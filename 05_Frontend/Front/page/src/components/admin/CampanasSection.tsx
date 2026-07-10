@@ -141,6 +141,9 @@ export const CampanasSection = () => {
   };
 
   const isSms = formData.channelName === 'SMS';
+  const isWsp = formData.channelName === 'WSP';
+  // SMS y WhatsApp no usan adjunto ni plantilla SES.
+  const isMessaging = isSms || isWsp;
 
   const handleInputChange = (field: keyof CampaignForm, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -342,12 +345,13 @@ export const CampanasSection = () => {
                     <MenuItem value="EAU">EAU — Adjunto único</MenuItem>
                     <MenuItem value="EAP">EAP — Adjunto personalizado</MenuItem>
                     <MenuItem value="SMS">SMS — Mensaje de texto</MenuItem>
+                    <MenuItem value="WSP">WSP — WhatsApp (plantilla)</MenuItem>
                   </Select>
                 </FormControl>
-                <FormControl fullWidth disabled={isSms}>
+                <FormControl fullWidth disabled={isMessaging}>
                   <InputLabel>Tipo de Adjunto</InputLabel>
                   <Select
-                    value={isSms ? 'NONE' : formData.attachmentType}
+                    value={isMessaging ? 'NONE' : formData.attachmentType}
                     label="Tipo de Adjunto"
                     onChange={(e) => handleInputChange('attachmentType', e.target.value)}
                   >
@@ -367,6 +371,15 @@ export const CampanasSection = () => {
                   onChange={(e) => handleInputChange('template', e.target.value)}
                   placeholder="Hola {{Nombre}}, tu mensaje aquí…"
                   helperText={`Admite variables {{columna}} del CSV. ${formData.template.length} caracteres (~${Math.max(1, Math.ceil(formData.template.length / 160))} segmento(s)). En SMS la columna 2 del CSV es el celular (E.164, +57…).`}
+                />
+              ) : isWsp ? (
+                <TextField
+                  fullWidth
+                  label="Plantilla de WhatsApp (HSM)"
+                  value={formData.template}
+                  onChange={(e) => handleInputChange('template', e.target.value)}
+                  placeholder="nombre_de_la_plantilla_aprobada"
+                  helperText="Nombre exacto de la plantilla de marketing pre-aprobada por Meta. Los parámetros {{1}}, {{2}}… se toman de las columnas del CSV desde 'Nombre' en adelante. La columna 2 del CSV es el celular (E.164, +57…)."
                 />
               ) : (
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>

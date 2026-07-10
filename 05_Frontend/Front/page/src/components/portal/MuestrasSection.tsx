@@ -118,7 +118,8 @@ export const MuestrasSection = () => {
 
   // Canal de la campaña seleccionada → parámetros del estimador de costo.
   const selectedChannel = campaignOptions.find((c) => c.campaignName === campaign)?.channel ?? 'EM';
-  const estimatorChannel = selectedChannel === 'SMS' ? 'SMS' : 'EMAIL';
+  const estimatorChannel =
+    selectedChannel === 'SMS' ? 'SMS' : selectedChannel === 'WSP' ? 'WHATSAPP' : selectedChannel === 'VOZ' ? 'VOICE' : 'EMAIL';
   const estimatorMode = (['EM', 'EAU', 'EAP'].includes(selectedChannel) ? selectedChannel : 'EM') as 'EM' | 'EAU' | 'EAP';
 
   const [tipo, setTipo] = useState<TipoMuestra>('aleatorias');
