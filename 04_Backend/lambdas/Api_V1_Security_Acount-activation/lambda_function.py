@@ -13,7 +13,15 @@ EXPIRED_URL = os.environ.get('ACTIVATION_EXPIRED_URL', 'https://www.mailconnect.
 
 
 def _redirect(location):
-    return {"statusCode": 302, "headers": {"Location": location}}
+    # Respuesta con forma de Lambda-proxy (AWS_PROXY): API Gateway la traduce a un
+    # 302 HTTP real con el header Location. El campo 'body' vacío es obligatorio para
+    # que el proxy no falle; sin proxy, este mismo dict se mostraría como JSON (no
+    # redirige) -> el endpoint DEBE tener activada "Use Lambda Proxy integration".
+    return {
+        "statusCode": 302,
+        "headers": {"Location": location},
+        "body": "",
+    }
 
 
 def _get_key(event):
