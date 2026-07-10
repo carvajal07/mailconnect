@@ -1,18 +1,21 @@
+"""
+Script de prueba: genera un JWT simple. La clave se toma de la variable de
+entorno SECRET_KEY (nunca en el código; este repo es público).
+"""
+import os
+
 import jwt
-import json
-import hashlib
 
-def generateJwt(username):
-    # Configurar la información del token (puedes incluir más información según tus necesidades)
-    payload = {"sub": username, "iss": "your_issuer"}
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    raise SystemExit('Define la variable de entorno SECRET_KEY antes de ejecutar.')
 
-    # Generar el token JWT
+
+def generate_jwt(username):
+    payload = {"sub": username, "iss": "mailconnect"}
     token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
     print(token)
+    return token
 
-SECRET_KEY = '1sfdgtewrgedfv'
-username = 'pruebas'
-token = generateJwt(username)
-  
 
-  
+generate_jwt('pruebas')

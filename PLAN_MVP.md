@@ -78,7 +78,7 @@ admin de clientes, verify-code.
 | # | Brecha | Detalle |
 |---|--------|---------|
 | A1 | **Listar campañas del cliente** | No existe `POST /Campaign/List`. Sin esto, Muestras exige escribir el nombre a mano, Campañas solo muestra lo creado en la sesión y Estadísticas usa datos demo. Es la pieza que más destraba el portal. |
-| A2 | **Estadísticas reales** | Endpoint de agregados por campaña (proceso + conteos por estado). La lógica ya existe en `Api_V1_Agent_Reports` (status_summary, open_rate…): exponerla como endpoint del portal. |
+| A2 | ~~**Estadísticas reales**~~ ✅ | **Hecho (jul 2026):** lambda `Api_V1_Reports_Statistics` (`POST /Report/Statistics`), **sin Bedrock** (lee DynamoDB directo: `campaign`+`process`+`{customer}_sendStatus_{proceso}`, estado de mayor prioridad por messageId). Front `EstadisticasSection` conectado. Falta desplegar la lambda + ruta en AWS. |
 | A3 | **Multi-tenant real** | Las lambdas confían en el `customerName`/`customerId` del body: un cliente autenticado podría operar a nombre de otro. Meter `customerId` como claim del JWT y que las lambdas lo tomen del token (el Authorizer ya lo decodifica). |
 | A4 | **Refresh token** | Implementar `/Security/Refresh-token` (hoy stub) o decidir vivir con relogin diario. |
 | A5 | **Lista negra funcional** | Ya se unificó el nombre `{customer}_blackList`, pero la tabla tiene PK `blackListId` y la consulta es por `email` → crear **GSI por email** (o migrar PK a email) y ajustar `check_blacklist`. |
@@ -103,11 +103,13 @@ admin de clientes, verify-code.
 
 ### Fase 0 — Seguridad urgente (1–2 días) 🔴
 
-- [ ] `[J]` Generar nueva `SECRET_KEY` (32+ bytes aleatorios, p. ej. `python -c "import secrets; print(secrets.token_urlsafe(48))"`).
-- [ ] `[J]` Actualizarla en las env de: `Login`, `Authorizer`, `Authorizer2`, `Change-password`.
-- [ ] `[C]` Eliminar del repo los scripts con la clave (`prueba genera JWT.py`, `prueba jwt.py`) o dejarlos leyendo de env.
-- [ ] `[J]` Decidir: hacer el repo **privado** (recomendado) o limpiar historial git (BFG/filter-repo). Mientras el repo sea público, TODO lo commiteado es público.
-- [ ] `[J]` Confirmar que las access keys IAM (`consumoSQS`, `consumoS3`) no estén expuestas y rotarlas si hay duda (el archivo `DatosTrabajo.txt` **no** está en el repo — verificado — pero la rotación es barata).
+- [~] `[J]` `SECRET_KEY` configurada por variable de entorno en todas las lambdas (jul 2026).
+      ⚠️ Confirmar que el VALOR sea uno **nuevo** (32+ bytes, p. ej.
+      `python -c "import secrets; print(secrets.token_urlsafe(48))"`): la clave vieja quedó
+      en el **historial git** del repo público, así que si no se rotó, sigue comprometida.
+- [x] `[C]` Scripts `prueba genera JWT.py` y `prueba jwt.py` limpios: leen `SECRET_KEY` de env.
+- [ ] `[J]` Decidir: hacer el repo **privado** (recomendado) o limpiar historial git (BFG/filter-repo). Mientras el repo sea público, TODO lo commiteado (incluido el historial) es público.
+- [x] `[J]` Access keys y `DatosTrabajo.txt` gestionados (jul 2026).
 
 ### Fase 1 — MVP correo en producción (1–2 semanas) 🔴🟠
 
@@ -126,28 +128,29 @@ admin de clientes, verify-code.
       builder ("Cargar de SES" con selector).
 - [x] `[C]` **Manejo de 401/expiración en `apiClient`** → limpia sesión + redirect a `/login` con
       aviso; **cierre por inactividad** (`VITE_IDLE_MINUTES`, default 15 min) en `RequireAuth`.
-- [ ] `[C]` **GSI de lista negra** (código `check_blacklist` por índice `email`).
+- [x] `[C]` **Lista negra funcional:** `{customer}_blackList` se crea con PK `email` (jul 2026);
+      `check_blacklist` consulta por email y ReceptionStatus escribe compatible. (Se descartó el
+      GSI: PK email es más simple y consistente con unsubscribe.)
+- [x] `[C]` **Tabla OTP corregida:** `Create/Validate-otp`, `Recovery` y `Change-password` usan
+      `oneTimePassword` (PK `oneTimePasswordId`) — el nombre real en AWS; antes apuntaban a `otp`
+      (inexistente) y el flujo OTP habría fallado en producción.
 - [x] `[C]` Ampliar pruebas: desuscripción (4 pruebas: token válido/alterado/idempotente/sin token;
       29 en total). Pendiente: campaign-list y prepare-batch.
 
-**Consola AWS `[J]`:**
-- [ ] Crear tabla `databaseFile` (PK `databaseFileId`) + lambdas `Api_V1_Database_Register-file` y `Api_V1_Database_List` + rutas `/Database/*` con CORS + permisos DynamoDB.
-- [ ] Crear tabla/GSI: índice `email` en `{customer}_blackList` (o definir al crear las tablas dinámicas — se crean desde código, así que `[C]` ajusta `check_and_create_table`).
-- [ ] Método **GET** en `/Security/Acount-activation` (proxy, sin authorizer) + redeploy.
-- [ ] Env vars: `SECRET_KEY` (nueva), `SENDER_EMAIL`, `ACTIVATION_URL`, `ACTIVATION_SUCCESS/ERROR/EXPIRED_URL`, `OTP_EXPIRATION_MIN`.
-- [ ] Verificar mapeo de rutas `/Email/Send-batch-template(-samples)` → `Prepare-batch-template`; revisar que `Api_V1_Email_Send-batch-template` (stub) no esté en uso y restaurar versión si algo la usa.
-- [ ] **SES production access** + dominio verificado + DKIM + SPF + DMARC (GoDaddy).
-- [ ] Crear las lambdas nuevas en AWS: `Api_V1_Email_Unsubscribe`, `Api_V1_Campaign_List`,
-      `Api_V1_Template_List` (el CD las actualizará en adelante) + rutas: `GET/POST
-      /Email/Unsubscribe` (**proxy, SIN authorizer, pública**), `POST /Campaign/List` y
-      `POST /Template/List` (con authorizer + CORS) + redeploy del stage.
-- [ ] Env vars de desuscripción: `SECRET_KEY` en `Api_V1_Email_Unsubscribe`,
-      `Api_V1_Email_Send-batch-template-EM` y `-EAU` (y `UNSUBSCRIBE_URL` si difiere del
-      default `https://api.mailconnect.com.co/V1/Email/Unsubscribe`). Permisos: la lambda
-      Unsubscribe necesita `dynamodb:CreateTable/PutItem/DescribeTable`; `Template_List`
-      necesita `ses:ListTemplates`.
-- [ ] ⚠️ Si ya existen tablas `{customer}_unsubscribe` viejas (PK `unsubscribeId`), eliminarlas
-      para que se recreen con PK `email` (estaban vacías: el flujo nunca escribió en ellas).
+**Consola AWS `[J]`:** _(actualizado jul 2026 — gran parte completada ✅)_
+- [x] Tabla `databaseFile` + lambdas `Database_Register-file`/`Database_List` + rutas `/Database/*` con CORS + permisos.
+- [x] Método **GET** en `/Security/Acount-activation` (proxy, sin authorizer) + redeploy.
+- [x] Env vars de seguridad y activación configuradas (`SECRET_KEY`, `SENDER_EMAIL`, `ACTIVATION_URL`, `ACTIVATION_*_URL`, `OTP_EXPIRATION_MIN`).
+- [x] `Api_V1_Email_Send-batch-template` verificada (no tenía código; nada que restaurar).
+- [x] Lambdas nuevas creadas (`Unsubscribe`, `Campaign_List`, `Template_List`, Python 3.13) + rutas (Unsubscribe pública GET/POST proxy; List con authorizer) + CORS + redeploy.
+- [x] `SECRET_KEY` en Unsubscribe/Send-EM/Send-EAU; permisos (`dynamodb:CreateTable/PutItem/DescribeTable`, `ses:ListTemplates`).
+- [x] Tabla `mailconnect_unsubscribe` de pruebas eliminada (se recrean con PK `email`).
+- [x] Tablas globales confirmadas. ⚠️ Hallazgo: la tabla de OTP se llama **`oneTimePassword`**
+      (PK `oneTimePasswordId`), no `otp` → lambdas ya corregidas en código (jul 2026). También
+      existe `oneTimePasswordAudit` (sin uso actual; opcional auditar validaciones ahí).
+- [ ] ⚠️ Si existe alguna tabla `{cliente}_blackList` vieja (PK `blackListId`), eliminarla para
+      que se recree con PK `email` (el filtrado de lista negra ya quedó activo en código).
+- [ ] **SES production access** + dominio verificado + DKIM + SPF + DMARC (GoDaddy). ← **el gran pendiente**
 - [ ] DLQ para las 3 colas SQS + alarmas CloudWatch (errores lambda, bounce/complaint rate, presupuesto).
 - [ ] PITR en tablas globales DynamoDB.
 - [ ] Hosting del front: S3+CloudFront (o Amplify) en `www.mailconnect.com.co`, `VITE_API_BASE_URL=https://api.mailconnect.com.co/V1`, certificado ACM.
@@ -159,7 +162,7 @@ admin de clientes, verify-code.
 
 - [ ] `[C]` `POST /Security/Refresh-token` real + auto-refresh en `apiClient`.
 - [ ] `[C]` Claims `customerId`/`customer` en el JWT + lambdas leyendo el cliente del token (multi-tenant).
-- [ ] `[C]` Estadísticas con datos reales (endpoint de agregados reutilizando `Agent_Reports`).
+- [x] `[C]` Estadísticas con datos reales (lambda `Api_V1_Reports_Statistics`, sin Bedrock). ← hecho en Fase 1.
 - [ ] `[C+J]` **Canal SMS** (diseño en §5.2): lambda Send-SMS + cola + estados + front (form campaña con canal SMS y validación de celular en CSV).
 - [ ] `[C]` Estimador de costos (email + SMS) según criterio de `CLAUDE.md` §5.
 - [ ] `[J]` Decidir proveedor SMS definitivo con costos reales (AWS vs local) tras piloto.

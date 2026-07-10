@@ -388,11 +388,10 @@ def _batch_get_emails(table_name:str, keys:list)->set:
 
 def check_blacklist(keys:list)->set:
     """
-    Consulta los email en la lista negra del cliente.
-    Nota: la tabla '{customer}_blackList' histórica tiene PK 'blackListId', por lo
-    que esta consulta por email solo funciona en tablas nuevas con PK 'email' (o
-    cuando se agregue el GSI por email). Si el esquema no coincide, devuelve
-    vacío sin interrumpir el envío.
+    Consulta los email en la lista negra del cliente. La tabla
+    '{customer}_blackList' se crea con PK 'email' (ReceptionStatus escribe
+    compatible porque su Item incluye 'email'). Tablas viejas con PK
+    'blackListId' devuelven vacío sin interrumpir el envío.
     """
     return _batch_get_emails(f'{customer_name}_blackList', keys)
 
@@ -668,9 +667,12 @@ def lambda_handler(event, context):
                 # ya existía, hay que FILTRAR contra ella en el envío real.
                 unsubscribe_existed = not check_and_create_table(f'{customer_name}_unsubscribe','email')
 
-                # Tabla de lista negra (PK histórica 'blackListId'; el filtrado
-                # por email quedará efectivo cuando se agregue el GSI por email).
-                blacklist_existed = not check_and_create_table(f'{customer_name}_blackList','blackListId')
+                # Tabla de lista negra: PK 'email' (igual que unsubscribe), para
+                # que el filtrado por email de check_blacklist funcione directo.
+                # ReceptionStatus incluye 'email' en sus inserts, así que escribe
+                # compatible. Tablas viejas con PK 'blackListId' se ignoran con
+                # gracia (borrar y dejar que se recreen).
+                blacklist_existed = not check_and_create_table(f'{customer_name}_blackList','email')
 
                 #Estas tablas siempre se deben crear
                 # Define los detalles de la tabla sendDetail
