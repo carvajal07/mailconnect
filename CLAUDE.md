@@ -115,6 +115,9 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `MessageTemplate/Create` | `{ channel:SMS\|WSP\|DOCX, name, body?/hsmName?+language?+params?/s3Path?+params? }` | 201 `data:{messageTemplateId}` · 400 datos. SMS necesita `body`, WSP `hsmName`, DOCX `s3Path` |
 | `MessageTemplate/List` | `{ customerId, channel? }` | 200 `data:{templates[], count}` (desc por fecha; filtra por canal si se envía) |
 | `MessageTemplate/Delete` | `{ messageTemplateId }` | 200 ok · 403 otro cliente · 404 no existe |
+| `Blacklist/List` | `{ customerId }` o `{ customer }` | 200 `data:{items:[{email, rejectionType, description, date}], count}` (tabla `{customer}_blackList`) |
+| `Blacklist/Add` | `{ email (correo o celular), reason? }` | 201 ok · 400 datos. Crea la tabla si no existe (PK `email`) |
+| `Blacklist/Delete` | `{ email }` | 200 ok · 404 no estaba · 400 datos |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -245,6 +248,30 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   `role` a `admin` en la tabla `user` (consola/script). ⚠️ `[J]`: promover el/los usuarios admin.
 - **Aceptación de términos:** `Register` guarda `termsAccepted` (bool) + `termsAcceptedAt` +
   `termsVersion` (evidencia Ley 1581); el front envía `acceptedTerms` desde la casilla del registro.
+
+### Lista negra por cliente (jul 2026)
+- **Gestión:** lambdas `Api_V1_Blacklist_{List,Add,Delete}` sobre la tabla `{customer}_blackList`
+  (PK `email`; el "email" es el contacto: correo **o** celular E.164). Multi-tenant por el nombre
+  de empresa del token. `Add` crea la tabla si no existe (mismo esquema que Prepare-batch /
+  ReceptionStatus). `List` devuelve vacío si la tabla no existe (no es error).
+- **Automático + manual:** la llena sola `Email_ReceptionStatus` (rebotes permanentes / quejas) y
+  el cliente puede agregar/quitar desde el portal (sección **Lista negra**, `ListaNegraSection`).
+- **Filtrado:** `Prepare-batch` ya excluye estos contactos en el **envío real** (`check_blacklist`).
+
+### Estados de entrega SMS / Voz (ReceptionStatus EUM) (jul 2026)
+- **Email** ya tenía `Api_V1_Email_ReceptionStatus` (eventos SES por SNS → estados 1..10).
+- **SMS y Voz:** nueva `Api_V1_Messaging_ReceptionStatus` procesa los eventos de **AWS End User
+  Messaging** (SMS + Voz) por SNS y **añade** una fila a `{customer}_sendStatus_{proceso}` con el
+  estado (1 enviado · 2 entregado/contestado · 3 rechazado/fallido). `Statistics` agrega por
+  `messageId` tomando el estado de mayor prioridad → los reportes reflejan entrega, no solo envío.
+- **Metadata:** los envíos SMS/Voz ahora pasan `Context={customer, processId, uniqueId}` en
+  `send_text_message`/`send_voice_message`; EUM lo incluye en el evento y ReceptionStatus lo lee
+  para saber a qué cliente/proceso pertenece cada estado.
+- ⚠️ **WhatsApp:** los recibos de entrega/lectura vienen de **Meta** (formato distinto, vía la
+  SNS de `socialmessaging`); su ReceptionStatus queda **pendiente** (mismo patrón, otro parser).
+- ⚠️ `[J]`: crear los **configuration sets** de SMS y Voz con **event destination → SNS**, y
+  suscribir `Api_V1_Messaging_ReceptionStatus` a esa SNS. Env `SMS_CONFIGURATION_SET` /
+  `VOICE_CONFIGURATION_SET` en los envíos para que emitan eventos.
 
 ### Límite de muestras y bloqueo de envíos por cliente (jul 2026)
 - **Límite de muestras (5 por campaña):** cada operación de `Send-batch-template-samples`
@@ -525,6 +552,12 @@ se puede leer del objeto ya subido a S3.)
       - **Canal Voz:** cola `Voice_Send-batch` + trigger a `Api_V1_Voice_Send-batch` (crear la
         función vacía antes del CD) + origen de voz en End User Messaging + permiso
         `sms-voice:SendVoiceMessage`. Env `VOICE_ORIGINATION_IDENTITY`.
+      - **Lista negra:** rutas `/Blacklist/List`, `/Blacklist/Add`, `/Blacklist/Delete`
+        (authorizer + CORS) + lambdas `Api_V1_Blacklist_{List,Add,Delete}` (crear vacías) con
+        permisos `Scan/PutItem/GetItem/DeleteItem/CreateTable/DescribeTable` sobre `*_blackList`.
+      - **Estados SMS/Voz:** lambda `Api_V1_Messaging_ReceptionStatus` (crear vacía) suscrita a la
+        SNS de los **configuration sets** de SMS y Voz (event destinations). Permiso
+        `PutItem` sobre `*_sendStatus_*`.
       - **Roles:** campo `role` en la tabla `user` (default `client`; Register lo escribe). Los
         Authorizers deben reenviar `role` en el context (proxy directo; en no-proxy, el mapping
         template debe inyectar `$context.authorizer.role`). **Promover manualmente** al menos un

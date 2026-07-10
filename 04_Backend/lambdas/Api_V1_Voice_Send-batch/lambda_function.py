@@ -105,6 +105,9 @@ def lambda_handler(event, context):
                     'MessageBody': message,
                     'MessageBodyTextType': BODY_TEXT_TYPE,
                     'VoiceId': VOICE_ID,
+                    # Metadata que EUM incluye en los eventos de la llamada (SNS) para que
+                    # ReceptionStatus sepa a qué cliente/proceso pertenece cada estado.
+                    'Context': {'customer': customer_name, 'processId': process_id, 'uniqueId': unique_id},
                 }
                 if CONFIGURATION_SET:
                     params['ConfigurationSetName'] = CONFIGURATION_SET

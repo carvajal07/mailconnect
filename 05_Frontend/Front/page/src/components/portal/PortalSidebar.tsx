@@ -18,6 +18,7 @@ import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import RateReviewIcon from '@mui/icons-material/RateReview';
 import StorageIcon from '@mui/icons-material/Storage';
+import BlockIcon from '@mui/icons-material/Block';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
@@ -37,6 +38,7 @@ export const PORTAL_TABS: PortalTab[] = [
   { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },
   { id: 'muestras', label: 'Muestras', icon: <RateReviewIcon /> },
   { id: 'basesdatos', label: 'Bases de datos', icon: <StorageIcon /> },
+  { id: 'listanegra', label: 'Lista negra', icon: <BlockIcon /> },
   { id: 'reportes', label: 'Reportes', icon: <AssessmentIcon /> },
   { id: 'estadisticas', label: 'Estadísticas', icon: <BarChartIcon /> },
   { id: 'cuenta', label: 'Mi cuenta', icon: <AccountCircleIcon /> },
