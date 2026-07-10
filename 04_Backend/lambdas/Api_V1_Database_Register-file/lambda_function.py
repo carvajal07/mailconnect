@@ -9,8 +9,10 @@ Request:
     {
       customerId, customer, fileName, s3Path,
       totalRecords?, validEmails?, invalidEmails?, duplicates?,
-      delimiter?, uploadedBy?
+      delimiter?, channel?, columns?, uploadedBy?
     }
+`columns` es la lista de encabezados del CSV (los campos usables como variables
+`{{campo}}` en las plantillas). El front la toma del análisis del archivo al subirlo.
 Respuesta: 201 { data: { databaseFileId } }
 '''
 import uuid
@@ -39,6 +41,15 @@ def _to_int(value, default=0):
         return default
 
 
+def _tenant_from_authorizer(event):
+    """customerId/customer del context del Authorizer (si llega). Se prefiere sobre el
+    body para que Register y List usen la MISMA identidad (evita listados vacíos)."""
+    if not isinstance(event, dict):
+        return {}
+    auth = (event.get('requestContext') or {}).get('authorizer') or {}
+    return auth if isinstance(auth, dict) else {}
+
+
 def lambda_handler(event, context):
     status = True
     description = "Base de datos registrada correctamente"
@@ -49,11 +60,16 @@ def lambda_handler(event, context):
     formatted_date = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     payload = _get_payload(event)
+    auth = _tenant_from_authorizer(event)
 
-    # Campos obligatorios
+    # Encabezados del CSV (campos usables como {{variables}}). Se normaliza a lista de str.
+    raw_columns = payload.get('columns', [])
+    columns = [str(c) for c in raw_columns] if isinstance(raw_columns, list) else []
+
+    # Campos obligatorios (customerId/customer prefieren el context del Authorizer).
     try:
-        customer_id = payload['customerId']
-        customer = payload['customer']
+        customer_id = auth.get('customerId') or payload['customerId']
+        customer = auth.get('customer') or payload['customer']
         file_name = payload['fileName']
         s3_path = payload['s3Path']
     except (KeyError, TypeError):
@@ -78,6 +94,12 @@ def lambda_handler(event, context):
                 'invalidEmails': _to_int(payload.get('invalidEmails')),
                 'duplicates': _to_int(payload.get('duplicates')),
                 'delimiter': payload.get('delimiter', ';'),
+                # Canal para el que se validó la base (EMAIL/SMS/WHATSAPP/VOICE).
+                # Define qué es la columna 2 (correo o celular).
+                'channel': payload.get('channel', 'EMAIL'),
+                # Encabezados del CSV: los campos que se pueden usar como {{variables}}
+                # en las plantillas. Se guardan como texto para reusarlos sin releer el CSV.
+                'columns': columns,
                 'uploadedBy': payload.get('uploadedBy', ''),
                 'uploadDate': formatted_date,
                 'status': 'activa'

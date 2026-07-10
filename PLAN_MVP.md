@@ -181,7 +181,15 @@ admin de clientes, verify-code.
 ### Fase 3 — WhatsApp y Voz (según demanda comercial) 🟡
 
 - [ ] `[J]` Verificación del negocio en Meta + WABA + número dedicado (§5.3 — trámite lento: iniciarlo temprano).
-- [ ] `[C+J]` Canal WhatsApp (plantillas HSM + envío + estados).
+- [~] `[C]` **Canal WhatsApp** (diseño en §5.3): `Api_V1_Wsp_Send-batch` (AWS End User Messaging
+      Social `send_whatsapp_message`), Prepare-batch enruta el canal `WSP` a la cola
+      `Wsp_Send-batch` y pasa el nombre de la plantilla HSM (`wspTemplate` = campo `template` de
+      la campaña); los parámetros `{{1}}…` salen del CSV (`row[2:]`); estados en
+      `{customer}_sendStatus_{proc}` (igual que email/SMS). Front: canal WSP en el form de campaña
+      (campo para el nombre de la plantilla HSM) y estimador `WSP → WHATSAPP`. ⚠️ `[J]`: crear la
+      cola `Wsp_Send-batch` + trigger, registrar número/WABA en End User Messaging Social, aprobar
+      las plantillas HSM con Meta y configurar env `WSP_ORIGINATION_PHONE_NUMBER_ID`. Pendiente
+      `[C]`: estados de entrega WhatsApp por SNS (ReceptionStatus) + pantalla "Plantillas WhatsApp".
 - [ ] `[C+J]` Canal Voz (TTS con Polly vía AWS End User Messaging Voice).
 - [ ] CSV grandes por partes; portal admin de clientes; plantillas PDF.
 

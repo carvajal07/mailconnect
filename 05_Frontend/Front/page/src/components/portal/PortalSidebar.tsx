@@ -12,7 +12,9 @@ import {
   Tooltip,
 } from '@mui/material';
 import CodeIcon from '@mui/icons-material/Code';
-import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import DescriptionIcon from '@mui/icons-material/Description';
+import SmsIcon from '@mui/icons-material/Sms';
+import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import RateReviewIcon from '@mui/icons-material/RateReview';
 import StorageIcon from '@mui/icons-material/Storage';
@@ -29,7 +31,9 @@ export interface PortalTab {
 
 export const PORTAL_TABS: PortalTab[] = [
   { id: 'html', label: 'Plantillas HTML', icon: <CodeIcon /> },
-  { id: 'pdf', label: 'Plantillas PDF', icon: <PictureAsPdfIcon /> },
+  { id: 'docx', label: 'Plantillas DOCX', icon: <DescriptionIcon /> },
+  { id: 'sms', label: 'Plantillas SMS', icon: <SmsIcon /> },
+  { id: 'whatsapp', label: 'Plantillas WhatsApp', icon: <WhatsAppIcon /> },
   { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },
   { id: 'muestras', label: 'Muestras', icon: <RateReviewIcon /> },
   { id: 'basesdatos', label: 'Bases de datos', icon: <StorageIcon /> },

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -23,18 +23,25 @@ import {
   Chip,
   Alert,
   CircularProgress,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ApartmentIcon from '@mui/icons-material/Apartment';
+import EditIcon from '@mui/icons-material/Edit';
+import StorageIcon from '@mui/icons-material/Storage';
 import { getUser } from '../../services/authService';
 import { campaignsService } from '../../services/campaignsService';
 import type { CampaignSummary } from '../../services/campaignsService';
 import { templatesService } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
+import { messageTemplatesService } from '../../services/messageTemplatesService';
+import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { usePortalData } from '../../context/PortalDataContext';
 
 interface CampaignForm {
   campaignName: string;
@@ -76,10 +83,13 @@ export const CampanasSection = () => {
   const customer = getUser()?.customer ?? '';
   const customerId = getUser()?.customerId ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
+  // Campañas y bases precargadas al entrar al portal (contexto compartido).
+  const { campaigns: campaignsCtx, databases, refreshCampaigns } = usePortalData();
+  const campanas = campaignsCtx.items;
+  const loadingList = campaignsCtx.loading;
 
-  const [campanas, setCampanas] = useState<CampaignSummary[]>([]);
-  const [loadingList, setLoadingList] = useState(false);
   const [openDialog, setOpenDialog] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null); // null = crear, id = editar
   const [openUploadDialog, setOpenUploadDialog] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -89,22 +99,15 @@ export const CampanasSection = () => {
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
 
+  // Plantillas de mensaje guardadas (SMS/WSP) para prellenar el campo del canal.
+  const [msgTemplates, setMsgTemplates] = useState<MessageTemplate[]>([]);
+
   // Carga de CSV / documento a S3 (URL prefirmada).
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvDocumentType, setCsvDocumentType] = useState<'database' | 'document'>('database');
   const [lastUploadPath, setLastUploadPath] = useState('');
 
-  const loadCampaigns = useCallback(async () => {
-    if (!customerId) return;
-    setLoadingList(true);
-    const res = await campaignsService.list(customerId);
-    setLoadingList(false);
-    if (isOk(res) && res.data?.campaigns) setCampanas(res.data.campaigns);
-  }, [customerId]);
-
-  useEffect(() => {
-    loadCampaigns();
-  }, [loadCampaigns]);
+  const loadCampaigns = refreshCampaigns;
 
   const loadTemplates = useCallback(async () => {
     if (!customer && !customerId) return;
@@ -114,18 +117,47 @@ export const CampanasSection = () => {
     if (isOk(res) && res.data?.templates) setTemplates(res.data.templates);
   }, [customer, customerId]);
 
+  // Carga las plantillas SMS + WhatsApp guardadas (para reutilizarlas en la campaña).
+  const loadMsgTemplates = useCallback(async () => {
+    if (!customerId) return;
+    const res = await messageTemplatesService.list(customerId);
+    if (isOk(res) && res.data?.templates) setMsgTemplates(res.data.templates);
+  }, [customerId]);
+
   const handleOpenDialog = () => {
+    setEditingId(null);
     setFormData(emptyForm(sessionEmail));
     setOpenDialog(true);
     loadTemplates();
+    loadMsgTemplates();
+  };
+
+  /** Abre el diálogo precargado con los datos de una campaña para editarla. */
+  const handleEdit = (c: CampaignSummary) => {
+    setEditingId(c.campaignId);
+    setFormData({
+      campaignName: c.campaignName ?? '',
+      channelName: c.channel ?? 'EM',
+      attachmentType: 'NONE',
+      template: c.template ?? '',
+      from: c.originEmail ?? sessionEmail,
+      dataPath: c.dataPath ?? '',
+    });
+    setOpenDialog(true);
+    loadTemplates();
+    loadMsgTemplates();
   };
 
   const handleCloseDialog = () => {
     setOpenDialog(false);
+    setEditingId(null);
     setOpenUploadDialog(false);
   };
 
   const isSms = formData.channelName === 'SMS';
+  const isWsp = formData.channelName === 'WSP';
+  // SMS y WhatsApp no usan adjunto ni plantilla SES.
+  const isMessaging = isSms || isWsp;
 
   const handleInputChange = (field: keyof CampaignForm, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -141,24 +173,33 @@ export const CampanasSection = () => {
       return;
     }
     setSubmitting(true);
-    const res = await campaignsService.create({
-      customerId,
-      campaignName: formData.campaignName,
-      channelName: formData.channelName,
-      attachmentType: formData.attachmentType,
-      dataPath: formData.dataPath,
-      template: formData.template,
-      from: formData.from,
-    });
+    const res = editingId
+      ? await campaignsService.update({
+          campaignId: editingId,
+          campaignName: formData.campaignName,
+          channelName: formData.channelName,
+          attachmentType: formData.attachmentType,
+          dataPath: formData.dataPath,
+          template: formData.template,
+          from: formData.from,
+        })
+      : await campaignsService.create({
+          customerId,
+          campaignName: formData.campaignName,
+          channelName: formData.channelName,
+          attachmentType: formData.attachmentType,
+          dataPath: formData.dataPath,
+          template: formData.template,
+          from: formData.from,
+        });
     setSubmitting(false);
 
     if (isOk(res)) {
-      const campaignId = res.data?.campaignId;
-      notify(`Campaña creada correctamente${campaignId ? ` (ID ${campaignId})` : ''}.`, 'success');
+      notify(editingId ? 'Campaña actualizada correctamente.' : 'Campaña creada correctamente.', 'success');
       handleCloseDialog();
       loadCampaigns();
     } else {
-      notify(res.description || 'No se pudo crear la campaña.', 'error');
+      notify(res.description || `No se pudo ${editingId ? 'actualizar' : 'crear'} la campaña.`, 'error');
     }
   };
 
@@ -234,12 +275,13 @@ export const CampanasSection = () => {
               <TableCell>Estado</TableCell>
               <TableCell>Plantilla</TableCell>
               <TableCell>Fecha</TableCell>
+              <TableCell align="right">Acciones</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {campanas.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                <TableCell colSpan={7} align="center" sx={{ py: 4, color: 'text.secondary' }}>
                   {loadingList ? 'Cargando…' : 'Aún no hay campañas registradas para tu empresa.'}
                 </TableCell>
               </TableRow>
@@ -263,6 +305,20 @@ export const CampanasSection = () => {
                   {campana.template || '—'}
                 </TableCell>
                 <TableCell sx={{ whiteSpace: 'nowrap' }}>{fmtDate(campana.date)}</TableCell>
+                <TableCell align="right">
+                  <Tooltip title={campana.campaignState === 'Pendiente' ? 'Editar campaña' : 'Solo se pueden editar campañas en estado Pendiente'}>
+                    <span>
+                      <IconButton
+                        size="small"
+                        color="primary"
+                        onClick={() => handleEdit(campana)}
+                        disabled={campana.campaignState !== 'Pendiente'}
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -271,7 +327,7 @@ export const CampanasSection = () => {
 
       {/* Dialog para crear campaña */}
       <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
-        <DialogTitle>Crear Campaña</DialogTitle>
+        <DialogTitle>{editingId ? 'Editar Campaña' : 'Crear Campaña'}</DialogTitle>
         <DialogContent>
           <Box sx={{ mt: 2 }}>
             <Stack spacing={2}>
@@ -303,12 +359,13 @@ export const CampanasSection = () => {
                     <MenuItem value="EAU">EAU — Adjunto único</MenuItem>
                     <MenuItem value="EAP">EAP — Adjunto personalizado</MenuItem>
                     <MenuItem value="SMS">SMS — Mensaje de texto</MenuItem>
+                    <MenuItem value="WSP">WSP — WhatsApp (plantilla)</MenuItem>
                   </Select>
                 </FormControl>
-                <FormControl fullWidth disabled={isSms}>
+                <FormControl fullWidth disabled={isMessaging}>
                   <InputLabel>Tipo de Adjunto</InputLabel>
                   <Select
-                    value={isSms ? 'NONE' : formData.attachmentType}
+                    value={isMessaging ? 'NONE' : formData.attachmentType}
                     label="Tipo de Adjunto"
                     onChange={(e) => handleInputChange('attachmentType', e.target.value)}
                   >
@@ -319,16 +376,63 @@ export const CampanasSection = () => {
                 </FormControl>
               </Stack>
               {isSms ? (
-                <TextField
-                  fullWidth
-                  multiline
-                  minRows={3}
-                  label="Texto del SMS"
-                  value={formData.template}
-                  onChange={(e) => handleInputChange('template', e.target.value)}
-                  placeholder="Hola {{Nombre}}, tu mensaje aquí…"
-                  helperText={`Admite variables {{columna}} del CSV. ${formData.template.length} caracteres (~${Math.max(1, Math.ceil(formData.template.length / 160))} segmento(s)). En SMS la columna 2 del CSV es el celular (E.164, +57…).`}
-                />
+                <>
+                  {msgTemplates.some((t) => t.channel === 'SMS') && (
+                    <TextField
+                      select
+                      fullWidth
+                      size="small"
+                      label="Usar plantilla SMS guardada (opcional)"
+                      value=""
+                      onChange={(e) => {
+                        const t = msgTemplates.find((m) => m.messageTemplateId === e.target.value);
+                        if (t?.body) handleInputChange('template', t.body);
+                      }}
+                    >
+                      {msgTemplates.filter((t) => t.channel === 'SMS').map((t) => (
+                        <MenuItem key={t.messageTemplateId} value={t.messageTemplateId}>{t.name}</MenuItem>
+                      ))}
+                    </TextField>
+                  )}
+                  <TextField
+                    fullWidth
+                    multiline
+                    minRows={3}
+                    label="Texto del SMS"
+                    value={formData.template}
+                    onChange={(e) => handleInputChange('template', e.target.value)}
+                    placeholder="Hola {{Nombre}}, tu mensaje aquí…"
+                    helperText={`Admite variables {{columna}} del CSV. ${formData.template.length} caracteres (~${Math.max(1, Math.ceil(formData.template.length / 160))} segmento(s)). En SMS la columna 2 del CSV es el celular (E.164, +57…).`}
+                  />
+                </>
+              ) : isWsp ? (
+                <>
+                  {msgTemplates.some((t) => t.channel === 'WSP') && (
+                    <TextField
+                      select
+                      fullWidth
+                      size="small"
+                      label="Usar plantilla WhatsApp guardada (opcional)"
+                      value=""
+                      onChange={(e) => {
+                        const t = msgTemplates.find((m) => m.messageTemplateId === e.target.value);
+                        if (t?.hsmName) handleInputChange('template', t.hsmName);
+                      }}
+                    >
+                      {msgTemplates.filter((t) => t.channel === 'WSP').map((t) => (
+                        <MenuItem key={t.messageTemplateId} value={t.messageTemplateId}>{t.name} · {t.hsmName}</MenuItem>
+                      ))}
+                    </TextField>
+                  )}
+                  <TextField
+                    fullWidth
+                    label="Plantilla de WhatsApp (HSM)"
+                    value={formData.template}
+                    onChange={(e) => handleInputChange('template', e.target.value)}
+                    placeholder="nombre_de_la_plantilla_aprobada"
+                    helperText="Nombre exacto de la plantilla de marketing pre-aprobada por Meta. Los parámetros {{1}}, {{2}}… se toman de las columnas del CSV desde 'Nombre' en adelante. La columna 2 del CSV es el celular (E.164, +57…)."
+                  />
+                </>
               ) : (
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                   <FormControl fullWidth>
@@ -359,14 +463,30 @@ export const CampanasSection = () => {
                   />
                 </Stack>
               )}
-              <TextField
-                fullWidth
-                label="Data Path"
-                value={formData.dataPath}
-                onChange={(e) => handleInputChange('dataPath', e.target.value)}
-                placeholder="Ruta del CSV en S3 (ej: 2025-10-17/archivo.csv)"
-                helperText="Usa la ruta que devuelve 'Cargar CSV' o la de Bases de datos"
-              />
+              <FormControl fullWidth>
+                <InputLabel>Base de datos</InputLabel>
+                <Select
+                  value={databases.items.some((d) => d.s3Path === formData.dataPath) ? formData.dataPath : (formData.dataPath || '')}
+                  label="Base de datos"
+                  onChange={(e) => handleInputChange('dataPath', e.target.value)}
+                >
+                  {/* Conserva una ruta previa que ya no esté en la lista (ej. al editar). */}
+                  {formData.dataPath && !databases.items.some((d) => d.s3Path === formData.dataPath) && (
+                    <MenuItem value={formData.dataPath}>{formData.dataPath} (actual)</MenuItem>
+                  )}
+                  {databases.items.length === 0 && (
+                    <MenuItem value="" disabled>
+                      {databases.loading ? 'Cargando bases…' : 'No hay bases; cárgalas en "Bases de datos"'}
+                    </MenuItem>
+                  )}
+                  {databases.items.map((d) => (
+                    <MenuItem key={d.databaseFileId} value={d.s3Path}>
+                      <StorageIcon fontSize="small" sx={{ mr: 1, verticalAlign: 'middle', color: 'text.secondary' }} />
+                      {d.fileName} — {d.totalRecords?.toLocaleString('es-CO')} registros
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
             </Stack>
           </Box>
         </DialogContent>
@@ -375,7 +495,7 @@ export const CampanasSection = () => {
             Cancelar
           </Button>
           <Button variant="contained" onClick={handleSubmit} disabled={submitting}>
-            {submitting ? <CircularProgress size={22} /> : 'Crear Campaña'}
+            {submitting ? <CircularProgress size={22} /> : editingId ? 'Guardar cambios' : 'Crear Campaña'}
           </Button>
         </DialogActions>
       </Dialog>

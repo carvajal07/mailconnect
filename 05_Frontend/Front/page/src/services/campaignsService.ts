@@ -19,10 +19,22 @@ import type { ApiResponse } from './apiClient';
 export const CAMPAIGN_ENDPOINTS = {
   CREATE: '/Campaign/Create-campaign',
   LIST: '/Campaign/List',
+  UPDATE: '/Campaign/Update',
   PRESIGN_URL: '/Campaign/Prefirm-url',
   SEND_SAMPLES: '/Email/Send-batch-template-samples',
   SEND_REAL: '/Email/Send-batch-template',
 };
+
+/** Campos editables de una campaña (solo si está en estado Pendiente). */
+export interface CampaignUpdatePayload {
+  campaignId: string;
+  campaignName?: string;
+  channelName?: string;
+  attachmentType?: string;
+  dataPath?: string;
+  template?: string;
+  from?: string;
+}
 
 /** Campaña como la devuelve POST /Campaign/List (tabla `campaign`). */
 export interface CampaignSummary {
@@ -36,7 +48,12 @@ export interface CampaignSummary {
   template: string;
   originEmail: string;
   date: string;
+  /** Envíos de muestras ya realizados (máx. 5 por campaña; lo controla el backend). */
+  samplesSentCount?: number;
 }
+
+/** Máximo de envíos de muestras por campaña (debe coincidir con MAX_SAMPLE_SENDS del backend). */
+export const MAX_SAMPLE_SENDS = 5;
 
 export interface SamplesPayload {
   customerName: string;
@@ -87,6 +104,10 @@ export const campaignsService = {
   /** Lista las campañas del cliente (ruta /Campaign/List). */
   list: (customerId: string): Promise<ApiResponse<{ campaigns?: CampaignSummary[]; count?: number }>> =>
     apiPost(CAMPAIGN_ENDPOINTS.LIST, { customerId }),
+
+  /** Edita una campaña en estado Pendiente (ruta /Campaign/Update). */
+  update: (payload: CampaignUpdatePayload): Promise<ApiResponse<{ campaignId?: string }>> =>
+    apiPost(CAMPAIGN_ENDPOINTS.UPDATE, payload),
 
   /** Solicita una URL prefirmada de S3 para subir el archivo (CSV/documento). */
   presignUrl: (payload: PresignPayload): Promise<ApiResponse<{ url?: string; path?: string }>> =>

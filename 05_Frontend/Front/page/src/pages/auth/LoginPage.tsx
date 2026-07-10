@@ -160,6 +160,7 @@ export const LoginPage = () => {
           customer: res.data.customer,
           customerId: res.data.customerId,
           nit: res.data.companyTin,
+          realSendEnabled: res.data.realSendEnabled,
           email: formData.email,
         });
         navigate('/panel');

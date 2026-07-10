@@ -56,12 +56,20 @@ def lambda_handler(event, context):
         }
 
     try:
+        items = []
+        # 1) Buscar por customerId (llave principal).
         if customer_id:
             response = table_database.scan(FilterExpression=Attr('customerId').eq(customer_id))
-        else:
+            items = response.get('Items', [])
+        # 2) Fallback por nombre de empresa (customer): robusto ante desalineación del
+        #    customerId entre el registro y la consulta (p. ej. mapping template del
+        #    Authorizer que inyecta un customerId distinto/ vacío). El nombre de empresa
+        #    es estable en toda la sesión.
+        if not items and customer:
             response = table_database.scan(FilterExpression=Attr('customer').eq(customer))
+            items = response.get('Items', [])
 
-        items = [_clean(i) for i in response.get('Items', [])]
+        items = [_clean(i) for i in items]
         # Orden descendente por fecha de carga (ISO -> ordena como texto)
         items.sort(key=lambda x: x.get('uploadDate', ''), reverse=True)
 

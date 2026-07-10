@@ -8,16 +8,15 @@ import {
   IconButton,
   Menu,
   MenuItem,
-  Divider,
   Avatar,
 } from '@mui/material';
-import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import MenuIcon from '@mui/icons-material/Menu';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import { useNavigate } from 'react-router-dom';
 import { PortalSidebar, DRAWER_WIDTH_FULL, DRAWER_WIDTH_MINI } from '../../components/portal/PortalSidebar';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
-import { PlaceholderSection } from '../../components/portal/PlaceholderSection';
+import { MessageTemplatesSection } from '../../components/portal/MessageTemplatesSection';
+import { DocxTemplatesSection } from '../../components/portal/DocxTemplatesSection';
 import { BasesDatosSection } from '../../components/portal/BasesDatosSection';
 import { MuestrasSection } from '../../components/portal/MuestrasSection';
 import { EstadisticasSection } from '../../components/portal/EstadisticasSection';
@@ -27,6 +26,7 @@ import { CampanasSection } from '../../components/admin/CampanasSection';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
 import { authService, clearSession, getUser } from '../../services/authService';
+import { PortalDataProvider } from '../../context/PortalDataContext';
 
 export const PortalPage = () => {
   const [activeSection, setActiveSection] = useState('html');
@@ -50,20 +50,18 @@ export const PortalPage = () => {
     switch (activeSection) {
       case 'html':
         return <HtmlBuilderSection />;
+      case 'docx':
+        return <DocxTemplatesSection />;
+      case 'sms':
+        return <MessageTemplatesSection channel="SMS" />;
+      case 'whatsapp':
+        return <MessageTemplatesSection channel="WSP" />;
       case 'campanas':
         return <CampanasSection />;
       case 'muestras':
         return <MuestrasSection />;
       case 'cuenta':
         return <MiCuentaSection />;
-      case 'pdf':
-        return (
-          <PlaceholderSection
-            title="Plantillas PDF"
-            icon={<PictureAsPdfIcon fontSize="inherit" />}
-            description="Aquí podrás crear plantillas de documentos PDF (combinación de correspondencia) para los envíos con adjunto personalizado. Requiere el backend de combinación .docx/PDF."
-          />
-        );
       case 'basesdatos':
         return <BasesDatosSection />;
       case 'reportes':
@@ -76,6 +74,7 @@ export const PortalPage = () => {
   };
 
   return (
+    <PortalDataProvider>
     <Box sx={{ display: 'flex' }}>
       <AppBar
         position="fixed"
@@ -96,11 +95,7 @@ export const PortalPage = () => {
             {collapsed ? <MenuIcon /> : <MenuOpenIcon />}
           </IconButton>
           <Logo height="34px" />
-          <Divider orientation="vertical" flexItem sx={{ mx: 2, my: 1.5, display: { xs: 'none', sm: 'block' } }} />
-          <Typography variant="subtitle1" component="div" sx={{ flexGrow: 1, fontWeight: 600, color: 'text.secondary', display: { xs: 'none', sm: 'block' } }}>
-            Portal del cliente
-          </Typography>
-          <Box sx={{ flexGrow: { xs: 1, sm: 0 } }} />
+          <Box sx={{ flexGrow: 1 }} />
           {user?.name && (
             <Typography variant="body2" sx={{ mr: 1.5, color: 'text.secondary', display: { xs: 'none', md: 'block' } }}>
               Hola, <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>{user.name}</Box>
@@ -135,5 +130,6 @@ export const PortalPage = () => {
         </Container>
       </Box>
     </Box>
+    </PortalDataProvider>
   );
 };

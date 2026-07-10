@@ -30,6 +30,8 @@ export interface LoginData {
   companyTin?: string;
   userId: string;
   name: string;
+  /** ¿El cliente tiene habilitados los envíos reales? (default true si no viene). */
+  realSendEnabled?: boolean;
 }
 
 export interface RegisterPayload {
@@ -50,6 +52,9 @@ export interface SessionUser {
   customerId?: string;
   /** NIT de la empresa. */
   nit?: string;
+  /** ¿El cliente tiene habilitados los envíos reales? Si es false, el portal
+   *  deshabilita "Enviar campaña real" (el backend también lo bloquea). */
+  realSendEnabled?: boolean;
   email: string;
 }
 

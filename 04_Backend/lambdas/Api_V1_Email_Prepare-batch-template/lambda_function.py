@@ -29,6 +29,7 @@ REGISTERS_FOR_EM:int = 250
 REGISTERS_FOR_EAU:int = 250
 REGISTERS_FOR_EAP:int = 100
 REGISTERS_FOR_SMS:int = 100
+REGISTERS_FOR_WSP:int = 100
 
 URL_SQS_EM = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-template-EM'
 URL_SQS_EAU = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-raw-EAU'
@@ -36,14 +37,36 @@ URL_SQS_EAU = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch
 URL_SQS_EAP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Template_Combination-EAP'
 # Canal SMS: cola que consume la lambda Api_V1_Sms_Send-batch (AWS End User Messaging).
 URL_SQS_SMS = 'https://sqs.us-east-1.amazonaws.com/873837768806/Sms_Send-batch'
+# Canal WhatsApp: cola que consume la lambda Api_V1_Wsp_Send-batch (End User Messaging Social).
+URL_SQS_WSP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Wsp_Send-batch'
 REGION = 'us-east-1'
-DELIMITER = ';'
+DELIMITER = ';'          # delimitador por defecto si no se puede detectar
+CANDIDATE_DELIMITERS = [';', ',', '\t', '|']
 ENCODING = 'utf-8'
+
+
+def detect_delimiter(temp_file, default=DELIMITER):
+    """Detecta el delimitador del CSV leyendo el encabezado: elige, entre ; , tab |,
+    el que más aparece en la primera línea con datos. Así el cliente puede subir la
+    base con cualquiera de los 4 delimitadores (antes se asumía siempre ';')."""
+    try:
+        with open(temp_file, 'r', encoding=ENCODING) as f:
+            for line in f:
+                if line.strip():
+                    counts = {d: line.count(d) for d in CANDIDATE_DELIMITERS}
+                    best = max(counts, key=counts.get)
+                    chosen = best if counts[best] > 0 else default
+                    print("Delimitador detectado: {!r}".format(chosen))
+                    return chosen
+    except Exception as e:
+        print("No se pudo detectar el delimitador ({}); se usa {!r}".format(e, default))
+    return default
 
 global process_id
 global campaign_id
 global customer_id
 global sms_body
+global wsp_template
 global customer_name
 global formatted_date
 global from_email
@@ -65,6 +88,15 @@ ses = boto3.client('ses', region_name=REGION)
 
 table_process = dynamodb.Table('process')
 table_campaign = dynamodb.Table('campaign')
+table_customer = dynamodb.Table('customer')
+
+# Máximo de OPERACIONES de envío de muestras permitidas por campaña (acumulado en toda
+# la vida de la campaña). Cada llamada a Send-batch-template-samples cuenta como 1.
+MAX_SAMPLE_SENDS:int = 5
+
+
+class RealSendDisabled(Exception):
+    """El cliente tiene deshabilitados los envíos reales (campo realSendEnabled=false)."""
 
 message:str = ""
 body:str = ""
@@ -144,7 +176,7 @@ def select_campaign(campaign_name:str)->dict:
     Returns:
         dict: Nombre de la campaña
     """
-    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template'  # Lista de campos a consultar
+    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, samplesSentCount'  # Lista de campos a consultar
 
     response_campaign = table_campaign.scan(
         FilterExpression="campaignName = :value",
@@ -152,6 +184,35 @@ def select_campaign(campaign_name:str)->dict:
         ProjectionExpression=projection_campaign_expression
     )
     return response_campaign
+
+
+def increment_samples_count()->int:
+    """Suma 1 (atómico) al contador de envíos de muestras de la campaña actual y
+    devuelve el nuevo valor. Usa la variable global campaign_id."""
+    response = table_campaign.update_item(
+        Key={'campaignId': campaign_id},
+        UpdateExpression='SET samplesSentCount = if_not_exists(samplesSentCount, :zero) + :one',
+        ExpressionAttributeValues={':one': 1, ':zero': 0},
+        ReturnValues='UPDATED_NEW'
+    )
+    return int(response['Attributes'].get('samplesSentCount', 0))
+
+
+def is_real_send_enabled(customer_id_value:str)->bool:
+    """¿El cliente tiene habilitados los envíos reales? Lee el campo realSendEnabled
+    de la tabla customer. Si falta el campo (clientes antiguos) se asume HABILITADO
+    (fail-open, para no bloquear a nadie por una migración pendiente)."""
+    try:
+        response = table_customer.scan(
+            FilterExpression="customerId = :value",
+            ExpressionAttributeValues={":value": customer_id_value},
+            ProjectionExpression='realSendEnabled'
+        )
+        if response['Items']:
+            return bool(response['Items'][0].get('realSendEnabled', True))
+    except Exception as e:
+        print("No se pudo verificar realSendEnabled ({}); se asume habilitado".format(e))
+    return True
 
 def prepare_message(data:str,part:int)-> list:
     """
@@ -178,6 +239,8 @@ def prepare_message(data:str,part:int)-> list:
             "templateName":template_name,
             # Texto del SMS (solo para canal SMS; vacío para email). Lo usa Send-batch-SMS.
             "smsBody":sms_body,
+            # Nombre de la plantilla HSM (solo canal WSP; vacío para el resto). Lo usa Send-batch-WSP.
+            "wspTemplate":wsp_template,
             "part":part,
             "data":data
         }
@@ -601,6 +664,7 @@ def lambda_handler(event, context):
     global template_name
     global attachment
     global sms_body
+    global wsp_template
 
     status = True
     description = "Campaña enviandose correctamente"
@@ -666,6 +730,9 @@ def lambda_handler(event, context):
                 # Para SMS el campo 'template' de la campaña guarda el TEXTO del mensaje
                 # (no un template de SES). Para email queda vacío y no se usa.
                 sms_body = response_campaign['Items'][0].get("template", "") if channel_name == "SMS" else ""
+                # Para WhatsApp el campo 'template' guarda el NOMBRE de la plantilla HSM
+                # aprobada por Meta. Para el resto de canales queda vacío y no se usa.
+                wsp_template = response_campaign['Items'][0].get("template", "") if channel_name == "WSP" else ""
 
                 # Define los detalles de la tabla processDetail
                 table = f'{customer_name}_processDetail'
@@ -714,6 +781,9 @@ def lambda_handler(event, context):
                 elif channel_name == "SMS":
                     attachment = False
                     url_sqs = URL_SQS_SMS
+                elif channel_name == "WSP":
+                    attachment = False
+                    url_sqs = URL_SQS_WSP
                 else:
                     attachment = False
                     url_sqs = URL_SQS_EM
@@ -731,9 +801,12 @@ def lambda_handler(event, context):
                     status = False
                     print(description)
                     status_code = 404
-                else: 
+                else:
                     registers = []
                     headers = ""
+                    # Detectar el delimitador del CSV (el cliente pudo subirlo con
+                    # ; , tab o |). Se usa este valor en todas las lecturas de abajo.
+                    delimiter = detect_delimiter(temp_file)
                     #En el front se debe agregar un boton o slider para elegir la cantidad de muestras
                     #Entre 1 y 5 muestras maximo
                     #Se debe poner entre 1 y 2 campos (1 campo para el email y el otro campo es para la identificacion que solo aplica si son muestras selectivas)                    
@@ -760,9 +833,23 @@ def lambda_handler(event, context):
                             if not re.match(patron_email, email):
                                 invalid_mail = True
                                 invalid_mails += email
-                                
-                        if invalid_mail:
-                            description = f'Error en las direcciones email enviadas para las muestras, emails con error: {invalid_mails}'                            
+
+                        # Límite de envíos de muestras por campaña (acumulado). Cada
+                        # operación de muestras cuenta 1; al llegar a MAX_SAMPLE_SENDS
+                        # se bloquea (evita abuso/costos con envíos de prueba repetidos).
+                        samples_sent_before = int(response_campaign['Items'][0].get('samplesSentCount', 0))
+                        limit_reached = samples_sent_before >= MAX_SAMPLE_SENDS
+                        print(f"Muestras enviadas antes: {samples_sent_before}/{MAX_SAMPLE_SENDS}")
+
+                        if limit_reached:
+                            description = (f'Se alcanzó el máximo de {MAX_SAMPLE_SENDS} envíos de '
+                                           f'muestras para esta campaña. Aprueba y envía la campaña '
+                                           f'real o crea una nueva campaña.')
+                            status = False
+                            print(description)
+                            status_code = 429
+                        elif invalid_mail:
+                            description = f'Error en las direcciones email enviadas para las muestras, emails con error: {invalid_mails}'
                             status = False
                             print(description)
                             status_code = 400
@@ -787,8 +874,8 @@ def lambda_handler(event, context):
                                     print('Inicio lectura del archivo para filtrar los registros de muestras selectivas y reemplazar el email real con el de muestras')
                                     with open(temp_file, 'r', encoding=ENCODING) as file:
                                         print("Apertura correcta del archivo Csv")
-                                        # Leer y validar que el delimitador sea el correcto co
-                                        reader = csv.reader(file, delimiter=DELIMITER)
+                                        # Delimitador detectado (no se asume ';')
+                                        reader = csv.reader(file, delimiter=delimiter)
                                         print("Lectura correcta del archivo como Csv")
                                         headers = next(reader) #Agrego la primer linea que pertenece al encabezado a una variable
                                         print("Headers: " + str(headers))
@@ -848,7 +935,7 @@ def lambda_handler(event, context):
                                     print('Inicio lectura del archivo para tomar los primeros registros y reemplazar el email real con el de muestras')
                                     with open(temp_file, 'r', encoding=ENCODING) as file:
                                         print("Apertura correcta del archivo Csv")
-                                        reader = csv.reader(file, delimiter=DELIMITER)
+                                        reader = csv.reader(file, delimiter=delimiter)
                                         print("Lectura correcta del archivo como Csv")
                                         headers = next(reader) #Agrego la primer linea que pertenece al encabezado a una variable
                                         print("Headers: " + str(headers))
@@ -896,8 +983,20 @@ def lambda_handler(event, context):
                             print("Finaliza insercion en la tabla de procesos")
                             update_campaign_status("Muestras")
                             print("Finaliza actualizacion de la tabla de estado de la campaña")
+                            # Solo se cuenta la operación de muestras si salió bien.
+                            if status:
+                                nuevo_conteo = increment_samples_count()
+                                print(f"Envíos de muestras usados: {nuevo_conteo}/{MAX_SAMPLE_SENDS}")
                     else:
                         print("Inicia proceso de envio real")
+                        # Bloqueo por cliente: si el cliente tiene deshabilitados los
+                        # envíos reales, no se procesa la campaña real (las muestras sí).
+                        # Se lanza RealSendDisabled y se atrapa abajo (mantiene el 403 y
+                        # NO marca la campaña en Error).
+                        if not is_real_send_enabled(customer_id):
+                            raise RealSendDisabled(
+                                'Los envíos reales están deshabilitados para este cliente. '
+                                'Contacta al administrador de MailConnect.')
                         update_campaign_status("Enviando")
                         
                         if (channel_name == "EM"):
@@ -908,7 +1007,9 @@ def lambda_handler(event, context):
                             registers_for_message = REGISTERS_FOR_EAP
                         if (channel_name == "SMS"):
                             registers_for_message = REGISTERS_FOR_SMS
-                        global_counter_message = 0 
+                        if (channel_name == "WSP"):
+                            registers_for_message = REGISTERS_FOR_WSP
+                        global_counter_message = 0
 
                         keys = []       
                         emails_error = []
@@ -925,7 +1026,7 @@ def lambda_handler(event, context):
                         try:
                             print("Lectura del archivo spool para validar registros con estructura de email incorrecta")
                             with open(temp_file, 'r', encoding=ENCODING) as file:
-                                reader = csv.reader(file, delimiter=DELIMITER)
+                                reader = csv.reader(file, delimiter=delimiter)
                                 headers = next(reader) #Agrego la primer linea que pertenece al encabezado a una variable
                                 print("Headers: " + str(headers))
                                 for line in reader:
@@ -1032,8 +1133,14 @@ def lambda_handler(event, context):
             print(description)
             status_code = 404
             update_campaign_status("Error")
+    except RealSendDisabled as e:
+        # Cliente con envíos reales deshabilitados: 403 claro, sin marcar Error.
+        description = str(e)
+        status = False
+        status_code = 403
+        print(description)
     except Exception as e:
-        description = "Error no controlado en el servicio"        
+        description = "Error no controlado en el servicio"
         status = False
         status_code = 500
         print(description)
