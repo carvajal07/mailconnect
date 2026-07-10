@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -19,6 +19,7 @@ import {
   DialogActions,
   Button,
   Divider,
+  CircularProgress,
 } from '@mui/material';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
@@ -26,21 +27,50 @@ import DraftsIcon from '@mui/icons-material/Drafts';
 import SendIcon from '@mui/icons-material/Send';
 import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { StatTile, Donut, Funnel, useStatusColors } from './charts';
 import {
-  DEMO_CAMPAIGNS,
   ESTADO_LABEL as estadoLabel,
   rate,
   type CampaignStat,
   type Estado,
 } from './campaignData';
+import { getUser } from '../../services/authService';
+import { statsService } from '../../services/statsService';
+import { isOk } from '../../services/apiClient';
 
 const estadoColor: Record<Estado, 'warning' | 'info' | 'success'> = { pendiente: 'warning', creada: 'info', enviada: 'success' };
 
 export const EstadisticasSection = () => {
   const status = useStatusColors();
+  const user = getUser();
   const [detail, setDetail] = useState<CampaignStat | null>(null);
-  const campaigns = DEMO_CAMPAIGNS;
+  const [campaigns, setCampaigns] = useState<CampaignStat[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadStats = useCallback(async () => {
+    const customerId = user?.customerId ?? '';
+    const customer = user?.customer ?? '';
+    if (!customerId || !customer) {
+      setError('Tu sesión no tiene una empresa asociada.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    const res = await statsService.statistics(customerId, customer);
+    setLoading(false);
+    if (isOk(res) && res.data?.campaigns) {
+      setCampaigns(res.data.campaigns);
+    } else {
+      setError(res.description || 'No se pudieron cargar las estadísticas.');
+    }
+  }, [user?.customerId, user?.customer]);
+
+  useEffect(() => {
+    loadStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const kpis = useMemo(() => {
     const by = (e: Estado) => campaigns.filter((c) => c.estado === e).length;
@@ -77,15 +107,29 @@ export const EstadisticasSection = () => {
 
   return (
     <Box>
-      <Typography variant="h4" mb={2}>
-        Estadísticas
-      </Typography>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1}>
+        <Typography variant="h4">Estadísticas</Typography>
+        <Button
+          variant="outlined"
+          startIcon={loading ? <CircularProgress size={16} /> : <RefreshIcon />}
+          onClick={loadStats}
+          disabled={loading}
+        >
+          Actualizar
+        </Button>
+      </Stack>
 
-      <Alert severity="info" sx={{ mb: 2 }}>
-        Datos <strong>ilustrativos (demo)</strong>. El tablero está listo para conectarse cuando el
-        backend exponga las métricas agregadas por campaña (envíos, entregas, aperturas, clics,
-        rebotes). La estructura y los cálculos ya funcionan con datos reales.
-      </Alert>
+      {error && (
+        <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setError('')}>
+          {error}
+        </Alert>
+      )}
+
+      {!loading && !error && campaigns.length === 0 && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Aún no hay campañas registradas para tu empresa. Crea y envía una campaña para ver aquí sus métricas.
+        </Alert>
+      )}
 
       {/* KPIs */}
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2,1fr)', sm: 'repeat(3,1fr)', lg: 'repeat(6,1fr)' }, gap: 2, mb: 3 }}>
@@ -134,7 +178,7 @@ export const EstadisticasSection = () => {
               <TableRow key={c.id} hover>
                 <TableCell>{c.name}</TableCell>
                 <TableCell>
-                  <Chip label={estadoLabel[c.estado]} size="small" color={estadoColor[c.estado]} variant="outlined" />
+                  <Chip label={c.rawState || estadoLabel[c.estado]} size="small" color={estadoColor[c.estado]} variant="outlined" />
                 </TableCell>
                 <TableCell align="right">{c.enviados.toLocaleString('es-CO')}</TableCell>
                 <TableCell align="right">{c.entregados.toLocaleString('es-CO')}</TableCell>

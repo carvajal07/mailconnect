@@ -257,9 +257,12 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
       - [x] **Estadísticas** (`EstadisticasSection` + `charts.tsx`): tablero con KPIs
             (pendientes/creadas/enviadas, total envíos, apertura promedio), **dona** de
             campañas por estado, **embudo** de envío (enviados→entregados→abiertos→clics) y
-            tabla con detalle por campaña. Gráficos en SVG propio (sin dependencias),
-            theme-aware y con paleta validada (dataviz). Datos ilustrativos hasta que el
-            backend exponga métricas agregadas.
+            tabla con detalle por campaña (muestra el estado real). Gráficos en SVG propio
+            (sin dependencias), theme-aware y con paleta validada (dataviz). **Conectado a
+            datos reales** vía `statsService` → `POST /Report/Statistics` (lambda
+            `Api_V1_Reports_Statistics`, **sin Bedrock**: lee `campaign` + `process` +
+            `{customer}_sendStatus_{proceso}` y agrega por estado de mayor prioridad por
+            messageId). Con refrescar/loading/error/vacío.
       - [x] **Reportes** (`ReportesSection` + `reportsService`): (a) **exportar resumen** de
             campañas a CSV al instante (local, sin backend) y (b) **reporte de estado por
             campaña** vía el endpoint real `state-report` (`{cliente, idProceso}` → `{count,

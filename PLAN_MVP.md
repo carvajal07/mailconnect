@@ -78,7 +78,7 @@ admin de clientes, verify-code.
 | # | Brecha | Detalle |
 |---|--------|---------|
 | A1 | **Listar campañas del cliente** | No existe `POST /Campaign/List`. Sin esto, Muestras exige escribir el nombre a mano, Campañas solo muestra lo creado en la sesión y Estadísticas usa datos demo. Es la pieza que más destraba el portal. |
-| A2 | **Estadísticas reales** | Endpoint de agregados por campaña (proceso + conteos por estado). La lógica ya existe en `Api_V1_Agent_Reports` (status_summary, open_rate…): exponerla como endpoint del portal. |
+| A2 | ~~**Estadísticas reales**~~ ✅ | **Hecho (jul 2026):** lambda `Api_V1_Reports_Statistics` (`POST /Report/Statistics`), **sin Bedrock** (lee DynamoDB directo: `campaign`+`process`+`{customer}_sendStatus_{proceso}`, estado de mayor prioridad por messageId). Front `EstadisticasSection` conectado. Falta desplegar la lambda + ruta en AWS. |
 | A3 | **Multi-tenant real** | Las lambdas confían en el `customerName`/`customerId` del body: un cliente autenticado podría operar a nombre de otro. Meter `customerId` como claim del JWT y que las lambdas lo tomen del token (el Authorizer ya lo decodifica). |
 | A4 | **Refresh token** | Implementar `/Security/Refresh-token` (hoy stub) o decidir vivir con relogin diario. |
 | A5 | **Lista negra funcional** | Ya se unificó el nombre `{customer}_blackList`, pero la tabla tiene PK `blackListId` y la consulta es por `email` → crear **GSI por email** (o migrar PK a email) y ajustar `check_blacklist`. |
@@ -162,7 +162,7 @@ admin de clientes, verify-code.
 
 - [ ] `[C]` `POST /Security/Refresh-token` real + auto-refresh en `apiClient`.
 - [ ] `[C]` Claims `customerId`/`customer` en el JWT + lambdas leyendo el cliente del token (multi-tenant).
-- [ ] `[C]` Estadísticas con datos reales (endpoint de agregados reutilizando `Agent_Reports`).
+- [x] `[C]` Estadísticas con datos reales (lambda `Api_V1_Reports_Statistics`, sin Bedrock). ← hecho en Fase 1.
 - [ ] `[C+J]` **Canal SMS** (diseño en §5.2): lambda Send-SMS + cola + estados + front (form campaña con canal SMS y validación de celular en CSV).
 - [ ] `[C]` Estimador de costos (email + SMS) según criterio de `CLAUDE.md` §5.
 - [ ] `[J]` Decidir proveedor SMS definitivo con costos reales (AWS vs local) tras piloto.

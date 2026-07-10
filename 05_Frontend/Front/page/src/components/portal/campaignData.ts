@@ -12,6 +12,8 @@ export interface CampaignStat {
   id: string;
   name: string;
   estado: Estado;
+  /** Estado real de la campaña en el backend (Pendiente/Muestras/Enviando/…). */
+  rawState?: string;
   enviados: number;
   entregados: number;
   abiertos: number;
