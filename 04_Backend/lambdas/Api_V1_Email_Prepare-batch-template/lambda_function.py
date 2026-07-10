@@ -37,8 +37,27 @@ URL_SQS_EAP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Template_Combina
 # Canal SMS: cola que consume la lambda Api_V1_Sms_Send-batch (AWS End User Messaging).
 URL_SQS_SMS = 'https://sqs.us-east-1.amazonaws.com/873837768806/Sms_Send-batch'
 REGION = 'us-east-1'
-DELIMITER = ';'
+DELIMITER = ';'          # delimitador por defecto si no se puede detectar
+CANDIDATE_DELIMITERS = [';', ',', '\t', '|']
 ENCODING = 'utf-8'
+
+
+def detect_delimiter(temp_file, default=DELIMITER):
+    """Detecta el delimitador del CSV leyendo el encabezado: elige, entre ; , tab |,
+    el que más aparece en la primera línea con datos. Así el cliente puede subir la
+    base con cualquiera de los 4 delimitadores (antes se asumía siempre ';')."""
+    try:
+        with open(temp_file, 'r', encoding=ENCODING) as f:
+            for line in f:
+                if line.strip():
+                    counts = {d: line.count(d) for d in CANDIDATE_DELIMITERS}
+                    best = max(counts, key=counts.get)
+                    chosen = best if counts[best] > 0 else default
+                    print("Delimitador detectado: {!r}".format(chosen))
+                    return chosen
+    except Exception as e:
+        print("No se pudo detectar el delimitador ({}); se usa {!r}".format(e, default))
+    return default
 
 global process_id
 global campaign_id
@@ -731,9 +750,12 @@ def lambda_handler(event, context):
                     status = False
                     print(description)
                     status_code = 404
-                else: 
+                else:
                     registers = []
                     headers = ""
+                    # Detectar el delimitador del CSV (el cliente pudo subirlo con
+                    # ; , tab o |). Se usa este valor en todas las lecturas de abajo.
+                    delimiter = detect_delimiter(temp_file)
                     #En el front se debe agregar un boton o slider para elegir la cantidad de muestras
                     #Entre 1 y 5 muestras maximo
                     #Se debe poner entre 1 y 2 campos (1 campo para el email y el otro campo es para la identificacion que solo aplica si son muestras selectivas)                    
@@ -787,8 +809,8 @@ def lambda_handler(event, context):
                                     print('Inicio lectura del archivo para filtrar los registros de muestras selectivas y reemplazar el email real con el de muestras')
                                     with open(temp_file, 'r', encoding=ENCODING) as file:
                                         print("Apertura correcta del archivo Csv")
-                                        # Leer y validar que el delimitador sea el correcto co
-                                        reader = csv.reader(file, delimiter=DELIMITER)
+                                        # Delimitador detectado (no se asume ';')
+                                        reader = csv.reader(file, delimiter=delimiter)
                                         print("Lectura correcta del archivo como Csv")
                                         headers = next(reader) #Agrego la primer linea que pertenece al encabezado a una variable
                                         print("Headers: " + str(headers))
@@ -848,7 +870,7 @@ def lambda_handler(event, context):
                                     print('Inicio lectura del archivo para tomar los primeros registros y reemplazar el email real con el de muestras')
                                     with open(temp_file, 'r', encoding=ENCODING) as file:
                                         print("Apertura correcta del archivo Csv")
-                                        reader = csv.reader(file, delimiter=DELIMITER)
+                                        reader = csv.reader(file, delimiter=delimiter)
                                         print("Lectura correcta del archivo como Csv")
                                         headers = next(reader) #Agrego la primer linea que pertenece al encabezado a una variable
                                         print("Headers: " + str(headers))
@@ -925,7 +947,7 @@ def lambda_handler(event, context):
                         try:
                             print("Lectura del archivo spool para validar registros con estructura de email incorrecta")
                             with open(temp_file, 'r', encoding=ENCODING) as file:
-                                reader = csv.reader(file, delimiter=DELIMITER)
+                                reader = csv.reader(file, delimiter=delimiter)
                                 headers = next(reader) #Agrego la primer linea que pertenece al encabezado a una variable
                                 print("Headers: " + str(headers))
                                 for line in reader:

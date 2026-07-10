@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -23,11 +23,15 @@ import {
   Chip,
   Alert,
   CircularProgress,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ApartmentIcon from '@mui/icons-material/Apartment';
+import EditIcon from '@mui/icons-material/Edit';
+import StorageIcon from '@mui/icons-material/Storage';
 import { getUser } from '../../services/authService';
 import { campaignsService } from '../../services/campaignsService';
 import type { CampaignSummary } from '../../services/campaignsService';
@@ -35,6 +39,7 @@ import { templatesService } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { usePortalData } from '../../context/PortalDataContext';
 
 interface CampaignForm {
   campaignName: string;
@@ -76,10 +81,13 @@ export const CampanasSection = () => {
   const customer = getUser()?.customer ?? '';
   const customerId = getUser()?.customerId ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
+  // Campañas y bases precargadas al entrar al portal (contexto compartido).
+  const { campaigns: campaignsCtx, databases, refreshCampaigns } = usePortalData();
+  const campanas = campaignsCtx.items;
+  const loadingList = campaignsCtx.loading;
 
-  const [campanas, setCampanas] = useState<CampaignSummary[]>([]);
-  const [loadingList, setLoadingList] = useState(false);
   const [openDialog, setOpenDialog] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null); // null = crear, id = editar
   const [openUploadDialog, setOpenUploadDialog] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -94,17 +102,7 @@ export const CampanasSection = () => {
   const [csvDocumentType, setCsvDocumentType] = useState<'database' | 'document'>('database');
   const [lastUploadPath, setLastUploadPath] = useState('');
 
-  const loadCampaigns = useCallback(async () => {
-    if (!customerId) return;
-    setLoadingList(true);
-    const res = await campaignsService.list(customerId);
-    setLoadingList(false);
-    if (isOk(res) && res.data?.campaigns) setCampanas(res.data.campaigns);
-  }, [customerId]);
-
-  useEffect(() => {
-    loadCampaigns();
-  }, [loadCampaigns]);
+  const loadCampaigns = refreshCampaigns;
 
   const loadTemplates = useCallback(async () => {
     if (!customer && !customerId) return;
@@ -115,13 +113,30 @@ export const CampanasSection = () => {
   }, [customer, customerId]);
 
   const handleOpenDialog = () => {
+    setEditingId(null);
     setFormData(emptyForm(sessionEmail));
+    setOpenDialog(true);
+    loadTemplates();
+  };
+
+  /** Abre el diálogo precargado con los datos de una campaña para editarla. */
+  const handleEdit = (c: CampaignSummary) => {
+    setEditingId(c.campaignId);
+    setFormData({
+      campaignName: c.campaignName ?? '',
+      channelName: c.channel ?? 'EM',
+      attachmentType: 'NONE',
+      template: c.template ?? '',
+      from: c.originEmail ?? sessionEmail,
+      dataPath: c.dataPath ?? '',
+    });
     setOpenDialog(true);
     loadTemplates();
   };
 
   const handleCloseDialog = () => {
     setOpenDialog(false);
+    setEditingId(null);
     setOpenUploadDialog(false);
   };
 
@@ -141,24 +156,33 @@ export const CampanasSection = () => {
       return;
     }
     setSubmitting(true);
-    const res = await campaignsService.create({
-      customerId,
-      campaignName: formData.campaignName,
-      channelName: formData.channelName,
-      attachmentType: formData.attachmentType,
-      dataPath: formData.dataPath,
-      template: formData.template,
-      from: formData.from,
-    });
+    const res = editingId
+      ? await campaignsService.update({
+          campaignId: editingId,
+          campaignName: formData.campaignName,
+          channelName: formData.channelName,
+          attachmentType: formData.attachmentType,
+          dataPath: formData.dataPath,
+          template: formData.template,
+          from: formData.from,
+        })
+      : await campaignsService.create({
+          customerId,
+          campaignName: formData.campaignName,
+          channelName: formData.channelName,
+          attachmentType: formData.attachmentType,
+          dataPath: formData.dataPath,
+          template: formData.template,
+          from: formData.from,
+        });
     setSubmitting(false);
 
     if (isOk(res)) {
-      const campaignId = res.data?.campaignId;
-      notify(`Campaña creada correctamente${campaignId ? ` (ID ${campaignId})` : ''}.`, 'success');
+      notify(editingId ? 'Campaña actualizada correctamente.' : 'Campaña creada correctamente.', 'success');
       handleCloseDialog();
       loadCampaigns();
     } else {
-      notify(res.description || 'No se pudo crear la campaña.', 'error');
+      notify(res.description || `No se pudo ${editingId ? 'actualizar' : 'crear'} la campaña.`, 'error');
     }
   };
 
@@ -234,12 +258,13 @@ export const CampanasSection = () => {
               <TableCell>Estado</TableCell>
               <TableCell>Plantilla</TableCell>
               <TableCell>Fecha</TableCell>
+              <TableCell align="right">Acciones</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {campanas.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                <TableCell colSpan={7} align="center" sx={{ py: 4, color: 'text.secondary' }}>
                   {loadingList ? 'Cargando…' : 'Aún no hay campañas registradas para tu empresa.'}
                 </TableCell>
               </TableRow>
@@ -263,6 +288,20 @@ export const CampanasSection = () => {
                   {campana.template || '—'}
                 </TableCell>
                 <TableCell sx={{ whiteSpace: 'nowrap' }}>{fmtDate(campana.date)}</TableCell>
+                <TableCell align="right">
+                  <Tooltip title={campana.campaignState === 'Pendiente' ? 'Editar campaña' : 'Solo se pueden editar campañas en estado Pendiente'}>
+                    <span>
+                      <IconButton
+                        size="small"
+                        color="primary"
+                        onClick={() => handleEdit(campana)}
+                        disabled={campana.campaignState !== 'Pendiente'}
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -271,7 +310,7 @@ export const CampanasSection = () => {
 
       {/* Dialog para crear campaña */}
       <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
-        <DialogTitle>Crear Campaña</DialogTitle>
+        <DialogTitle>{editingId ? 'Editar Campaña' : 'Crear Campaña'}</DialogTitle>
         <DialogContent>
           <Box sx={{ mt: 2 }}>
             <Stack spacing={2}>
@@ -359,14 +398,30 @@ export const CampanasSection = () => {
                   />
                 </Stack>
               )}
-              <TextField
-                fullWidth
-                label="Data Path"
-                value={formData.dataPath}
-                onChange={(e) => handleInputChange('dataPath', e.target.value)}
-                placeholder="Ruta del CSV en S3 (ej: 2025-10-17/archivo.csv)"
-                helperText="Usa la ruta que devuelve 'Cargar CSV' o la de Bases de datos"
-              />
+              <FormControl fullWidth>
+                <InputLabel>Base de datos</InputLabel>
+                <Select
+                  value={databases.items.some((d) => d.s3Path === formData.dataPath) ? formData.dataPath : (formData.dataPath || '')}
+                  label="Base de datos"
+                  onChange={(e) => handleInputChange('dataPath', e.target.value)}
+                >
+                  {/* Conserva una ruta previa que ya no esté en la lista (ej. al editar). */}
+                  {formData.dataPath && !databases.items.some((d) => d.s3Path === formData.dataPath) && (
+                    <MenuItem value={formData.dataPath}>{formData.dataPath} (actual)</MenuItem>
+                  )}
+                  {databases.items.length === 0 && (
+                    <MenuItem value="" disabled>
+                      {databases.loading ? 'Cargando bases…' : 'No hay bases; cárgalas en "Bases de datos"'}
+                    </MenuItem>
+                  )}
+                  {databases.items.map((d) => (
+                    <MenuItem key={d.databaseFileId} value={d.s3Path}>
+                      <StorageIcon fontSize="small" sx={{ mr: 1, verticalAlign: 'middle', color: 'text.secondary' }} />
+                      {d.fileName} — {d.totalRecords?.toLocaleString('es-CO')} registros
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
             </Stack>
           </Box>
         </DialogContent>
@@ -375,7 +430,7 @@ export const CampanasSection = () => {
             Cancelar
           </Button>
           <Button variant="contained" onClick={handleSubmit} disabled={submitting}>
-            {submitting ? <CircularProgress size={22} /> : 'Crear Campaña'}
+            {submitting ? <CircularProgress size={22} /> : editingId ? 'Guardar cambios' : 'Crear Campaña'}
           </Button>
         </DialogActions>
       </Dialog>

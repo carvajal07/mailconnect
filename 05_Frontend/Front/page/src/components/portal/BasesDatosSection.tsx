@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import {
   Box,
   Button,
@@ -34,6 +34,7 @@ import { campaignsService } from '../../services/campaignsService';
 import { databaseService, type DatabaseFile } from '../../services/databaseService';
 import { getUser } from '../../services/authService';
 import { isOk } from '../../services/apiClient';
+import { usePortalData } from '../../context/PortalDataContext';
 import { useFeedback } from '../../hooks/useFeedback';
 import { analyzeCsv, DELIMITER_LABELS, REQUIRED_COLUMNS, type CsvAnalysis, type Delimiter } from './csv';
 
@@ -78,10 +79,20 @@ const formatBytes = (n: number) => {
 
 export const BasesDatosSection = () => {
   const { notify, FeedbackSnackbar } = useFeedback();
+  // Bases precargadas al entrar al portal (contexto compartido).
+  const { databases, refreshDatabases } = usePortalData();
+  // Análisis local (vista previa) de las bases cargadas en esta sesión, por id.
+  const [analysisById, setAnalysisById] = useState<Record<string, CsvAnalysis>>({});
 
-  const [bases, setBases] = useState<BaseDatos[]>([]);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [viewBase, setViewBase] = useState<BaseDatos | null>(null);
+
+  const loadingList = databases.loading;
+  const bases: BaseDatos[] = databases.items.map((f) => {
+    const b = fromApi(f);
+    const a = analysisById[b.id];
+    return a ? { ...b, analysis: a } : b;
+  });
 
   // El cliente (empresa) se toma de la sesión; define el bucket {customer}.database.
   const customer = getUser()?.customer ?? '';
@@ -92,22 +103,6 @@ export const BasesDatosSection = () => {
   const [delimiter, setDelimiter] = useState<Delimiter>(';');
   const [analysis, setAnalysis] = useState<CsvAnalysis | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [loadingList, setLoadingList] = useState(false);
-
-  // Carga el historial de bases del cliente desde el backend.
-  const loadBases = useCallback(async () => {
-    if (!customerId && !customer) return;
-    setLoadingList(true);
-    const res = await databaseService.list(customerId, customer);
-    setLoadingList(false);
-    if (isOk(res) && res.data?.files) {
-      setBases(res.data.files.map(fromApi));
-    }
-  }, [customerId, customer]);
-
-  useEffect(() => {
-    loadBases();
-  }, [loadBases]);
 
   const resetUpload = () => {
     setFile(null);
@@ -179,31 +174,17 @@ export const BasesDatosSection = () => {
     });
     setUploading(false);
 
-    // Mostramos la base recién cargada de inmediato (con su análisis para la vista
-    // previa), aunque el registro de metadata falle; luego refrescamos del backend.
-    const nowIso = new Date().toISOString();
-    setBases((prev) => [
-      {
-        id: reg.data?.databaseFileId ?? `${Date.now()}`,
-        name: file.name,
-        customer: customer.trim(),
-        path,
-        totalRecords: analysis.totalRows,
-        validEmails: analysis.validEmails,
-        invalidEmails: analysis.invalidEmails,
-        uploadDate: nowIso,
-        delimiter,
-        analysis,
-      },
-      ...prev,
-    ]);
+    // Guardamos el análisis local (para la vista previa) asociado al id de la base,
+    // y refrescamos el contexto para que la tabla muestre la metadata del backend.
+    const newId = reg.data?.databaseFileId;
+    if (newId) setAnalysisById((prev) => ({ ...prev, [newId]: analysis }));
     notify(
       isOk(reg) ? `Base subida y registrada: ${path}` : `Base subida a S3 (${path}). No se pudo registrar su metadata.`,
       isOk(reg) ? 'success' : 'warning',
     );
     setUploadOpen(false);
     resetUpload();
-    if (isOk(reg)) loadBases();
+    if (isOk(reg)) refreshDatabases();
   };
 
   return (
@@ -211,7 +192,7 @@ export const BasesDatosSection = () => {
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1}>
         <Typography variant="h4">Bases de datos</Typography>
         <Stack direction="row" spacing={1}>
-          <Button variant="outlined" startIcon={loadingList ? <CircularProgress size={16} /> : <RefreshIcon />} onClick={loadBases} disabled={loadingList}>
+          <Button variant="outlined" startIcon={loadingList ? <CircularProgress size={16} /> : <RefreshIcon />} onClick={refreshDatabases} disabled={loadingList}>
             Actualizar
           </Button>
           <Button variant="contained" startIcon={<CloudUploadIcon />} onClick={() => setUploadOpen(true)}>

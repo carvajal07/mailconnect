@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Box,
   Paper,
@@ -35,42 +35,19 @@ import {
   type CampaignStat,
   type Estado,
 } from './campaignData';
-import { getUser } from '../../services/authService';
-import { statsService } from '../../services/statsService';
-import { isOk } from '../../services/apiClient';
+import { usePortalData } from '../../context/PortalDataContext';
 
 const estadoColor: Record<Estado, 'warning' | 'info' | 'success'> = { pendiente: 'warning', creada: 'info', enviada: 'success' };
 
 export const EstadisticasSection = () => {
   const status = useStatusColors();
-  const user = getUser();
   const [detail, setDetail] = useState<CampaignStat | null>(null);
-  const [campaigns, setCampaigns] = useState<CampaignStat[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const loadStats = useCallback(async () => {
-    const customerId = user?.customerId ?? '';
-    const customer = user?.customer ?? '';
-    if (!customerId || !customer) {
-      setError('Tu sesión no tiene una empresa asociada.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    const res = await statsService.statistics(customerId, customer);
-    setLoading(false);
-    if (isOk(res) && res.data?.campaigns) {
-      setCampaigns(res.data.campaigns);
-    } else {
-      setError(res.description || 'No se pudieron cargar las estadísticas.');
-    }
-  }, [user?.customerId, user?.customer]);
-
-  useEffect(() => {
-    loadStats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Datos precargados al entrar al portal (contexto compartido).
+  const { stats, refreshStats } = usePortalData();
+  const campaigns = stats.items;
+  const loading = stats.loading;
+  const error = stats.error;
+  const loadStats = refreshStats;
 
   const kpis = useMemo(() => {
     const by = (e: Estado) => campaigns.filter((c) => c.estado === e).length;
@@ -120,7 +97,7 @@ export const EstadisticasSection = () => {
       </Stack>
 
       {error && (
-        <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setError('')}>
+        <Alert severity="warning" sx={{ mb: 2 }}>
           {error}
         </Alert>
       )}

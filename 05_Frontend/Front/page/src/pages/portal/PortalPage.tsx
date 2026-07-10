@@ -27,6 +27,7 @@ import { CampanasSection } from '../../components/admin/CampanasSection';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
 import { authService, clearSession, getUser } from '../../services/authService';
+import { PortalDataProvider } from '../../context/PortalDataContext';
 
 export const PortalPage = () => {
   const [activeSection, setActiveSection] = useState('html');
@@ -76,6 +77,7 @@ export const PortalPage = () => {
   };
 
   return (
+    <PortalDataProvider>
     <Box sx={{ display: 'flex' }}>
       <AppBar
         position="fixed"
@@ -135,5 +137,6 @@ export const PortalPage = () => {
         </Container>
       </Box>
     </Box>
+    </PortalDataProvider>
   );
 };

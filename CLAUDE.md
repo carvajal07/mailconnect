@@ -104,6 +104,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `forgot-password` | `{ user (email), ip? }` | 200 siempre (genérico, no revela si el correo existe; envía OTP por correo) |
 | `logout` | `{ user (email) }` | 200 (idempotente) |
 | `Campaign/List` | `{ customerId }` | 200 `data:{campaigns[], count}` (orden desc por fecha; incluye `campaignState`) |
+| `Campaign/Update` | `{ campaignId, campaignName?, channelName?, attachmentType?, dataPath?, template?, from? }` | 200 ok · 409 no-Pendiente · 403 otro cliente · 404 no existe. Solo edita campañas en estado `Pendiente`; toma el cliente del context del Authorizer |
 | `Template/List` | `{ customer }` o `{ customerId }` | 200 `data:{templates:[{name, created}], count}` (SES filtrado por prefijo `{customer}_`) |
 | `Email/Unsubscribe` | **GET/POST público (proxy, sin authorizer)** `?t=<token HMAC>` | 200 página HTML (confirmación / enlace inválido). El token lo firman las lambdas Send con `SECRET_KEY`; inserta en `{customer}_unsubscribe` (PK `email`) |
 | `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, ... }` | 201 `data:{databaseFileId}` |
@@ -133,6 +134,18 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
    `{customer}_unsubscribe` (PK `email`) y muestra una página de confirmación con la marca.
 4. Prepare-batch filtra contra esa tabla en el envío real (chequeo reparado: antes nunca corría).
    ⚠️ EAP aún no reemplaza la variable (pendiente, mismo patrón que EAU).
+
+### Portal: precarga y edición (jul 2026)
+- **Precarga al loguear:** `PortalDataProvider` (`context/PortalDataContext.tsx`) envuelve el
+  portal y al montar carga en paralelo **campañas, bases de datos y estadísticas**; cuando el
+  cliente abre cada tab la data ya está lista. `CampanasSection`, `BasesDatosSection` y
+  `EstadisticasSection` consumen del contexto (`usePortalData`) con su botón de refrescar.
+- **Editar campaña:** botón ✏️ en la tabla (solo si estado `Pendiente`) que abre el mismo
+  diálogo precargado y llama a `Campaign/Update`.
+- **Base de datos en crear/editar campaña:** el "Data Path" es un **selector** de las bases del
+  cliente (del contexto), no un texto libre; al elegir una se fija su `s3Path`.
+- **Delimitador del CSV:** `Prepare-batch` ahora **detecta** el delimitador (`; , tab |`) leyendo
+  el encabezado, así el cliente puede subir la base con cualquiera de los 4 (antes asumía `;`).
 
 ### Canal SMS (jul 2026, base)
 - **Envío:** `Api_V1_Sms_Send-batch` (trigger cola `Sms_Send-batch`) manda cada SMS con
