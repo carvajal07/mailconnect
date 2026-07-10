@@ -20,6 +20,7 @@ export const CAMPAIGN_ENDPOINTS = {
   CREATE: '/Campaign/Create-campaign',
   PRESIGN_URL: '/Campaign/Prefirm-url',
   SEND_SAMPLES: '/Email/Send-batch-template-samples',
+  SEND_REAL: '/Email/Send-batch-template',
 };
 
 export interface SamplesPayload {
@@ -32,6 +33,20 @@ export interface SamplesPayload {
   selectiveSamples: boolean;
   recipients: string[];
   identifications: string[];
+}
+
+/**
+ * Envío REAL de la campaña (la "aprobación"). Va a la misma Lambda que las muestras
+ * (Prepare-batch-template) pero por la ruta /Email/Send-batch-template; al no contener
+ * "samples", la Lambda entra al flujo de envío real y deja la campaña en "Enviando".
+ * Requiere que la campaña esté en estado "Pendiente" o "Muestras".
+ */
+export interface RealSendPayload {
+  customerName: string;
+  campaignName: string;
+  userId: string;
+  template: string;
+  templateVersion: number;
 }
 
 export interface CampaignPayload {
@@ -61,6 +76,10 @@ export const campaignsService = {
   /** Envía muestras de la campaña (ruta /Email/Send-batch-template-samples). */
   sendSamples: (payload: SamplesPayload): Promise<ApiResponse> =>
     apiPost(CAMPAIGN_ENDPOINTS.SEND_SAMPLES, payload),
+
+  /** Dispara el envío REAL de la campaña tras la aprobación (ruta /Email/Send-batch-template). */
+  sendReal: (payload: RealSendPayload): Promise<ApiResponse> =>
+    apiPost(CAMPAIGN_ENDPOINTS.SEND_REAL, payload),
 
   /** Sube el archivo a S3 con la URL prefirmada (PUT directo). Devuelve true si OK. */
   uploadToS3: async (url: string, file: File): Promise<boolean> => {

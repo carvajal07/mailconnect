@@ -184,12 +184,20 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             (sección "Plantillas prediseñadas", `HtmlBuilderSection allowSavePreset`).
       - [x] **Campañas** reutiliza `CampanasSection`. **Mi cuenta** muestra la sesión y permite
             cambiar la contraseña (change-password con token).
-      - [x] **Muestras** (`MuestrasSection`): flujo de prueba/aprobación previo al envío real.
-            Configuración de la campaña, **slider 1–5** que habilita dinámicamente los campos de
-            correo, selector **Aleatorias/Selectivas** (en selectivas, campo de **identificación**
-            por muestra), y apartado de **aprobación** (Aprobar/Rechazar → habilita "Enviar
-            campaña real"). El endpoint `send-samples` no existe aún; las muestras se registran
-            localmente para gestionar la aprobación (`campaignsService.sendSamples` marcado).
+      - [x] **Muestras** (`MuestrasSection`): flujo de prueba/aprobación **conectado end-to-end**
+            a la Lambda `Prepare-batch-template` (es la misma para muestras y envío real; distingue
+            por `event["resource"]`). Configuración de la campaña, **slider 1–5** que habilita
+            dinámicamente los campos de correo, selector **Aleatorias/Selectivas** (en selectivas,
+            campo de **identificación** por muestra). **Enviar muestras** → `POST
+            /Email/Send-batch-template-samples` (la Lambda reemplaza el correo real por el de prueba
+            y deja la campaña en estado `Muestras`); solo si responde OK se registra el lote para
+            aprobación. **Aprobar** habilita **Enviar campaña real** → `POST
+            /Email/Send-batch-template` (misma Lambda, sin "samples" → envío a toda la base, estado
+            `Enviando`). Servicios `campaignsService.sendSamples` / `sendReal`. Requiere que la
+            campaña esté en estado `Pendiente` o `Muestras`. **Fix backend:** en muestras selectivas
+            la comparación de identificación era `int(line[0]) == identificación(str)` y nunca hacía
+            match; ahora compara como texto normalizado. **Fix front:** `apiClient` normaliza también
+            el envelope con `status_code` (snake_case) que devuelve esta Lambda (proxy).
       - [x] **Bases de datos** (`BasesDatosSection` + `csv.ts`): carga de CSV con
             **validación/preview local** (parser propio: detecta delimitador, columnas, total
             de registros, columna de email, y cuenta válidos/inválidos/duplicados) y subida real
@@ -214,8 +222,10 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [~] Conectar las secciones del panel a la API real (capa de servicios nueva):
       - [x] **Plantillas** → `create-template`, `get-template`, `delete-template` (reales).
       - [x] **Campañas** → `create-campaign` y `get-urlS3` (URL prefirmada + PUT a S3).
+      - [x] **Muestras/Envío real** → `Send-batch-template-samples` (muestras) y
+            `Send-batch-template` (envío real tras aprobación), ambos a `Prepare-batch-template`.
       - [ ] **Clientes** → solo existe `register`; falta backend de listar/editar/eliminar.
-      - Nota: el backend aún no expone listar/buscar/muestras/envío-real, así que las
+      - Nota: el backend aún no expone listar/buscar campañas, así que las
         tablas muestran lo creado/consultado en la sesión y esas acciones están deshabilitadas.
         Los servicios viven en `src/services/{apiClient,templatesService,campaignsService}.ts`.
 

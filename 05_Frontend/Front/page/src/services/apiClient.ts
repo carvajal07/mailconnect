@@ -58,9 +58,16 @@ async function request<T = unknown>(
     try { json = JSON.parse((json as { body: string }).body); } catch { /* se deja tal cual */ }
   }
 
-  // Envelope estándar del backend.
-  if (json && typeof json === 'object' && 'statusCode' in json && 'status' in json) {
-    return json as ApiResponse<T>;
+  // Envelope estándar del backend. Soporta 'statusCode' (no-proxy) y 'status_code'
+  // (snake_case, como devuelve Prepare-batch-template), normalizando a ApiResponse.
+  if (json && typeof json === 'object' && 'status' in json && ('statusCode' in json || 'status_code' in json)) {
+    const j = json as Record<string, unknown>;
+    return {
+      status: Boolean(j.status),
+      statusCode: Number(j.statusCode ?? j.status_code),
+      description: typeof j.description === 'string' ? j.description : '',
+      data: j.data as T,
+    };
   }
 
   // Respuesta no estándar: normalizar usando el HTTP status.

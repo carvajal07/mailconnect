@@ -771,11 +771,14 @@ def lambda_handler(event, context):
                                 #No se realizara el proceso de completar la cantidad de muestras
 
                                 try:
-                                    sample_identifications = data["identifications"]
-                                    sample_identifications = set(sample_identifications)
+                                    # Las identificaciones llegan del front como texto; el
+                                    # spool trae line[0] numérico. Normalizamos ambos a texto
+                                    # (sin espacios) para que la comparación haga match
+                                    # (antes int == str nunca coincidía y no se enviaba nada).
+                                    sample_identifications = set(str(i).strip() for i in data["identifications"])
                                     index_recipient = 0
-                                    samples_count = 0                                
-                                    print(f"Identificaciones para las muestras: {samples}")  
+                                    samples_count = 0
+                                    print(f"Identificaciones para las muestras: {sample_identifications}")
 
                                     #Opcion 2
                                     print('Inicio lectura del archivo para filtrar los registros de muestras selectivas y reemplazar el email real con el de muestras')
@@ -793,7 +796,7 @@ def lambda_handler(event, context):
                                             if samples_count == quantity_samples:
                                                 print("Salgo del bucle porque ya encontre todas las muestras solicitadas")
                                                 break
-                                            id = int(line[0])
+                                            id = str(line[0]).strip()
                                             #print(id)
                                             for identification in sample_identifications:
                                                 if id == identification:
