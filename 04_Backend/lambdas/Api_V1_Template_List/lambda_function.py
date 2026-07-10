@@ -29,6 +29,15 @@ def _get_payload(event):
     return event if isinstance(event, dict) else {}
 
 
+def _tenant_from_authorizer(event):
+    """Identidad del tenant del context del Authorizer (CONFIABLE). Se prefiere
+    sobre el body para que un cliente no liste plantillas de otro (multi-tenant)."""
+    if not isinstance(event, dict):
+        return {}
+    auth = (event.get('requestContext') or {}).get('authorizer') or {}
+    return auth if isinstance(auth, dict) else {}
+
+
 def _customer_name(payload):
     customer = payload.get('customer')
     if customer:
@@ -48,6 +57,12 @@ def _customer_name(payload):
 
 def lambda_handler(event, context):
     payload = _get_payload(event)
+
+    # La identidad del token (Authorizer) manda sobre el body. Si el token trae
+    # customer/customerId, se usa para resolver el nombre y se ignora el body.
+    auth = _tenant_from_authorizer(event)
+    if auth.get('customer') or auth.get('customerId'):
+        payload = {'customer': auth.get('customer'), 'customerId': auth.get('customerId')}
 
     try:
         customer = _customer_name(payload)

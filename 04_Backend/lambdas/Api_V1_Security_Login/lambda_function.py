@@ -16,10 +16,15 @@ table_user_data = dynamodb.Table("userData")
 table_session = dynamodb.Table('session')
 SECRET_KEY = os.environ['SECRET_KEY']  # Variable de entorno en la consola Lambda
 
-def generate_jwt(username):
-    # Información de la carga util
+def generate_jwt(username, customer_id="", customer="", user_id=""):
+    # Información de la carga útil. Se embeben la identidad del tenant (customerId,
+    # customer) y el userId como claims: el Authorizer los reenvía en el context y
+    # las lambdas pueden confiar en ellos (multi-tenant) en vez del body.
     payload = {
         'user': username,
+        'customerId': customer_id,
+        'customer': customer,
+        'userId': user_id,
         'exp': datetime.utcnow() + timedelta(days=1)  # Expira en 1 día
     }
 
@@ -154,12 +159,13 @@ def lambda_handler(event, context):
                     hashObject = hashlib.sha256(saltedPassword.encode())
                     inputHashed = hashObject.hexdigest()
                     if (inputHashed == userHash):
-                        token = generate_jwt(user)
                         customerId = responseUser['Items'][0]['customerId']
                         userId = responseUser['Items'][0]['userId']
                         customer, companyTin = select_client(customerId)
                         userDataId = responseUser['Items'][0]['userDataId']
                         name = select_name(userDataId)
+                        # Token con los claims del tenant (para multi-tenant vía Authorizer).
+                        token = generate_jwt(user, customerId, customer, userId)
                         print(name)
                         # Registrar la sesión. No debe romper el login si falla
                         # (p. ej. permisos de la tabla), por eso va en su propio try.

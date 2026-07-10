@@ -125,6 +125,8 @@ export const CampanasSection = () => {
     setOpenUploadDialog(false);
   };
 
+  const isSms = formData.channelName === 'SMS';
+
   const handleInputChange = (field: keyof CampaignForm, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
@@ -300,12 +302,13 @@ export const CampanasSection = () => {
                     <MenuItem value="EM">EM — Email marketing</MenuItem>
                     <MenuItem value="EAU">EAU — Adjunto único</MenuItem>
                     <MenuItem value="EAP">EAP — Adjunto personalizado</MenuItem>
+                    <MenuItem value="SMS">SMS — Mensaje de texto</MenuItem>
                   </Select>
                 </FormControl>
-                <FormControl fullWidth>
+                <FormControl fullWidth disabled={isSms}>
                   <InputLabel>Tipo de Adjunto</InputLabel>
                   <Select
-                    value={formData.attachmentType}
+                    value={isSms ? 'NONE' : formData.attachmentType}
                     label="Tipo de Adjunto"
                     onChange={(e) => handleInputChange('attachmentType', e.target.value)}
                   >
@@ -315,34 +318,47 @@ export const CampanasSection = () => {
                   </Select>
                 </FormControl>
               </Stack>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <FormControl fullWidth>
-                  <InputLabel>Plantilla (SES)</InputLabel>
-                  <Select
-                    value={formData.template}
-                    label="Plantilla (SES)"
-                    onChange={(e) => handleInputChange('template', e.target.value)}
-                    endAdornment={loadingTemplates ? <CircularProgress size={16} sx={{ mr: 3 }} /> : undefined}
-                  >
-                    {templates.length === 0 && (
-                      <MenuItem value="" disabled>
-                        {loadingTemplates ? 'Cargando plantillas…' : 'No hay plantillas del cliente'}
-                      </MenuItem>
-                    )}
-                    {templates.map((t) => (
-                      <MenuItem key={t.name} value={t.name}>
-                        {t.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+              {isSms ? (
                 <TextField
                   fullWidth
-                  label="De (From)"
-                  value={formData.from}
-                  onChange={(e) => handleInputChange('from', e.target.value)}
+                  multiline
+                  minRows={3}
+                  label="Texto del SMS"
+                  value={formData.template}
+                  onChange={(e) => handleInputChange('template', e.target.value)}
+                  placeholder="Hola {{Nombre}}, tu mensaje aquí…"
+                  helperText={`Admite variables {{columna}} del CSV. ${formData.template.length} caracteres (~${Math.max(1, Math.ceil(formData.template.length / 160))} segmento(s)). En SMS la columna 2 del CSV es el celular (E.164, +57…).`}
                 />
-              </Stack>
+              ) : (
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                  <FormControl fullWidth>
+                    <InputLabel>Plantilla (SES)</InputLabel>
+                    <Select
+                      value={formData.template}
+                      label="Plantilla (SES)"
+                      onChange={(e) => handleInputChange('template', e.target.value)}
+                      endAdornment={loadingTemplates ? <CircularProgress size={16} sx={{ mr: 3 }} /> : undefined}
+                    >
+                      {templates.length === 0 && (
+                        <MenuItem value="" disabled>
+                          {loadingTemplates ? 'Cargando plantillas…' : 'No hay plantillas del cliente'}
+                        </MenuItem>
+                      )}
+                      {templates.map((t) => (
+                        <MenuItem key={t.name} value={t.name}>
+                          {t.name}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <TextField
+                    fullWidth
+                    label="De (From)"
+                    value={formData.from}
+                    onChange={(e) => handleInputChange('from', e.target.value)}
+                  />
+                </Stack>
+              )}
               <TextField
                 fullWidth
                 label="Data Path"

@@ -76,7 +76,7 @@ Corrige la tabla del README (que marca varias como TODO):
 | `Validate-otp` | `POST /api/validate-otp` | ✅ Implementado |
 | `Recovery-password` | `POST /api/forgot-password` | ✅ Implementado (genera y envía OTP; respuesta genérica) |
 | `Verify-code` | `POST /api/verify-code` | ⚠️ **Stub** |
-| `Refresh-token` | `POST /api/token/refresh` | ⚠️ **Stub** |
+| `Refresh-token` | `POST /api/token/refresh` | ✅ Implementado (renueva el JWT con los mismos claims) |
 | `Authorizer` / `Authorizer2` | (Lambda Authorizer) | ✅ Valida el JWT (HS256) con `SECRET_KEY`; deniega por defecto |
 
 ---
@@ -133,6 +133,33 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
    `{customer}_unsubscribe` (PK `email`) y muestra una página de confirmación con la marca.
 4. Prepare-batch filtra contra esa tabla en el envío real (chequeo reparado: antes nunca corría).
    ⚠️ EAP aún no reemplaza la variable (pendiente, mismo patrón que EAU).
+
+### Canal SMS (jul 2026, base)
+- **Envío:** `Api_V1_Sms_Send-batch` (trigger cola `Sms_Send-batch`) manda cada SMS con
+  **AWS End User Messaging** (`pinpoint-sms-voice-v2` → `SendTextMessage`) y registra el
+  estado en `{customer}_sendStatus_{proceso}` (mismo patrón que email → reportes/estadísticas
+  funcionan igual). Env: `SMS_ORIGINATION_IDENTITY` (obligatoria), `SMS_CONFIGURATION_SET` (opc).
+- **Enrutamiento:** `Prepare-batch` enruta `channel="SMS"` a `URL_SQS_SMS` (lotes de 100) y
+  agrega `smsBody` al mensaje = **campo `template` de la campaña** (para SMS, `template` guarda
+  el TEXTO del mensaje, no un template de SES). Admite variables `{{columna}}` del CSV.
+- **CSV en SMS:** la **columna 2** (line[1]) es el **celular E.164** (`+57…`), no el correo.
+  `csv.ts` exporta `isValidPhone`. ⚠️ La validación por canal en la carga de bases queda pendiente.
+- **Front:** el form de campaña (`CampanasSection`) tiene el canal **SMS** con campo de texto
+  (contador de segmentos) en vez del selector de plantilla SES.
+- ⚠️ `[J]`: crear la cola `Sms_Send-batch` + trigger, y configurar origen en End User Messaging.
+
+### Multi-tenant y refresh (jul 2026)
+- **Claims en el JWT:** `Login` embebe `customerId`, `customer` y `userId` en el token.
+  El `Authorizer`/`Authorizer2` los reenvían en el **context** de la policy.
+- **Enforcement:** las read-lambdas (`Campaign_List`, `Template_List`, `Database_List`,
+  `Reports_Statistics`) **prefieren el `customerId`/`customer` del context del Authorizer**
+  (`event.requestContext.authorizer.*`) sobre el body → un cliente no puede consultar datos
+  de otro. ⚠️ Para que el context llegue en integración **no-proxy**, el mapping template de
+  esas rutas debe inyectar `$context.authorizer.customerId` (y `customer`) al body, o pasarlas
+  a **proxy**. En proxy ya funciona directo. Sin eso, cae al body (comportamiento legacy).
+- **Refresh token:** `Api_V1_Security_Refresh-token` valida el token vigente y reemite uno con
+  los mismos claims y `exp` fresco (sesión deslizante). El front lo renueva en segundo plano
+  (`RequireAuth`) cuando el usuario está activo y al token le queda < 1 h.
 
 ### Sesión del front
 - El JWT se decodifica en el cliente para conocer `exp`: si venció, `apiClient` corta antes de
@@ -292,36 +319,45 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [ ] Mover `SECRET_KEY` a **AWS Secrets Manager** (hoy es variable de entorno).
 - [ ] Lista negra por cliente; manejo de CSV grandes por partes; segmentar IPs SES por cliente.
 
-### Producto – Estimador de costo de envío (criterio para más adelante)
-> **Objetivo:** antes de que el cliente confirme un envío, mostrarle un **estimado del
-> valor** de esa campaña, para que decida con el costo a la vista (no cobrar a ciegas).
+### Producto – Estimador de costo de envío (✅ implementado, jul 2026)
+> **Objetivo:** antes de confirmar un envío, mostrarle al cliente un **estimado del valor**
+> de la campaña (los **4 canales**), con desglose, para que decida con el costo a la vista.
 
-- [ ] **Mostrar un costo estimado en el flujo de envío** (pantalla previa a "Enviar"),
-      recalculado en vivo según los parámetros de la campaña.
-- **Factores que entran en el cálculo:**
-  - **Cantidad de envíos** (nº de destinatarios del CSV / segmento).
-  - **¿Lleva adjunto?** (sí/no) y **peso aproximado** del adjunto (por tramos de MB).
-  - **Tipo de adjunto / canal:**
-    - `EM` (sin adjunto) → costo base por correo.
-    - `EAU` (adjunto único, mismo para todos) → base + recargo por peso del adjunto.
-    - `EAP` (adjunto personalizado por destinatario) → base + costo de **combinación**
-      por destinatario, **distinto si el documento es PDF o Word/.docx** (la generación
-      y renderizado personalizado cuesta más y pesa más).
-- **Dónde va:**
-  - **Backend:** una tabla/JSON de **tarifas** (configurable, idealmente por cliente) y
-    un endpoint tipo `POST /api/email/estimate` que reciba `{ channel, recipients,
-    hasAttachment, attachmentSizeMB, attachmentType (pdf|docx), personalized }` y
-    devuelva `{ estimatedCost, currency, breakdown }`. El desglose debe explicar cada
-    componente (base × envíos, recargo por peso, recargo por personalización, etc.).
-  - **Frontend:** en `CampanasSection`/portal, tras cargar el CSV y elegir opciones,
-    llamar al estimador y mostrar el valor + desglose **antes** del botón de enviar,
-    con la aclaración de que es un **estimado** (el cobro real puede variar).
-- **Pendiente de definir:**
-  - Modelo de precios y **moneda (COP)**: ¿tarifa plana por correo + recargos, o por tramos?
-  - Cómo obtener el **peso del adjunto** (del archivo ya subido a S3 vía `get-urlS3`, o
-    declarado por el usuario) y cómo estimarlo para `EAP` antes de generar los documentos.
-  - Costos AWS de referencia (SES por correo, almacenamiento/tráfico S3, cómputo de la
-    combinación docx/PDF) para calibrar la tarifa; redondeo, impuestos y mínimo por campaña.
+**Endpoint:** `POST /Cost/Estimate` (lambda `Api_V1_Cost_Estimate`, no-proxy, envelope).
+- Request: `{ customerId, channel, recipients, emailMode?, attachmentSizeMB?, attachmentType?,
+  smsSegments?, voiceMinutes? }`.
+- Response `data`: `{ currency:'COP', channel, recipients, unitCost, subtotal, taxRate, tax,
+  estimatedCost, appliedMinimum, breakdown:[{concept,detail,amount}], isEstimate, note }`.
+
+**Tabla de tarifas `pricingRate`** (DynamoDB — **PK `customerId` (String) + SK `channel`
+(String)**; `customerId='*'` = tarifa **global** por defecto). La lambda trae DEFAULT_RATES
+embebidas, así funciona aunque la tabla no exista; si existe, el ítem `('*',canal)` y luego
+`(cliente,canal)` **sobreescriben** los defaults (tarifa por cliente). Valores en **COP**.
+
+Campos por canal (todos configurables en `pricingRate`):
+- **EMAIL:** `baseEM`, `baseEAU`, `baseEAP`, `attachmentPerMB`, `personalizedPdf`, `personalizedDocx`.
+- **SMS:** `baseSms` (por SMS y por segmento de 160 GSM-7 / 70 unicode).
+- **WHATSAPP:** `baseMarketing` (por mensaje de plantilla de marketing).
+- **VOICE:** `basePerMinute`, `avgMinutes`.
+- **Comunes:** `taxRate` (IVA, default 0.19), `minCampaign` (mínimo por campaña, default $5000).
+
+**Criterios de cálculo** (unit = costo por destinatario; subtotal = unit × destinatarios):
+- EMAIL·EM → `baseEM`. EMAIL·EAU → `baseEAU + MB×attachmentPerMB`.
+  EMAIL·EAP → `baseEAP + MB×attachmentPerMB + (pdf? personalizedPdf : personalizedDocx)`.
+- SMS → `baseSms × segmentos`. WHATSAPP → `baseMarketing`. VOICE → `basePerMinute × minutos`.
+- Se aplica `max(subtotal, minCampaign)`, luego IVA. `breakdown` explica cada componente.
+
+**Frontend:** `costService.ts` + componente **`CostEstimate`** (interactivo, los 4 canales),
+integrado en **Muestras** (antes de aprobar/enviar), con el canal preseleccionado según la
+campaña. Muestra total, costo unitario, desglose e IVA, y la aclaración de "estimado".
+
+**Tarifas por defecto (COP, INDICATIVAS — calibrar `[J]`):** EM 8 · EAU 15 · EAP 40 ·
+adjunto 5/MB · pers. PDF 25 / DOCX 35 · SMS 60 · WhatsApp 90 · Voz 120/min · mín. $5000 · IVA 19%.
+
+**Pendiente `[J]`:** crear la tabla `pricingRate` + ruta `/Cost/Estimate` (authorizer+CORS) +
+permiso `dynamodb:GetItem`; calibrar tarifas con costos reales (SES/SNS/Meta/AWS EUM) y cargar
+overrides por cliente. (El peso del adjunto hoy lo declara el usuario en el estimador; a futuro
+se puede leer del objeto ya subido a S3.)
 
 ### Infraestructura / despliegue
 - [ ] Desplegar las lambdas nuevas y **crear sus rutas** en API Gateway

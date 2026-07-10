@@ -37,6 +37,7 @@ import { templatesService } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { CostEstimate } from './CostEstimate';
 
 type TipoMuestra = 'aleatorias' | 'selectivas';
 type EstadoLote = 'enviada' | 'aprobada' | 'rechazada' | 'enviada_real';
@@ -114,6 +115,11 @@ export const MuestrasSection = () => {
     const found = campaignOptions.find((c) => c.campaignName === name);
     if (found?.template) setTemplate(found.template);
   };
+
+  // Canal de la campaña seleccionada → parámetros del estimador de costo.
+  const selectedChannel = campaignOptions.find((c) => c.campaignName === campaign)?.channel ?? 'EM';
+  const estimatorChannel = selectedChannel === 'SMS' ? 'SMS' : 'EMAIL';
+  const estimatorMode = (['EM', 'EAU', 'EAP'].includes(selectedChannel) ? selectedChannel : 'EM') as 'EM' | 'EAU' | 'EAP';
 
   const [tipo, setTipo] = useState<TipoMuestra>('aleatorias');
   const [quantity, setQuantity] = useState(1);
@@ -374,6 +380,11 @@ export const MuestrasSection = () => {
           {sending ? <CircularProgress size={22} /> : 'Enviar muestras'}
         </Button>
       </Paper>
+
+      {/* Estimador de costo (antes de aprobar y enviar la campaña real) */}
+      <Box sx={{ mb: 2 }}>
+        <CostEstimate channel={estimatorChannel} emailMode={estimatorMode} />
+      </Box>
 
       {/* Aprobación */}
       {lotes.length > 0 && (

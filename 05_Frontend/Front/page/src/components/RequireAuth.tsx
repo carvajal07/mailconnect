@@ -6,6 +6,8 @@ import {
   isTokenExpired,
   clearSession,
   sessionExpired,
+  secondsUntilExpiry,
+  refreshSession,
 } from '../services/authService';
 
 /**
@@ -25,6 +27,7 @@ const IDLE_MINUTES = Number(import.meta.env.VITE_IDLE_MINUTES) > 0
 const LAST_ACTIVITY_KEY = 'mc_last_activity';
 const CHECK_EVERY_MS = 30_000; // frecuencia del chequeo de inactividad/expiración
 const TOUCH_THROTTLE_MS = 5_000; // no escribir la marca de actividad más seguido que esto
+const REFRESH_WHEN_LEFT_S = 3600; // renovar el token si le queda < 1 h y el usuario está activo
 
 export const RequireAuth = ({ children }: { children: ReactNode }) => {
   const authed = isAuthenticated() && !isTokenExpired();
@@ -53,10 +56,17 @@ export const RequireAuth = ({ children }: { children: ReactNode }) => {
         sessionExpired('expired');
         return;
       }
-      // 2) Inactividad prolongada (la marca se comparte entre pestañas).
       const last = Number(localStorage.getItem(LAST_ACTIVITY_KEY)) || Date.now();
-      if (Date.now() - last > IDLE_MINUTES * 60_000) {
+      const idleMs = Date.now() - last;
+      // 2) Inactividad prolongada (la marca se comparte entre pestañas).
+      if (idleMs > IDLE_MINUTES * 60_000) {
         sessionExpired('inactive');
+        return;
+      }
+      // 3) Sesión deslizante: si el usuario sigue activo y al token le queda poco,
+      // se renueva en segundo plano para no cortarle la sesión a la mitad.
+      if (idleMs < IDLE_MINUTES * 60_000 && secondsUntilExpiry() < REFRESH_WHEN_LEFT_S) {
+        void refreshSession();
       }
     }, CHECK_EVERY_MS);
 

@@ -76,4 +76,14 @@ def lambda_handler(event, context):
         print("Authorizer: el token no contiene 'user'.")
         raise Exception('Unauthorized')
 
-    return _build_policy(user, 'Allow', resource, context={'user': str(user)})
+    # Reenviar la identidad del tenant en el context. API Gateway la expone a las
+    # lambdas como event.requestContext.authorizer.<clave> (proxy) o, en no-proxy,
+    # se inyecta al body con un mapping template ($context.authorizer.customerId).
+    # Los valores del context deben ser strings.
+    ctx = {
+        'user': str(user),
+        'customerId': str(decoded.get('customerId', '') or ''),
+        'customer': str(decoded.get('customer', '') or ''),
+        'userId': str(decoded.get('userId', '') or ''),
+    }
+    return _build_policy(user, 'Allow', resource, context=ctx)
