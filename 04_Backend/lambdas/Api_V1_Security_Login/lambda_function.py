@@ -27,6 +27,23 @@ def generate_jwt(username):
     token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
     return token
 
+def _client_info(event):
+    """Extrae IP y user-agent del evento (soporta proxy y no-proxy)."""
+    ip = "unknown"
+    device = "unknown"
+    if isinstance(event, dict):
+        rc = event.get('requestContext') or {}
+        identity = rc.get('identity') or {}
+        ip = identity.get('sourceIp') or ip
+        headers = event.get('headers') or {}
+        # Los headers pueden venir con distinta capitalización
+        for k, v in headers.items():
+            if str(k).lower() == 'user-agent' and v:
+                device = v
+                break
+    return ip, device
+
+
 def create_Session(userId,ipAddress,device,numberAttemps):
     sessionId = str(uuid.uuid4())
     # Obtener la fecha y hora actual
@@ -144,7 +161,13 @@ def lambda_handler(event, context):
                         userDataId = responseUser['Items'][0]['userDataId']
                         name = select_name(userDataId)
                         print(name)
-                        #create_Session();
+                        # Registrar la sesión. No debe romper el login si falla
+                        # (p. ej. permisos de la tabla), por eso va en su propio try.
+                        try:
+                            ipAddress, device = _client_info(event)
+                            create_Session(userId, ipAddress, device, 1)
+                        except Exception as session_error:
+                            print("No se pudo registrar la sesion: {}".format(session_error))
                         status = True
                         statusCode = 200
                         description = "Usuario correcto"
