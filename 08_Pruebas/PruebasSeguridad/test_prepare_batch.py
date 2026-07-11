@@ -139,6 +139,18 @@ def test_classify_and_enqueue_filtra_y_agrupa(pb):
     assert correos == ['ok1@t.com', 'ok2@t.com', 'ok3@t.com']
 
 
+def test_classify_and_enqueue_part_offset_numera_unico(pb):
+    # Fase 4: en el fan-out, cada part-file numera sus lotes con part_offset para que el
+    # número de parte sea ÚNICO en todo el proceso (la lambda de envío deduplica por parte).
+    enviados = []
+    registers = [['1', 'a@t.com', 'A'], ['2', 'b@t.com', 'B'], ['3', 'c@t.com', 'C']]
+    pb.classify_and_enqueue(
+        _ctx(), registers, blacklist_emails=set(), unsubscribes_emails=set(),
+        registers_for_message=1, url_sqs='q',
+        send_fn=lambda url, msg: enviados.append(json.loads(msg)), part_offset=5000)
+    assert [m['part'] for m in enviados] == [5001, 5002, 5003]
+
+
 def test_send_sqs_propaga_error(pb):
     # Antes se tragaba la excepción (print) → el envío quedaba "Enviando" sin encolar.
     # Ahora el error se PROPAGA para que el bloque que llama marque Error.

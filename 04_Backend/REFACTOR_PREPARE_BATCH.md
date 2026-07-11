@@ -104,7 +104,32 @@ tablas en DynamoDB._
             reencola, 403 deshabilitado). Se escribió ANTES del split como red de seguridad. De paso
             se quitó el `update_campaign_status("Error")` de la rama "campaña no encontrada" (leía un
             `campaign_id` inexistente). Suite 124→127. ✅
-- [ ] **Fase 4 — CSV grande por partes** (#3): trocear + fan-out a otra lambda.
+- [x] **Fase 4 — CSV grande por partes / fan-out** (#3): ✅ La MISMA lambda es ahora
+      **dual-mode**. El envío real por API (`preparar_split`) **trocea** el CSV en part-files de
+      `PART_SIZE` filas subidos a S3 (`_parts/{processId}/{n}.json`) y encola UN trabajo por parte
+      en `URL_SQS_PREPARE_PART`; cada parte la procesa un **worker** (`procesar_parte`, la misma
+      lambda disparada por esa cola) en su propia invocación → una base de 100k+ ya no se procesa
+      en una sola llamada (cierra el riesgo de timeout de 15 min). El splitter solo mantiene
+      `PART_SIZE` filas en memoria a la vez.
+      - **Idempotencia por parte** (cierra el límite de Fase 2, #2): el worker es idempotente —
+        el encolado al canal se numera con `part_offset = part*PART_SIZE` (único en el proceso →
+        la lambda de envío deduplica por `(processId, part)`), los estados de los filtrados usan
+        IDs deterministas (`{part}-{state}-{idx}` → reprocesar SOBREESCRIBE, no duplica), y el
+        conteo se hace con una **marca condicional atómica** (`ADD processedParts` + conteos,
+        condicionado a que la parte no estuviera marcada). Una redelivery de SQS no duplica nada.
+        Los conteos por categoría los ACUMULAN los workers en la fila del proceso (el splitter la
+        crea en 'Procesando' con `registersOnSpool` + `parts`).
+      - Pruebas: `test_prepare_batch_integration.py` reescrito al fan-out (split trocea+encola,
+        workers acumulan, worker idempotente, duplicado no retrocea, 403 deshabilitado) +
+        `part_offset` unitario. Suite 127→129. ✅
+      - ⚠️ **`[J]`:** crear la cola **`Email_Prepare-batch-part`** + trigger a ESTA misma lambda
+        (`Api_V1_Email_Prepare-batch-template`); permisos `s3:PutObject/GetObject` en
+        `{customer}.database` (prefijo `_parts/`) y `dynamodb:UpdateItem/GetItem` en `process`
+        (campo nuevo `processedParts`, String Set). Env: reutiliza las mismas.
+      - ⚠️ **Límite residual:** si el SPLITTER muere a la mitad de encolar partes, la campaña
+        queda 'Enviando' con partes faltantes (el lock de Fase 2 evita re-trocear). Cerrarlo del
+        todo requeriría un checkpoint durable del plan de split (fuera de alcance). El splitter
+        sigue descargando el CSV a `/tmp` para trocear (eliminar `/tmp` = stream desde S3, futuro).
 - [ ] **Fase 5 — scan → query / índices** (#6).
 
 _Cada fase va en su propio commit con pruebas. Ante conflicto de prioridad, manda la severidad._

@@ -42,6 +42,13 @@ URL_SQS_SMS = 'https://sqs.us-east-1.amazonaws.com/873837768806/Sms_Send-batch'
 URL_SQS_WSP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Wsp_Send-batch'
 # Canal Voz: cola que consume la lambda Api_V1_Voice_Send-batch (End User Messaging Voice).
 URL_SQS_VOICE = 'https://sqs.us-east-1.amazonaws.com/873837768806/Voice_Send-batch'
+# Fase 4 — Fan-out de CSV grandes: la MISMA lambda se dispara con esta cola para procesar
+# UNA parte del envío real. El envío real por API "trocea" el CSV en part-files en S3 y
+# encola un trabajo por parte aquí; cada disparo procesa su parte (valida/filtra/encola al
+# canal). Evita que UNA sola invocación procese 100k+ registros (timeout de 15 min).
+URL_SQS_PREPARE_PART = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Prepare-batch-part'
+# Filas por part-file (tamaño del troceo). Cada parte se procesa en su propia invocación.
+PART_SIZE:int = 5000
 REGION = 'us-east-1'
 DELIMITER = ';'          # delimitador por defecto si no se puede detectar
 CANDIDATE_DELIMITERS = [';', ',', '\t', '|']
@@ -70,7 +77,7 @@ class ProcessState:
     """Estado POR INVOCACIÓN del envío. Antes vivía en variables globales del módulo, un
     patrón frágil en Lambda "caliente" (los globals persisten entre invocaciones y se
     pisan). Ahora se arma UNA vez en el handler y se pasa EXPLÍCITAMENTE a
-    preparar_muestras()/preparar_real() y a los helpers que lo necesitan."""
+    preparar_muestras()/preparar_split()/procesar_parte() y a los helpers que lo necesitan."""
 
     def __init__(self):
         self.process_id = None
@@ -286,7 +293,7 @@ def prepare_message(ctx:dict, data:list, part:int)-> str:
 
 def classify_and_enqueue(ctx:dict, registers_correct:list, blacklist_emails:set,
                          unsubscribes_emails:set, registers_for_message:int,
-                         url_sqs:str, send_fn=None):
+                         url_sqs:str, send_fn=None, part_offset:int=0):
     """Núcleo del envío real (extraído del handler para poder testearlo). Clasifica los
     registros con estructura válida en (lista negra / desuscritos / a enviar), agrupa los
     'a enviar' en lotes de `registers_for_message` y los ENCOLA en SQS.
@@ -295,7 +302,10 @@ def classify_and_enqueue(ctx:dict, registers_correct:list, blacklist_emails:set,
       - registers_blacklist / registers_unsubscribe: filas filtradas (para registrar su estado).
       - enqueued: cantidad realmente encolada.
       - parts: número de mensajes SQS generados.
-    `send_fn` permite inyectar un doble en las pruebas (por defecto send_sqs real)."""
+    `send_fn` permite inyectar un doble en las pruebas (por defecto send_sqs real).
+    `part_offset` desplaza la numeración de las partes: en el fan-out (Fase 4) cada part-file
+    aporta varios lotes al canal y el número de parte debe ser ÚNICO en todo el proceso (la
+    lambda de envío deduplica por (processId, part)); se pasa `part_offset = part * PART_SIZE`."""
     if send_fn is None:
         send_fn = send_sqs
     registers_blacklist = []
@@ -317,12 +327,12 @@ def classify_and_enqueue(ctx:dict, registers_correct:list, blacklist_emails:set,
             if count_register == registers_for_message:
                 parts += 1
                 count_register = 0
-                send_fn(url_sqs, prepare_message(ctx, batch, parts))
+                send_fn(url_sqs, prepare_message(ctx, batch, part_offset + parts))
                 batch = []
     # Último lote incompleto.
     if batch:
         parts += 1
-        send_fn(url_sqs, prepare_message(ctx, batch, parts))
+        send_fn(url_sqs, prepare_message(ctx, batch, part_offset + parts))
     return registers_blacklist, registers_unsubscribe, enqueued, parts
 
 def send_sqs_batch(url_sqs:str,messages:list)->None:
@@ -479,7 +489,7 @@ def check_unsubscribes(customer_name:str, keys:list)->set:
     """
     return _batch_get_emails(f'{customer_name}_unsubscribe', keys)
 
-def insert_mails_status(st:'ProcessState',emails:list,state:str,description:str)->None:
+def insert_mails_status(st:'ProcessState',emails:list,state:str,description:str,id_prefix:str=None)->None:
     """
     Función encargada de insertar los detalles de cada envio a la base de datos con su respectivo estado. Aplica solo para desinscritos y lista negra
 
@@ -488,6 +498,9 @@ def insert_mails_status(st:'ProcessState',emails:list,state:str,description:str)
         emails (list): Lista con los email de lista negra o desinscritos que se van a insertar a la base de datos
         state (str): Estado 12 (Desinscrito) o 13 (Lista negra)
         description (str): Descripcion de cualquiera de los dos estados
+        id_prefix (str): Prefijo para IDs DETERMINISTAS (fan-out Fase 4). Con él, reprocesar
+            una parte SOBRESCRIBE las mismas filas (put idempotente) en vez de duplicarlas.
+            Sin él (None) se usa un uuid aleatorio (comportamiento legacy).
 
     Returns:
         None: No retorna resultados
@@ -496,8 +509,8 @@ def insert_mails_status(st:'ProcessState',emails:list,state:str,description:str)
     data_to_insert_send_detail = []
     data_to_insert_send_status = []
     # Define los datos que deseas insertar
-    for register in emails:
-        id = str(uuid.uuid4())
+    for idx, register in enumerate(emails):
+        id = f'{id_prefix}-{idx}' if id_prefix else str(uuid.uuid4())
 
         unique_id = register[0]
         email = register[1]
@@ -740,20 +753,56 @@ def preparar_muestras(st, data, response_campaign, user_id, template_version,
     return status, status_code, description
 
 
-def preparar_real(st, data, response_campaign, user_id, template_version, temp_file,
-                  delimiter, url_sqs, channel_name, unsubscribe_existed,
-                  blacklist_existed, patron_email):
-    """Rama de ENVÍO REAL (a toda la base). Aplica el bloqueo por cliente y la idempotencia,
-    lee el spool, filtra estructura/lista negra/desuscritos, agrupa en lotes y encola a SQS,
-    y registra el proceso + los estados de los filtrados.
+def registers_for_channel(channel_name:str)->int:
+    """Tamaño de lote (destinatarios por mensaje SQS al canal) según el canal."""
+    return {
+        "EM": REGISTERS_FOR_EM, "EAU": REGISTERS_FOR_EAU, "EAP": REGISTERS_FOR_EAP,
+        "SMS": REGISTERS_FOR_SMS, "WSP": REGISTERS_FOR_WSP, "VOZ": REGISTERS_FOR_VOICE,
+    }.get(channel_name, REGISTERS_FOR_EM)
+
+
+def upload_part_file(bucket_name:str, process_id:str, part:int, rows:list)->str:
+    """Sube UN part-file (trozo del CSV) a S3 como JSON (lista de filas) y devuelve su key.
+    Serializar como JSON evita re-parsear CSV (delimitadores/comillas) en el worker."""
+    key = f'_parts/{process_id}/{part}.json'
+    s3.put_object(Bucket=bucket_name, Key=key, Body=json.dumps(rows).encode('utf-8'))
+    return key
+
+
+def enqueue_part_job(st, part:int, part_key:str, bucket_name:str, channel_queue:str,
+                     registers_for_message:int, unsubscribe_existed:bool,
+                     blacklist_existed:bool)->None:
+    """Encola UN trabajo de parte en la cola de partes (URL_SQS_PREPARE_PART). El worker
+    (esta misma lambda, disparada por SQS) descarga el part-file y lo procesa."""
+    job = dict(build_ctx(st))  # campos comunes del envío (customerId, processId, headers, …)
+    job.update({
+        "prepareJob": True,
+        "part": part,
+        "partKey": part_key,
+        "bucket": bucket_name,
+        "channelQueue": channel_queue,
+        "registersForMessage": registers_for_message,
+        "unsubscribeExisted": unsubscribe_existed,
+        "blacklistExisted": blacklist_existed,
+    })
+    send_sqs(URL_SQS_PREPARE_PART, json.dumps(job))
+
+
+def preparar_split(st, data, response_campaign, user_id, template_version, temp_file,
+                   delimiter, url_sqs, channel_name, unsubscribe_existed,
+                   blacklist_existed):
+    """SPLITTER del ENVÍO REAL (Fase 4). Aplica el bloqueo por cliente + la idempotencia de
+    campaña, TROCEA el CSV en part-files de PART_SIZE filas subidos a S3 y encola UN trabajo
+    por parte en URL_SQS_PREPARE_PART. NO valida/filtra/encola al canal (eso lo hace cada
+    worker en su propia invocación) → una base de 100k+ ya no se procesa en una sola llamada.
 
     Devuelve (status, status_code, description). Puede lanzar RealSendDisabled/AlreadySending,
-    que el handler atrapa. El estado `st` lleva todo el contexto (antes eran globals)."""
+    que el handler atrapa."""
     status = True
     status_code = 200
     description = "Campaña enviandose correctamente"
 
-    print("Inicia proceso de envio real")
+    print("Inicia SPLIT del envio real")
     # Bloqueo por cliente: si el cliente tiene deshabilitados los envíos reales, no se
     # procesa la campaña real (las muestras sí). Se lanza RealSendDisabled y se atrapa en
     # el handler (mantiene el 403 y NO marca la campaña en Error).
@@ -762,112 +811,171 @@ def preparar_real(st, data, response_campaign, user_id, template_version, temp_f
             'Los envíos reales están deshabilitados para este cliente. '
             'Contacta al administrador de MailConnect.')
     # IDEMPOTENCIA: transición atómica a 'Enviando'. Si otra invocación (reintento de
-    # Lambda/API Gateway, doble clic, envío concurrente) ya tomó el lock, NO se re-encola
+    # Lambda/API Gateway, doble clic, envío concurrente) ya tomó el lock, NO se re-trocea
     # (se lanza AlreadySending → 200 limpio).
     if not try_start_real_send(st, st.process_id):
         raise AlreadySending('La campaña ya está en proceso de envío; no se re-encola.')
 
-    if (channel_name == "EM"):
-        registers_for_message = REGISTERS_FOR_EM
-    if (channel_name == "EAU"):
-        registers_for_message = REGISTERS_FOR_EAU
-    if (channel_name == "EAP"):
-        registers_for_message = REGISTERS_FOR_EAP
-    if (channel_name == "SMS"):
-        registers_for_message = REGISTERS_FOR_SMS
-    if (channel_name == "WSP"):
-        registers_for_message = REGISTERS_FOR_WSP
-    if (channel_name == "VOZ"):
-        registers_for_message = REGISTERS_FOR_VOICE
-    global_counter_message = 0
-
-    keys = []
-    emails_error = []
-    registers_unsubscribe = []
-    registers_blacklist = []
-    registers_correct = []
+    registers_for_message = registers_for_channel(channel_name)
+    bucket_name = f'{st.customer_name.lower()}.database'
     registers_on_spool = 0
-    registers_to_send = 0
-    quantity_blacklist = 0
-    quantity_unsubscribe = 0
-    quantity_deletions = 0
-    # Lee el archivo CSV descargado y agrupa los datos
+    part = 0
     try:
-        print("Lectura del archivo spool para validar registros con estructura de email incorrecta")
+        # Lee el CSV descargado y trocea en part-files. Solo se acumulan PART_SIZE filas en
+        # memoria a la vez (se suben y se libera el buffer) → apto para bases grandes.
         with open(temp_file, 'r', encoding=ENCODING) as file:
             reader = csv.reader(file, delimiter=delimiter)
-            st.headers = next(reader)  # primer linea = encabezado
+            st.headers = next(reader)  # primer linea = encabezado (va en el ctx)
             print("Headers: " + str(st.headers))
+            buffer = []
             for line in reader:
+                buffer.append(line)
                 registers_on_spool += 1
-                #En este primer for recorro los registros y verifico si no tienen error de estructura
-                #Los registros sin error los guardo para luego verificar en las listas negras y unsubscribe
-                #Los registros buenos los agrego a un array y los malos a otro
-                email = line[1]
-                if re.match(patron_email, email):
-                    #Voy agregando los email a una lista para posteriormente verificar si estan en lista negra o desinscritos
-                    keys.append({'email': email})
-                    registers_correct.append(line)
-                else:
-                    emails_error.append(line)
-        print("Finaliza lectura del archivo spool para validar registros con estructura de email incorrecta")
-        #consultar registros en unsubscribe y blacklist
-        #Solo se consulta si la tabla ya existía (si es el primer proceso del cliente, las
-        #tablas recién creadas están vacías).
-        blacklist_emails = set()
-        unsubscribes_emails = set()
-        if unsubscribe_existed:
-            unsubscribes_emails = check_unsubscribes(st.customer_name, keys)
-            quantity_unsubscribe = len(unsubscribes_emails)
-        if blacklist_existed:
-            blacklist_emails = check_blacklist(st.customer_name, keys)
-            quantity_blacklist = len(blacklist_emails)
-
-        print("Cantidad registros en blacklist: " + str(quantity_blacklist))
-        print("Cantidad registros en unsubscribe: " + str(quantity_unsubscribe))
-
-        quantity_deletions = len(emails_error)
-        print("Cantidad registros con estructura incorrecta: " + str(quantity_deletions))
-
-        print("Inicio de clasificacion email correctos para el envio")
-
-        # Clasificación + agrupación en lotes + encolado a SQS, extraído a una función pura
-        # y testeable (antes: bucle anidado en el handler).
-        registers_blacklist, registers_unsubscribe, registers_to_send, global_counter_message = \
-            classify_and_enqueue(
-                build_ctx(st), registers_correct, blacklist_emails,
-                unsubscribes_emails, registers_for_message, url_sqs)
-        print(f"Encolados: {registers_to_send} en {global_counter_message} mensaje(s)")
+                if len(buffer) == PART_SIZE:
+                    part += 1
+                    key = upload_part_file(bucket_name, st.process_id, part, buffer)
+                    enqueue_part_job(st, part, key, bucket_name, url_sqs,
+                                     registers_for_message, unsubscribe_existed, blacklist_existed)
+                    buffer = []
+            if buffer:  # último trozo incompleto
+                part += 1
+                key = upload_part_file(bucket_name, st.process_id, part, buffer)
+                enqueue_part_job(st, part, key, bucket_name, url_sqs,
+                                 registers_for_message, unsubscribe_existed, blacklist_existed)
+        os.remove(temp_file)
+        print(f"SPLIT: {registers_on_spool} registros en {part} parte(s)")
     except Exception as e:
         update_campaign_status(st, "Error")
         print(e)
-        print('Error en el proceso de envios reales')
+        print('Error al trocear/encolar el envio real')
         status = False
-        description = 'Error en el proceso de envios reales'
+        description = 'Error al trocear/encolar el envio real'
         status_code = 400
     else:
-        print("TotalMensajes: " + str(global_counter_message))
-        #El total de mensajes es el total de partes para insertar en processDetail
-        insert_process(st, data["campaignName"], user_id, registers_on_spool, registers_to_send, quantity_blacklist, quantity_unsubscribe, quantity_deletions, global_counter_message, template_version, "Procesando")
-        #Elimina el archivo temporal descargado
-        os.remove(temp_file)
-
-        print("Proceso de registro de errores en la tabla de processDetail")
-        #Insertar los email con estructura invalida en las tablas de estados y de datos
-        insert_mails_status(st, emails_error, 11, "El email no tiene una estructura valida")
-        #Insertar los email desinscritos en las tablas de estados y de datos
-        insert_mails_status(st, registers_unsubscribe, 12, "El email se encuentra desinscrito para este cliente")
-        #Insertar los email que estaban en la lista negra en las tablas de estados y de datos
-        insert_mails_status(st, registers_blacklist, 13, "El email se encuentra en la lista negra de este cliente")
+        # Fila del proceso: registersOnSpool y el total de partes ya se conocen; los conteos
+        # por categoría (a enviar / lista negra / desuscritos / inválidos) los ACUMULAN los
+        # workers de cada parte (ADD atómico). Estado inicial "Procesando".
+        insert_process(st, data["campaignName"], user_id, registers_on_spool, 0, 0, 0, 0,
+                       part, template_version, "Procesando")
 
     return status, status_code, description
 
 
+def _part_already_done(st, part)->bool:
+    """¿La parte `part` ya fue procesada por completo? Se consulta el set `processedParts`
+    de la fila del proceso. Como el worker MARCA la parte al FINAL (después de encolar y
+    registrar estados), 'marcada' ⇒ 'terminada' → es seguro saltarla (idempotencia)."""
+    try:
+        item = table_process.get_item(Key={'processId': st.process_id}).get('Item') or {}
+        return str(part) in (item.get('processedParts') or set())
+    except Exception as e:
+        print(f'No se pudo leer processedParts ({e}); se procesa la parte')
+        return False
+
+
+def _mark_and_count_part(st, part, enqueued, quantity_blacklist, quantity_unsubscribe,
+                         quantity_deletions)->bool:
+    """Marca la parte como procesada Y acumula sus conteos en la fila del proceso en UNA
+    operación ATÓMICA condicionada a que la parte no estuviera ya marcada. Devuelve False si
+    ya estaba marcada (otra invocación la contó) → no se duplica el conteo."""
+    try:
+        table_process.update_item(
+            Key={'processId': st.process_id},
+            UpdateExpression=('ADD processedParts :p, registersToSend :rts, '
+                              'quantityBlacklist :bl, quantityUnsubscribe :un, quantityDeletions :de'),
+            ConditionExpression='attribute_not_exists(processedParts) OR NOT contains(processedParts, :pv)',
+            ExpressionAttributeValues={
+                ':p': set([str(part)]), ':pv': str(part),
+                ':rts': enqueued, ':bl': quantity_blacklist,
+                ':un': quantity_unsubscribe, ':de': quantity_deletions,
+            })
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return False
+        raise
+
+
+def procesar_parte(st, job, patron_email)->None:
+    """WORKER del ENVÍO REAL (Fase 4). Procesa UNA parte: descarga el part-file, valida la
+    estructura de email, filtra lista negra/desuscritos, agrupa en lotes y ENCOLA al canal
+    con numeración de parte ÚNICA, registra los estados de los filtrados y ACUMULA los
+    conteos en la fila del proceso. IDEMPOTENTE: encolado deduplicado por la lambda de envío
+    (por (processId, part)); estados con IDs deterministas (put idempotente); conteo con
+    marca condicional → una redelivery de SQS no duplica nada."""
+    # Reconstruye el estado de la invocación desde el ctx que viaja en el trabajo.
+    st.customer_id = job['customerId']
+    st.customer_name = job['customerName']
+    st.process_id = job['processId']
+    st.campaign_id = job['campaignId']
+    st.attachment = job.get('attachment', False)
+    st.from_email = job.get('fromEmail', '')
+    st.headers = job.get('headers')
+    st.template_name = job.get('templateName')
+    st.sms_body = job.get('smsBody', '')
+    st.wsp_template = job.get('wspTemplate', '')
+    st.voice_message = job.get('voiceMessage', '')
+
+    part = job['part']
+    registers_for_message = job['registersForMessage']
+    channel_queue = job['channelQueue']
+    unsubscribe_existed = job.get('unsubscribeExisted', False)
+    blacklist_existed = job.get('blacklistExisted', False)
+
+    # Idempotencia rápida: si la parte ya se completó, no se rehace el trabajo.
+    if _part_already_done(st, part):
+        print(f"La parte {part} del proceso {st.process_id} ya fue procesada; se omite")
+        return
+
+    # Descarga el part-file (JSON con las filas de esta parte).
+    obj = s3.get_object(Bucket=job['bucket'], Key=job['partKey'])
+    rows = json.loads(obj['Body'].read().decode('utf-8'))
+
+    keys = []
+    emails_error = []
+    registers_correct = []
+    for line in rows:
+        email = line[1]
+        if re.match(patron_email, email):
+            keys.append({'email': email})
+            registers_correct.append(line)
+        else:
+            emails_error.append(line)
+
+    #Solo se consulta si la tabla ya existía (si es el primer proceso del cliente, las tablas
+    #recién creadas están vacías).
+    blacklist_emails = set()
+    unsubscribes_emails = set()
+    if unsubscribe_existed:
+        unsubscribes_emails = check_unsubscribes(st.customer_name, keys)
+    if blacklist_existed:
+        blacklist_emails = check_blacklist(st.customer_name, keys)
+
+    # Encola al canal con parte ÚNICA (part_offset garantiza que no choque con otras partes).
+    ctx = build_ctx(st)
+    registers_blacklist, registers_unsubscribe, enqueued, _channel_parts = classify_and_enqueue(
+        ctx, registers_correct, blacklist_emails, unsubscribes_emails,
+        registers_for_message, channel_queue, part_offset=part * PART_SIZE)
+
+    # Estados de los filtrados con IDs deterministas (reprocesar SOBREESCRIBE, no duplica).
+    insert_mails_status(st, emails_error, 11, "El email no tiene una estructura valida", id_prefix=f'{part}-11')
+    insert_mails_status(st, registers_unsubscribe, 12, "El email se encuentra desinscrito para este cliente", id_prefix=f'{part}-12')
+    insert_mails_status(st, registers_blacklist, 13, "El email se encuentra en la lista negra de este cliente", id_prefix=f'{part}-13')
+
+    # Marca la parte + acumula conteos (atómico, condicional). Al final: si crasheó antes,
+    # una redelivery rehace el trabajo idempotente y recién aquí cuenta una sola vez.
+    counted = _mark_and_count_part(st, part, enqueued, len(registers_blacklist),
+                                   len(registers_unsubscribe), len(emails_error))
+    print(f"Parte {part}: encolados={enqueued}, contada={counted}")
+
+
 def lambda_handler(event, context):
     """
-    Función principal. Hace el SETUP común (parseo, campaña, tablas, descarga del CSV) y
-    DESPACHA a preparar_muestras() o preparar_real() según el endpoint. El estado de la
-    invocación viaja en un objeto ProcessState (antes eran variables globales).
+    Función principal. Tiene DOS modos:
+      - SQS (evento con 'Records'): WORKER de una parte del envío real (Fase 4) → procesar_parte.
+      - API Gateway (evento con 'resource'): SETUP común (parseo, campaña, tablas, descarga del
+        CSV) y DESPACHA a preparar_muestras() (muestras) o preparar_split() (envío real → fan-out).
+    El estado de la invocación viaja en un objeto ProcessState (antes eran variables globales).
 
     Args:
         event (dict): Datos de evento
@@ -888,6 +996,17 @@ def lambda_handler(event, context):
     st.formatted_date = now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + 'Z'
 
     try:
+        # WORKER (Fase 4): si el evento viene de SQS (cola de partes), procesa cada parte.
+        # Es la MISMA lambda, disparada por URL_SQS_PREPARE_PART. patron_email por posición:
+        # line[0]=Identificacion, line[1]=Correo, line[2]=Nombre.
+        if 'Records' in event:
+            patron_email = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{2,}$'
+            for record in event['Records']:
+                job = json.loads(record['body'])
+                procesar_parte(st, job, patron_email)  # st ya trae formatted_date
+            return {'statusCode': 200, 'body': json.dumps({'status': True, 'status_code': 200,
+                    'description': 'Partes procesadas'})}
+
         # Obtener datos del evento
         endpoint = event["resource"]
         print("endpoint: " + endpoint)
@@ -1010,10 +1129,12 @@ def lambda_handler(event, context):
                             st, data, response_campaign, user_id, template_version,
                             temp_file, delimiter, url_sqs, patron_email)
                     else:
-                        status, status_code, description = preparar_real(
+                        # Envío real → SPLIT: trocea el CSV y encola un trabajo por parte
+                        # (cada parte la procesa un worker en su propia invocación, Fase 4).
+                        status, status_code, description = preparar_split(
                             st, data, response_campaign, user_id, template_version,
                             temp_file, delimiter, url_sqs, channel_name,
-                            unsubscribe_existed, blacklist_existed, patron_email)
+                            unsubscribe_existed, blacklist_existed)
 
             #Si el estado es "Enviando" o "Terminada" quiere decir que es una campaña que ya no se debe enviar
             else:
