@@ -65,18 +65,27 @@ def detect_delimiter(temp_file, default=DELIMITER):
         print("No se pudo detectar el delimitador ({}); se usa {!r}".format(e, default))
     return default
 
-global process_id
-global campaign_id
-global customer_id
-global sms_body
-global wsp_template
-global voice_message
-global customer_name
-global formatted_date
-global from_email
-global headers
-global template_name
-global attachment
+
+class ProcessState:
+    """Estado POR INVOCACIÓN del envío. Antes vivía en variables globales del módulo, un
+    patrón frágil en Lambda "caliente" (los globals persisten entre invocaciones y se
+    pisan). Ahora se arma UNA vez en el handler y se pasa EXPLÍCITAMENTE a
+    preparar_muestras()/preparar_real() y a los helpers que lo necesitan."""
+
+    def __init__(self):
+        self.process_id = None
+        self.campaign_id = None
+        self.customer_id = None
+        self.customer_name = None
+        self.formatted_date = None
+        self.from_email = None
+        self.headers = None
+        self.template_name = None
+        self.attachment = False
+        self.sms_body = ''       # texto SMS (solo canal SMS)
+        self.wsp_template = ''   # nombre HSM (solo canal WSP)
+        self.voice_message = ''  # texto TTS (solo canal VOZ)
+
 
 # Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
@@ -110,23 +119,14 @@ class AlreadySending(Exception):
 # Estados desde los que se PUEDE iniciar un envío real (compare-and-set atómico).
 REAL_SEND_ALLOWED_STATES = ('Pendiente', 'Muestras', 'Error')
 
-message:str = ""
-body:str = ""
-messages = []
-global_counter_message:int
 
-registers_for_message:int = 0
-samples:bool = False
-invalid_mail:bool = False
-invalid_mails:str = ""
-
-
-def insert_process(campaign_name:str,user_id:str,registers_on_spool:int,registers_to_send:int,quantity_blacklist:int,quantity_unsubscribe:int,quantity_deletions:int,parts:int,template_version:int,state:str)->None:
+def insert_process(st:'ProcessState',campaign_name:str,user_id:str,registers_on_spool:int,registers_to_send:int,quantity_blacklist:int,quantity_unsubscribe:int,quantity_deletions:int,parts:int,template_version:int,state:str)->None:
     """
     Esta función inserta los datos del proceso completo, con sus cantidades.
 
     Args:
-        process (str): En el campo proceso se inserta el nombre de la campaña
+        st (ProcessState): Estado de la invocación (process_id, customer_name, campaign_id, fecha)
+        campaign_name (str): En el campo proceso se inserta el nombre de la campaña
         user_id (str): Identificador unico del usuario
         registers_on_spool (int): Cantidad de registros que llegaron en la BD del cliente
         registers_to_send (int): Cantidad de registros a enviar, descontando los errores, lista negra y desinscritos
@@ -143,10 +143,10 @@ def insert_process(campaign_name:str,user_id:str,registers_on_spool:int,register
     # Insertar datos en la tabla de campañas
     table_process.put_item(
         Item={
-            'processId': process_id,
-            'customerName': customer_name,
+            'processId': st.process_id,
+            'customerName': st.customer_name,
             'campaignName': campaign_name,
-            'campaignId': campaign_id,
+            'campaignId': st.campaign_id,
             'userId': user_id,
             'registersOnSpool': registers_on_spool,
             'registersToSend': registers_to_send,
@@ -155,23 +155,24 @@ def insert_process(campaign_name:str,user_id:str,registers_on_spool:int,register
             'quantityDeletions': quantity_deletions,
             'parts': parts,
             'templateVersion': template_version,
-            'date': formatted_date,
+            'date': st.formatted_date,
             'processState': state
         }
     )
 
-def update_campaign_status(state:str)->None:
+def update_campaign_status(st:'ProcessState',state:str)->None:
     """
     Esta función realiza la actualizacion del estado de la campaña.
 
     Args:
-        status (str): Estado de la campaña
+        st (ProcessState): Estado de la invocación (campaign_id)
+        state (str): Estado de la campaña
 
     Returns:
         None: No retorna resultados
     """
     response_update_campaign_status = table_campaign.update_item(
-        Key={'campaignId':campaign_id},
+        Key={'campaignId':st.campaign_id},
         UpdateExpression='SET campaignState = :s',
         ExpressionAttributeValues={':s': state},
         ReturnValues='UPDATED_NEW'
@@ -179,18 +180,17 @@ def update_campaign_status(state:str)->None:
     print(response_update_campaign_status['Attributes'])
 
 
-def try_start_real_send(process_id_value:str)->bool:
+def try_start_real_send(st:'ProcessState',process_id_value:str)->bool:
     """IDEMPOTENCIA del envío real. Transición ATÓMICA de la campaña a 'Enviando' SOLO si su
     estado actual permite iniciar el envío (Pendiente/Muestras/Error), y guarda el processId
     ganador en `sendProcessId`.
 
     Devuelve True si ESTA invocación ganó el lock; False si otra ya lo tomó (reintento de
     Lambda/API Gateway, doble clic o envío concurrente) → NO se debe re-encolar. Cierra la
-    ventana de carrera entre leer el estado y marcarlo 'Enviando'.
-    Usa la global campaign_id."""
+    ventana de carrera entre leer el estado y marcarlo 'Enviando'."""
     try:
         table_campaign.update_item(
-            Key={'campaignId': campaign_id},
+            Key={'campaignId': st.campaign_id},
             UpdateExpression='SET campaignState = :sending, sendProcessId = :pid',
             ConditionExpression='campaignState IN (:s1, :s2, :s3)',
             ExpressionAttributeValues={
@@ -227,11 +227,11 @@ def select_campaign(campaign_name:str)->dict:
     return response_campaign
 
 
-def increment_samples_count()->int:
+def increment_samples_count(st:'ProcessState')->int:
     """Suma 1 (atómico) al contador de envíos de muestras de la campaña actual y
-    devuelve el nuevo valor. Usa la variable global campaign_id."""
+    devuelve el nuevo valor."""
     response = table_campaign.update_item(
-        Key={'campaignId': campaign_id},
+        Key={'campaignId': st.campaign_id},
         UpdateExpression='SET samplesSentCount = if_not_exists(samplesSentCount, :zero) + :one',
         ExpressionAttributeValues={':one': 1, ':zero': 0},
         ReturnValues='UPDATED_NEW'
@@ -255,22 +255,22 @@ def is_real_send_enabled(customer_id_value:str)->bool:
         print("No se pudo verificar realSendEnabled ({}); se asume habilitado".format(e))
     return True
 
-def build_ctx()->dict:
+def build_ctx(st:'ProcessState')->dict:
     """Arma el contexto del envío (los campos que van en cada mensaje SQS) a partir del
-    estado actual. Centraliza la lectura de los globals en UN solo lugar (paso hacia
-    quitar los globals): las funciones puras de abajo reciben `ctx` y ya no leen globals."""
+    estado `st` de la invocación. Las funciones puras de abajo reciben `ctx` y no leen
+    ningún estado global."""
     return {
-        "customerId": customer_id,
-        "customerName": customer_name,
-        "processId": process_id,
-        "campaignId": campaign_id,
-        "attachment": attachment,
-        "fromEmail": from_email,
-        "headers": headers,
-        "templateName": template_name,
-        "smsBody": sms_body,        # texto SMS (solo canal SMS)
-        "wspTemplate": wsp_template,  # nombre HSM (solo canal WSP)
-        "voiceMessage": voice_message,  # texto TTS (solo canal VOZ)
+        "customerId": st.customer_id,
+        "customerName": st.customer_name,
+        "processId": st.process_id,
+        "campaignId": st.campaign_id,
+        "attachment": st.attachment,
+        "fromEmail": st.from_email,
+        "headers": st.headers,
+        "templateName": st.template_name,
+        "smsBody": st.sms_body,          # texto SMS (solo canal SMS)
+        "wspTemplate": st.wsp_template,  # nombre HSM (solo canal WSP)
+        "voiceMessage": st.voice_message,  # texto TTS (solo canal VOZ)
     }
 
 
@@ -393,7 +393,7 @@ def check_and_create_table(table_name:str, id:str)->bool:
             KeySchema=key_schema,
             AttributeDefinitions=attribute_definitions,
             BillingMode='PAY_PER_REQUEST'  #Configurar capacidad bajo demanda
-        )        
+        )
         print(f"La tabla '{table_name}' ha sido creada con éxito.")
         was_created = True
     except ClientError as e:
@@ -431,14 +431,6 @@ def ensure_status_table(customer_name:str)->str:
             print("Error al crear la tabla de estados:", e)
     return table_name
 
-def get_blacklist_emails() -> set:
-    table_blacklist = dynamodb.Table('cliente_blacklist')
-    response = table_blacklist.scan(ProjectionExpression='email')
-    return set(item['email'] for item in response['Items'])
-
-def filtrar_emails_validos(lista_emails: list[str], blacklist: set[str]) -> list[str]:
-    return [email for email in lista_emails if email not in blacklist]
-
 def _batch_get_emails(table_name:str, keys:list)->set:
     """
     Consulta por lotes qué emails de `keys` existen en la tabla `table_name`
@@ -471,7 +463,7 @@ def _batch_get_emails(table_name:str, keys:list)->set:
         return set()
     return found
 
-def check_blacklist(keys:list)->set:
+def check_blacklist(customer_name:str, keys:list)->set:
     """
     Consulta los email en la lista negra del cliente. La tabla
     '{customer}_blackList' se crea con PK 'email' (ReceptionStatus escribe
@@ -480,22 +472,23 @@ def check_blacklist(keys:list)->set:
     """
     return _batch_get_emails(f'{customer_name}_blackList', keys)
 
-def check_unsubscribes(keys:list)->set:
+def check_unsubscribes(customer_name:str, keys:list)->set:
     """
     Consulta los email desuscritos del cliente. La tabla '{customer}_unsubscribe'
     se crea con PK 'email' (igual que la escribe la lambda Unsubscribe).
     """
     return _batch_get_emails(f'{customer_name}_unsubscribe', keys)
 
-def insert_mails_status(emails:list,state:str,description:str)->None:
+def insert_mails_status(st:'ProcessState',emails:list,state:str,description:str)->None:
     """
     Función encargada de insertar los detalles de cada envio a la base de datos con su respectivo estado. Aplica solo para desinscritos y lista negra
 
     Args:
+        st (ProcessState): Estado de la invocación (process_id, customer_name, fecha)
         emails (list): Lista con los email de lista negra o desinscritos que se van a insertar a la base de datos
         state (str): Estado 12 (Desinscrito) o 13 (Lista negra)
         description (str): Descripcion de cualquiera de los dos estados
-        
+
     Returns:
         None: No retorna resultados
     """
@@ -505,10 +498,6 @@ def insert_mails_status(emails:list,state:str,description:str)->None:
     # Define los datos que deseas insertar
     for register in emails:
         id = str(uuid.uuid4())
-
-        #data_list = register.split(";")
-        #unique_id = data_list[0]
-        #email = data_list[1]
 
         unique_id = register[0]
         email = register[1]
@@ -520,22 +509,21 @@ def insert_mails_status(emails:list,state:str,description:str)->None:
             'uniqueId': unique_id,
             'email': email,
             'data': register,
-            'date': formatted_date
+            'date': st.formatted_date
         })
 
         #Data para insertar en los estados. processId = PK (tabla única {customer}_sendStatus).
         data_to_insert_send_status.append({
-            'processId': process_id,
+            'processId': st.process_id,
             'sendStatusId': id,
             'sendDetailId': id,
-            'date': formatted_date,
+            'date': st.formatted_date,
             'state': state,
             'type1': description,
             'type2': description
         })
 
-    table_name_details = f'{customer_name}_sendDetail_{process_id}'
-    #table_name_details = f'{customer_name}_sendDetail_9540e04c-7f00-4499-8e80-1ab15bea968f'
+    table_name_details = f'{st.customer_name}_sendDetail_{st.process_id}'
     table_details = dynamodb.Table(table_name_details)
 
     #Almacena en bufer la data para hacer el insert por batch y maneja internamente los reintentos de elementos no procesados
@@ -544,7 +532,7 @@ def insert_mails_status(emails:list,state:str,description:str)->None:
             batch.put_item(Item=item)
 
     # Tabla ÚNICA de estados del cliente (antes: una por proceso).
-    table_status = dynamodb.Table(f'{customer_name}_sendStatus')
+    table_status = dynamodb.Table(f'{st.customer_name}_sendStatus')
     with table_status.batch_writer() as batch:
         for item in data_to_insert_send_status:
             batch.put_item(Item=item)
@@ -568,29 +556,327 @@ def upload_s3(bucket_name:str,object_key:str,data:any) ->None:
 def validate_csv():
     pass
 
+
+def preparar_muestras(st, data, response_campaign, user_id, template_version,
+                      temp_file, delimiter, url_sqs, patron_email):
+    """Rama de ENVÍO DE MUESTRAS (correos de prueba). Reemplaza el correo real de los
+    primeros registros (o de las identificaciones seleccionadas) por los correos de
+    prueba y los encola. No toca la base real ni marca la campaña como 'Enviando'.
+
+    Devuelve (status, status_code, description). El estado `st` lleva todo el contexto
+    de la invocación (antes eran globals)."""
+    status = True
+    status_code = 200
+    description = "Campaña enviandose correctamente"
+
+    registers = []
+    count_register = 0
+
+    print("Inica proceso de envio de muestras")
+    process = data["campaignName"] + "-Samples"
+    quantity_samples = data['quantitySamples']
+    print("Cantidad  muestras en el payload: " + str(quantity_samples))
+    selective_samples = data.get('selectiveSamples', False)
+    recipients = data["recipients"]
+    print(f"Correos de muestras: {recipients}")
+    #Validar que los email sean correctos
+    quantity_recipients = len(recipients)
+    invalid_mail = False
+    invalid_mails = ""
+
+    registers_to_send = 0
+    quantity_blacklist = 0
+    quantity_unsubscribe = 0
+    quantity_deletions = 0
+    for email in recipients:
+        if not re.match(patron_email, email):
+            invalid_mail = True
+            invalid_mails += email
+
+    # Límite de envíos de muestras por campaña (acumulado). Cada operación de muestras
+    # cuenta 1; al llegar a MAX_SAMPLE_SENDS se bloquea (evita abuso/costos con envíos
+    # de prueba repetidos).
+    samples_sent_before = int(response_campaign['Items'][0].get('samplesSentCount', 0))
+    limit_reached = samples_sent_before >= MAX_SAMPLE_SENDS
+    print(f"Muestras enviadas antes: {samples_sent_before}/{MAX_SAMPLE_SENDS}")
+
+    if limit_reached:
+        description = (f'Se alcanzó el máximo de {MAX_SAMPLE_SENDS} envíos de '
+                       f'muestras para esta campaña. Aprueba y envía la campaña '
+                       f'real o crea una nueva campaña.')
+        status = False
+        print(description)
+        status_code = 429
+        return status, status_code, description
+
+    if invalid_mail:
+        description = f'Error en las direcciones email enviadas para las muestras, emails con error: {invalid_mails}'
+        status = False
+        print(description)
+        status_code = 400
+        return status, status_code, description
+
+    print("Todos los email enviados son validos")
+    if selective_samples:
+        print("Proceso con muestras selectivas")
+        #En el proceso de muestras selectivas solo se van a enviar la cantidad de registros que se encuentren en el spool del cliente
+        #No se realizara el proceso de completar la cantidad de muestras
+        try:
+            # Las identificaciones llegan del front como texto; el spool trae line[0]
+            # numérico. Normalizamos ambos a texto (sin espacios) para que la comparación
+            # haga match (antes int == str nunca coincidía y no se enviaba nada).
+            sample_identifications = set(str(i).strip() for i in data["identifications"])
+            index_recipient = 0
+            samples_count = 0
+            print(f"Identificaciones para las muestras: {sample_identifications}")
+
+            print('Inicio lectura del archivo para filtrar los registros de muestras selectivas y reemplazar el email real con el de muestras')
+            with open(temp_file, 'r', encoding=ENCODING) as file:
+                print("Apertura correcta del archivo Csv")
+                # Delimitador detectado (no se asume ';')
+                reader = csv.reader(file, delimiter=delimiter)
+                print("Lectura correcta del archivo como Csv")
+                st.headers = next(reader)  # primer linea = encabezado
+                print("Headers: " + str(st.headers))
+                for line in reader:
+                    #Reviso si ya asigne la cantidad total de muestras para no seguir recorriendo las lineas
+                    if samples_count == quantity_samples:
+                        print("Salgo del bucle porque ya encontre todas las muestras solicitadas")
+                        break
+                    id = str(line[0]).strip()
+                    for identification in sample_identifications:
+                        if id == identification:
+                            samples_count += 1
+                            print("Muestra selectiva encontrada en la base de datos del cliente")
+                            #Reemplazar email real
+                            if index_recipient == quantity_recipients:
+                                index_recipient = 0
+                            #Reemplazar el email real por el email de muestras
+                            new_email = recipients[index_recipient]
+                            real_email = line[1]
+                            print(f'Reemplazando el email "{real_email}" por el email "{new_email}"')
+                            line[1] = new_email
+                            registers.append(line)
+                            index_recipient += 1
+                            break
+
+            registers_to_send = samples_count
+        except Exception as e:
+            print(e)
+            update_campaign_status(st, "Error")
+            description = 'Error en el filtrado de los registros desde la base de datos original'
+            status = False
+            print(description)
+            status_code = 400
+        else:
+            print('Los filtros de registros se realizaron de manera correcta')
+            samples_found = len(registers)
+            if samples_found > 0:
+                print("Se procede a realizar los envios a la cola")
+                messages = prepare_message(build_ctx(st), registers, 1)
+                send_sqs(url_sqs, messages)
+            else:
+                print(f'No se encontro ningura de las cedulas "{sample_identifications}" en el spool de envios')
+    else:
+        print("Proceso con muestras automaticas")
+        try:
+            #Se realiza el envio de la cantidad de email indicados con la data de los primeros registros de la BD
+            index_recipient = 0
+            print('Inicio lectura del archivo para tomar los primeros registros y reemplazar el email real con el de muestras')
+            with open(temp_file, 'r', encoding=ENCODING) as file:
+                print("Apertura correcta del archivo Csv")
+                reader = csv.reader(file, delimiter=delimiter)
+                print("Lectura correcta del archivo como Csv")
+                st.headers = next(reader)  # primer linea = encabezado
+                print("Headers: " + str(st.headers))
+                for line in reader:
+                    print("Registro a procesar: " + str(line))
+                    #Reinicio el indice de los recipient para cuando la cantidad de muestras es mayor a los email enviados en la lista
+                    if index_recipient == quantity_recipients:
+                        index_recipient = 0
+                    #Reemplazar el email real por el email de muestras
+                    print(recipients)
+                    new_email = recipients[index_recipient]
+                    print(f"Line: {line}")
+                    real_email = line[1]
+                    print(f'Reemplazando el email "{real_email}" por el email "{new_email}"')
+                    line[1] = new_email
+                    registers.append(line)
+                    count_register += 1
+                    index_recipient += 1
+                    if count_register == quantity_samples:
+                        print("Preparar mensaje para enviar")
+                        messages = prepare_message(build_ctx(st), registers, 1)
+                        send_sqs(url_sqs, messages)
+                        registers = []
+                        break
+            #Valido si hay registros, es decir que la BD original no contenia los suficientes registros para las muestras
+            if registers:
+                print("La cantidad de muestras solicitada es mayor a la data que se encuentra en la BD")
+                messages = prepare_message(build_ctx(st), registers, 1)
+                send_sqs(url_sqs, messages)
+
+            # Elimina el archivo temporal descargado
+            os.remove(temp_file)
+            print("Se elimino el archivo temporal")
+            registers_to_send = len(registers)
+            print("Se asigno nuevamente la cantidad de registros a enviar")
+        except:
+            update_campaign_status(st, "Error")
+            description = 'Error en el proceso de muestras automaticas'
+            status = False
+            print(description)
+            status_code = 400
+
+    insert_process(st, process, user_id, registers_to_send, registers_to_send, quantity_blacklist, quantity_unsubscribe, quantity_deletions, 1, template_version, "Muestras")
+    print("Finaliza insercion en la tabla de procesos")
+    update_campaign_status(st, "Muestras")
+    print("Finaliza actualizacion de la tabla de estado de la campaña")
+    # Solo se cuenta la operación de muestras si salió bien.
+    if status:
+        nuevo_conteo = increment_samples_count(st)
+        print(f"Envíos de muestras usados: {nuevo_conteo}/{MAX_SAMPLE_SENDS}")
+
+    return status, status_code, description
+
+
+def preparar_real(st, data, response_campaign, user_id, template_version, temp_file,
+                  delimiter, url_sqs, channel_name, unsubscribe_existed,
+                  blacklist_existed, patron_email):
+    """Rama de ENVÍO REAL (a toda la base). Aplica el bloqueo por cliente y la idempotencia,
+    lee el spool, filtra estructura/lista negra/desuscritos, agrupa en lotes y encola a SQS,
+    y registra el proceso + los estados de los filtrados.
+
+    Devuelve (status, status_code, description). Puede lanzar RealSendDisabled/AlreadySending,
+    que el handler atrapa. El estado `st` lleva todo el contexto (antes eran globals)."""
+    status = True
+    status_code = 200
+    description = "Campaña enviandose correctamente"
+
+    print("Inicia proceso de envio real")
+    # Bloqueo por cliente: si el cliente tiene deshabilitados los envíos reales, no se
+    # procesa la campaña real (las muestras sí). Se lanza RealSendDisabled y se atrapa en
+    # el handler (mantiene el 403 y NO marca la campaña en Error).
+    if not is_real_send_enabled(st.customer_id):
+        raise RealSendDisabled(
+            'Los envíos reales están deshabilitados para este cliente. '
+            'Contacta al administrador de MailConnect.')
+    # IDEMPOTENCIA: transición atómica a 'Enviando'. Si otra invocación (reintento de
+    # Lambda/API Gateway, doble clic, envío concurrente) ya tomó el lock, NO se re-encola
+    # (se lanza AlreadySending → 200 limpio).
+    if not try_start_real_send(st, st.process_id):
+        raise AlreadySending('La campaña ya está en proceso de envío; no se re-encola.')
+
+    if (channel_name == "EM"):
+        registers_for_message = REGISTERS_FOR_EM
+    if (channel_name == "EAU"):
+        registers_for_message = REGISTERS_FOR_EAU
+    if (channel_name == "EAP"):
+        registers_for_message = REGISTERS_FOR_EAP
+    if (channel_name == "SMS"):
+        registers_for_message = REGISTERS_FOR_SMS
+    if (channel_name == "WSP"):
+        registers_for_message = REGISTERS_FOR_WSP
+    if (channel_name == "VOZ"):
+        registers_for_message = REGISTERS_FOR_VOICE
+    global_counter_message = 0
+
+    keys = []
+    emails_error = []
+    registers_unsubscribe = []
+    registers_blacklist = []
+    registers_correct = []
+    registers_on_spool = 0
+    registers_to_send = 0
+    quantity_blacklist = 0
+    quantity_unsubscribe = 0
+    quantity_deletions = 0
+    # Lee el archivo CSV descargado y agrupa los datos
+    try:
+        print("Lectura del archivo spool para validar registros con estructura de email incorrecta")
+        with open(temp_file, 'r', encoding=ENCODING) as file:
+            reader = csv.reader(file, delimiter=delimiter)
+            st.headers = next(reader)  # primer linea = encabezado
+            print("Headers: " + str(st.headers))
+            for line in reader:
+                registers_on_spool += 1
+                #En este primer for recorro los registros y verifico si no tienen error de estructura
+                #Los registros sin error los guardo para luego verificar en las listas negras y unsubscribe
+                #Los registros buenos los agrego a un array y los malos a otro
+                email = line[1]
+                if re.match(patron_email, email):
+                    #Voy agregando los email a una lista para posteriormente verificar si estan en lista negra o desinscritos
+                    keys.append({'email': email})
+                    registers_correct.append(line)
+                else:
+                    emails_error.append(line)
+        print("Finaliza lectura del archivo spool para validar registros con estructura de email incorrecta")
+        #consultar registros en unsubscribe y blacklist
+        #Solo se consulta si la tabla ya existía (si es el primer proceso del cliente, las
+        #tablas recién creadas están vacías).
+        blacklist_emails = set()
+        unsubscribes_emails = set()
+        if unsubscribe_existed:
+            unsubscribes_emails = check_unsubscribes(st.customer_name, keys)
+            quantity_unsubscribe = len(unsubscribes_emails)
+        if blacklist_existed:
+            blacklist_emails = check_blacklist(st.customer_name, keys)
+            quantity_blacklist = len(blacklist_emails)
+
+        print("Cantidad registros en blacklist: " + str(quantity_blacklist))
+        print("Cantidad registros en unsubscribe: " + str(quantity_unsubscribe))
+
+        quantity_deletions = len(emails_error)
+        print("Cantidad registros con estructura incorrecta: " + str(quantity_deletions))
+
+        print("Inicio de clasificacion email correctos para el envio")
+
+        # Clasificación + agrupación en lotes + encolado a SQS, extraído a una función pura
+        # y testeable (antes: bucle anidado en el handler).
+        registers_blacklist, registers_unsubscribe, registers_to_send, global_counter_message = \
+            classify_and_enqueue(
+                build_ctx(st), registers_correct, blacklist_emails,
+                unsubscribes_emails, registers_for_message, url_sqs)
+        print(f"Encolados: {registers_to_send} en {global_counter_message} mensaje(s)")
+    except Exception as e:
+        update_campaign_status(st, "Error")
+        print(e)
+        print('Error en el proceso de envios reales')
+        status = False
+        description = 'Error en el proceso de envios reales'
+        status_code = 400
+    else:
+        print("TotalMensajes: " + str(global_counter_message))
+        #El total de mensajes es el total de partes para insertar en processDetail
+        insert_process(st, data["campaignName"], user_id, registers_on_spool, registers_to_send, quantity_blacklist, quantity_unsubscribe, quantity_deletions, global_counter_message, template_version, "Procesando")
+        #Elimina el archivo temporal descargado
+        os.remove(temp_file)
+
+        print("Proceso de registro de errores en la tabla de processDetail")
+        #Insertar los email con estructura invalida en las tablas de estados y de datos
+        insert_mails_status(st, emails_error, 11, "El email no tiene una estructura valida")
+        #Insertar los email desinscritos en las tablas de estados y de datos
+        insert_mails_status(st, registers_unsubscribe, 12, "El email se encuentra desinscrito para este cliente")
+        #Insertar los email que estaban en la lista negra en las tablas de estados y de datos
+        insert_mails_status(st, registers_blacklist, 13, "El email se encuentra en la lista negra de este cliente")
+
+    return status, status_code, description
+
+
 def lambda_handler(event, context):
     """
-    Función principal
+    Función principal. Hace el SETUP común (parseo, campaña, tablas, descarga del CSV) y
+    DESPACHA a preparar_muestras() o preparar_real() según el endpoint. El estado de la
+    invocación viaja en un objeto ProcessState (antes eran variables globales).
 
     Args:
         event (dict): Datos de evento
         context (dict): Datos de contexto
-        
+
     Returns:
         None: Personalizado
     """
-    global process_id
-    global campaign_id
-    global customer_id
-    global customer_name
-    global formatted_date
-    global from_email
-    global headers
-    global template_name
-    global attachment
-    global sms_body
-    global wsp_template
-    global voice_message
+    st = ProcessState()
 
     status = True
     description = "Campaña enviandose correctamente"
@@ -599,18 +885,15 @@ def lambda_handler(event, context):
     # Obtener la fecha y hora actual
     now = datetime.utcnow()
     # Formatear la fecha y hora según un formato específico
-    formatted_date = now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + 'Z'
+    st.formatted_date = now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + 'Z'
 
     try:
-        # Obtener datos del evento        
+        # Obtener datos del evento
         endpoint = event["resource"]
         print("endpoint: " + endpoint)
         data = json.loads(event["body"])
-        #print(body)
-        #data = json.loads(body)
-        #print(data)
-        customer_name = data["customerName"]
-        print("Customer: " + customer_name)
+        st.customer_name = data["customerName"]
+        print("Customer: " + st.customer_name)
         campaign_name = data["campaignName"]
         user_id = data["userId"]
 
@@ -621,7 +904,7 @@ def lambda_handler(event, context):
         ####################################
 
         samples = "Send-batch-template-samples" in endpoint
-        print("Samples: " + str(samples)) 
+        print("Samples: " + str(samples))
         response_campaign = select_campaign(campaign_name)
         print(response_campaign)
         if response_campaign['Items']:
@@ -638,407 +921,103 @@ def lambda_handler(event, context):
             #Esta linea siguiente es la de pruebas
             if (state == "Pendiente" or state == "Muestras" or state == "Error"):
                 print(f'La campaña se encuentra en estado "{state}" y se puede realizar su envio')
-                process_id = str(uuid.uuid4())
+                st.process_id = str(uuid.uuid4())
                 # Detalles del archivo en S3
-                bucket_name = f'{customer_name.lower()}.database'
-                temp_file = f'/tmp/{customer_name}_{formatted_date}.tmp'  # Ruta temporal para almacenar el archivo descargado
-                print("Process id:" + process_id)
-                
-                campaign_id = response_campaign['Items'][0]["campaignId"]   
-                print("Despues de capturar el id de campaña")             
-                #REVISAR
-                #El siguiente campo parece que no lo necesito
-                customer_id = response_campaign['Items'][0]["customerId"]
+                bucket_name = f'{st.customer_name.lower()}.database'
+                temp_file = f'/tmp/{st.customer_name}_{st.formatted_date}.tmp'  # Ruta temporal para almacenar el archivo descargado
+                print("Process id:" + st.process_id)
+
+                st.campaign_id = response_campaign['Items'][0]["campaignId"]
+                print("Despues de capturar el id de campaña")
+                st.customer_id = response_campaign['Items'][0]["customerId"]
                 consecutive = response_campaign['Items'][0]["consecutive"]
                 channel_name = response_campaign['Items'][0]["channel"]
                 data_path = response_campaign['Items'][0]["dataPath"]
-                from_email = response_campaign['Items'][0]["originEmail"]
+                st.from_email = response_campaign['Items'][0]["originEmail"]
                 # Para SMS el campo 'template' de la campaña guarda el TEXTO del mensaje
                 # (no un template de SES). Para email queda vacío y no se usa.
-                sms_body = response_campaign['Items'][0].get("template", "") if channel_name == "SMS" else ""
+                st.sms_body = response_campaign['Items'][0].get("template", "") if channel_name == "SMS" else ""
                 # Para WhatsApp el campo 'template' guarda el NOMBRE de la plantilla HSM
                 # aprobada por Meta. Para el resto de canales queda vacío y no se usa.
-                wsp_template = response_campaign['Items'][0].get("template", "") if channel_name == "WSP" else ""
+                st.wsp_template = response_campaign['Items'][0].get("template", "") if channel_name == "WSP" else ""
                 # Para Voz el campo 'template' guarda el TEXTO a leer por TTS.
-                voice_message = response_campaign['Items'][0].get("template", "") if channel_name == "VOZ" else ""
+                st.voice_message = response_campaign['Items'][0].get("template", "") if channel_name == "VOZ" else ""
 
                 # Define los detalles de la tabla processDetail
-                table = f'{customer_name}_processDetail'
-                id = 'processDetailId'
-                check_and_create_table(table,id)
+                check_and_create_table(f'{st.customer_name}_processDetail', 'processDetailId')
 
-                # Tabla de desuscritos: PK 'email' (así la escribe la lambda
-                # Unsubscribe y así la consulta check_unsubscribes). Si la tabla
-                # ya existía, hay que FILTRAR contra ella en el envío real.
-                unsubscribe_existed = not check_and_create_table(f'{customer_name}_unsubscribe','email')
+                # Tabla de desuscritos: PK 'email' (así la escribe la lambda Unsubscribe y
+                # así la consulta check_unsubscribes). Si la tabla ya existía, hay que
+                # FILTRAR contra ella en el envío real.
+                unsubscribe_existed = not check_and_create_table(f'{st.customer_name}_unsubscribe', 'email')
 
-                # Tabla de lista negra: PK 'email' (igual que unsubscribe), para
-                # que el filtrado por email de check_blacklist funcione directo.
-                # ReceptionStatus incluye 'email' en sus inserts, así que escribe
-                # compatible. Tablas viejas con PK 'blackListId' se ignoran con
-                # gracia (borrar y dejar que se recreen).
-                blacklist_existed = not check_and_create_table(f'{customer_name}_blackList','email')
+                # Tabla de lista negra: PK 'email' (igual que unsubscribe), para que el
+                # filtrado por email de check_blacklist funcione directo. ReceptionStatus
+                # incluye 'email' en sus inserts, así que escribe compatible. Tablas viejas
+                # con PK 'blackListId' se ignoran con gracia (borrar y dejar que se recreen).
+                blacklist_existed = not check_and_create_table(f'{st.customer_name}_blackList', 'email')
 
                 #Estas tablas siempre se deben crear
                 # Define los detalles de la tabla sendDetail
-                table = f'{customer_name}_sendDetail_{process_id}'
-                id = 'sendDetailId'
-                check_and_create_table(table,id)
+                check_and_create_table(f'{st.customer_name}_sendDetail_{st.process_id}', 'sendDetailId')
 
                 # Tabla ÚNICA de estados del cliente (PK processId + SK sendStatusId).
                 # Antes se creaba una tabla por proceso ({customer}_sendStatus_{uuid}).
-                ensure_status_table(customer_name)
-                #Realizar la creacion de la cola para el cliente
-                #Configurar la cola como disparador
-                
-                template_name = f'{customer_name}_{consecutive}_{channel_name}_{campaign_name}'
+                ensure_status_table(st.customer_name)
 
-                #template_name = f'{customer_name}_{consecutive}_{channel_name}_PromocionesJunio'
+                st.template_name = f'{st.customer_name}_{consecutive}_{channel_name}_{campaign_name}'
 
                 print(f"Channel: {channel_name}")
                 #EAU = Email con adjunto unico (El mismo adjunto se envia a todos los destinatarios)
                 #EAP = Email con adjunto personalizado (Se realiza personalizacion en campos para enviar a cada destinatario un adjunto diferente)
-                #attachment = (channel_name == "EAU" or channel_name == "EAP")
                 if channel_name == "EAU":
-                    attachment = True
-                    url_sqs= URL_SQS_EAU
+                    st.attachment = True
+                    url_sqs = URL_SQS_EAU
                 elif channel_name == "EAP":
-                    attachment = True
+                    st.attachment = True
                     url_sqs = URL_SQS_EAP
                 elif channel_name == "SMS":
-                    attachment = False
+                    st.attachment = False
                     url_sqs = URL_SQS_SMS
                 elif channel_name == "WSP":
-                    attachment = False
+                    st.attachment = False
                     url_sqs = URL_SQS_WSP
                 elif channel_name == "VOZ":
-                    attachment = False
+                    st.attachment = False
                     url_sqs = URL_SQS_VOICE
                 else:
-                    attachment = False
+                    st.attachment = False
                     url_sqs = URL_SQS_EM
-                registers = ""
-                count_register = 0
-                count_message = 0
                 print("Queue: " + url_sqs)
 
                 try:
                     # Descarga el archivo CSV desde S3
                     s3.download_file(bucket_name, data_path, temp_file)
                 except:
-                    update_campaign_status("Error")
-                    description = f'No se pudo realizar la descarga del archivo "{temp_file}" del bucket "{bucket_name} - {data_path}"'                    
+                    update_campaign_status(st, "Error")
+                    description = f'No se pudo realizar la descarga del archivo "{temp_file}" del bucket "{bucket_name} - {data_path}"'
                     status = False
                     print(description)
                     status_code = 404
                 else:
-                    registers = []
-                    headers = ""
-                    # Detectar el delimitador del CSV (el cliente pudo subirlo con
-                    # ; , tab o |). Se usa este valor en todas las lecturas de abajo.
+                    # Detectar el delimitador del CSV (el cliente pudo subirlo con ; , tab o |).
                     delimiter = detect_delimiter(temp_file)
-                    #En el front se debe agregar un boton o slider para elegir la cantidad de muestras
-                    #Entre 1 y 5 muestras maximo
-                    #Se debe poner entre 1 y 2 campos (1 campo para el email y el otro campo es para la identificacion que solo aplica si son muestras selectivas)                    
+                    #Estructura obligatoria por posicion: line[0]=Identificacion, line[1]=Correo, line[2]=Nombre
                     patron_email = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{2,}$'
 
                     if samples:
-                        print("Inica proceso de envio de muestras")                        
-                        process = campaign_name + "-Samples"                    
-                        quantity_samples = data['quantitySamples']   
-                        print("Cantidad  muestras en el payload: " + str(quantity_samples))
-                        selective_samples = data.get('selectiveSamples',False)                   
-                        recipients = data["recipients"]
-                        print(f"Correos de muestras: {recipients}")
-                        #Validar que los email sean correctos
-                        quantity_recipients = len(recipients)
-                        invalid_mail = False
-                        invalid_mails = ""
- 
-                        registers_to_send = 0
-                        quantity_blacklist = 0
-                        quantity_unsubscribe = 0
-                        quantity_deletions = 0 
-                        for email in recipients:
-                            if not re.match(patron_email, email):
-                                invalid_mail = True
-                                invalid_mails += email
-
-                        # Límite de envíos de muestras por campaña (acumulado). Cada
-                        # operación de muestras cuenta 1; al llegar a MAX_SAMPLE_SENDS
-                        # se bloquea (evita abuso/costos con envíos de prueba repetidos).
-                        samples_sent_before = int(response_campaign['Items'][0].get('samplesSentCount', 0))
-                        limit_reached = samples_sent_before >= MAX_SAMPLE_SENDS
-                        print(f"Muestras enviadas antes: {samples_sent_before}/{MAX_SAMPLE_SENDS}")
-
-                        if limit_reached:
-                            description = (f'Se alcanzó el máximo de {MAX_SAMPLE_SENDS} envíos de '
-                                           f'muestras para esta campaña. Aprueba y envía la campaña '
-                                           f'real o crea una nueva campaña.')
-                            status = False
-                            print(description)
-                            status_code = 429
-                        elif invalid_mail:
-                            description = f'Error en las direcciones email enviadas para las muestras, emails con error: {invalid_mails}'
-                            status = False
-                            print(description)
-                            status_code = 400
-                        else:
-                            print("Todos los email enviados son validos")
-                            if selective_samples:
-                                print("Proceso con muestras selectivas")
-                                #En el proceso de muestras selectivas solo se van a enviar la cantidad de registros que se encuentren en el spool del cliente
-                                #No se realizara el proceso de completar la cantidad de muestras
-
-                                try:
-                                    # Las identificaciones llegan del front como texto; el
-                                    # spool trae line[0] numérico. Normalizamos ambos a texto
-                                    # (sin espacios) para que la comparación haga match
-                                    # (antes int == str nunca coincidía y no se enviaba nada).
-                                    sample_identifications = set(str(i).strip() for i in data["identifications"])
-                                    index_recipient = 0
-                                    samples_count = 0
-                                    print(f"Identificaciones para las muestras: {sample_identifications}")
-
-                                    #Opcion 2
-                                    print('Inicio lectura del archivo para filtrar los registros de muestras selectivas y reemplazar el email real con el de muestras')
-                                    with open(temp_file, 'r', encoding=ENCODING) as file:
-                                        print("Apertura correcta del archivo Csv")
-                                        # Delimitador detectado (no se asume ';')
-                                        reader = csv.reader(file, delimiter=delimiter)
-                                        print("Lectura correcta del archivo como Csv")
-                                        headers = next(reader) #Agrego la primer linea que pertenece al encabezado a una variable
-                                        print("Headers: " + str(headers))
-                                        for line in reader:
-                                        #for line in file:  
-                                            #print("Registro a procesar: " + str(line)) 
-                                            #Reviso si ya asigne la cantidad total de muestras para no seguir recorriendo las lineas
-                                            if samples_count == quantity_samples:
-                                                print("Salgo del bucle porque ya encontre todas las muestras solicitadas")
-                                                break
-                                            id = str(line[0]).strip()
-                                            #print(id)
-                                            for identification in sample_identifications:
-                                                if id == identification:
-                                                    samples_count += 1
-                                                    print("Muestra selectiva encontrada en la base de datos del cliente")
-                                                    #Reemplazar email real
-                                                    if index_recipient == quantity_recipients:
-                                                        index_recipient = 0
-                                                    #Reemplazar el email real por el email de muestras
-                                                    new_email = recipients[index_recipient]
-                                                    real_email = line[1]
-                                                    print(f'Reemplazando el email "{real_email}" por el email "{new_email}"')
-                                                    line[1] = new_email
-                                                    #line = line.replace(real_email,new_email)
-                                                    registers.append(line)
-                                                    index_recipient += 1
-                                                    break
-                                    
-                                    registers_to_send = samples_count
-
-                                    #registers = search_samples(temp_file,identifications,recipients,quantitySamples,quantity_recipients)
-
-                                    #registers = emailReplace(registers,recipients)
-                                except Exception as e:
-                                    print(e)
-                                    update_campaign_status("Error")
-                                    description = 'Error en el filtrado de los registros desde la base de datos original'                                    
-                                    status = False
-                                    print(description)
-                                    status_code = 400
-                                else:
-                                    print('Los filtros de registros se realizaron de manera correcta')
-                                    samples_found = len(registers)
-                                    if samples_found > 0:
-                                        print("Se procede a realizar los envios a la cola")
-                                        messages = prepare_message(build_ctx(),registers,1)
-                                        send_sqs(url_sqs,messages)
-                                    else:
-                                        print(f'No se encontro ningura de las cedulas "{sample_identifications}" en el spool de envios')
-                                
-                            else:
-                                print("Proceso con muestras automaticas")
-                                try:
-                                    #Se realiza el envio de la cantidad de email indicados con la data de los primeros registros de la BD
-                                    index_recipient = 0
-                                    print('Inicio lectura del archivo para tomar los primeros registros y reemplazar el email real con el de muestras')
-                                    with open(temp_file, 'r', encoding=ENCODING) as file:
-                                        print("Apertura correcta del archivo Csv")
-                                        reader = csv.reader(file, delimiter=delimiter)
-                                        print("Lectura correcta del archivo como Csv")
-                                        headers = next(reader) #Agrego la primer linea que pertenece al encabezado a una variable
-                                        print("Headers: " + str(headers))
-                                        for line in reader:
-                                        #for line in file:                                    
-                                            print("Registro a procesar: " + str(line))
-                                            #Reinicio el indice de los recipient para cuando la cantidad de muestras es mayor a los email enviados en la lista
-                                            if index_recipient == quantity_recipients:
-                                                index_recipient = 0
-                                            #Reemplazar el email real por el email de muestras
-                                            print(recipients)
-                                            new_email = recipients[index_recipient] 
-                                            print(f"Line: {line}")   
-                                            real_email = line[1]
-                                            print(f'Reemplazando el email "{real_email}" por el email "{new_email}"')
-                                            line[1] = new_email
-                                            #line = line.replace(real_email,new_email)
-                                            registers.append(line)
-                                            count_register += 1
-                                            index_recipient += 1
-                                            if count_register == quantity_samples:
-                                                print("Preparar mensaje para enviar")
-                                                messages = prepare_message(build_ctx(),registers,1)
-                                                send_sqs(url_sqs,messages)
-                                                registers = []
-                                                break
-                                    #Valido si hay registros, es decir que la BD original no contenia los suficientes registros para las muestras
-                                    if registers:
-                                        print("La cantidad de muestras solicitada es mayor a la data que se encuentra en la BD")
-                                        messages = prepare_message(build_ctx(),registers,1)
-                                        send_sqs(url_sqs,messages)
-
-                                    # Elimina el archivo temporal descargado
-                                    os.remove(temp_file)
-                                    print("Se elimino el archivo temporal")
-                                    registers_to_send = len(registers)
-                                    print("Se asigno nuevamente la cantidad de registros a enviar")
-                                except:
-                                    update_campaign_status("Error")
-                                    description = 'Error en el proceso de muestras automaticas'                                    
-                                    status = False
-                                    print(description)
-                                    status_code = 400
-                            insert_process(process,user_id,registers_to_send,registers_to_send,quantity_blacklist,quantity_unsubscribe,quantity_deletions,1,template_version,"Muestras")
-                            print("Finaliza insercion en la tabla de procesos")
-                            update_campaign_status("Muestras")
-                            print("Finaliza actualizacion de la tabla de estado de la campaña")
-                            # Solo se cuenta la operación de muestras si salió bien.
-                            if status:
-                                nuevo_conteo = increment_samples_count()
-                                print(f"Envíos de muestras usados: {nuevo_conteo}/{MAX_SAMPLE_SENDS}")
+                        status, status_code, description = preparar_muestras(
+                            st, data, response_campaign, user_id, template_version,
+                            temp_file, delimiter, url_sqs, patron_email)
                     else:
-                        print("Inicia proceso de envio real")
-                        # Bloqueo por cliente: si el cliente tiene deshabilitados los
-                        # envíos reales, no se procesa la campaña real (las muestras sí).
-                        # Se lanza RealSendDisabled y se atrapa abajo (mantiene el 403 y
-                        # NO marca la campaña en Error).
-                        if not is_real_send_enabled(customer_id):
-                            raise RealSendDisabled(
-                                'Los envíos reales están deshabilitados para este cliente. '
-                                'Contacta al administrador de MailConnect.')
-                        # IDEMPOTENCIA: transición atómica a 'Enviando'. Si otra invocación
-                        # (reintento de Lambda/API Gateway, doble clic, envío concurrente) ya
-                        # tomó el lock, NO se re-encola (se lanza AlreadySending → 200 limpio).
-                        if not try_start_real_send(process_id):
-                            raise AlreadySending(
-                                'La campaña ya está en proceso de envío; no se re-encola.')
-
-                        if (channel_name == "EM"):
-                            registers_for_message = REGISTERS_FOR_EM
-                        if (channel_name == "EAU"):
-                            registers_for_message = REGISTERS_FOR_EAU
-                        if (channel_name == "EAP"):
-                            registers_for_message = REGISTERS_FOR_EAP
-                        if (channel_name == "SMS"):
-                            registers_for_message = REGISTERS_FOR_SMS
-                        if (channel_name == "WSP"):
-                            registers_for_message = REGISTERS_FOR_WSP
-                        if (channel_name == "VOZ"):
-                            registers_for_message = REGISTERS_FOR_VOICE
-                        global_counter_message = 0
-
-                        keys = []       
-                        emails_error = []
-                        registers_unsubscribe = []
-                        registers_blacklist = []
-                        destinations = []
-                        registers_correct = []
-                        registers_on_spool = 0  
-                        registers_to_send = 0
-                        quantity_blacklist = 0
-                        quantity_unsubscribe = 0
-                        quantity_deletions = 0  
-                        # Lee el archivo CSV descargado y agrupa los datos              
-                        try:
-                            print("Lectura del archivo spool para validar registros con estructura de email incorrecta")
-                            with open(temp_file, 'r', encoding=ENCODING) as file:
-                                reader = csv.reader(file, delimiter=delimiter)
-                                headers = next(reader) #Agrego la primer linea que pertenece al encabezado a una variable
-                                print("Headers: " + str(headers))
-                                for line in reader:
-                                #for line in file:
-                                    registers_on_spool += 1
-                                    #En este primer for recorro los registros y verifico si no tienen error de estructura
-                                    #Los registros sin error los guardo para luego verificar en las listas negras y unsubscribe
-                                    #Los registros buenos los agrego a un array y los malos a otro
-                                    #for data in arrayData:
-                                    email = line[1]
-                                    #print(email)
-                                    if re.match(patron_email, email):
-                                        #Voy agregando los email a una lista para posteriormente verificar si estan en lista negra o desinscritos
-                                        #emailList.append(email)
-                                        keys.append({'email': email})
-                                        registers_correct.append(line)
-                                    else:
-                                        emails_error.append(line)
-                            print("Finaliza lectura del archivo spool para validar registros con estructura de email incorrecta")
-                            #consultar registros en unsubscribe y blacklist
-                            #Solo se consulta si la tabla ya existía (si es el primer
-                            #proceso del cliente, las tablas recién creadas están vacías).
-                            #Antes esta condición usaba una bandera que siempre quedaba
-                            #True (las tablas sendStatus_{proceso} siempre son nuevas) y
-                            #el filtrado nunca corría.
-                            blacklist_emails = set()
-                            unsubscribes_emails = set()
-                            if unsubscribe_existed:
-                                unsubscribes_emails = check_unsubscribes(keys)
-                                quantity_unsubscribe = len(unsubscribes_emails)
-                            if blacklist_existed:
-                                blacklist_emails = check_blacklist(keys)
-                                quantity_blacklist = len(blacklist_emails)
-
-                            print("Cantidad registros en blacklist: " + str(quantity_blacklist))                            
-                            print("Cantidad registros en unsubscribe: " + str(quantity_unsubscribe))
-
-                            quantity_deletions = len(emails_error)
-                            print("Cantidad registros con estructura incorrecta: " + str(quantity_deletions))
-
-                            print("Inicio de clasificacion email correctos para el envio")
-
-                            # Clasificación + agrupación en lotes + encolado a SQS, extraído
-                            # a una función pura y testeable (antes: bucle anidado en el handler).
-                            registers_blacklist, registers_unsubscribe, registers_to_send, global_counter_message = \
-                                classify_and_enqueue(
-                                    build_ctx(), registers_correct, blacklist_emails,
-                                    unsubscribes_emails, registers_for_message, url_sqs)
-                            print(f"Encolados: {registers_to_send} en {global_counter_message} mensaje(s)")
-                        except Exception as e:
-                            update_campaign_status("Error")
-                            print(e)
-                            print('Error en el proceso de envios reales')
-                            status = False
-                            description = 'Error en el proceso de envios reales'
-                            status_code = 400
-                        else:
-                            print("TotalMensajes: " + str(global_counter_message)) 
-                            #El total de mensajes es el total de partes para insertar en processDetail    
-                            insert_process(campaign_name,user_id,registers_on_spool,registers_to_send,quantity_blacklist,quantity_unsubscribe,quantity_deletions,global_counter_message,template_version,"Procesando")
-                            #Elimina el archivo temporal descargado
-                            os.remove(temp_file)
-
-                            print("Proceso de registro de errores en la tabla de processDetail")
-                            #Insertar los email desinscritos en las tablas de estados y de datos
-                            insert_mails_status(emails_error,11,"El email no tiene una estructura valida")
-                            #Insertar los email desinscritos en las tablas de estados y de datos
-                            insert_mails_status(registers_unsubscribe,12,"El email se encuentra desinscrito para este cliente")
-                            #Insertar los email que estaban en la lista negra en las tablas de estados y de datos
-                            insert_mails_status(registers_blacklist,13,"El email se encuentra en la lista negra de este cliente")
-                            
+                        status, status_code, description = preparar_real(
+                            st, data, response_campaign, user_id, template_version,
+                            temp_file, delimiter, url_sqs, channel_name,
+                            unsubscribe_existed, blacklist_existed, patron_email)
 
             #Si el estado es "Enviando" o "Terminada" quiere decir que es una campaña que ya no se debe enviar
             else:
-                description = f'La campaña se encuentra en estado "{state}" y por esta razon no puede ser enviada'                
+                description = f'La campaña se encuentra en estado "{state}" y por esta razon no puede ser enviada'
                 status = False
                 print(description)
                 status_code = 404
@@ -1047,7 +1026,7 @@ def lambda_handler(event, context):
             status = False
             print(description)
             status_code = 404
-            update_campaign_status("Error")
+            # No hay campaña que marcar en Error (st.campaign_id no está seteado).
     except AlreadySending as e:
         # Reintento / envío concurrente: la campaña ya tomó el lock. Es el comportamiento
         # correcto (idempotencia), NO un error: 200 y sin marcar Error ni re-encolar.

@@ -85,16 +85,25 @@ tablas en DynamoDB._
       - ⚠️ **Límite conocido:** si un envío falla A LA MITAD (ya encoló algunos lotes) y queda en
         `Error`, un reintento re-encola TODO → duplicados parciales de esos lotes. Cerrarlo del
         todo requiere idempotencia por-lote (dedup en SQS/consumidor); queda para Fase 4.
-- [~] **Fase 3 — Partir el handler** (#8, #7, #11): en progreso.
+- [x] **Fase 3 — Partir el handler** (#8, #7, #11): ✅
       - [x] **3a:** extraído el núcleo del envío real a funciones PURAS y testeables:
             `classify_and_enqueue()` (clasifica lista negra/desuscritos, agrupa en lotes, encola
             con `send_fn` inyectable) y `prepare_message(ctx, data, part)` (ya NO lee globals;
             `build_ctx()` centraliza la lectura de globals en un solo lugar). El bucle anidado del
             handler se reemplazó por una llamada. Pruebas nuevas (filtra/agrupa, ctx, mensaje puro).
             Suite 122→124. ✅
-      - [ ] **3b:** mover las ramas completas a `preparar_muestras()`/`preparar_real()`, terminar
-            de quitar los globals (pasar el estado por parámetros) y un test de integración del
-            handler con moto (S3+SQS+DynamoDB) para cubrir el flujo completo (#11).
+      - [x] **3b:** las dos ramas completas se movieron a `preparar_muestras()` y `preparar_real()`
+            (cada una devuelve `(status, status_code, description)`); el handler quedó reducido al
+            SETUP común (parseo, campaña, tablas, descarga del CSV) + un dispatch. **Globals
+            eliminados** (#7): el estado por-invocación vive ahora en un objeto `ProcessState` que
+            se pasa explícitamente al handler → funciones → helpers (`insert_process`,
+            `update_campaign_status`, `try_start_real_send`, `increment_samples_count`, `build_ctx`,
+            `insert_mails_status` reciben `st`; `check_blacklist`/`check_unsubscribes` reciben
+            `customer_name`). **Test de integración con moto** (S3+SQS+DynamoDB) que cubre el flujo
+            real completo (#11): `test_prepare_batch_integration.py` (camino feliz, duplicado no
+            reencola, 403 deshabilitado). Se escribió ANTES del split como red de seguridad. De paso
+            se quitó el `update_campaign_status("Error")` de la rama "campaña no encontrada" (leía un
+            `campaign_id` inexistente). Suite 124→127. ✅
 - [ ] **Fase 4 — CSV grande por partes** (#3): trocear + fan-out a otra lambda.
 - [ ] **Fase 5 — scan → query / índices** (#6).
 

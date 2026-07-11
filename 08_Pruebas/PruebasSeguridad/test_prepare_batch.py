@@ -56,19 +56,18 @@ def pb():
         res.Table('empresa_blackList').put_item(Item={'email': 'negro@test.com'})
 
         module = _load_prepare_batch()
-        module.customer_name = 'empresa'  # global que usan check_unsubscribes/blacklist
         yield module
 
 
 def test_check_unsubscribes_encuentra_desuscritos(pb):
     keys = [{'email': 'baja@test.com'}, {'email': 'activo@test.com'}, {'email': 'baja2@test.com'}]
-    result = pb.check_unsubscribes(keys)
+    result = pb.check_unsubscribes('empresa', keys)
     assert result == {'baja@test.com', 'baja2@test.com'}
 
 
 def test_check_blacklist_encuentra_lista_negra(pb):
     keys = [{'email': 'negro@test.com'}, {'email': 'limpio@test.com'}]
-    assert pb.check_blacklist(keys) == {'negro@test.com'}
+    assert pb.check_blacklist('empresa', keys) == {'negro@test.com'}
 
 
 def test_batch_get_dedup_y_troceo(pb):
@@ -105,11 +104,13 @@ def test_prepare_message_es_pura_y_devuelve_json(pb):
 
 
 def test_build_ctx_lee_el_estado_actual(pb):
-    pb.customer_id = 'CU9'; pb.customer_name = 'empresa'; pb.process_id = 'PZ'
-    pb.campaign_id = 'K9'; pb.attachment = True; pb.from_email = 'x@y.com'
-    pb.headers = ['a']; pb.template_name = 'TT'
-    pb.sms_body = 'hola'; pb.wsp_template = ''; pb.voice_message = ''
-    ctx = pb.build_ctx()
+    # build_ctx(st) ya no lee globals: arma el ctx desde el ProcessState de la invocación.
+    st = pb.ProcessState()
+    st.customer_id = 'CU9'; st.customer_name = 'empresa'; st.process_id = 'PZ'
+    st.campaign_id = 'K9'; st.attachment = True; st.from_email = 'x@y.com'
+    st.headers = ['a']; st.template_name = 'TT'
+    st.sms_body = 'hola'; st.wsp_template = ''; st.voice_message = ''
+    ctx = pb.build_ctx(st)
     assert ctx['customerId'] == 'CU9' and ctx['processId'] == 'PZ'
     assert ctx['smsBody'] == 'hola' and ctx['attachment'] is True
 
