@@ -102,6 +102,14 @@ MAX_SAMPLE_SENDS:int = 5
 class RealSendDisabled(Exception):
     """El cliente tiene deshabilitados los envíos reales (campo realSendEnabled=false)."""
 
+
+class AlreadySending(Exception):
+    """La campaña ya tomó el lock de envío real (otro proceso / reintento). Idempotencia."""
+
+
+# Estados desde los que se PUEDE iniciar un envío real (compare-and-set atómico).
+REAL_SEND_ALLOWED_STATES = ('Pendiente', 'Muestras', 'Error')
+
 message:str = ""
 body:str = ""
 messages = []
@@ -169,6 +177,35 @@ def update_campaign_status(state:str)->None:
         ReturnValues='UPDATED_NEW'
     )
     print(response_update_campaign_status['Attributes'])
+
+
+def try_start_real_send(process_id_value:str)->bool:
+    """IDEMPOTENCIA del envío real. Transición ATÓMICA de la campaña a 'Enviando' SOLO si su
+    estado actual permite iniciar el envío (Pendiente/Muestras/Error), y guarda el processId
+    ganador en `sendProcessId`.
+
+    Devuelve True si ESTA invocación ganó el lock; False si otra ya lo tomó (reintento de
+    Lambda/API Gateway, doble clic o envío concurrente) → NO se debe re-encolar. Cierra la
+    ventana de carrera entre leer el estado y marcarlo 'Enviando'.
+    Usa la global campaign_id."""
+    try:
+        table_campaign.update_item(
+            Key={'campaignId': campaign_id},
+            UpdateExpression='SET campaignState = :sending, sendProcessId = :pid',
+            ConditionExpression='campaignState IN (:s1, :s2, :s3)',
+            ExpressionAttributeValues={
+                ':sending': 'Enviando',
+                ':pid': process_id_value,
+                ':s1': REAL_SEND_ALLOWED_STATES[0],
+                ':s2': REAL_SEND_ALLOWED_STATES[1],
+                ':s3': REAL_SEND_ALLOWED_STATES[2],
+            }
+        )
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return False
+        raise
 
 def select_campaign(campaign_name:str)->dict:
     """
@@ -854,8 +891,13 @@ def lambda_handler(event, context):
                             raise RealSendDisabled(
                                 'Los envíos reales están deshabilitados para este cliente. '
                                 'Contacta al administrador de MailConnect.')
-                        update_campaign_status("Enviando")
-                        
+                        # IDEMPOTENCIA: transición atómica a 'Enviando'. Si otra invocación
+                        # (reintento de Lambda/API Gateway, doble clic, envío concurrente) ya
+                        # tomó el lock, NO se re-encola (se lanza AlreadySending → 200 limpio).
+                        if not try_start_real_send(process_id):
+                            raise AlreadySending(
+                                'La campaña ya está en proceso de envío; no se re-encola.')
+
                         if (channel_name == "EM"):
                             registers_for_message = REGISTERS_FOR_EM
                         if (channel_name == "EAU"):
@@ -995,6 +1037,13 @@ def lambda_handler(event, context):
             print(description)
             status_code = 404
             update_campaign_status("Error")
+    except AlreadySending as e:
+        # Reintento / envío concurrente: la campaña ya tomó el lock. Es el comportamiento
+        # correcto (idempotencia), NO un error: 200 y sin marcar Error ni re-encolar.
+        description = str(e)
+        status = True
+        status_code = 200
+        print(description)
     except RealSendDisabled as e:
         # Cliente con envíos reales deshabilitados: 403 claro, sin marcar Error.
         description = str(e)

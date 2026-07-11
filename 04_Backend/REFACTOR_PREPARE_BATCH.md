@@ -75,7 +75,16 @@ tablas en DynamoDB._
       - ⚠️ **Migración/`[J]`:** las tablas viejas `{customer}_sendStatus_{uuid}` quedan huérfanas
         (pre-prod = datos de prueba, no se migran). En AWS: dar a Prepare-batch permiso
         `CreateTable` para `{customer}_sendStatus` (llave compuesta) y a los lectores `Query`.
-- [ ] **Fase 2 — Idempotencia** (#2): persistir/derivar `processId` estable por (campaña,versión).
+- [x] **Fase 2 — Idempotencia** (#2): `try_start_real_send()` hace una **transición atómica**
+      (conditional update) de la campaña a `Enviando` SOLO si su estado permite iniciar el envío
+      (Pendiente/Muestras/Error) y guarda el `sendProcessId` ganador. Si otra invocación ya tomó
+      el lock (reintento de Lambda/API Gateway, doble clic, envío concurrente) → lanza
+      `AlreadySending` → 200 limpio, **sin re-encolar**. Cierra la ventana de carrera entre leer el
+      estado y marcarlo Enviando. Pruebas de idempotencia (gana/pierde lock, Terminada no reenvía,
+      Error permite reintento). Suite 118→122. ✅
+      - ⚠️ **Límite conocido:** si un envío falla A LA MITAD (ya encoló algunos lotes) y queda en
+        `Error`, un reintento re-encola TODO → duplicados parciales de esos lotes. Cerrarlo del
+        todo requiere idempotencia por-lote (dedup en SQS/consumidor); queda para Fase 4.
 - [ ] **Fase 3 — Partir el handler** (#8, #7, #11): `preparar_muestras()`/`preparar_real()` +
       helpers, quitar globals, pruebas del flujo.
 - [ ] **Fase 4 — CSV grande por partes** (#3): trocear + fan-out a otra lambda.

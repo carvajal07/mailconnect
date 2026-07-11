@@ -52,6 +52,51 @@ def pb():
         yield _load_prepare_batch()
 
 
+def _set_state(state):
+    boto3.resource('dynamodb', region_name='us-east-1').Table('campaign').update_item(
+        Key={'campaignId': 'C1'},
+        UpdateExpression='SET campaignState = :s',
+        ExpressionAttributeValues={':s': state})
+
+
+def _get_campaign():
+    return boto3.resource('dynamodb', region_name='us-east-1').Table('campaign').get_item(
+        Key={'campaignId': 'C1'})['Item']
+
+
+def test_idempotencia_primer_envio_gana_el_lock(pb):
+    pb.campaign_id = 'C1'
+    _set_state('Pendiente')
+    assert pb.try_start_real_send('PROC-1') is True
+    item = _get_campaign()
+    assert item['campaignState'] == 'Enviando'
+    assert item['sendProcessId'] == 'PROC-1'
+
+
+def test_idempotencia_reintento_no_reencola(pb):
+    pb.campaign_id = 'C1'
+    _set_state('Pendiente')
+    assert pb.try_start_real_send('PROC-1') is True
+    # Segundo intento (ya 'Enviando') → pierde el lock, no re-encola.
+    assert pb.try_start_real_send('PROC-2') is False
+    # El sendProcessId sigue siendo el del ganador.
+    assert _get_campaign()['sendProcessId'] == 'PROC-1'
+
+
+def test_idempotencia_terminada_no_reenvia(pb):
+    pb.campaign_id = 'C1'
+    _set_state('Terminada')
+    assert pb.try_start_real_send('PROC-3') is False
+
+
+def test_idempotencia_error_permite_reintento(pb):
+    # Tras un fallo (Error), sí se permite reintentar el envío.
+    pb.campaign_id = 'C1'
+    _set_state('Error')
+    assert pb.try_start_real_send('PROC-4') is True
+    assert _get_campaign()['campaignState'] == 'Enviando'
+
+
 def test_increment_samples_count_sube_de_a_uno(pb):
     pb.campaign_id = 'C1'
     assert pb.increment_samples_count() == 1
