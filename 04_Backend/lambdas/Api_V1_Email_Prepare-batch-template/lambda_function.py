@@ -255,39 +255,75 @@ def is_real_send_enabled(customer_id_value:str)->bool:
         print("No se pudo verificar realSendEnabled ({}); se asume habilitado".format(e))
     return True
 
-def prepare_message(data:str,part:int)-> list:
-    """
-    Esta función crea el body con la data necesaria para enviar a SQS
-
-    Args:
-        data (str): String con la data separada por punto y coma
-        part (str): Numero de parte
-
-    Returns:
-        list: Lista con el append de cada mensaje de SQS
-    """ 
-    # Se construye el dict SIN try (antes, si esto fallaba, `json_string` quedaba sin
-    # asignar y el `return json_string` reventaba con UnboundLocalError). Si falta un
-    # dato, que falle acá con un error claro y que lo maneje quien llama.
-    body = {
-        "customerId":customer_id,
-        "customerName":customer_name,
-        "processId":process_id,
-        "campaignId":campaign_id,
-        "attachment":attachment,
-        "fromEmail":from_email,
-        "headers":headers,
-        "templateName":template_name,
-        # Texto del SMS (solo para canal SMS; vacío para email). Lo usa Send-batch-SMS.
-        "smsBody":sms_body,
-        # Nombre de la plantilla HSM (solo canal WSP; vacío para el resto). Lo usa Send-batch-WSP.
-        "wspTemplate":wsp_template,
-        # Texto a leer por TTS (solo canal VOZ; vacío para el resto). Lo usa Send-batch-Voice.
-        "voiceMessage":voice_message,
-        "part":part,
-        "data":data
+def build_ctx()->dict:
+    """Arma el contexto del envío (los campos que van en cada mensaje SQS) a partir del
+    estado actual. Centraliza la lectura de los globals en UN solo lugar (paso hacia
+    quitar los globals): las funciones puras de abajo reciben `ctx` y ya no leen globals."""
+    return {
+        "customerId": customer_id,
+        "customerName": customer_name,
+        "processId": process_id,
+        "campaignId": campaign_id,
+        "attachment": attachment,
+        "fromEmail": from_email,
+        "headers": headers,
+        "templateName": template_name,
+        "smsBody": sms_body,        # texto SMS (solo canal SMS)
+        "wspTemplate": wsp_template,  # nombre HSM (solo canal WSP)
+        "voiceMessage": voice_message,  # texto TTS (solo canal VOZ)
     }
+
+
+def prepare_message(ctx:dict, data:list, part:int)-> str:
+    """Crea el JSON de UN mensaje SQS a partir del contexto `ctx` (ver build_ctx) + los
+    registros `data` de ese lote y el número de parte. Función PURA (no lee globals),
+    testeable de forma aislada."""
+    body = dict(ctx)  # copia de los campos comunes del envío
+    body["part"] = part
+    body["data"] = data
     return json.dumps(body)
+
+
+def classify_and_enqueue(ctx:dict, registers_correct:list, blacklist_emails:set,
+                         unsubscribes_emails:set, registers_for_message:int,
+                         url_sqs:str, send_fn=None):
+    """Núcleo del envío real (extraído del handler para poder testearlo). Clasifica los
+    registros con estructura válida en (lista negra / desuscritos / a enviar), agrupa los
+    'a enviar' en lotes de `registers_for_message` y los ENCOLA en SQS.
+
+    Devuelve (registers_blacklist, registers_unsubscribe, enqueued, parts):
+      - registers_blacklist / registers_unsubscribe: filas filtradas (para registrar su estado).
+      - enqueued: cantidad realmente encolada.
+      - parts: número de mensajes SQS generados.
+    `send_fn` permite inyectar un doble en las pruebas (por defecto send_sqs real)."""
+    if send_fn is None:
+        send_fn = send_sqs
+    registers_blacklist = []
+    registers_unsubscribe = []
+    batch = []
+    count_register = 0
+    parts = 0
+    enqueued = 0
+    for line in registers_correct:
+        email = line[1]
+        if email in blacklist_emails:
+            registers_blacklist.append(line)
+        elif email in unsubscribes_emails:
+            registers_unsubscribe.append(line)
+        else:
+            batch.append(line)
+            enqueued += 1
+            count_register += 1
+            if count_register == registers_for_message:
+                parts += 1
+                count_register = 0
+                send_fn(url_sqs, prepare_message(ctx, batch, parts))
+                batch = []
+    # Último lote incompleto.
+    if batch:
+        parts += 1
+        send_fn(url_sqs, prepare_message(ctx, batch, parts))
+    return registers_blacklist, registers_unsubscribe, enqueued, parts
 
 def send_sqs_batch(url_sqs:str,messages:list)->None:
     """
@@ -816,7 +852,7 @@ def lambda_handler(event, context):
                                     samples_found = len(registers)
                                     if samples_found > 0:
                                         print("Se procede a realizar los envios a la cola")
-                                        messages = prepare_message(registers,1)
+                                        messages = prepare_message(build_ctx(),registers,1)
                                         send_sqs(url_sqs,messages)
                                     else:
                                         print(f'No se encontro ningura de las cedulas "{sample_identifications}" en el spool de envios')
@@ -852,14 +888,14 @@ def lambda_handler(event, context):
                                             index_recipient += 1
                                             if count_register == quantity_samples:
                                                 print("Preparar mensaje para enviar")
-                                                messages = prepare_message(registers,1)
+                                                messages = prepare_message(build_ctx(),registers,1)
                                                 send_sqs(url_sqs,messages)
                                                 registers = []
                                                 break
                                     #Valido si hay registros, es decir que la BD original no contenia los suficientes registros para las muestras
                                     if registers:
                                         print("La cantidad de muestras solicitada es mayor a la data que se encuentra en la BD")
-                                        messages = prepare_message(registers,1)
+                                        messages = prepare_message(build_ctx(),registers,1)
                                         send_sqs(url_sqs,messages)
 
                                     # Elimina el archivo temporal descargado
@@ -970,38 +1006,13 @@ def lambda_handler(event, context):
 
                             print("Inicio de clasificacion email correctos para el envio")
 
-                            for line in registers_correct:
-                                email = line[1]
-                                if email in blacklist_emails:
-                                    print(f"El correo electrónico {email} está en la lista negra")
-                                    registers_blacklist.append(line)
-                                elif  email in unsubscribes_emails:
-                                    print(f"El correo electrónico {email} se ha dado de baja.")
-                                    registers_unsubscribe.append(line)
-                                else:       
-                                    count_register += 1
-                                    registers.append(line)
-                                    if count_register == registers_for_message:
-                                        global_counter_message += 1
-                                        count_register = 0
-                                        message = prepare_message(registers,global_counter_message)
-                                        #Enviar a SQS
-                                        send_sqs(url_sqs,message)
-                                        #borrar messages
-                                        registers = []
-                                        
-                            #Si aun existen registros (porque no se completo el lote de X) se envian en un mensaje a SQS
-                            if registers:
-                                global_counter_message += 1
-                                message = prepare_message(registers,global_counter_message)
-                                #Enviar a SQS
-                                #upload_s3
-                                send_sqs(url_sqs,message)
-
-                            # Los REALMENTE encolados = estructuralmente válidos MENOS los
-                            # que se filtraron por lista negra y desuscritos (antes se
-                            # reportaba len(registers_correct), que los incluía de más).
-                            registers_to_send = len(registers_correct) - len(registers_blacklist) - len(registers_unsubscribe)
+                            # Clasificación + agrupación en lotes + encolado a SQS, extraído
+                            # a una función pura y testeable (antes: bucle anidado en el handler).
+                            registers_blacklist, registers_unsubscribe, registers_to_send, global_counter_message = \
+                                classify_and_enqueue(
+                                    build_ctx(), registers_correct, blacklist_emails,
+                                    unsubscribes_emails, registers_for_message, url_sqs)
+                            print(f"Encolados: {registers_to_send} en {global_counter_message} mensaje(s)")
                         except Exception as e:
                             update_campaign_status("Error")
                             print(e)

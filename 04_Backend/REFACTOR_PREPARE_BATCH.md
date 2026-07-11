@@ -85,8 +85,16 @@ tablas en DynamoDB._
       - ⚠️ **Límite conocido:** si un envío falla A LA MITAD (ya encoló algunos lotes) y queda en
         `Error`, un reintento re-encola TODO → duplicados parciales de esos lotes. Cerrarlo del
         todo requiere idempotencia por-lote (dedup en SQS/consumidor); queda para Fase 4.
-- [ ] **Fase 3 — Partir el handler** (#8, #7, #11): `preparar_muestras()`/`preparar_real()` +
-      helpers, quitar globals, pruebas del flujo.
+- [~] **Fase 3 — Partir el handler** (#8, #7, #11): en progreso.
+      - [x] **3a:** extraído el núcleo del envío real a funciones PURAS y testeables:
+            `classify_and_enqueue()` (clasifica lista negra/desuscritos, agrupa en lotes, encola
+            con `send_fn` inyectable) y `prepare_message(ctx, data, part)` (ya NO lee globals;
+            `build_ctx()` centraliza la lectura de globals en un solo lugar). El bucle anidado del
+            handler se reemplazó por una llamada. Pruebas nuevas (filtra/agrupa, ctx, mensaje puro).
+            Suite 122→124. ✅
+      - [ ] **3b:** mover las ramas completas a `preparar_muestras()`/`preparar_real()`, terminar
+            de quitar los globals (pasar el estado por parámetros) y un test de integración del
+            handler con moto (S3+SQS+DynamoDB) para cubrir el flujo completo (#11).
 - [ ] **Fase 4 — CSV grande por partes** (#3): trocear + fan-out a otra lambda.
 - [ ] **Fase 5 — scan → query / índices** (#6).
 

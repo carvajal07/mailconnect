@@ -85,18 +85,57 @@ def test_tabla_inexistente_no_revienta(pb):
 
 # ---- Fase 0: quick wins ----
 
-def test_prepare_message_devuelve_json_valido(pb):
-    # Antes: si el dict fallaba, json_string quedaba sin asignar → UnboundLocalError.
-    # Ahora siempre devuelve un JSON válido con la data y la parte.
-    pb.customer_id = 'CU1'; pb.customer_name = 'empresa'; pb.process_id = 'P1'
-    pb.campaign_id = 'K1'; pb.attachment = False; pb.from_email = 'a@b.com'
-    pb.headers = ['Id', 'Correo', 'Nombre']; pb.template_name = 'T'
-    pb.sms_body = ''; pb.wsp_template = ''; pb.voice_message = ''
-    out = pb.prepare_message([['1', 'a@b.com', 'Ana']], 3)
+def _ctx(**over):
+    base = {'customerId': 'CU1', 'customerName': 'empresa', 'processId': 'P1',
+            'campaignId': 'K1', 'attachment': False, 'fromEmail': 'a@b.com',
+            'headers': ['Id', 'Correo', 'Nombre'], 'templateName': 'T',
+            'smsBody': '', 'wspTemplate': '', 'voiceMessage': ''}
+    base.update(over)
+    return base
+
+
+def test_prepare_message_es_pura_y_devuelve_json(pb):
+    # Fase 3: prepare_message(ctx, data, part) ya NO lee globals; es pura y testeable.
+    out = pb.prepare_message(_ctx(), [['1', 'a@b.com', 'Ana']], 3)
     parsed = json.loads(out)
     assert parsed['processId'] == 'P1'
     assert parsed['part'] == 3
     assert parsed['data'] == [['1', 'a@b.com', 'Ana']]
+    assert parsed['smsBody'] == '' and parsed['voiceMessage'] == ''
+
+
+def test_build_ctx_lee_el_estado_actual(pb):
+    pb.customer_id = 'CU9'; pb.customer_name = 'empresa'; pb.process_id = 'PZ'
+    pb.campaign_id = 'K9'; pb.attachment = True; pb.from_email = 'x@y.com'
+    pb.headers = ['a']; pb.template_name = 'TT'
+    pb.sms_body = 'hola'; pb.wsp_template = ''; pb.voice_message = ''
+    ctx = pb.build_ctx()
+    assert ctx['customerId'] == 'CU9' and ctx['processId'] == 'PZ'
+    assert ctx['smsBody'] == 'hola' and ctx['attachment'] is True
+
+
+def test_classify_and_enqueue_filtra_y_agrupa(pb):
+    # Núcleo del envío real extraído: clasifica y agrupa en lotes, con send_fn inyectado.
+    enviados = []
+    registers = [
+        ['1', 'ok1@t.com', 'A'],
+        ['2', 'negro@t.com', 'B'],   # lista negra
+        ['3', 'ok2@t.com', 'C'],
+        ['4', 'baja@t.com', 'D'],    # desuscrito
+        ['5', 'ok3@t.com', 'E'],
+    ]
+    bl = pb.classify_and_enqueue(
+        _ctx(), registers,
+        blacklist_emails={'negro@t.com'}, unsubscribes_emails={'baja@t.com'},
+        registers_for_message=2, url_sqs='q',
+        send_fn=lambda url, msg: enviados.append(json.loads(msg)))
+    registers_blacklist, registers_unsubscribe, enqueued, parts = bl
+    assert len(registers_blacklist) == 1 and len(registers_unsubscribe) == 1
+    assert enqueued == 3          # 3 válidos (ok1, ok2, ok3)
+    assert parts == 2             # lotes de 2 → [2] + [1]
+    # Los mensajes solo llevan los válidos, en orden.
+    correos = [row[1] for m in enviados for row in m['data']]
+    assert correos == ['ok1@t.com', 'ok2@t.com', 'ok3@t.com']
 
 
 def test_send_sqs_propaga_error(pb):
