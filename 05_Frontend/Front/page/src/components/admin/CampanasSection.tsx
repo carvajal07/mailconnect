@@ -44,6 +44,8 @@ import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { usePortalData } from '../../context/PortalDataContext';
 
+type EapDocFormat = 'DOCX' | 'PDF';
+
 interface CampaignForm {
   campaignName: string;
   channelName: string;
@@ -51,6 +53,8 @@ interface CampaignForm {
   template: string;
   from: string;
   dataPath: string;
+  // Solo EAP: formato del documento (DOCX = combinación Word, PDF = campos personalizados).
+  documentFormat: EapDocFormat;
 }
 
 const emptyForm = (from = ''): CampaignForm => ({
@@ -60,6 +64,7 @@ const emptyForm = (from = ''): CampaignForm => ({
   template: '',
   from,
   dataPath: '',
+  documentFormat: 'DOCX',
 });
 
 /** Color del chip según el estado de la campaña. */
@@ -98,7 +103,8 @@ export const CampanasSection = () => {
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
 
-  // Plantillas de mensaje guardadas (SMS/WSP) para prellenar el campo del canal.
+  // Plantillas de mensaje guardadas (SMS/WSP): en estos canales la plantilla se ELIGE
+  // de las disponibles del canal (no se escribe a mano).
   const [msgTemplates, setMsgTemplates] = useState<MessageTemplate[]>([]);
 
   // Documento adjunto (solo EAU/EAP): se sube a S3 y se pasa su ruta a la campaña.
@@ -147,6 +153,7 @@ export const CampanasSection = () => {
       template: c.template ?? '',
       from: c.originEmail ?? sessionEmail,
       dataPath: c.dataPath ?? '',
+      documentFormat: (c.documentFormat as EapDocFormat) ?? 'DOCX',
     });
     resetAttachment();
     setOpenDialog(true);
@@ -162,8 +169,32 @@ export const CampanasSection = () => {
   const isSms = formData.channelName === 'SMS';
   const isWsp = formData.channelName === 'WSP';
   const isVoice = formData.channelName === 'VOZ';
+  const isEap = formData.channelName === 'EAP';
   // Solo EAU/EAP llevan documento adjunto (el resto no).
   const isAttachment = formData.channelName === 'EAU' || formData.channelName === 'EAP';
+  // EAP con PDF acepta .pdf; EAP con DOCX (o EAU) acepta documentos ofimáticos.
+  const isEapPdf = isEap && formData.documentFormat === 'PDF';
+  const attachmentAccept = isEapPdf ? '.pdf' : isEap ? '.docx,.doc' : '.pdf,.docx,.doc,.xlsx';
+  // Plantillas disponibles por canal (SMS/WSP se eligen de estas; sin texto libre).
+  const smsTemplates = msgTemplates.filter((t) => t.channel === 'SMS');
+  const wspTemplates = msgTemplates.filter((t) => t.channel === 'WSP');
+
+  /** Id de la plantilla que corresponde al contenido actual de la campaña (para el selector).
+   *  Se deriva del template guardado: SMS compara por texto (body), WSP por nombre HSM.
+   *  '' si no coincide con ninguna guardada (p. ej. al editar una plantilla ya borrada). */
+  const currentMsgTemplateId = isSms
+    ? smsTemplates.find((t) => t.body === formData.template)?.messageTemplateId ?? ''
+    : isWsp
+      ? wspTemplates.find((t) => t.hsmName === formData.template)?.messageTemplateId ?? ''
+      : '';
+
+  /** Elige una plantilla guardada (SMS/WSP) → fija el contenido de la campaña. */
+  const selectMsgTemplate = (id: string) => {
+    const t = msgTemplates.find((m) => m.messageTemplateId === id);
+    if (!t) return;
+    // SMS guarda el texto (body); WSP guarda el nombre de la plantilla HSM.
+    handleInputChange('template', t.channel === 'WSP' ? (t.hsmName ?? '') : (t.body ?? ''));
+  };
 
   const handleInputChange = (field: keyof CampaignForm, value: string) => {
     setFormData((prev) => {
@@ -173,9 +204,16 @@ export const CampanasSection = () => {
       if (field === 'channelName') {
         const attach = value === 'EAU' || value === 'EAP';
         next.attachmentType = attach ? (prev.attachmentType === 'NONE' ? 'ONFILE' : prev.attachmentType) : 'NONE';
+        // Al salir de EAP, el formato de documento vuelve al default.
+        if (value !== 'EAP') next.documentFormat = 'DOCX';
+        // Cada canal usa un tipo de plantilla distinto (SES / body SMS / HSM / texto voz):
+        // al cambiar de canal se limpia para no arrastrar un valor incompatible.
+        if (value !== prev.channelName) next.template = '';
       }
       return next;
     });
+    // Cambiar de canal o de formato invalida el adjunto ya subido (cambia el tipo de archivo).
+    if (field === 'channelName' || field === 'documentFormat') resetAttachment();
   };
 
   /** Sube el documento adjunto (EAU/EAP) a S3 y guarda su ruta. */
@@ -213,6 +251,11 @@ export const CampanasSection = () => {
       notify('Nombre de la campaña y Canal son obligatorios.', 'warning');
       return;
     }
+    // SMS/WSP: la plantilla se ELIGE de las guardadas del canal (obligatoria).
+    if ((isSms || isWsp) && !formData.template) {
+      notify(`Selecciona una plantilla de ${isSms ? 'SMS' : 'WhatsApp'} guardada para este canal.`, 'warning');
+      return;
+    }
     // EAU/EAP exigen un documento adjunto (el backend lo valida y devuelve 400 sin él).
     if (!editingId && isAttachment && !attachmentPath) {
       notify('Para EAU/EAP debes subir el documento adjunto antes de crear la campaña.', 'warning');
@@ -228,6 +271,7 @@ export const CampanasSection = () => {
           dataPath: formData.dataPath,
           template: formData.template,
           from: formData.from,
+          documentFormat: isEap ? formData.documentFormat : undefined,
         })
       : await campaignsService.create({
           customerId,
@@ -239,6 +283,10 @@ export const CampanasSection = () => {
           from: formData.from,
           // Documento adjunto (solo EAU/EAP): el backend espera una lista de { path }.
           attachment: isAttachment && attachmentPath ? [{ path: attachmentPath }] : undefined,
+          // Formato del documento EAP (DOCX combinación Word / PDF campos personalizados).
+          documentFormat: isEap ? formData.documentFormat : undefined,
+          // EAP siempre es personalizado por destinatario.
+          variableDocument: isEap || undefined,
         });
     setSubmitting(false);
 
@@ -343,7 +391,7 @@ export const CampanasSection = () => {
                 <Box component="ul" sx={{ m: 0.5, pl: 2.5 }}>
                   <li><strong>EM</strong>: correo con plantilla HTML, sin adjunto.</li>
                   <li><strong>EAU</strong>: correo con un <em>adjunto único</em> (el mismo archivo para todos).</li>
-                  <li><strong>EAP</strong>: correo con <em>adjunto personalizado</em> (documento .docx combinado por destinatario).</li>
+                  <li><strong>EAP</strong>: correo con <em>adjunto personalizado</em> por destinatario. Dos tipos: <strong>Word (.docx)</strong> combinación de correspondencia, o <strong>PDF</strong> con campos personalizados.</li>
                   <li><strong>SMS</strong> / <strong>WSP</strong>: mensaje de texto / plantilla de WhatsApp (sin adjunto).</li>
                   <li><strong>VOZ</strong>: llamada telefónica que lee un mensaje por texto a voz (sin adjunto).</li>
                 </Box>
@@ -401,6 +449,28 @@ export const CampanasSection = () => {
                 </FormControl>
               </Stack>
 
+              {/* Solo EAP: tipo de documento (combinación Word vs campos en PDF). Cada uno
+                  tiene distinto flujo/costo y una lambda distinta que arma el archivo. */}
+              {isEap && !editingId && (
+                <FormControl fullWidth>
+                  <InputLabel>Tipo de documento (EAP)</InputLabel>
+                  <Select
+                    value={formData.documentFormat}
+                    label="Tipo de documento (EAP)"
+                    onChange={(e) => handleInputChange('documentFormat', e.target.value)}
+                  >
+                    <MenuItem value="DOCX">Word (.docx) — combinación de correspondencia</MenuItem>
+                    <MenuItem value="PDF">PDF — personalización de campos</MenuItem>
+                  </Select>
+                </FormControl>
+              )}
+              {isEap && editingId && (
+                <Alert severity="info">
+                  Tipo de documento EAP: <strong>{formData.documentFormat === 'PDF' ? 'PDF (campos personalizados)' : 'Word (.docx) combinación'}</strong>.
+                  El documento se define al crear la campaña; para cambiarlo, crea una nueva.
+                </Alert>
+              )}
+
               {/* Documento adjunto (solo EAU/EAP). El backend exige el adjunto para estos canales. */}
               {isAttachment && !editingId && (
                 <Box sx={{ p: 1.5, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
@@ -411,16 +481,18 @@ export const CampanasSection = () => {
                       startIcon={attachmentUploading ? <CircularProgress size={16} /> : <UploadFileIcon />}
                       disabled={attachmentUploading}
                     >
-                      {attachmentName ? 'Cambiar documento' : 'Subir documento adjunto'}
-                      <input hidden type="file" accept=".pdf,.docx,.doc,.xlsx" onChange={handleUploadAttachment} />
+                      {attachmentName ? 'Cambiar documento' : (isEapPdf ? 'Subir PDF plantilla' : 'Subir documento adjunto')}
+                      <input hidden type="file" accept={attachmentAccept} onChange={handleUploadAttachment} />
                     </Button>
                     {attachmentName ? (
                       <Chip color="success" label={attachmentName} onDelete={resetAttachment} />
                     ) : (
                       <Typography variant="caption" color="text.secondary">
-                        {formData.channelName === 'EAP'
-                          ? 'Sube el .docx de combinación (adjunto personalizado por destinatario).'
-                          : 'Sube el documento que se adjuntará a todos (PDF/Word).'}
+                        {isEapPdf
+                          ? 'Sube el PDF plantilla con los campos a personalizar por destinatario.'
+                          : isEap
+                            ? 'Sube el .docx de combinación (adjunto personalizado por destinatario).'
+                            : 'Sube el documento que se adjuntará a todos (PDF/Word).'}
                       </Typography>
                     )}
                   </Stack>
@@ -432,61 +504,59 @@ export const CampanasSection = () => {
 
               {isSms ? (
                 <>
-                  {msgTemplates.some((t) => t.channel === 'SMS') && (
-                    <TextField
-                      select
-                      fullWidth
-                      size="small"
-                      label="Usar plantilla SMS guardada (opcional)"
-                      value=""
-                      onChange={(e) => {
-                        const t = msgTemplates.find((m) => m.messageTemplateId === e.target.value);
-                        if (t?.body) handleInputChange('template', t.body);
-                      }}
+                  <FormControl fullWidth>
+                    <InputLabel>Plantilla SMS</InputLabel>
+                    <Select
+                      value={currentMsgTemplateId}
+                      label="Plantilla SMS"
+                      onChange={(e) => selectMsgTemplate(e.target.value)}
                     >
-                      {msgTemplates.filter((t) => t.channel === 'SMS').map((t) => (
+                      {smsTemplates.length === 0 && (
+                        <MenuItem value="" disabled>No hay plantillas SMS; créalas en "Plantillas SMS"</MenuItem>
+                      )}
+                      {smsTemplates.map((t) => (
                         <MenuItem key={t.messageTemplateId} value={t.messageTemplateId}>{t.name}</MenuItem>
                       ))}
-                    </TextField>
+                    </Select>
+                  </FormControl>
+                  {formData.template && (
+                    <TextField
+                      fullWidth
+                      multiline
+                      minRows={3}
+                      label="Texto de la plantilla (solo lectura)"
+                      value={formData.template}
+                      InputProps={{ readOnly: true }}
+                      helperText={`~${Math.max(1, Math.ceil(formData.template.length / 160))} segmento(s). En SMS la columna 2 del CSV es el celular (E.164, +57…). Edita el texto en "Plantillas SMS".`}
+                    />
                   )}
-                  <TextField
-                    fullWidth
-                    multiline
-                    minRows={3}
-                    label="Texto del SMS"
-                    value={formData.template}
-                    onChange={(e) => handleInputChange('template', e.target.value)}
-                    placeholder="Hola {{Nombre}}, tu mensaje aquí…"
-                    helperText={`Admite variables {{columna}} del CSV. ${formData.template.length} caracteres (~${Math.max(1, Math.ceil(formData.template.length / 160))} segmento(s)). En SMS la columna 2 del CSV es el celular (E.164, +57…).`}
-                  />
                 </>
               ) : isWsp ? (
                 <>
-                  {msgTemplates.some((t) => t.channel === 'WSP') && (
-                    <TextField
-                      select
-                      fullWidth
-                      size="small"
-                      label="Usar plantilla WhatsApp guardada (opcional)"
-                      value=""
-                      onChange={(e) => {
-                        const t = msgTemplates.find((m) => m.messageTemplateId === e.target.value);
-                        if (t?.hsmName) handleInputChange('template', t.hsmName);
-                      }}
+                  <FormControl fullWidth>
+                    <InputLabel>Plantilla WhatsApp</InputLabel>
+                    <Select
+                      value={currentMsgTemplateId}
+                      label="Plantilla WhatsApp"
+                      onChange={(e) => selectMsgTemplate(e.target.value)}
                     >
-                      {msgTemplates.filter((t) => t.channel === 'WSP').map((t) => (
+                      {wspTemplates.length === 0 && (
+                        <MenuItem value="" disabled>No hay plantillas WhatsApp; créalas en "Plantillas WhatsApp"</MenuItem>
+                      )}
+                      {wspTemplates.map((t) => (
                         <MenuItem key={t.messageTemplateId} value={t.messageTemplateId}>{t.name} · {t.hsmName}</MenuItem>
                       ))}
-                    </TextField>
+                    </Select>
+                  </FormControl>
+                  {formData.template && (
+                    <TextField
+                      fullWidth
+                      label="Plantilla HSM seleccionada (solo lectura)"
+                      value={formData.template}
+                      InputProps={{ readOnly: true }}
+                      helperText="Nombre de la plantilla de Meta. Los parámetros {{1}}, {{2}}… salen de las columnas del CSV desde 'Nombre'. La columna 2 es el celular (E.164, +57…)."
+                    />
                   )}
-                  <TextField
-                    fullWidth
-                    label="Plantilla de WhatsApp (HSM)"
-                    value={formData.template}
-                    onChange={(e) => handleInputChange('template', e.target.value)}
-                    placeholder="nombre_de_la_plantilla_aprobada"
-                    helperText="Nombre exacto de la plantilla de marketing pre-aprobada por Meta. Los parámetros {{1}}, {{2}}… se toman de las columnas del CSV desde 'Nombre' en adelante. La columna 2 del CSV es el celular (E.164, +57…)."
-                  />
                 </>
               ) : isVoice ? (
                 <TextField

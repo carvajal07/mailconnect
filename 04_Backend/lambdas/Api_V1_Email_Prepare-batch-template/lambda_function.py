@@ -35,7 +35,11 @@ REGISTERS_FOR_VOICE:int = 50
 URL_SQS_EM = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-template-EM'
 URL_SQS_EAU = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-raw-EAU'
 #URL_SQS_EAP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-raw-EAP'
+# EAP con DOCX: combinación de correspondencia (armado del .docx por destinatario).
 URL_SQS_EAP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Template_Combination-EAP'
+# EAP con PDF: personalización de campos en un PDF (armador DISTINTO al de Word).
+# ⚠️ [J]: crear esta cola + la lambda que arma el PDF personalizado (aún no existe).
+URL_SQS_EAP_PDF = 'https://sqs.us-east-1.amazonaws.com/873837768806/Template_Combination-EAP-PDF'
 # Canal SMS: cola que consume la lambda Api_V1_Sms_Send-batch (AWS End User Messaging).
 URL_SQS_SMS = 'https://sqs.us-east-1.amazonaws.com/873837768806/Sms_Send-batch'
 # Canal WhatsApp: cola que consume la lambda Api_V1_Wsp_Send-batch (End User Messaging Social).
@@ -224,7 +228,7 @@ def select_campaign(campaign_name:str)->dict:
     Returns:
         dict: Nombre de la campaña
     """
-    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, samplesSentCount'  # Lista de campos a consultar
+    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, samplesSentCount, documentFormat'  # Lista de campos a consultar
 
     response_campaign = table_campaign.scan(
         FilterExpression="campaignName = :value",
@@ -1094,7 +1098,12 @@ def lambda_handler(event, context):
                     url_sqs = URL_SQS_EAU
                 elif channel_name == "EAP":
                     st.attachment = True
-                    url_sqs = URL_SQS_EAP
+                    # EAP tiene dos armadores según el formato del documento: DOCX
+                    # (combinación de correspondencia) o PDF (personalización de campos).
+                    # Cada uno tiene su propia cola/lambda que construye el archivo.
+                    document_format = str(response_campaign['Items'][0].get('documentFormat', 'DOCX') or 'DOCX').upper()
+                    url_sqs = URL_SQS_EAP_PDF if document_format == 'PDF' else URL_SQS_EAP
+                    print(f"EAP documentFormat: {document_format} → {url_sqs}")
                 elif channel_name == "SMS":
                     st.attachment = False
                     url_sqs = URL_SQS_SMS

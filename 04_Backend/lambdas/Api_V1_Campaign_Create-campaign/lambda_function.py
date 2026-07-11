@@ -86,25 +86,28 @@ def update_consecutive(customerId,consecutive):
         )
         print(responseUpdateConsecutive['Attributes'])
 
-def insert_campaign(customerId,campaignName,numeration,channel,dataPath,template,source,date):    
+def insert_campaign(customerId,campaignName,numeration,channel,dataPath,template,source,date,documentFormat=None):
     campaignId = str(uuid.uuid4())
+    item = {
+        'campaignId': campaignId,
+        'customerId': customerId,
+        'campaignName': campaignName,
+        'consecutive': numeration,
+        'channel': channel,
+        'dataPath': dataPath,
+        'template': template,
+        'originEmail': source,
+        'campaignState': 'Pendiente',
+        # Contador de envíos de muestras (máx. MAX_SAMPLE_SENDS en Prepare-batch).
+        'samplesSentCount': 0,
+        'date': date
+    }
+    # Solo EAP: formato del documento (DOCX = combinación Word, PDF = campos personalizados).
+    # Se guarda en la campaña para que Prepare-batch pueda enrutar al armador correcto.
+    if documentFormat:
+        item['documentFormat'] = documentFormat
     # Insertar datos en la tabla de campañas
-    table_campaign.put_item(
-        Item={
-            'campaignId': campaignId,
-            'customerId': customerId,
-            'campaignName': campaignName,
-            'consecutive': numeration,
-            'channel': channel,
-            'dataPath': dataPath,
-            'template': template,
-            'originEmail': source,
-            'campaignState': 'Pendiente',
-            # Contador de envíos de muestras (máx. MAX_SAMPLE_SENDS en Prepare-batch).
-            'samplesSentCount': 0,
-            'date': date
-        }
-    )
+    table_campaign.put_item(Item=item)
     return campaignId
 
 def create_template(customerName,channelName,consecutive,campaignName,subject,template):    
@@ -121,21 +124,23 @@ def create_template(customerName,channelName,consecutive,campaignName,subject,te
 
     print("plantilla creada correctamente")    
 
-def insert_attachment(campaignId,attachment_type,documentPath,variableDocument,date):
+def insert_attachment(campaignId,attachment_type,documentPath,variableDocument,date,documentFormat=None):
     documentId = str(uuid.uuid4())
+    item = {
+        'documentId': documentId,
+        'campaignId': campaignId,
+        # Antes guardaba el literal "attachment_type" (bug): la lambda de envío EAU
+        # leía siempre un valor incorrecto y el ONFILE/ONLINE no funcionaba.
+        'attachmentType': attachment_type,
+        'documentPath': documentPath,
+        'variableDocument': variableDocument,
+        'date': date
+    }
+    # Formato del documento EAP (DOCX/PDF): lo usa el armador del adjunto personalizado.
+    if documentFormat:
+        item['documentFormat'] = documentFormat
     # Insertar datos en la tabla de documentos
-    table_document.put_item(
-        Item={
-            'documentId': documentId,
-            'campaignId': campaignId,
-            # Antes guardaba el literal "attachment_type" (bug): la lambda de envío EAU
-            # leía siempre un valor incorrecto y el ONFILE/ONLINE no funcionaba.
-            'attachmentType': attachment_type,
-            'documentPath': documentPath,
-            'variableDocument': variableDocument,
-            'date': date
-        }
-    )
+    table_document.put_item(Item=item)
 
 def lambda_handler(event, context):
     status = True
@@ -170,6 +175,9 @@ def lambda_handler(event, context):
         #subject = event.get('subject','SMS')
         mask = event.get('mask','')
         attachment = event.get('attachment','')
+        # Solo EAP: DOCX (combinación Word) o PDF (campos personalizados). Distinto flujo,
+        # costo y lambda que arma el archivo. Se normaliza a mayúsculas.
+        documentFormat = str(event.get('documentFormat', '') or '').upper() or None
 
         #Validar si la mascara contiene informacion para agregarla al from
         if (not "" in mask):
@@ -239,7 +247,7 @@ def lambda_handler(event, context):
                 try:
                     #Voy a omitir el campo del consecutivo en el nombre de la campaña debido a que este consecutivo ya se guarda en un campo de la BD
                     #campaignName = consecutive + "_" + campaignName
-                    campaignId = insert_campaign(customerId,campaignName,consecutive,channelName,dataPath,template,source,formattedDate)
+                    campaignId = insert_campaign(customerId,campaignName,consecutive,channelName,dataPath,template,source,formattedDate,documentFormat)
                 except:
                     status = False
                     statusCode = 404
@@ -253,7 +261,7 @@ def lambda_handler(event, context):
                         for attach in attachment:
                             print("for")
                             path = attach.get('path')
-                            insert_attachment(campaignId,attachment_type,path,variableDocument,formattedDate)
+                            insert_attachment(campaignId,attachment_type,path,variableDocument,formattedDate,documentFormat)
                 except:
                     status = False
                     statusCode = 404

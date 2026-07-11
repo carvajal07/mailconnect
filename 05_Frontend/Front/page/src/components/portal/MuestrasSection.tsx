@@ -33,8 +33,6 @@ import MenuItem from '@mui/material/MenuItem';
 import { getUser } from '../../services/authService';
 import { campaignsService, MAX_SAMPLE_SENDS } from '../../services/campaignsService';
 import type { CampaignSummary } from '../../services/campaignsService';
-import { templatesService } from '../../services/templatesService';
-import type { TemplateSummary } from '../../services/templatesService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { CostEstimate } from './CostEstimate';
@@ -82,24 +80,18 @@ export const MuestrasSection = () => {
   const [template, setTemplate] = useState('');
   const [version, setVersion] = useState(1);
 
-  // Listas del backend: la campaña SE SELECCIONA (no se escribe a mano).
+  // Listas del backend: la campaña SE SELECCIONA (no se escribe a mano). La plantilla NO
+  // se elige aquí: ya viene configurada en la campaña (al seleccionarla se conoce todo).
   const [campaignOptions, setCampaignOptions] = useState<CampaignSummary[]>([]);
-  const [templateOptions, setTemplateOptions] = useState<TemplateSummary[]>([]);
   const [loadingLists, setLoadingLists] = useState(false);
 
   const loadLists = useCallback(async () => {
     if (!customerId && !cliente) return;
     setLoadingLists(true);
-    const [resCampaigns, resTemplates] = await Promise.all([
-      customerId ? campaignsService.list(customerId) : Promise.resolve(null),
-      templatesService.list(cliente, customerId),
-    ]);
+    const resCampaigns = customerId ? await campaignsService.list(customerId) : null;
     setLoadingLists(false);
     if (resCampaigns && isOk(resCampaigns) && resCampaigns.data?.campaigns) {
       setCampaignOptions(resCampaigns.data.campaigns);
-    }
-    if (isOk(resTemplates) && resTemplates.data?.templates) {
-      setTemplateOptions(resTemplates.data.templates);
     }
   }, [customerId, cliente]);
 
@@ -288,29 +280,18 @@ export const MuestrasSection = () => {
                 </MenuItem>
               ))}
             </TextField>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+            {/* La plantilla NO se elige aquí: es la que quedó configurada en la campaña.
+                Al seleccionar la campaña se conoce el canal, la plantilla y el resto. */}
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
               <TextField
-                select
-                label="Plantilla (SES)"
-                value={template}
-                onChange={(e) => setTemplate(e.target.value)}
+                label={selectedChannel === 'SMS' || selectedChannel === 'VOZ' ? 'Mensaje de la campaña' : selectedChannel === 'WSP' ? 'Plantilla WhatsApp (HSM)' : 'Plantilla de la campaña'}
+                value={template || (campaign ? '—' : '')}
                 fullWidth
                 size="small"
-              >
-                {template && !templateOptions.some((t) => t.name === template) && (
-                  <MenuItem value={template}>{template}</MenuItem>
-                )}
-                {templateOptions.length === 0 && !template && (
-                  <MenuItem value="" disabled>
-                    {loadingLists ? 'Cargando…' : 'Sin plantillas'}
-                  </MenuItem>
-                )}
-                {templateOptions.map((t) => (
-                  <MenuItem key={t.name} value={t.name}>
-                    {t.name}
-                  </MenuItem>
-                ))}
-              </TextField>
+                InputProps={{ readOnly: true }}
+                placeholder={campaign ? '' : 'Selecciona una campaña'}
+                helperText="Definida en la campaña; no se cambia desde muestras."
+              />
               <TextField
                 label="Versión de plantilla"
                 type="number"

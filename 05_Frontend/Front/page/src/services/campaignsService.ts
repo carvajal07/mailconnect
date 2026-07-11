@@ -25,6 +25,12 @@ export const CAMPAIGN_ENDPOINTS = {
   SEND_REAL: '/Email/Send-batch-template',
 };
 
+/** Formato del documento en campañas EAP (adjunto personalizado por destinatario):
+ *  - DOCX: combinación de correspondencia (.docx) → lambda de combinación Word.
+ *  - PDF:  personalización de campos en un PDF → lambda de armado de PDF (distinto costo/flujo).
+ *  EAU y el resto de canales no usan este campo. */
+export type EapDocumentFormat = 'DOCX' | 'PDF';
+
 /** Campos editables de una campaña (solo si está en estado Pendiente). */
 export interface CampaignUpdatePayload {
   campaignId: string;
@@ -34,6 +40,7 @@ export interface CampaignUpdatePayload {
   dataPath?: string;
   template?: string;
   from?: string;
+  documentFormat?: EapDocumentFormat;
 }
 
 /** Campaña como la devuelve POST /Campaign/List (tabla `campaign`). */
@@ -50,6 +57,8 @@ export interface CampaignSummary {
   date: string;
   /** Envíos de muestras ya realizados (máx. 5 por campaña; lo controla el backend). */
   samplesSentCount?: number;
+  /** Formato del documento EAP (DOCX/PDF), si aplica. */
+  documentFormat?: EapDocumentFormat;
 }
 
 /** Máximo de envíos de muestras por campaña (debe coincidir con MAX_SAMPLE_SENDS del backend). */
@@ -93,6 +102,8 @@ export interface CampaignPayload {
   attachment?: { path: string }[];
   /** ¿El adjunto (EAP) usa combinación de correspondencia por destinatario? */
   variableDocument?: boolean;
+  /** Formato del documento EAP: DOCX (combinación Word) o PDF (campos personalizados). */
+  documentFormat?: EapDocumentFormat;
 }
 
 export interface PresignPayload {
