@@ -1,0 +1,2106 @@
+{
+  "info": {
+    "_postman_id": "8f2c1a44-0b3e-4c11-9a7e-mailconnect01",
+    "name": "MailConnect API (V1)",
+    "description": "Colección COMPLETA de la API de MailConnect.\n\n## Uso\n1. Configura la variable `baseUrl` (default https://api.mailconnect.com.co/V1) y `email`/`password`/`customer`/`companyTin`.\n2. Corre **1) Seguridad → Login**: guarda `token`, `customerId`, `customer`, `userId` automáticamente. El resto de requests usan `Authorization: Bearer {{token}}`.\n3. Corre las demás carpetas. Cada request valida el envelope y loguea en consola `OK <nombre> -> HTTP <code> | statusCode=<sc> | <desc>`.\n\n## Convención de respuesta\nIntegración no-proxy: el resultado va DENTRO del cuerpo HTTP 200 como `{status, statusCode, description, data}`. Excepciones: Acount-activation (302) y Unsubscribe (HTML), ambos proxy.\n\n## ⚠️ Cuidado\nLa carpeta **4) Envíos** dispara envíos REALES (correos). No corras la colección completa a ciegas contra producción.\n\n## Runner\nCon Newman: `newman run 01-MailConnect.postman_collection.json --folder '1) Seguridad'`.\n\n## No incluidos (no son rutas HTTP)\nConsumidores de cola/SNS/cron: Sms/Wsp/Voice Send-batch, Prepare-batch (partes), Email/Messaging ReceptionStatus, Template Combination, Cron/SQS DeleteTables, Authorizer.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.mailconnect.com.co/V1"
+    },
+    {
+      "key": "email",
+      "value": "qa@example.com"
+    },
+    {
+      "key": "password",
+      "value": "Clave123"
+    },
+    {
+      "key": "customer",
+      "value": "EmpresaQA"
+    },
+    {
+      "key": "companyTin",
+      "value": "900123456"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "customerId",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "campaignName",
+      "value": "Campaña QA"
+    },
+    {
+      "key": "campaignId",
+      "value": ""
+    },
+    {
+      "key": "databaseFileId",
+      "value": ""
+    },
+    {
+      "key": "messageTemplateId",
+      "value": ""
+    },
+    {
+      "key": "s3Path",
+      "value": ""
+    },
+    {
+      "key": "otpId",
+      "value": ""
+    },
+    {
+      "key": "otp",
+      "value": ""
+    },
+    {
+      "key": "processId",
+      "value": ""
+    },
+    {
+      "key": "activationKey",
+      "value": ""
+    },
+    {
+      "key": "unsubscribeToken",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1) Seguridad",
+      "description": "Autenticación, registro, recuperación y OTP. Login guarda el token en {{token}}.",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Security/Register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Security",
+                "Register"
+              ]
+            },
+            "description": "Crea una cuenta cliente (queda inactiva hasta activar por correo).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test QA\",\n  \"phone\": \"+573001234567\",\n  \"email\": \"{{email}}\",\n  \"company\": \"{{customer}}\",\n  \"companyTin\": \"{{companyTin}}\",\n  \"password\": \"{{password}}\",\n  \"acceptedTerms\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Security/Login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Security",
+                "Login"
+              ]
+            },
+            "description": "Devuelve token + datos de sesión. Guarda token/customerId/customer/userId en variables.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  if (body.data && body.data.token) {",
+                  "    pm.collectionVariables.set('token', body.data.token);",
+                  "    pm.collectionVariables.set('customerId', body.data.customerId || '');",
+                  "    pm.collectionVariables.set('customer', body.data.customer || '');",
+                  "    pm.collectionVariables.set('userId', body.data.userId || '');",
+                  "    pm.collectionVariables.set('companyTin', body.data.companyTin || '');",
+                  "    pm.test(name + ' devolvio token', function () { pm.expect(body.data.token).to.be.a('string'); });",
+                  "    console.log('    -> token guardado en {{token}}');",
+                  "  }",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Account activation (GET)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/Security/Acount-activation?qs={{activationKey}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Security",
+                "Acount-activation"
+              ],
+              "query": [
+                {
+                  "key": "qs",
+                  "value": "{{activationKey}}"
+                }
+              ]
+            },
+            "description": "Activa la cuenta con la clave del correo. Responde 302 redirect (no envelope).",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Recovery password (forgot)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Security/Recovery-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Security",
+                "Recovery-password"
+              ]
+            },
+            "description": "Genera y envía un OTP al correo. Respuesta genérica (no revela si el correo existe).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user\": \"{{email}}\",\n  \"ip\": \"127.0.0.1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Security/Create-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Security",
+                "Create-otp"
+              ]
+            },
+            "description": "Genera un OTP (guarda otpId). El código llega por correo.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user\": \"{{email}}\",\n  \"expiration\": 5,\n  \"system\": \"postman\",\n  \"ip\": \"127.0.0.1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  if (body.data && body.data.otpId) { pm.collectionVariables.set('otpId', body.data.otpId); console.log('    -> otpId guardado'); }",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Validate OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Security/Validate-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Security",
+                "Validate-otp"
+              ]
+            },
+            "description": "Valida y consume el OTP. Pon el código recibido en {{otp}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"otp\": \"{{otp}}\",\n  \"user\": \"{{email}}\",\n  \"ip\": \"127.0.0.1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Change password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Security/Change-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Security",
+                "Change-password"
+              ]
+            },
+            "description": "Cambia la contraseña. Autoriza por Bearer (logueado) o por OTP (recuperación).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user\": \"{{email}}\",\n  \"password\": \"NuevaClave123\",\n  \"otp\": \"{{otp}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Security/Refresh-token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Security",
+                "Refresh-token"
+              ]
+            },
+            "description": "Renueva el JWT con los mismos claims (sesión deslizante).",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  if (body.data && body.data.token) {",
+                  "    pm.collectionVariables.set('token', body.data.token);",
+                  "    pm.collectionVariables.set('customerId', body.data.customerId || '');",
+                  "    pm.collectionVariables.set('customer', body.data.customer || '');",
+                  "    pm.collectionVariables.set('userId', body.data.userId || '');",
+                  "    pm.collectionVariables.set('companyTin', body.data.companyTin || '');",
+                  "    pm.test(name + ' devolvio token', function () { pm.expect(body.data.token).to.be.a('string'); });",
+                  "    console.log('    -> token guardado en {{token}}');",
+                  "  }",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Security/Logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Security",
+                "Logout"
+              ]
+            },
+            "description": "Cierra sesiones del usuario (idempotente).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user\": \"{{email}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify code (STUB)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Security/Verify-code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Security",
+                "Verify-code"
+              ]
+            },
+            "description": "Stub: aún no implementado en el backend.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"123456\",\n  \"user\": \"{{email}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2) Plantillas SES (HTML)",
+      "description": "Plantillas de correo HTML en Amazon SES.",
+      "item": [
+        {
+          "name": "Create template",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Template/Create-template",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Template",
+                "Create-template"
+              ]
+            },
+            "description": "Crea/actualiza una plantilla SES.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"customerId\": \"{{customerId}}\",\n  \"channel\": 2,\n  \"templateName\": \"{{customer}}_QA_EM_Prueba\",\n  \"subject\": \"Hola {{Nombre}}\",\n  \"htmlBody\": \"<html><body><h1>Hola {{Nombre}}</h1></body></html>\",\n  \"textBody\": \"Hola {{Nombre}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List templates",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Template/List",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Template",
+                "List"
+              ]
+            },
+            "description": "Lista las plantillas SES del cliente (prefijo {customer}_).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer\": \"{{customer}}\",\n  \"customerId\": \"{{customerId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get template",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Template/Get-template",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Template",
+                "Get-template"
+              ]
+            },
+            "description": "Devuelve el HTML de una plantilla.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"templateName\": \"{{customer}}_QA_EM_Prueba\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete template",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Template/Delete-template",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Template",
+                "Delete-template"
+              ]
+            },
+            "description": "Borra una plantilla SES.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"templateName\": \"{{customer}}_QA_EM_Prueba\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3) Campañas",
+      "description": "Crear, listar, editar campañas y URL prefirmada de S3.",
+      "item": [
+        {
+          "name": "Prefirm URL (S3)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Campaign/Prefirm-url",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Campaign",
+                "Prefirm-url"
+              ]
+            },
+            "description": "URL prefirmada para subir un archivo a S3. Guarda la ruta en {{s3Path}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer\": \"{{customer}}\",\n  \"documentName\": \"base.csv\",\n  \"documentType\": \"database\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  if (body.data && body.data.path) { pm.collectionVariables.set('s3Path', body.data.path); console.log('    -> s3Path guardado'); }",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create campaign",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Campaign/Create-campaign",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Campaign",
+                "Create-campaign"
+              ]
+            },
+            "description": "Crea una campaña (estado Pendiente). Guarda campaignId.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"campaignName\": \"{{campaignName}}\",\n  \"channelName\": \"EM\",\n  \"attachmentType\": \"NONE\",\n  \"dataPath\": \"{{s3Path}}\",\n  \"template\": \"{{customer}}_QA_EM_Prueba\",\n  \"from\": \"comunicaciones\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  if (body.data && body.data.campaignId) { pm.collectionVariables.set('campaignId', body.data.campaignId); console.log('    -> campaignId guardado'); }",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List campaigns",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Campaign/List",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Campaign",
+                "List"
+              ]
+            },
+            "description": "Lista las campañas del cliente (desc por fecha).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update campaign",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Campaign/Update",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Campaign",
+                "Update"
+              ]
+            },
+            "description": "Edita una campaña en estado Pendiente.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"campaignId\": \"{{campaignId}}\",\n  \"campaignName\": \"{{campaignName}} (editada)\",\n  \"template\": \"{{customer}}_QA_EM_Prueba\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4) Envíos (⚠️ EFECTOS REALES)",
+      "description": "OJO: estos endpoints ENVÍAN de verdad (correos/SMS). 'Send-batch-template' dispara el envío a TODA la base. Úsalos solo con datos de prueba controlados.",
+      "item": [
+        {
+          "name": "Send SAMPLES (⚠️ envía muestras)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Email/Send-batch-template-samples",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Email",
+                "Send-batch-template-samples"
+              ]
+            },
+            "description": "Envía correos de prueba (reemplaza el real por el de muestra). Máx 5 por campaña.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"{{customer}}\",\n  \"campaignName\": \"{{campaignName}}\",\n  \"userId\": \"{{userId}}\",\n  \"template\": \"{{customer}}_QA_EM_Prueba\",\n  \"templateVersion\": 1,\n  \"quantitySamples\": 1,\n  \"selectiveSamples\": false,\n  \"recipients\": [\n    \"{{email}}\"\n  ],\n  \"identifications\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Send REAL (⚠️⚠️ envía a TODA la base)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Email/Send-batch-template",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Email",
+                "Send-batch-template"
+              ]
+            },
+            "description": "ENVÍO REAL a toda la base de la campaña. NO lo dispares salvo en prueba controlada.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"{{customer}}\",\n  \"campaignName\": \"{{campaignName}}\",\n  \"userId\": \"{{userId}}\",\n  \"template\": \"{{customer}}_QA_EM_Prueba\",\n  \"templateVersion\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Send on-demand (⚠️ envía 1 correo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Email/Send-ondemand-template",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Email",
+                "Send-ondemand-template"
+              ]
+            },
+            "description": "Envía un correo puntual con una plantilla (transaccional).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer\": \"{{customer}}\",\n  \"template\": \"{{customer}}_QA_EM_Prueba\",\n  \"to\": \"{{email}}\",\n  \"data\": {\n    \"Nombre\": \"QA\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unsubscribe (GET público)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/Email/Unsubscribe?t={{unsubscribeToken}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Email",
+                "Unsubscribe"
+              ],
+              "query": [
+                {
+                  "key": "t",
+                  "value": "{{unsubscribeToken}}"
+                }
+              ]
+            },
+            "description": "Página pública de desuscripción. Requiere token HMAC firmado en {{unsubscribeToken}}.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5) Bases de datos",
+      "description": "Metadata de los CSV subidos a S3.",
+      "item": [
+        {
+          "name": "Register file",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Database/Register-file",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Database",
+                "Register-file"
+              ]
+            },
+            "description": "Registra la metadata de una base ya subida a S3. Guarda databaseFileId.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"customer\": \"{{customer}}\",\n  \"fileName\": \"base.csv\",\n  \"s3Path\": \"{{s3Path}}\",\n  \"totalRecords\": 100,\n  \"validEmails\": 98,\n  \"invalidEmails\": 2,\n  \"channel\": \"EMAIL\",\n  \"columns\": [\n    \"Identificacion\",\n    \"Correo\",\n    \"Nombre\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  if (body.data && body.data.databaseFileId) { pm.collectionVariables.set('databaseFileId', body.data.databaseFileId); console.log('    -> databaseFileId guardado'); }",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List databases",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Database/List",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Database",
+                "List"
+              ]
+            },
+            "description": "Lista las bases del cliente (incluye columns, válidos/inválidos).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"customer\": \"{{customer}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete database",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Database/Delete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Database",
+                "Delete"
+              ]
+            },
+            "description": "Borra el registro de la base y el CSV en S3 (best-effort).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"databaseFileId\": \"{{databaseFileId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6) Plantillas multicanal (SMS/WSP/DOCX)",
+      "description": "Tabla messageTemplate.",
+      "item": [
+        {
+          "name": "Create (SMS)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/MessageTemplate/Create",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "MessageTemplate",
+                "Create"
+              ]
+            },
+            "description": "Crea una plantilla SMS (body). WSP usa hsmName+language+params; DOCX usa s3Path+params.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"channel\": \"SMS\",\n  \"name\": \"Promo SMS\",\n  \"body\": \"Hola {{Nombre}}, tu mensaje aquí\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  if (body.data && body.data.messageTemplateId) { pm.collectionVariables.set('messageTemplateId', body.data.messageTemplateId); console.log('    -> messageTemplateId guardado'); }",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/MessageTemplate/List",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "MessageTemplate",
+                "List"
+              ]
+            },
+            "description": "Lista las plantillas (filtra por canal si se envía).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"channel\": \"SMS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/MessageTemplate/Delete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "MessageTemplate",
+                "Delete"
+              ]
+            },
+            "description": "Borra una plantilla multicanal.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageTemplateId\": \"{{messageTemplateId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7) Lista negra",
+      "description": "Contactos que no reciben envíos ({customer}_blackList).",
+      "item": [
+        {
+          "name": "Add",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Blacklist/Add",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Blacklist",
+                "Add"
+              ]
+            },
+            "description": "Agrega un contacto (correo o celular E.164).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"bloqueado@test.com\",\n  \"reason\": \"prueba\",\n  \"customerId\": \"{{customerId}}\",\n  \"customer\": \"{{customer}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Blacklist/List",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Blacklist",
+                "List"
+              ]
+            },
+            "description": "Lista la lista negra del cliente.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"customer\": \"{{customer}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Blacklist/Delete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Blacklist",
+                "Delete"
+              ]
+            },
+            "description": "Quita un contacto de la lista negra.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"bloqueado@test.com\",\n  \"customerId\": \"{{customerId}}\",\n  \"customer\": \"{{customer}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8) Clientes (ADMIN)",
+      "description": "Endpoints administrativos: exigen rol admin (403 si no).",
+      "item": [
+        {
+          "name": "List customers (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Customer/List",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Customer",
+                "List"
+              ]
+            },
+            "description": "Lista todos los clientes. Requiere rol admin.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update customer (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Customer/Update",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Customer",
+                "Update"
+              ]
+            },
+            "description": "Togglea realSendEnabled de un cliente. Requiere rol admin.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"realSendEnabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "9) Reportes y costo",
+      "description": "Estadísticas, reporte de estado y estimador de costo.",
+      "item": [
+        {
+          "name": "Statistics",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Report/Statistics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Report",
+                "Statistics"
+              ]
+            },
+            "description": "Agrega estados por campaña (dona/embudo del panel).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"customer\": \"{{customer}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "State report",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Report"
+              ]
+            },
+            "description": "Reporte de estado por proceso (CSV). Pon un idProceso real.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cliente\": \"{{customer}}\",\n  \"idProceso\": \"{{processId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cost estimate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Cost/Estimate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Cost",
+                "Estimate"
+              ]
+            },
+            "description": "Estimador de costo por canal.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"channel\": \"EMAIL\",\n  \"recipients\": 1000,\n  \"emailMode\": \"EM\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const name = pm.info.requestName;",
+                  "let body = null; try { body = pm.response.json(); } catch (e) {}",
+                  "const code = pm.response.code;",
+                  "pm.test(name + ' respondió (no 5xx, no timeout)', function () { pm.expect(code).to.be.below(500); });",
+                  "if (body) {",
+                  "  const sc = (body.statusCode !== undefined) ? body.statusCode : body.status_code;",
+                  "  pm.test(name + ' trae envelope', function () { pm.expect(body).to.have.property('description'); });",
+                  "  console.log('OK  ' + name + ' -> HTTP ' + code + ' | statusCode=' + sc + ' | ' + (body.description || ''));",
+                  "  // (sin encadenamiento)",
+                  "} else {",
+                  "  console.log('??  ' + name + ' -> HTTP ' + code + ' | sin cuerpo JSON (posible 302/403 authorizer/HTML)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
