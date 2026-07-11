@@ -121,6 +121,10 @@ def lambda_handler(event, context):
         # a str para que coincida con el tipo del índice (evita ValidationException
         # "Type mismatch for Index Key companyTin") y para que los scan comparen S==S.
         companyTin = str(payload['companyTin'])
+        # Aceptación de términos + autorización de tratamiento de datos (Habeas Data).
+        # El front exige marcar la casilla; guardamos la evidencia (bool + fecha + versión).
+        accepted_terms = bool(payload.get('acceptedTerms', False))
+        terms_version = str(payload.get('termsVersion', '2026-07-10'))
 
         print("Inicio validación de los datos del payload")
 
@@ -194,7 +198,9 @@ def lambda_handler(event, context):
                         }
                     )
 
-                    # Usuario (inactivo hasta activar)
+                    # Usuario (inactivo hasta activar). Rol por defecto: 'client'.
+                    # Los administradores de MailConnect se provisionan aparte
+                    # (cambiando este campo a 'admin' en la tabla / por un script).
                     table_user.put_item(
                         Item={
                             'userId': userId,
@@ -203,6 +209,11 @@ def lambda_handler(event, context):
                             'email': email,
                             'userHash': hashed_password,
                             'userSalt': salt,
+                            'role': 'client',
+                            # Evidencia de aceptación de términos (Ley 1581).
+                            'termsAccepted': accepted_terms,
+                            'termsAcceptedAt': formattedDate if accepted_terms else '',
+                            'termsVersion': terms_version,
                             'date': formattedDate,
                             'active': False
                         }

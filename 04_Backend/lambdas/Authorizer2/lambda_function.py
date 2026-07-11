@@ -77,5 +77,6 @@ def lambda_handler(event, context):
         'customerId': str(decoded.get('customerId', '') or ''),
         'customer': str(decoded.get('customer', '') or ''),
         'userId': str(decoded.get('userId', '') or ''),
+        'role': str(decoded.get('role', 'client') or 'client'),
     }
     return _build_policy(user, 'Allow', resource, context=ctx)

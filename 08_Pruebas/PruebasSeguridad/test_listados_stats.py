@@ -72,13 +72,19 @@ def mods():
         # Campañas
         res.Table('campaign').put_item(Item={'campaignId': 'C1', 'customerId': 'CU1', 'campaignName': 'Promo', 'campaignState': 'Terminada', 'channel': 'EM', 'consecutive': '0001', 'template': 'empresa_0001_EM_Promo', 'date': '2026-07-01'})
         res.Table('campaign').put_item(Item={'campaignId': 'C9', 'customerId': 'CU2', 'campaignName': 'Ajena', 'campaignState': 'Pendiente', 'channel': 'EM', 'date': '2026-07-02'})
-        # Proceso + estados de C1
+        # Proceso + estados de C1 (tabla única {customer}_sendStatus, PK processId + SK sendStatusId)
         res.Table('process').put_item(Item={'processId': 'P1', 'campaignId': 'C1', 'customerName': 'empresa', 'registersToSend': 3})
-        mk('empresa_sendStatus_P1', 'sendStatusId')
-        st = res.Table('empresa_sendStatus_P1')
+        ddb.create_table(
+            TableName='empresa_sendStatus',
+            KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'},
+                       {'AttributeName': 'sendStatusId', 'KeyType': 'RANGE'}],
+            AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'},
+                                  {'AttributeName': 'sendStatusId', 'AttributeType': 'S'}],
+            BillingMode='PAY_PER_REQUEST')
+        st = res.Table('empresa_sendStatus')
         rows = [('m1', 1), ('m1', 2), ('m1', 4), ('m2', 1), ('m2', 6), ('m3', 1)]
         for i, (mid, state) in enumerate(rows):
-            st.put_item(Item={'sendStatusId': f's{i}', 'messageId': mid, 'state': state})
+            st.put_item(Item={'processId': 'P1', 'sendStatusId': f's{i}', 'messageId': mid, 'state': state})
         # Bases de datos (databaseFile) de CU1
         res.Table('databaseFile').put_item(Item={'databaseFileId': 'D1', 'customerId': 'CU1', 'customer': 'empresa', 'fileName': 'base.csv', 's3Path': 'x/base.csv', 'totalRecords': 100, 'uploadDate': '2026-07-01T00:00:00Z'})
         res.Table('databaseFile').put_item(Item={'databaseFileId': 'D9', 'customerId': 'CU2', 'customer': 'otra', 'fileName': 'ajena.csv', 's3Path': 'y/a.csv', 'totalRecords': 5, 'uploadDate': '2026-07-01T00:00:00Z'})

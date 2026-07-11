@@ -8,6 +8,8 @@ import {
   sessionExpired,
   secondsUntilExpiry,
   refreshSession,
+  getUser,
+  isAdmin,
 } from '../services/authService';
 
 /**
@@ -29,7 +31,7 @@ const CHECK_EVERY_MS = 30_000; // frecuencia del chequeo de inactividad/expiraci
 const TOUCH_THROTTLE_MS = 5_000; // no escribir la marca de actividad más seguido que esto
 const REFRESH_WHEN_LEFT_S = 3600; // renovar el token si le queda < 1 h y el usuario está activo
 
-export const RequireAuth = ({ children }: { children: ReactNode }) => {
+export const RequireAuth = ({ children, requireAdmin = false }: { children: ReactNode; requireAdmin?: boolean }) => {
   const authed = isAuthenticated() && !isTokenExpired();
 
   useEffect(() => {
@@ -84,6 +86,11 @@ export const RequireAuth = ({ children }: { children: ReactNode }) => {
       try { sessionStorage.setItem('mc_logout_reason', 'expired'); } catch { /* sin storage */ }
     }
     return <Navigate to="/login" replace />;
+  }
+
+  // Ruta solo-admin: un usuario autenticado sin rol admin se manda a su portal.
+  if (requireAdmin && !isAdmin(getUser())) {
+    return <Navigate to="/panel" replace />;
   }
 
   return <>{children}</>;

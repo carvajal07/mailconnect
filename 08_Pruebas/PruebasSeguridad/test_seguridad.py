@@ -190,6 +190,28 @@ def test_registro_telefono_invalido_400(ctx):
     assert resp['statusCode'] == 400
 
 
+def test_registro_guarda_rol_y_terminos(ctx):
+    email = ctx.unique_email('rol')
+    resp = ctx.handler('register')({
+        'name': 'X', 'phone': '3001112233', 'email': email,
+        'company': 'C', 'companyTin': 900222, 'password': 'Password123',
+        'acceptedTerms': True,
+    }, None)
+    assert resp['statusCode'] == 201
+    item = ctx.tables['user'].scan(
+        FilterExpression='email = :e', ExpressionAttributeValues={':e': email})['Items'][0]
+    assert item['role'] == 'client'          # rol por defecto
+    assert item['termsAccepted'] is True     # evidencia de aceptación
+    assert item['termsAcceptedAt']           # fecha registrada
+
+
+def test_login_devuelve_rol(ctx):
+    email = ctx.make_active_user(ctx.unique_email('rol-login'))
+    resp = ctx.handler('login')({'user': email, 'password': 'Password123'}, None)
+    assert resp['statusCode'] == 200
+    assert resp['data']['role'] == 'client'
+
+
 # ============================ ACTIVACIÓN ============================
 
 def test_activacion_valida_activa_cuenta(ctx):

@@ -40,6 +40,22 @@ def _scan_all(table):
         if not last_key:
             break
 
+
+def _query_process(table, process_id):
+    """Estados de UN proceso desde la tabla única {cliente}_sendStatus (PK processId)."""
+    from boto3.dynamodb.conditions import Key
+    last_key = None
+    while True:
+        kwargs = {'KeyConditionExpression': Key('processId').eq(process_id)}
+        if last_key:
+            kwargs['ExclusiveStartKey'] = last_key
+        resp = table.query(**kwargs)
+        for item in resp.get("Items", []):
+            yield item
+        last_key = resp.get("LastEvaluatedKey")
+        if not last_key:
+            break
+
 def _parse_data_field(raw):
     if not isinstance(raw, str):
         return []
@@ -73,13 +89,14 @@ def _parse_iso_dt(s):
 
 def build_report(cliente: str, id_proceso: str, s3_bucket: str | None, s3_prefix: str | None):
     table_detail_name = f"{cliente}_sendDetail_{id_proceso}"
-    table_status_name = f"{cliente}_sendStatus_{id_proceso}"
+    # Tabla ÚNICA de estados (antes: una por proceso). Se consulta por processId.
+    table_status_name = f"{cliente}_sendStatus"
     table_detail = _dynamo.Table(table_detail_name)
     table_status = _dynamo.Table(table_status_name)
 
-    # 1) Leer sendStatus y conservar SOLO el último por messageId (según date más reciente)
+    # 1) Leer sendStatus del proceso y conservar SOLO el último por messageId (date más reciente)
     latest_status_by_msgid = {}
-    for it in _scan_all(table_status):
+    for it in _query_process(table_status, id_proceso):
         message_id = it.get("messageId") or it.get("MessageId")
         if not message_id:
             continue

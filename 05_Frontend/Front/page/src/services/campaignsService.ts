@@ -89,6 +89,10 @@ export interface CampaignPayload {
   dataPath: string;
   template: string;
   from: string;
+  /** Documento(s) adjunto(s) para EAU/EAP: lista de { path } (ruta en S3). */
+  attachment?: { path: string }[];
+  /** ¿El adjunto (EAP) usa combinación de correspondencia por destinatario? */
+  variableDocument?: boolean;
 }
 
 export interface PresignPayload {

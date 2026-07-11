@@ -58,9 +58,11 @@ def build_whatsapp_message(phone, template_name, params):
 
 
 def _record_status(customer_name, process_id, rows):
-    table = dynamodb.Table(f'{customer_name}_sendStatus_{process_id}')
+    # Tabla ÚNICA {customer}_sendStatus (PK processId + SK sendStatusId).
+    table = dynamodb.Table(f'{customer_name}_sendStatus')
     with table.batch_writer() as batch:
         for item in rows:
+            item['processId'] = process_id
             batch.put_item(Item=item)
 
 

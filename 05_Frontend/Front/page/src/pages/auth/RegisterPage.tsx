@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link as RouterLink } from 'react-router-dom';
 import {
   Box,
   Paper,
@@ -11,6 +11,9 @@ import {
   Alert,
   InputAdornment,
   IconButton,
+  Checkbox,
+  FormControlLabel,
+  FormHelperText,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -66,6 +69,9 @@ export const RegisterPage = () => {
   const [successOpen, setSuccessOpen] = useState(false);
   const [registeredEmail, setRegisteredEmail] = useState('');
   const [submitError, setSubmitError] = useState('');
+  // Aceptación de términos + autorización de tratamiento de datos (Habeas Data).
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [termsError, setTermsError] = useState(false);
 
   // Validaciones
   const validateName = (name: string): string | undefined => {
@@ -166,6 +172,12 @@ export const RegisterPage = () => {
 
     if (!validateForm()) return;
 
+    // Debe aceptar términos y autorizar el tratamiento de datos antes de registrarse.
+    if (!acceptedTerms) {
+      setTermsError(true);
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmitError('');
 
@@ -177,6 +189,7 @@ export const RegisterPage = () => {
         company: formData.company.trim(),
         companyTin: Number(formData.companyTin),
         password: formData.password,
+        acceptedTerms: acceptedTerms,
       });
 
       if (res.status && (res.statusCode === 201 || res.statusCode === 200)) {
@@ -352,12 +365,48 @@ export const RegisterPage = () => {
               }}
             />
 
+            <Box sx={{ mt: 1.5 }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={acceptedTerms}
+                    onChange={(e) => {
+                      setAcceptedTerms(e.target.checked);
+                      if (e.target.checked) setTermsError(false);
+                    }}
+                    disabled={isSubmitting}
+                    size="small"
+                    sx={{ pt: 0.25 }}
+                  />
+                }
+                sx={{ alignItems: 'flex-start', m: 0 }}
+                label={
+                  <Typography variant="body2" color="text.secondary">
+                    He leído y acepto los{' '}
+                    <Link component={RouterLink} to="/legal/terminos" target="_blank" rel="noopener" sx={authLinkSx}>
+                      Términos y condiciones
+                    </Link>{' '}
+                    y autorizo el tratamiento de mis datos personales conforme a la{' '}
+                    <Link component={RouterLink} to="/legal/habeas-data" target="_blank" rel="noopener" sx={authLinkSx}>
+                      Política de Tratamiento de Datos (Habeas Data)
+                    </Link>
+                    .
+                  </Typography>
+                }
+              />
+              {termsError && (
+                <FormHelperText error sx={{ ml: 0 }}>
+                  Debes aceptar los términos y autorizar el tratamiento de datos para continuar.
+                </FormHelperText>
+              )}
+            </Box>
+
             <Button
               type="submit"
               fullWidth
               variant="contained"
               size="large"
-              disabled={isSubmitting}
+              disabled={isSubmitting || !acceptedTerms}
               sx={authSubmitSx}
             >
               {isSubmitting ? 'Registrando...' : 'Crear Cuenta'}

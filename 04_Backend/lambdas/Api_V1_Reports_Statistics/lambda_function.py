@@ -24,7 +24,7 @@ import json
 import boto3
 from decimal import Decimal
 from collections import defaultdict
-from boto3.dynamodb.conditions import Attr
+from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
 REGION = 'us-east-1'
@@ -85,6 +85,27 @@ def _scan_all(table, **kwargs):
     try:
         while True:
             resp = table.scan(**kwargs)
+            items.extend(resp.get('Items', []))
+            last_key = resp.get('LastEvaluatedKey')
+            if not last_key:
+                break
+            kwargs['ExclusiveStartKey'] = last_key
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            return []
+        raise
+    return items
+
+
+def _query_process(table, process_id):
+    """Trae los estados de UN proceso desde la tabla única {customer}_sendStatus
+    (PK processId). Devuelve [] si la tabla no existe. Reemplaza el scan de la antigua
+    tabla-por-proceso."""
+    items = []
+    kwargs = {'KeyConditionExpression': Key('processId').eq(process_id)}
+    try:
+        while True:
+            resp = table.query(**kwargs)
             items.extend(resp.get('Items', []))
             last_key = resp.get('LastEvaluatedKey')
             if not last_key:
@@ -173,8 +194,8 @@ def lambda_handler(event, context):
                 if not process_id:
                     continue
                 scanned += 1
-                status_table = dynamodb.Table(f'{customer}_sendStatus_{process_id}')
-                states = _current_state_per_message(_scan_all(status_table))
+                status_table = dynamodb.Table(f'{customer}_sendStatus')
+                states = _current_state_per_message(_query_process(status_table, process_id))
                 counts = _counts_from_states(states)
                 for k in totals:
                     totals[k] += counts[k]

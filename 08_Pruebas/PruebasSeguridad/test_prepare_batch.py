@@ -9,6 +9,7 @@ y no está instalado en CI.
 """
 import os
 import sys
+import json
 import types
 import importlib.util
 from pathlib import Path
@@ -55,19 +56,18 @@ def pb():
         res.Table('empresa_blackList').put_item(Item={'email': 'negro@test.com'})
 
         module = _load_prepare_batch()
-        module.customer_name = 'empresa'  # global que usan check_unsubscribes/blacklist
         yield module
 
 
 def test_check_unsubscribes_encuentra_desuscritos(pb):
     keys = [{'email': 'baja@test.com'}, {'email': 'activo@test.com'}, {'email': 'baja2@test.com'}]
-    result = pb.check_unsubscribes(keys)
+    result = pb.check_unsubscribes('empresa', keys)
     assert result == {'baja@test.com', 'baja2@test.com'}
 
 
 def test_check_blacklist_encuentra_lista_negra(pb):
     keys = [{'email': 'negro@test.com'}, {'email': 'limpio@test.com'}]
-    assert pb.check_blacklist(keys) == {'negro@test.com'}
+    assert pb.check_blacklist('empresa', keys) == {'negro@test.com'}
 
 
 def test_batch_get_dedup_y_troceo(pb):
@@ -80,3 +80,85 @@ def test_batch_get_dedup_y_troceo(pb):
 def test_tabla_inexistente_no_revienta(pb):
     # Si la tabla no existe, devuelve vacío en vez de tumbar el envío.
     assert pb._batch_get_emails('empresa_noexiste_unsubscribe', [{'email': 'a@test.com'}]) == set()
+
+
+# ---- Fase 0: quick wins ----
+
+def _ctx(**over):
+    base = {'customerId': 'CU1', 'customerName': 'empresa', 'processId': 'P1',
+            'campaignId': 'K1', 'attachment': False, 'fromEmail': 'a@b.com',
+            'headers': ['Id', 'Correo', 'Nombre'], 'templateName': 'T',
+            'smsBody': '', 'wspTemplate': '', 'voiceMessage': ''}
+    base.update(over)
+    return base
+
+
+def test_prepare_message_es_pura_y_devuelve_json(pb):
+    # Fase 3: prepare_message(ctx, data, part) ya NO lee globals; es pura y testeable.
+    out = pb.prepare_message(_ctx(), [['1', 'a@b.com', 'Ana']], 3)
+    parsed = json.loads(out)
+    assert parsed['processId'] == 'P1'
+    assert parsed['part'] == 3
+    assert parsed['data'] == [['1', 'a@b.com', 'Ana']]
+    assert parsed['smsBody'] == '' and parsed['voiceMessage'] == ''
+
+
+def test_build_ctx_lee_el_estado_actual(pb):
+    # build_ctx(st) ya no lee globals: arma el ctx desde el ProcessState de la invocación.
+    st = pb.ProcessState()
+    st.customer_id = 'CU9'; st.customer_name = 'empresa'; st.process_id = 'PZ'
+    st.campaign_id = 'K9'; st.attachment = True; st.from_email = 'x@y.com'
+    st.headers = ['a']; st.template_name = 'TT'
+    st.sms_body = 'hola'; st.wsp_template = ''; st.voice_message = ''
+    ctx = pb.build_ctx(st)
+    assert ctx['customerId'] == 'CU9' and ctx['processId'] == 'PZ'
+    assert ctx['smsBody'] == 'hola' and ctx['attachment'] is True
+
+
+def test_classify_and_enqueue_filtra_y_agrupa(pb):
+    # Núcleo del envío real extraído: clasifica y agrupa en lotes, con send_fn inyectado.
+    enviados = []
+    registers = [
+        ['1', 'ok1@t.com', 'A'],
+        ['2', 'negro@t.com', 'B'],   # lista negra
+        ['3', 'ok2@t.com', 'C'],
+        ['4', 'baja@t.com', 'D'],    # desuscrito
+        ['5', 'ok3@t.com', 'E'],
+    ]
+    bl = pb.classify_and_enqueue(
+        _ctx(), registers,
+        blacklist_emails={'negro@t.com'}, unsubscribes_emails={'baja@t.com'},
+        registers_for_message=2, url_sqs='q',
+        send_fn=lambda url, msg: enviados.append(json.loads(msg)))
+    registers_blacklist, registers_unsubscribe, enqueued, parts = bl
+    assert len(registers_blacklist) == 1 and len(registers_unsubscribe) == 1
+    assert enqueued == 3          # 3 válidos (ok1, ok2, ok3)
+    assert parts == 2             # lotes de 2 → [2] + [1]
+    # Los mensajes solo llevan los válidos, en orden.
+    correos = [row[1] for m in enviados for row in m['data']]
+    assert correos == ['ok1@t.com', 'ok2@t.com', 'ok3@t.com']
+
+
+def test_classify_and_enqueue_part_offset_numera_unico(pb):
+    # Fase 4: en el fan-out, cada part-file numera sus lotes con part_offset para que el
+    # número de parte sea ÚNICO en todo el proceso (la lambda de envío deduplica por parte).
+    enviados = []
+    registers = [['1', 'a@t.com', 'A'], ['2', 'b@t.com', 'B'], ['3', 'c@t.com', 'C']]
+    pb.classify_and_enqueue(
+        _ctx(), registers, blacklist_emails=set(), unsubscribes_emails=set(),
+        registers_for_message=1, url_sqs='q',
+        send_fn=lambda url, msg: enviados.append(json.loads(msg)), part_offset=5000)
+    assert [m['part'] for m in enviados] == [5001, 5002, 5003]
+
+
+def test_send_sqs_propaga_error(pb):
+    # Antes se tragaba la excepción (print) → el envío quedaba "Enviando" sin encolar.
+    # Ahora el error se PROPAGA para que el bloque que llama marque Error.
+    import pytest as _pytest
+    with _pytest.raises(Exception):
+        pb.send_sqs('https://sqs.us-east-1.amazonaws.com/000000000000/cola-inexistente', 'x')
+
+
+def test_search_samples_eliminado(pb):
+    # Código muerto y con bugs: ya no debe existir.
+    assert not hasattr(pb, 'search_samples')

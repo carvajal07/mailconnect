@@ -16,6 +16,7 @@ import type { ApiResponse } from './apiClient';
 export const DATABASE_ENDPOINTS = {
   REGISTER_FILE: '/Database/Register-file',
   LIST: '/Database/List',
+  DELETE: '/Database/Delete',
 };
 
 export interface RegisterFilePayload {
@@ -63,4 +64,8 @@ export const databaseService = {
    *  cae a buscar por nombre de empresa si el customerId no coincide). */
   list: (customerId: string, customer?: string): Promise<ApiResponse<{ files?: DatabaseFile[]; count?: number }>> =>
     apiPost(DATABASE_ENDPOINTS.LIST, { customerId, customer }),
+
+  /** Elimina el registro de una base de datos (no borra el CSV en S3). */
+  delete: (databaseFileId: string): Promise<ApiResponse> =>
+    apiPost(DATABASE_ENDPOINTS.DELETE, { databaseFileId }),
 };

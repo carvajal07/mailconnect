@@ -18,6 +18,7 @@ import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
 import { MessageTemplatesSection } from '../../components/portal/MessageTemplatesSection';
 import { DocxTemplatesSection } from '../../components/portal/DocxTemplatesSection';
 import { BasesDatosSection } from '../../components/portal/BasesDatosSection';
+import { ListaNegraSection } from '../../components/portal/ListaNegraSection';
 import { MuestrasSection } from '../../components/portal/MuestrasSection';
 import { EstadisticasSection } from '../../components/portal/EstadisticasSection';
 import { ReportesSection } from '../../components/portal/ReportesSection';
@@ -64,6 +65,8 @@ export const PortalPage = () => {
         return <MiCuentaSection />;
       case 'basesdatos':
         return <BasesDatosSection />;
+      case 'listanegra':
+        return <ListaNegraSection />;
       case 'reportes':
         return <ReportesSection />;
       case 'estadisticas':

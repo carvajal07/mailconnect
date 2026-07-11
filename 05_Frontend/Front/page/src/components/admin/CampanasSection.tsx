@@ -21,6 +21,7 @@ import {
   Select,
   MenuItem,
   Chip,
+  Alert,
   CircularProgress,
   IconButton,
   Tooltip,
@@ -30,6 +31,8 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import EditIcon from '@mui/icons-material/Edit';
 import StorageIcon from '@mui/icons-material/Storage';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 import { getUser } from '../../services/authService';
 import { campaignsService } from '../../services/campaignsService';
 import type { CampaignSummary } from '../../services/campaignsService';
@@ -98,6 +101,11 @@ export const CampanasSection = () => {
   // Plantillas de mensaje guardadas (SMS/WSP) para prellenar el campo del canal.
   const [msgTemplates, setMsgTemplates] = useState<MessageTemplate[]>([]);
 
+  // Documento adjunto (solo EAU/EAP): se sube a S3 y se pasa su ruta a la campaña.
+  const [attachmentPath, setAttachmentPath] = useState('');
+  const [attachmentName, setAttachmentName] = useState('');
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
+
   const loadCampaigns = refreshCampaigns;
 
   const loadTemplates = useCallback(async () => {
@@ -115,9 +123,15 @@ export const CampanasSection = () => {
     if (isOk(res) && res.data?.templates) setMsgTemplates(res.data.templates);
   }, [customerId]);
 
+  const resetAttachment = () => {
+    setAttachmentPath('');
+    setAttachmentName('');
+  };
+
   const handleOpenDialog = () => {
     setEditingId(null);
     setFormData(emptyForm(sessionEmail));
+    resetAttachment();
     setOpenDialog(true);
     loadTemplates();
     loadMsgTemplates();
@@ -134,6 +148,7 @@ export const CampanasSection = () => {
       from: c.originEmail ?? sessionEmail,
       dataPath: c.dataPath ?? '',
     });
+    resetAttachment();
     setOpenDialog(true);
     loadTemplates();
     loadMsgTemplates();
@@ -146,11 +161,47 @@ export const CampanasSection = () => {
 
   const isSms = formData.channelName === 'SMS';
   const isWsp = formData.channelName === 'WSP';
-  // SMS y WhatsApp no usan adjunto ni plantilla SES.
-  const isMessaging = isSms || isWsp;
+  const isVoice = formData.channelName === 'VOZ';
+  // Solo EAU/EAP llevan documento adjunto (el resto no).
+  const isAttachment = formData.channelName === 'EAU' || formData.channelName === 'EAP';
 
   const handleInputChange = (field: keyof CampaignForm, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+    setFormData((prev) => {
+      const next = { ...prev, [field]: value };
+      // Al pasar a EAU/EAP, propone "Archivo adjunto" (antes quedaba en "Sin adjunto");
+      // al salir de esos canales, vuelve a "Sin adjunto".
+      if (field === 'channelName') {
+        const attach = value === 'EAU' || value === 'EAP';
+        next.attachmentType = attach ? (prev.attachmentType === 'NONE' ? 'ONFILE' : prev.attachmentType) : 'NONE';
+      }
+      return next;
+    });
+  };
+
+  /** Sube el documento adjunto (EAU/EAP) a S3 y guarda su ruta. */
+  const handleUploadAttachment = async (fileEvent: React.ChangeEvent<HTMLInputElement>) => {
+    const file = fileEvent.target.files?.[0];
+    fileEvent.target.value = ''; // permite re-seleccionar el mismo archivo
+    if (!file) return;
+    if (!customer) {
+      notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
+      return;
+    }
+    setAttachmentUploading(true);
+    const presign = await campaignsService.presignUrl({ customer, documentName: file.name, documentType: 'document' });
+    if (!isOk(presign) || !presign.data?.url || !presign.data?.path) {
+      setAttachmentUploading(false);
+      return notify(presign.description || 'No se pudo crear la URL para el adjunto.', 'error');
+    }
+    const ok = await campaignsService.uploadToS3(presign.data.url, file);
+    setAttachmentUploading(false);
+    if (ok) {
+      setAttachmentPath(presign.data.path);
+      setAttachmentName(file.name);
+      notify('Documento adjunto subido.', 'success');
+    } else {
+      notify('No se pudo subir el documento adjunto a S3.', 'error');
+    }
   };
 
   const handleSubmit = async () => {
@@ -160,6 +211,11 @@ export const CampanasSection = () => {
     }
     if (!formData.campaignName || !formData.channelName) {
       notify('Nombre de la campaña y Canal son obligatorios.', 'warning');
+      return;
+    }
+    // EAU/EAP exigen un documento adjunto (el backend lo valida y devuelve 400 sin él).
+    if (!editingId && isAttachment && !attachmentPath) {
+      notify('Para EAU/EAP debes subir el documento adjunto antes de crear la campaña.', 'warning');
       return;
     }
     setSubmitting(true);
@@ -181,6 +237,8 @@ export const CampanasSection = () => {
           dataPath: formData.dataPath,
           template: formData.template,
           from: formData.from,
+          // Documento adjunto (solo EAU/EAP): el backend espera una lista de { path }.
+          attachment: isAttachment && attachmentPath ? [{ path: attachmentPath }] : undefined,
         });
     setSubmitting(false);
 
@@ -278,6 +336,25 @@ export const CampanasSection = () => {
         <DialogContent>
           <Box sx={{ mt: 2 }}>
             <Stack spacing={2}>
+              <Alert severity="info" icon={<InfoOutlinedIcon />}>
+                <Typography variant="body2" component="div">
+                  <strong>Canal</strong> — cómo se envía:
+                </Typography>
+                <Box component="ul" sx={{ m: 0.5, pl: 2.5 }}>
+                  <li><strong>EM</strong>: correo con plantilla HTML, sin adjunto.</li>
+                  <li><strong>EAU</strong>: correo con un <em>adjunto único</em> (el mismo archivo para todos).</li>
+                  <li><strong>EAP</strong>: correo con <em>adjunto personalizado</em> (documento .docx combinado por destinatario).</li>
+                  <li><strong>SMS</strong> / <strong>WSP</strong>: mensaje de texto / plantilla de WhatsApp (sin adjunto).</li>
+                  <li><strong>VOZ</strong>: llamada telefónica que lee un mensaje por texto a voz (sin adjunto).</li>
+                </Box>
+                <Typography variant="body2" component="div" sx={{ mt: 0.5 }}>
+                  <strong>Entrega del adjunto</strong> (solo EAU/EAP):
+                </Typography>
+                <Box component="ul" sx={{ m: 0.5, pl: 2.5 }}>
+                  <li><strong>Archivo adjunto en el correo</strong>: el documento viaja pegado al correo.</li>
+                  <li><strong>Enlace / botón de descarga</strong>: el correo lleva un enlace para descargarlo (no lo adjunta).</li>
+                </Box>
+              </Alert>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <ApartmentIcon fontSize="small" color="action" />
                 <Typography variant="body2" color="text.secondary">Empresa:&nbsp;</Typography>
@@ -307,21 +384,52 @@ export const CampanasSection = () => {
                     <MenuItem value="EAP">EAP — Adjunto personalizado</MenuItem>
                     <MenuItem value="SMS">SMS — Mensaje de texto</MenuItem>
                     <MenuItem value="WSP">WSP — WhatsApp (plantilla)</MenuItem>
+                    <MenuItem value="VOZ">VOZ — Llamada con mensaje de voz</MenuItem>
                   </Select>
                 </FormControl>
-                <FormControl fullWidth disabled={isMessaging}>
-                  <InputLabel>Tipo de Adjunto</InputLabel>
+                <FormControl fullWidth disabled={!isAttachment}>
+                  <InputLabel>Entrega del adjunto</InputLabel>
                   <Select
-                    value={isMessaging ? 'NONE' : formData.attachmentType}
-                    label="Tipo de Adjunto"
+                    value={isAttachment ? formData.attachmentType : 'NONE'}
+                    label="Entrega del adjunto"
                     onChange={(e) => handleInputChange('attachmentType', e.target.value)}
                   >
-                    <MenuItem value="NONE">NONE</MenuItem>
-                    <MenuItem value="ONFILE">ONFILE</MenuItem>
-                    <MenuItem value="ONLINE">ONLINE</MenuItem>
+                    <MenuItem value="NONE">Sin adjunto</MenuItem>
+                    <MenuItem value="ONFILE">Archivo adjunto en el correo</MenuItem>
+                    <MenuItem value="ONLINE">Enlace / botón de descarga</MenuItem>
                   </Select>
                 </FormControl>
               </Stack>
+
+              {/* Documento adjunto (solo EAU/EAP). El backend exige el adjunto para estos canales. */}
+              {isAttachment && !editingId && (
+                <Box sx={{ p: 1.5, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
+                    <Button
+                      variant="outlined"
+                      component="label"
+                      startIcon={attachmentUploading ? <CircularProgress size={16} /> : <UploadFileIcon />}
+                      disabled={attachmentUploading}
+                    >
+                      {attachmentName ? 'Cambiar documento' : 'Subir documento adjunto'}
+                      <input hidden type="file" accept=".pdf,.docx,.doc,.xlsx" onChange={handleUploadAttachment} />
+                    </Button>
+                    {attachmentName ? (
+                      <Chip color="success" label={attachmentName} onDelete={resetAttachment} />
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">
+                        {formData.channelName === 'EAP'
+                          ? 'Sube el .docx de combinación (adjunto personalizado por destinatario).'
+                          : 'Sube el documento que se adjuntará a todos (PDF/Word).'}
+                      </Typography>
+                    )}
+                  </Stack>
+                </Box>
+              )}
+              {isAttachment && editingId && (
+                <Alert severity="info">El documento adjunto se define al crear la campaña; para cambiarlo, crea una nueva.</Alert>
+              )}
+
               {isSms ? (
                 <>
                   {msgTemplates.some((t) => t.channel === 'SMS') && (
@@ -380,6 +488,17 @@ export const CampanasSection = () => {
                     helperText="Nombre exacto de la plantilla de marketing pre-aprobada por Meta. Los parámetros {{1}}, {{2}}… se toman de las columnas del CSV desde 'Nombre' en adelante. La columna 2 del CSV es el celular (E.164, +57…)."
                   />
                 </>
+              ) : isVoice ? (
+                <TextField
+                  fullWidth
+                  multiline
+                  minRows={3}
+                  label="Mensaje de voz (se lee por teléfono)"
+                  value={formData.template}
+                  onChange={(e) => handleInputChange('template', e.target.value)}
+                  placeholder="Hola {{Nombre}}, le recordamos que…"
+                  helperText="Texto que se convierte a voz (TTS) y se reproduce en la llamada. Admite variables {{columna}} del CSV. En Voz la columna 2 del CSV es el celular (E.164, +57…)."
+                />
               ) : (
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                   <FormControl fullWidth>

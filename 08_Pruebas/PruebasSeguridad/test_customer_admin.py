@@ -40,9 +40,14 @@ def cust():
         yield _load('Api_V1_Customer_List'), _load('Api_V1_Customer_Update')
 
 
+def _admin(body):
+    """Envuelve el body con el context de un Authorizer de rol admin."""
+    return {**body, 'requestContext': {'authorizer': {'role': 'admin'}}}
+
+
 def test_list_ordena_y_default_habilitado(cust):
     lst, _ = cust
-    resp = lst.lambda_handler({}, None)
+    resp = lst.lambda_handler(_admin({}), None)
     assert resp['statusCode'] == 200
     customers = resp['data']['customers']
     # Orden alfabético por empresa: Alfa antes que Beta.
@@ -52,26 +57,38 @@ def test_list_ordena_y_default_habilitado(cust):
     assert alfa['realSendEnabled'] is True
 
 
+def test_list_no_admin_403(cust):
+    lst, _ = cust
+    # Sin rol admin en el context → denegado.
+    assert lst.lambda_handler({'requestContext': {'authorizer': {'role': 'client'}}}, None)['statusCode'] == 403
+    assert lst.lambda_handler({}, None)['statusCode'] == 403
+
+
 def test_update_deshabilita(cust):
     _, upd = cust
-    resp = upd.lambda_handler({'customerId': 'CU1', 'realSendEnabled': False}, None)
+    resp = upd.lambda_handler(_admin({'customerId': 'CU1', 'realSendEnabled': False}), None)
     assert resp['statusCode'] == 200
     item = boto3.resource('dynamodb', region_name='us-east-1').Table('customer').get_item(Key={'customerId': 'CU1'})['Item']
     assert item['realSendEnabled'] is False
 
 
+def test_update_no_admin_403(cust):
+    _, upd = cust
+    assert upd.lambda_handler({'customerId': 'CU1', 'realSendEnabled': False}, None)['statusCode'] == 403
+
+
 def test_update_acepta_string(cust):
     _, upd = cust
-    upd.lambda_handler({'customerId': 'CU2', 'realSendEnabled': 'false'}, None)
+    upd.lambda_handler(_admin({'customerId': 'CU2', 'realSendEnabled': 'false'}), None)
     item = boto3.resource('dynamodb', region_name='us-east-1').Table('customer').get_item(Key={'customerId': 'CU2'})['Item']
     assert item['realSendEnabled'] is False
 
 
 def test_update_cliente_inexistente_404(cust):
     _, upd = cust
-    assert upd.lambda_handler({'customerId': 'NOPE', 'realSendEnabled': True}, None)['statusCode'] == 404
+    assert upd.lambda_handler(_admin({'customerId': 'NOPE', 'realSendEnabled': True}), None)['statusCode'] == 404
 
 
 def test_update_sin_datos_400(cust):
     _, upd = cust
-    assert upd.lambda_handler({'customerId': 'CU1'}, None)['statusCode'] == 400
+    assert upd.lambda_handler(_admin({'customerId': 'CU1'}), None)['statusCode'] == 400

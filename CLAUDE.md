@@ -95,7 +95,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 
 | Endpoint | Request (body) | Respuesta clave |
 |----------|----------------|-----------------|
-| `login` | `{ user (email), password }` | 200 `data:{token, userId, name, customer, customerId, companyTin, realSendEnabled}` · 404 credenciales · 423 inactiva |
+| `login` | `{ user (email), password }` | 200 `data:{token, userId, name, customer, customerId, companyTin, realSendEnabled, role}` · 404 credenciales · 423 inactiva |
 | `register` | `{ name, phone, email, company, companyTin (número), password }` | 201 ok · 409 email existe · 400 datos inválidos |
 | `account-activation` | query `?qs=<activationKey>` | 302 redirect (éxito/error/expirado) |
 | `create-otp` | `{ user (email) o userId, expiration (min), system, ip }` | 201 `data:{otpId}` (envía el código por correo) |
@@ -108,12 +108,16 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Template/List` | `{ customer }` o `{ customerId }` | 200 `data:{templates:[{name, created}], count}` (SES filtrado por prefijo `{customer}_`) |
 | `Email/Unsubscribe` | **GET/POST público (proxy, sin authorizer)** `?t=<token HMAC>` | 200 página HTML (confirmación / enlace inválido). El token lo firman las lambdas Send con `SECRET_KEY`; inserta en `{customer}_unsubscribe` (PK `email`) |
 | `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`) |
-| `Database/List` | `{ customerId }` | 200 `data:{files[], count}` |
+| `Database/List` | `{ customerId }` | 200 `data:{files[], count}` (incluye `columns`, `validEmails`, `invalidEmails`) |
+| `Database/Delete` | `{ databaseFileId }` | 200 ok · 403 otro cliente · 404 no existe. Borra el registro (no el CSV en S3) |
 | `Customer/List` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, realSendEnabled}], count}` |
 | `Customer/Update` | `{ customerId, realSendEnabled (bool) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales |
 | `MessageTemplate/Create` | `{ channel:SMS\|WSP\|DOCX, name, body?/hsmName?+language?+params?/s3Path?+params? }` | 201 `data:{messageTemplateId}` · 400 datos. SMS necesita `body`, WSP `hsmName`, DOCX `s3Path` |
 | `MessageTemplate/List` | `{ customerId, channel? }` | 200 `data:{templates[], count}` (desc por fecha; filtra por canal si se envía) |
 | `MessageTemplate/Delete` | `{ messageTemplateId }` | 200 ok · 403 otro cliente · 404 no existe |
+| `Blacklist/List` | `{ customerId }` o `{ customer }` | 200 `data:{items:[{email, rejectionType, description, date}], count}` (tabla `{customer}_blackList`) |
+| `Blacklist/Add` | `{ email (correo o celular), reason? }` | 201 ok · 400 datos. Crea la tabla si no existe (PK `email`) |
+| `Blacklist/Delete` | `{ email }` | 200 ok · 404 no estaba · 400 datos |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -165,6 +169,17 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Botón "Cargar CSV" de Campañas eliminado (jul 2026):** subía a S3 **sin registrar** la base
   (no aparecía en el tab) → confundía. El flujo único es: subir en **Bases de datos** (valida +
   registra) y elegir la base del **selector** al crear la campaña.
+- **Eliminar base (jul 2026):** botón papelera en la tabla + lambda `Api_V1_Database_Delete`
+  (borra el registro de `databaseFile`, no el CSV en S3; verifica el tenant).
+- **Válidos/Inválidos:** en la tabla, columnas con tooltip explicando el cálculo: **válidos** =
+  contacto (col 2) con formato correcto y sin duplicar; **inválidos** = contacto vacío o con
+  formato inválido para el canal (correo mal escrito o celular que no es E.164). Duplicados aparte.
+- **Campaña EAU/EAP — adjunto (fix 400):** el backend exige `attachment` para EAU/EAP; el form
+  ahora sube el documento a S3 (documentType=document) y envía `attachment:[{path}]`. Sin adjunto
+  bloquea antes de llamar. Los tipos de entrega se renombraron: `NONE`=Sin adjunto,
+  `ONFILE`=Archivo adjunto en el correo, `ONLINE`=Enlace/botón de descarga; el popup trae una guía.
+  **Fix backend:** `Create-campaign` guardaba el literal `"attachment_type"` en `document.attachmentType`
+  (bug) → ahora guarda el valor real (afectaba el ONFILE/ONLINE del envío EAU).
 - **Listado de bases (fix):** `Database/List` cae a buscar por **nombre de empresa** (`customer`)
   si el `customerId` no coincide (robustez ante desalineación del `customerId` entre registro y
   consulta, p. ej. por el mapping template del Authorizer). `Register-file` también prefiere el
@@ -203,6 +218,60 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   mapea `WSP → WHATSAPP` (y `VOZ → VOICE`).
 - ⚠️ `[J]`: crear la cola `Wsp_Send-batch` + trigger, registrar el número/WABA en End User
   Messaging Social y aprobar las plantillas HSM con Meta.
+
+### Canal Voz (jul 2026, base)
+- **Envío:** `Api_V1_Voice_Send-batch` (trigger cola `Voice_Send-batch`) hace una llamada y
+  reproduce un mensaje con **texto a voz (TTS)** vía **AWS End User Messaging Voice**
+  (`pinpoint-sms-voice-v2` → `send_voice_message`, voz de Amazon Polly). Registra el estado en
+  `{customer}_sendStatus_{proceso}` (igual que email/SMS/WhatsApp). Env:
+  `VOICE_ORIGINATION_IDENTITY` (obligatoria), `VOICE_ID` (default `LUPE`, español),
+  `VOICE_CONFIGURATION_SET` (opc), `VOICE_BODY_TEXT_TYPE` (`TEXT`|`SSML`, default `TEXT`).
+- **Enrutamiento:** `Prepare-batch` enruta `channel="VOZ"` a `URL_SQS_VOICE` (lotes de 50) y
+  agrega `voiceMessage` = campo `template` de la campaña (para Voz, `template` guarda el TEXTO
+  a leer). Admite variables `{{columna}}` del CSV. Columna 2 = celular E.164.
+- **Front:** el form de campaña tiene el canal **VOZ** con un campo de texto del mensaje; el
+  estimador mapea `VOZ → VOICE`.
+- ⚠️ `[J]`: crear la cola `Voice_Send-batch` + trigger y habilitar el origen de voz en End User
+  Messaging (número con capacidad de voz).
+
+### Roles (admin/client) (jul 2026)
+- **Modelo:** dos roles — **`admin`** (personal interno de MailConnect: gestiona clientes,
+  tarifas, config global) y **`client`** (default, usuario de una empresa). Dentro de un cliente
+  no hay sub-roles todavía (futuro: owner/member).
+- **Backend:** campo `role` en la tabla `user` (default `client` en `Register`). `Login` lo
+  embebe en el JWT y lo devuelve en `data.role`; `Authorizer`/`Authorizer2` lo reenvían en el
+  context (`event.requestContext.authorizer.role`); `Refresh-token` lo preserva. Los endpoints
+  **admin** (`Customer_List`, `Customer_Update`) exigen `role=admin` (403 si no).
+- **Front:** la sesión guarda `role`; `isAdmin(user)` en `authService`. `RequireAuth requireAdmin`
+  protege `/admin` (un `client` autenticado se redirige a `/panel`).
+- **Provisión de admins:** `Register` siempre crea `client`. Un admin se crea cambiando el campo
+  `role` a `admin` en la tabla `user` (consola/script). ⚠️ `[J]`: promover el/los usuarios admin.
+- **Aceptación de términos:** `Register` guarda `termsAccepted` (bool) + `termsAcceptedAt` +
+  `termsVersion` (evidencia Ley 1581); el front envía `acceptedTerms` desde la casilla del registro.
+
+### Lista negra por cliente (jul 2026)
+- **Gestión:** lambdas `Api_V1_Blacklist_{List,Add,Delete}` sobre la tabla `{customer}_blackList`
+  (PK `email`; el "email" es el contacto: correo **o** celular E.164). Multi-tenant por el nombre
+  de empresa del token. `Add` crea la tabla si no existe (mismo esquema que Prepare-batch /
+  ReceptionStatus). `List` devuelve vacío si la tabla no existe (no es error).
+- **Automático + manual:** la llena sola `Email_ReceptionStatus` (rebotes permanentes / quejas) y
+  el cliente puede agregar/quitar desde el portal (sección **Lista negra**, `ListaNegraSection`).
+- **Filtrado:** `Prepare-batch` ya excluye estos contactos en el **envío real** (`check_blacklist`).
+
+### Estados de entrega SMS / Voz (ReceptionStatus EUM) (jul 2026)
+- **Email** ya tenía `Api_V1_Email_ReceptionStatus` (eventos SES por SNS → estados 1..10).
+- **SMS y Voz:** nueva `Api_V1_Messaging_ReceptionStatus` procesa los eventos de **AWS End User
+  Messaging** (SMS + Voz) por SNS y **añade** una fila a `{customer}_sendStatus_{proceso}` con el
+  estado (1 enviado · 2 entregado/contestado · 3 rechazado/fallido). `Statistics` agrega por
+  `messageId` tomando el estado de mayor prioridad → los reportes reflejan entrega, no solo envío.
+- **Metadata:** los envíos SMS/Voz ahora pasan `Context={customer, processId, uniqueId}` en
+  `send_text_message`/`send_voice_message`; EUM lo incluye en el evento y ReceptionStatus lo lee
+  para saber a qué cliente/proceso pertenece cada estado.
+- ⚠️ **WhatsApp:** los recibos de entrega/lectura vienen de **Meta** (formato distinto, vía la
+  SNS de `socialmessaging`); su ReceptionStatus queda **pendiente** (mismo patrón, otro parser).
+- ⚠️ `[J]`: crear los **configuration sets** de SMS y Voz con **event destination → SNS**, y
+  suscribir `Api_V1_Messaging_ReceptionStatus` a esa SNS. Env `SMS_CONFIGURATION_SET` /
+  `VOICE_CONFIGURATION_SET` en los envíos para que emitan eventos.
 
 ### Límite de muestras y bloqueo de envíos por cliente (jul 2026)
 - **Límite de muestras (5 por campaña):** cada operación de `Send-batch-template-samples`
@@ -477,6 +546,22 @@ se puede leer del objeto ya subido a S3.)
         ⚠️ `/Customer/*` son **admin** (afectan a todos los clientes): restringir a rol admin.
       - Desplegar las lambdas nuevas: `Api_V1_Customer_List`, `Api_V1_Customer_Update`,
         `Api_V1_MessageTemplate_{Create,List,Delete}` (crear la función vacía antes del CD).
+      - **`Api_V1_Database_Delete`** + ruta `/Database/Delete` (authorizer + CORS) + permiso
+        `dynamodb:DeleteItem`/`GetItem` sobre `databaseFile`. Campo **`columns`** en `databaseFile`
+        (lo escribe Register-file; List lo devuelve).
+      - **Canal Voz:** cola `Voice_Send-batch` + trigger a `Api_V1_Voice_Send-batch` (crear la
+        función vacía antes del CD) + origen de voz en End User Messaging + permiso
+        `sms-voice:SendVoiceMessage`. Env `VOICE_ORIGINATION_IDENTITY`.
+      - **Lista negra:** rutas `/Blacklist/List`, `/Blacklist/Add`, `/Blacklist/Delete`
+        (authorizer + CORS) + lambdas `Api_V1_Blacklist_{List,Add,Delete}` (crear vacías) con
+        permisos `Scan/PutItem/GetItem/DeleteItem/CreateTable/DescribeTable` sobre `*_blackList`.
+      - **Estados SMS/Voz:** lambda `Api_V1_Messaging_ReceptionStatus` (crear vacía) suscrita a la
+        SNS de los **configuration sets** de SMS y Voz (event destinations). Permiso
+        `PutItem` sobre `*_sendStatus_*`.
+      - **Roles:** campo `role` en la tabla `user` (default `client`; Register lo escribe). Los
+        Authorizers deben reenviar `role` en el context (proxy directo; en no-proxy, el mapping
+        template debe inyectar `$context.authorizer.role`). **Promover manualmente** al menos un
+        usuario a `role='admin'`. Campos `termsAccepted`/`termsAcceptedAt`/`termsVersion` en `user`.
 - [ ] Sacar **SES del sandbox** y verificar remitente/dominio.
 - [ ] Configurar las **variables de entorno** de §3 en cada lambda.
 - [ ] Definir `VITE_API_BASE_URL` de producción en el front.

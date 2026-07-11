@@ -32,6 +32,8 @@ export interface LoginData {
   name: string;
   /** ¿El cliente tiene habilitados los envíos reales? (default true si no viene). */
   realSendEnabled?: boolean;
+  /** Rol del usuario: 'admin' (interno MailConnect) o 'client' (default). */
+  role?: string;
 }
 
 export interface RegisterPayload {
@@ -41,6 +43,8 @@ export interface RegisterPayload {
   company: string;
   companyTin: number;
   password: string;
+  /** Aceptación de términos + Habeas Data (el front la exige antes de registrar). */
+  acceptedTerms?: boolean;
 }
 
 export interface SessionUser {
@@ -55,8 +59,13 @@ export interface SessionUser {
   /** ¿El cliente tiene habilitados los envíos reales? Si es false, el portal
    *  deshabilita "Enviar campaña real" (el backend también lo bloquea). */
   realSendEnabled?: boolean;
+  /** Rol del usuario: 'admin' (interno) o 'client'. Controla el acceso a /admin. */
+  role?: string;
   email: string;
 }
+
+/** ¿La sesión corresponde a un administrador? */
+export const isAdmin = (user: SessionUser | null): boolean => (user?.role ?? 'client') === 'admin';
 
 const TOKEN_KEY = 'mc_token';
 const USER_KEY = 'mc_user';

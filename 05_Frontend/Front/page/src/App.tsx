@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { CssBaseline } from '@mui/material';
 import { LandingPage } from './pages/landing/LandingPage';
+import { LegalPage } from './pages/legal/LegalPage';
 import { LoginPage } from './pages/auth/LoginPage';
 import { RegisterPage } from './pages/auth/RegisterPage';
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
@@ -19,6 +20,9 @@ function App() {
           {/* Landing pública (marketing) */}
           <Route path="/" element={<LandingPage />} />
 
+          {/* Páginas legales públicas (Habeas Data, Términos, Anti-spam, Privacidad) */}
+          <Route path="/legal/:slug" element={<LegalPage />} />
+
           {/* Rutas de autenticación */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
@@ -35,11 +39,11 @@ function App() {
             }
           />
 
-          {/* Ruta de administración interna (protegida) */}
+          {/* Ruta de administración interna (protegida, solo rol admin) */}
           <Route
             path="/admin"
             element={
-              <RequireAuth>
+              <RequireAuth requireAdmin>
                 <AdminPage />
               </RequireAuth>
             }

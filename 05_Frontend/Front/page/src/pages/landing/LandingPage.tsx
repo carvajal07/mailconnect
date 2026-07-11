@@ -317,7 +317,7 @@ export const LandingPage = () => {
             </div>
             <div>
               <h4>Legal</h4>
-              <a href="#">Términos y condiciones</a><a href="#">Habeas Data · Ley 1581</a><a href="#">Política anti-spam</a><a href="#">Privacidad</a>
+              <Link to="/legal/terminos">Términos y condiciones</Link><Link to="/legal/habeas-data">Habeas Data · Ley 1581</Link><Link to="/legal/anti-spam">Política anti-spam</Link><Link to="/legal/privacidad">Privacidad</Link>
             </div>
           </div>
           <div className="foot-bottom">
