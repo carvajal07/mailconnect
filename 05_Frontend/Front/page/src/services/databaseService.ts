@@ -65,7 +65,7 @@ export const databaseService = {
   list: (customerId: string, customer?: string): Promise<ApiResponse<{ files?: DatabaseFile[]; count?: number }>> =>
     apiPost(DATABASE_ENDPOINTS.LIST, { customerId, customer }),
 
-  /** Elimina el registro de una base de datos (no borra el CSV en S3). */
+  /** Elimina una base de datos: su registro y el CSV en S3 (borrado best-effort del objeto). */
   delete: (databaseFileId: string): Promise<ApiResponse> =>
     apiPost(DATABASE_ENDPOINTS.DELETE, { databaseFileId }),
 };

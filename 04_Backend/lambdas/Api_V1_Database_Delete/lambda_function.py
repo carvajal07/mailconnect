@@ -1,7 +1,8 @@
 '''
-Lambda para eliminar el registro de una base de datos (metadata en la tabla
-'databaseFile'). NO borra el archivo CSV en S3 (solo su registro), para no perder el
-objeto por accidente; si se quiere, se puede extender para borrarlo también.
+Lambda para eliminar una base de datos: borra su registro (metadata en la tabla
+'databaseFile') Y el archivo CSV en S3 (bucket {customer}.database, key = s3Path). El
+borrado en S3 es best-effort: si falla, se registra y NO tumba la operación (el registro
+igual se elimina, para que la base desaparezca del listado del cliente).
 
 Ruta: POST /Database/Delete  (integración no-proxy, envelope estándar)
 Request:  { databaseFileId }
@@ -13,7 +14,25 @@ import json
 import boto3
 
 dynamodb = boto3.resource('dynamodb')
+s3 = boto3.client('s3')
 table_database = dynamodb.Table('databaseFile')
+
+
+def _delete_s3_object(item):
+    """Borra el CSV en S3 (best-effort). El bucket es {customer}.database (minúsculas) y
+    la key es el s3Path guardado en el registro. No propaga errores para no bloquear el
+    borrado del registro si el objeto ya no está o falta un permiso puntual."""
+    customer = item.get('customer')
+    s3_path = item.get('s3Path')
+    if not customer or not s3_path:
+        print('Sin customer/s3Path en el registro; no se borra objeto en S3.')
+        return
+    bucket = '{}.database'.format(str(customer).lower())
+    try:
+        s3.delete_object(Bucket=bucket, Key=s3_path)
+        print('Objeto S3 borrado: s3://{}/{}'.format(bucket, s3_path))
+    except Exception as e:
+        print('No se pudo borrar el objeto en S3 (se continúa): {}'.format(e))
 
 
 def _get_payload(event):
@@ -57,6 +76,8 @@ def lambda_handler(event, context):
             if not same:
                 return {'status': False, 'statusCode': 403, 'description': 'La base pertenece a otro cliente.'}
 
+        # Borra primero el CSV en S3 (best-effort) y luego el registro.
+        _delete_s3_object(current)
         table_database.delete_item(Key={'databaseFileId': database_file_id})
         return {'status': True, 'statusCode': 200, 'description': 'Base de datos eliminada correctamente.'}
     except Exception as e:

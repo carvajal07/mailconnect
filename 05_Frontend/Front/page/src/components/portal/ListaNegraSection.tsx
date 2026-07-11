@@ -29,6 +29,8 @@ import { blacklistService } from '../../services/blacklistService';
 import type { BlacklistItem } from '../../services/blacklistService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { useConfirm } from '../../hooks/useConfirm';
+import { validateContact } from './csv';
 
 /**
  * Sección "Lista negra": contactos (correo o celular) que NO reciben envíos. Se llena
@@ -40,6 +42,7 @@ export const ListaNegraSection = () => {
   const customerId = user?.customerId ?? '';
   const customer = user?.customer ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
+  const { confirm, ConfirmDialog } = useConfirm();
 
   const [items, setItems] = useState<BlacklistItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -61,11 +64,27 @@ export const ListaNegraSection = () => {
     load();
   }, [load]);
 
+  // Validación en vivo del contacto (correo o celular E.164) para avisar antes de enviar.
+  const contactError =
+    newContact.trim() && !validateContact(newContact).valid
+      ? validateContact(newContact).type === 'email'
+        ? 'El correo no tiene un formato válido.'
+        : 'El celular debe ir en formato E.164 (+57…).'
+      : '';
+
   const handleAdd = async () => {
     const contact = newContact.trim();
     if (!contact) return notify('Escribe el correo o celular a bloquear.', 'warning');
+    // Valida el formato ANTES de pegarle al backend (correo si trae '@', si no celular E.164).
+    const { valid, type } = validateContact(contact);
+    if (!valid) {
+      return notify(
+        type === 'email' ? 'El correo no tiene un formato válido.' : 'El celular debe ir en formato E.164 (+57…).',
+        'warning',
+      );
+    }
     setAdding(true);
-    const res = await blacklistService.add(contact, reason.trim() || undefined);
+    const res = await blacklistService.add(contact, reason.trim() || undefined, customerId, customer);
     setAdding(false);
     if (isOk(res)) {
       notify('Contacto agregado a la lista negra.', 'success');
@@ -78,9 +97,15 @@ export const ListaNegraSection = () => {
   };
 
   const handleRemove = async (contact: string) => {
-    if (!window.confirm(`¿Quitar "${contact}" de la lista negra? Volverá a poder recibir envíos.`)) return;
+    const ok = await confirm({
+      title: 'Quitar de la lista negra',
+      message: `¿Quitar "${contact}" de la lista negra? Volverá a poder recibir tus envíos.`,
+      confirmText: 'Quitar',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
     setDeletingKey(contact);
-    const res = await blacklistService.remove(contact);
+    const res = await blacklistService.remove(contact, customerId, customer);
     setDeletingKey(null);
     if (isOk(res)) {
       setItems((prev) => prev.filter((x) => x.email !== contact));
@@ -118,6 +143,8 @@ export const ListaNegraSection = () => {
             size="small"
             fullWidth
             placeholder="cliente@correo.com  o  +573001234567"
+            error={!!contactError}
+            helperText={contactError || ' '}
           />
           <TextField
             label="Motivo (opcional)"
@@ -125,14 +152,15 @@ export const ListaNegraSection = () => {
             onChange={(e) => setReason(e.target.value)}
             size="small"
             fullWidth
+            helperText=" "
           />
           <Button
             variant="contained"
             color="error"
             startIcon={adding ? <CircularProgress size={16} color="inherit" /> : <AddIcon />}
             onClick={handleAdd}
-            disabled={adding}
-            sx={{ whiteSpace: 'nowrap' }}
+            disabled={adding || !!contactError || !newContact.trim()}
+            sx={{ whiteSpace: 'nowrap', flexShrink: 0, minWidth: 140, alignSelf: { xs: 'stretch', sm: 'flex-start' } }}
           >
             Bloquear
           </Button>
@@ -205,6 +233,7 @@ export const ListaNegraSection = () => {
       </TableContainer>
 
       {FeedbackSnackbar}
+      {ConfirmDialog}
     </Box>
   );
 };

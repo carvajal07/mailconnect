@@ -40,6 +40,7 @@ import { getUser } from '../../services/authService';
 import { isOk } from '../../services/apiClient';
 import { usePortalData } from '../../context/PortalDataContext';
 import { useFeedback } from '../../hooks/useFeedback';
+import { useConfirm } from '../../hooks/useConfirm';
 import { analyzeCsv, DELIMITER_LABELS, requiredColumns, channelContactType, type CsvAnalysis, type ContactType, type Delimiter } from './csv';
 
 interface BaseDatos {
@@ -83,6 +84,7 @@ const formatBytes = (n: number) => {
 
 export const BasesDatosSection = () => {
   const { notify, FeedbackSnackbar } = useFeedback();
+  const { confirm, ConfirmDialog } = useConfirm();
   // Bases precargadas al entrar al portal (contexto compartido).
   const { databases, refreshDatabases } = usePortalData();
   // Análisis local (vista previa) de las bases cargadas en esta sesión, por id.
@@ -129,7 +131,13 @@ export const BasesDatosSection = () => {
   };
 
   const handleDelete = async (b: BaseDatos) => {
-    if (!window.confirm(`¿Eliminar la base "${b.name}"? Se quita del listado (el archivo en S3 no se borra).`)) return;
+    const ok = await confirm({
+      title: 'Eliminar base de datos',
+      message: `¿Eliminar la base "${b.name}"? Se quita del listado y se borra el archivo CSV de S3. Esta acción no se puede deshacer.`,
+      confirmText: 'Eliminar',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
     setDeletingId(b.id);
     const res = await databaseService.delete(b.id);
     setDeletingId(null);
@@ -518,6 +526,7 @@ export const BasesDatosSection = () => {
       </Dialog>
 
       {FeedbackSnackbar}
+      {ConfirmDialog}
     </Box>
   );
 };
