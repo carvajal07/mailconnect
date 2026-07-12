@@ -226,7 +226,7 @@ export const CampanasSection = () => {
       return;
     }
     setAttachmentUploading(true);
-    const presign = await campaignsService.presignUrl({ customer, documentName: file.name, documentType: 'document' });
+    const presign = await campaignsService.presignUrl({ customer, nit: getUser()?.nit ?? '', documentName: file.name, documentType: 'document' });
     if (!isOk(presign) || !presign.data?.url || !presign.data?.path) {
       setAttachmentUploading(false);
       return notify(presign.description || 'No se pudo crear la URL para el adjunto.', 'error');

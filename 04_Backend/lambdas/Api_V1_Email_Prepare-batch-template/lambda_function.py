@@ -67,6 +67,15 @@ CORS_HEADERS = {
     'Access-Control-Allow-Methods': 'POST,OPTIONS',
 }
 
+# Bucket por cliente por NIT: {prefix}-{nit}-{database|document} (DNS-safe). Se prefiere el
+# NIT sobre el nombre de empresa; hay fallback al esquema viejo por nombre en las lecturas.
+BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
+
+
+def tenant_bucket(nit, doc_type):
+    clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+
 
 def detect_delimiter(temp_file, default=DELIMITER):
     """Detecta el delimitador del CSV leyendo el encabezado: elige, entre ; , tab |,
@@ -105,6 +114,7 @@ class ProcessState:
         self.sms_body = ''       # texto SMS (solo canal SMS)
         self.wsp_template = ''   # nombre HSM (solo canal WSP)
         self.voice_message = ''  # texto TTS (solo canal VOZ)
+        self.nit = None          # NIT del cliente → define el bucket S3
 
 
 # Configurar el cliente de DynamoDB
@@ -275,6 +285,40 @@ def is_real_send_enabled(customer_id_value:str)->bool:
         print("No se pudo verificar realSendEnabled ({}); se asume habilitado".format(e))
     return True
 
+
+def get_customer_nit(customer_id_value:str):
+    """Devuelve el NIT (companyTin) del cliente para construir el bucket S3 por NIT.
+    Si no se encuentra, devuelve None y las lecturas caen al bucket viejo por nombre."""
+    try:
+        response = table_customer.scan(
+            FilterExpression="customerId = :value",
+            ExpressionAttributeValues={":value": customer_id_value},
+            ProjectionExpression='companyTin')
+        if response['Items']:
+            return response['Items'][0].get('companyTin')
+    except Exception as e:
+        print("No se pudo obtener el NIT del cliente ({})".format(e))
+    return None
+
+
+def download_base_csv(nit, customer_name, data_path, temp_file):
+    """Descarga el CSV de la base intentando primero el bucket por NIT y, si falla,
+    el bucket viejo por nombre (migración sin romper datos existentes)."""
+    candidates = []
+    if nit:
+        candidates.append(tenant_bucket(nit, 'database'))
+    candidates.append('{}.database'.format(customer_name.lower()))  # legacy por nombre
+    last_error = None
+    for bucket in candidates:
+        try:
+            s3.download_file(bucket, data_path, temp_file)
+            print("Base descargada de {}".format(bucket))
+            return bucket
+        except Exception as e:
+            last_error = e
+            print("No se pudo descargar de {} ({})".format(bucket, e))
+    raise last_error if last_error else Exception("No se pudo descargar la base")
+
 def build_ctx(st:'ProcessState')->dict:
     """Arma el contexto del envío (los campos que van en cada mensaje SQS) a partir del
     estado `st` de la invocación. Las funciones puras de abajo reciben `ctx` y no leen
@@ -291,6 +335,7 @@ def build_ctx(st:'ProcessState')->dict:
         "smsBody": st.sms_body,          # texto SMS (solo canal SMS)
         "wspTemplate": st.wsp_template,  # nombre HSM (solo canal WSP)
         "voiceMessage": st.voice_message,  # texto TTS (solo canal VOZ)
+        "nit": st.nit,                   # NIT → bucket S3 en las lambdas de envío (.document)
     }
 
 
@@ -830,7 +875,8 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
         raise AlreadySending('La campaña ya está en proceso de envío; no se re-encola.')
 
     registers_for_message = registers_for_channel(channel_name)
-    bucket_name = f'{st.customer_name.lower()}.database'
+    # Bucket del cliente por NIT (los part-files se suben aquí y el worker los lee de aquí).
+    bucket_name = tenant_bucket(st.nit, 'database') if st.nit else f'{st.customer_name.lower()}.database'
     registers_on_spool = 0
     part = 0
     try:
@@ -1055,14 +1101,15 @@ def lambda_handler(event, context):
             if (state == "Pendiente" or state == "Muestras" or state == "Error"):
                 print(f'La campaña se encuentra en estado "{state}" y se puede realizar su envio')
                 st.process_id = str(uuid.uuid4())
-                # Detalles del archivo en S3
-                bucket_name = f'{st.customer_name.lower()}.database'
-                temp_file = f'/tmp/{st.customer_name}_{st.formatted_date}.tmp'  # Ruta temporal para almacenar el archivo descargado
+                # Ruta temporal para el archivo descargado de S3.
+                temp_file = f'/tmp/{st.customer_name}_{st.formatted_date}.tmp'
                 print("Process id:" + st.process_id)
 
                 st.campaign_id = response_campaign['Items'][0]["campaignId"]
                 print("Despues de capturar el id de campaña")
                 st.customer_id = response_campaign['Items'][0]["customerId"]
+                # NIT del cliente → define el bucket S3 (por NIT, no por nombre).
+                st.nit = get_customer_nit(st.customer_id)
                 consecutive = response_campaign['Items'][0]["consecutive"]
                 channel_name = response_campaign['Items'][0]["channel"]
                 data_path = response_campaign['Items'][0]["dataPath"]
@@ -1129,8 +1176,8 @@ def lambda_handler(event, context):
                 print("Queue: " + url_sqs)
 
                 try:
-                    # Descarga el archivo CSV desde S3
-                    s3.download_file(bucket_name, data_path, temp_file)
+                    # Descarga el CSV desde S3 (bucket por NIT, con fallback al viejo por nombre).
+                    download_base_csv(st.nit, st.customer_name, data_path, temp_file)
                 except:
                     update_campaign_status(st, "Error")
                     description = f'No se pudo realizar la descarga del archivo "{temp_file}" del bucket "{bucket_name} - {data_path}"'

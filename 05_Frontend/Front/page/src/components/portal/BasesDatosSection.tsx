@@ -196,6 +196,7 @@ export const BasesDatosSection = () => {
     // Paso 1: URL prefirmada.
     const presign = await campaignsService.presignUrl({
       customer: customer.trim(),
+      nit: getUser()?.nit ?? '',
       documentName: file.name,
       documentType: 'database',
     });

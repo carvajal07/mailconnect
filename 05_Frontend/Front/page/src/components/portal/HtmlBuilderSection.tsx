@@ -86,6 +86,7 @@ const BLOCK_ICONS: Record<BlockType, ReactNode> = {
 export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePreset?: boolean } = {}) => {
   const sessionUserId = getUser()?.userId ?? '';
   const sessionCustomer = getUser()?.customer ?? '';
+  const sessionNit = getUser()?.nit ?? '';
   // customerId (uuid) para create-template: viene de la sesión, no se pide en el formulario.
   const sessionCustomerId = getUser()?.customerId ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
@@ -291,6 +292,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     }
     const presign = await campaignsService.presignUrl({
       customer: sessionCustomer,
+      nit: sessionNit,
       documentName: file.name,
       documentType: 'document',
     });
@@ -304,7 +306,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
       return null;
     }
     notify('Imagen subida a S3.', 'success');
-    return campaignsService.publicUrl(sessionCustomer, 'document', presign.data.path ?? '');
+    return campaignsService.publicUrl(sessionNit, 'document', presign.data.path ?? '');
   };
 
   /* ---------------- Plantillas prediseñadas ---------------- */

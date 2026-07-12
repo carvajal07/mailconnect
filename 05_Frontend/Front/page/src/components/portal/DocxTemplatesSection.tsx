@@ -80,7 +80,7 @@ export const DocxTemplatesSection = () => {
     setUploading(true);
     try {
       // 1) URL prefirmada para el documento.
-      const presign = await campaignsService.presignUrl({ customer, documentName: file.name, documentType: 'document' });
+      const presign = await campaignsService.presignUrl({ customer, nit: getUser()?.nit ?? '', documentName: file.name, documentType: 'document' });
       if (!isOk(presign) || !presign.data?.url || !presign.data?.path) {
         setUploading(false);
         return notify(presign.description || 'No se pudo crear la URL de subida.', 'error');
@@ -223,7 +223,7 @@ export const DocxTemplatesSection = () => {
                 <TableCell><Typography fontWeight={600}>{t.name}</Typography></TableCell>
                 <TableCell sx={{ maxWidth: 320 }}>
                   {t.s3Path ? (
-                    <Link href={campaignsService.publicUrl(customer, 'document', t.s3Path)} target="_blank" rel="noopener" underline="hover" sx={{ display: 'inline-block', maxWidth: '100%' }} noWrap>
+                    <Link href={campaignsService.publicUrl(getUser()?.nit ?? '', 'document', t.s3Path)} target="_blank" rel="noopener" underline="hover" sx={{ display: 'inline-block', maxWidth: '100%' }} noWrap>
                       {t.s3Path.split('/').pop()}
                     </Link>
                   ) : '—'}

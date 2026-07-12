@@ -27,6 +27,14 @@ CHARSET = "ISO-8859-1"
 REGION = 'us-east-1'
 QUANTITY_BATCH = 25
 
+# Bucket por cliente por NIT: {prefix}-{nit}-document (DNS-safe). Fallback al viejo por nombre.
+BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
+
+
+def tenant_bucket(nit, doc_type):
+    clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+
 # Desuscripción: URL de la lambda Unsubscribe y clave para firmar el token.
 # En EAU el correo es MIME crudo, así que además del enlace en el HTML
 # ({{unsubscribeUrl}}) se agrega el header estándar List-Unsubscribe (RFC 8058).
@@ -213,7 +221,7 @@ def send_bulk_v2(data, headers, start, end, tags, from_email, subject, html, tex
 
     print(f"Bloque {start}-{end} enviado.")
 
-def get_attachments_data(customer_name:str,campaign_id:str)->str:
+def get_attachments_data(customer_name:str,campaign_id:str,nit=None)->str:
     global file_name
     projection_document_expression = 'documentPath,attachmentType'  # Lista de campos a consultar
 
@@ -227,7 +235,7 @@ def get_attachments_data(customer_name:str,campaign_id:str)->str:
     items = response_document['Items']
     
     if items:
-        bucket_name = f'{customer_name}.document'
+        bucket_name = tenant_bucket(nit, 'document') if nit else f'{customer_name.lower()}.document'
         for item in items:
             attachment_path = item["documentPath"]
             attachment_type = item["attachmentType"]
@@ -554,6 +562,7 @@ def lambda_handler(event, context):
         json_body = json.loads(body)
         customer_id = json_body["customerId"]
         customer_name = json_body["customerName"]
+        nit = json_body.get("nit")  # NIT → bucket S3 por NIT (fallback al viejo por nombre)
         process_id = json_body["processId"]
         campaign_id = json_body["campaignId"]
         attachment = json_body["attachment"]
@@ -601,7 +610,7 @@ def lambda_handler(event, context):
         }]
 
         print(headers)
-        file_content = get_attachments_data(customer_name,campaign_id)
+        file_content = get_attachments_data(customer_name,campaign_id,nit)
         header_list = headers
 
         response_template = select_template(template_name)
