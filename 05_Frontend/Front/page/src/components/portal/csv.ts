@@ -13,6 +13,19 @@ const PHONE_E164_RE = /^\+?[1-9]\d{7,14}$/;
 export const isValidPhone = (raw: string): boolean =>
   PHONE_E164_RE.test((raw || '').replace(/[\s()-]/g, ''));
 
+/** ¿Es un correo con formato válido? (misma regla que usa el análisis de bases). */
+export const isValidEmail = (raw: string): boolean => EMAIL_RE.test((raw || '').trim());
+
+/**
+ * Valida un contacto de lista negra: si contiene '@' se valida como correo, si no,
+ * como celular E.164. Devuelve si es válido y una etiqueta del tipo detectado.
+ */
+export const validateContact = (raw: string): { valid: boolean; type: 'email' | 'phone' } => {
+  const v = (raw || '').trim();
+  const type: 'email' | 'phone' = v.includes('@') ? 'email' : 'phone';
+  return { valid: type === 'email' ? isValidEmail(v) : isValidPhone(v), type };
+};
+
 export type Delimiter = ';' | ',' | '\t' | '|';
 
 /**

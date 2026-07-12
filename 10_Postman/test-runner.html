@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MailConnect · Runner de pruebas del API</title>
+<style>
+  :root{
+    --bg:#0f1729; --card:#16233f; --card2:#1b2b4d; --ink:#e8eefc; --muted:#9db0d6;
+    --line:#2a3c66; --brand:#00c3ff; --blue:#0075be; --ok:#1fbf87; --amber:#ff9d2e;
+    --red:#ff5c72; --grey:#6b7aa0;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f3f6fc; --card:#ffffff; --card2:#f5f8ff; --ink:#16233f; --muted:#4b5b7e;
+      --line:#dce4f5; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Nunito",system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.45}
+  .wrap{max-width:1120px;margin:0 auto;padding:20px 16px 60px}
+  h1{font-size:22px;margin:0 0 2px;display:flex;align-items:center;gap:10px}
+  .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--brand),var(--blue));
+    display:inline-block;flex:0 0 auto}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+  label{display:block;font-size:12px;color:var(--muted);margin:0 0 4px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+  input[type=text],input[type=password]{width:100%;padding:9px 11px;border-radius:9px;border:1px solid var(--line);
+    background:var(--card2);color:var(--ink);font-size:14px;font-family:inherit}
+  input:focus{outline:2px solid var(--brand);border-color:transparent}
+  .opts{display:flex;flex-wrap:wrap;gap:14px 22px;margin-top:6px}
+  .chk{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ink);cursor:pointer;font-weight:600}
+  .chk input{width:17px;height:17px;accent-color:var(--brand)}
+  .chk.danger{color:var(--red)}
+  .row-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}
+  button{font-family:inherit;font-weight:800;border:0;border-radius:10px;padding:11px 18px;font-size:14.5px;cursor:pointer}
+  .btn-primary{background:linear-gradient(135deg,var(--brand),var(--blue));color:#04121f}
+  .btn-primary:disabled{opacity:.5;cursor:not-allowed}
+  .btn-ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+  .summary{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 0}
+  .pill{font-size:12.5px;font-weight:800;padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:var(--card2)}
+  .pill b{font-variant-numeric:tabular-nums}
+  .pill.ok{color:var(--ok)} .pill.amber{color:var(--amber)} .pill.red{color:var(--red)}
+  .pill.grey{color:var(--grey)} .pill.run{color:var(--brand)}
+  .bar{height:8px;border-radius:999px;background:var(--card2);overflow:hidden;margin:12px 0 0;border:1px solid var(--line)}
+  .bar > i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--brand),var(--ok));transition:width .25s}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);position:sticky;top:0;background:var(--card)}
+  .grp td{background:var(--card2);font-weight:800;color:var(--muted);text-transform:uppercase;font-size:11.5px;letter-spacing:.04em}
+  .meth{font-weight:800;font-size:11px;padding:2px 7px;border-radius:6px;background:var(--card2);border:1px solid var(--line)}
+  .path{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  .badge{font-weight:800;font-size:11.5px;padding:3px 9px;border-radius:999px;white-space:nowrap;border:1px solid transparent}
+  .b-pend{color:var(--grey);border-color:var(--line)}
+  .b-run{color:var(--brand);border-color:var(--brand)}
+  .b-ok{color:#04241a;background:var(--ok)}
+  .b-amber{color:#3a2400;background:var(--amber)}
+  .b-red{color:#2a0008;background:var(--red)}
+  .b-skip{color:var(--grey);border-color:var(--line)}
+  .desc{color:var(--muted);font-size:12.5px}
+  .code{font-variant-numeric:tabular-nums;font-weight:800}
+  details.det summary{cursor:pointer;color:var(--brand);font-size:12px;font-weight:700;margin-top:3px}
+  details.det pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;overflow:auto;
+    font-size:11.5px;max-height:220px;margin:6px 0 0}
+  .tbl-wrap{overflow-x:auto}
+  .note{font-size:12.5px;color:var(--muted)}
+  .hl{color:var(--amber);font-weight:800}
+  a{color:var(--brand)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span class="logo"></span> MailConnect · Runner de pruebas del API</h1>
+  <p class="sub">Corre todas las peticiones <b>en orden y con dependencias</b> desde tu navegador, y te dice el estado de cada endpoint.</p>
+
+  <div class="card">
+    <div class="grid">
+      <div><label>Base URL</label><input id="baseUrl" type="text" value="https://api.mailconnect.com.co/V1" /></div>
+      <div><label>Email</label><input id="email" type="text" placeholder="tu-usuario@correo.com" /></div>
+      <div><label>Password</label><input id="password" type="password" placeholder="••••••••" /></div>
+      <div><label>Empresa (customer)</label><input id="customer" type="text" placeholder="EmpresaQA" /></div>
+      <div><label>NIT (companyTin)</label><input id="companyTin" type="text" value="900123456" /></div>
+      <div><label>OTP (para validar, opcional)</label><input id="otp" type="text" placeholder="pega el código del correo" /></div>
+    </div>
+    <div class="opts">
+      <label class="chk"><input type="checkbox" id="optCleanup" checked /> Limpiar datos de prueba (deletes al final)</label>
+      <label class="chk"><input type="checkbox" id="optRegister" /> Incluir <b>Registro</b> (crea cuenta + correo)</label>
+      <label class="chk danger"><input type="checkbox" id="optSends" /> ⚠️ Incluir <b>ENVÍOS REALES</b> (correos de verdad)</label>
+      <label class="chk danger"><input type="checkbox" id="optDestructive" /> ⚠️ Incluir <b>destructivos</b> (change-password, logout)</label>
+    </div>
+    <div class="row-actions">
+      <button class="btn-primary" id="run">▶ Iniciar pruebas</button>
+      <button class="btn-ghost" id="copy">Copiar resultados (JSON)</button>
+      <span class="note" id="hint">Rellena email/password/empresa y dale a Iniciar.</span>
+    </div>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="summary" id="summary" style="margin-top:12px">
+      <span class="pill">Total <b id="c-total">0</b></span>
+      <span class="pill ok">Correctos <b id="c-ok">0</b></span>
+      <span class="pill amber">Error de negocio <b id="c-amber">0</b></span>
+      <span class="pill red">Fallidos <b id="c-red">0</b></span>
+      <span class="pill grey">Omitidos <b id="c-skip">0</b></span>
+      <span class="pill run">Funcionales <b id="c-func">0</b></span>
+    </div>
+    <p class="note" style="margin-top:10px">
+      <span class="hl">Leyenda:</span> <b>Correcto</b> = envelope 200/201 · <b>Error de negocio</b> = respondió con envelope 4xx
+      (el endpoint <i>sí funciona</i>, falló por datos/estado) · <b>Fallido</b> = 5xx, sin respuesta o <b>CORS/red</b>
+      (posible CORS no habilitado) · <b>Omitido</b> = saltado por dependencia faltante u opción desactivada.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th style="width:34px">#</th><th>Endpoint</th><th style="width:70px">Método</th>
+          <th style="width:120px">Estado</th><th style="width:70px">HTTP</th><th style="width:90px">statusCode</th>
+          <th>Descripción / detalle</th><th style="width:70px">ms</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---------- utilidades ----------
+const $ = (id) => document.getElementById(id);
+const rowsEl = $("rows");
+const ctx = {}; // contexto compartido entre peticiones (token, ids, etc.)
+
+function joinUrl(base, path){ return base.replace(/\/+$/,'') + '/' + path.replace(/^\/+/,''); }
+
+// ---------- definición del plan (ORDEN = ejecución) ----------
+// gate: 'register' | 'sends' | 'destructive' | 'cleanup' | null
+// skip(ctx) -> string(motivo) para omitir por dependencia faltante
+const PLAN = [
+  {grp:"1 · Seguridad"},
+  {name:"Register", method:"POST", path:"/Security/Register", auth:false, gate:"register",
+    body:c=>({name:"QA Runner",phone:"+573001234567",email:c.email,company:c.customer,companyTin:c.companyTin,password:c.password,acceptedTerms:true})},
+  {name:"Login", method:"POST", path:"/Security/Login", auth:false,
+    body:c=>({user:c.email,password:c.password}),
+    after:(c,d)=>{ if(d&&d.token){c.token=d.token;c.customerId=d.customerId||"";c.customer=d.customer||c.customer;c.userId=d.userId||"";} }},
+  {name:"Refresh token", method:"POST", path:"/Security/Refresh-token", auth:true, body:()=>({}),
+    after:(c,d)=>{ if(d&&d.token)c.token=d.token; }},
+  {name:"Create OTP", method:"POST", path:"/Security/Create-otp", auth:true,
+    body:c=>({user:c.email,expiration:5,system:"runner",ip:"127.0.0.1"}),
+    after:(c,d)=>{ if(d&&d.otpId)c.otpId=d.otpId; }},
+  {name:"Validate OTP", method:"POST", path:"/Security/Validate-otp", auth:true,
+    skip:c=>c.otp?null:"pega el OTP del correo en el campo OTP",
+    body:c=>({otp:c.otp,user:c.email,ip:"127.0.0.1"})},
+  {name:"Recovery password", method:"POST", path:"/Security/Recovery-password", auth:false,
+    body:c=>({user:c.email,ip:"127.0.0.1"})},
+  {name:"Verify code (STUB)", method:"POST", path:"/Security/Verify-code", auth:true,
+    body:c=>({code:"123456",user:c.email})},
+
+  {grp:"2 · Plantillas SES"},
+  {name:"Create template", method:"POST", path:"/Template/Create-template", auth:true,
+    body:c=>{ c.templateName=(c.customer||"Empresa")+"_QA_EM_Runner";
+      return {userId:c.userId,customerId:c.customerId,channel:2,templateName:c.templateName,
+        subject:"Hola {{Nombre}}",htmlBody:"<html><body><h1>Hola {{Nombre}}</h1></body></html>",textBody:"Hola {{Nombre}}"}; }},
+  {name:"List templates", method:"POST", path:"/Template/List", auth:true,
+    body:c=>({customer:c.customer,customerId:c.customerId})},
+  {name:"Get template", method:"POST", path:"/Template/Get-template", auth:true,
+    skip:c=>c.templateName?null:"falta crear la plantilla",
+    body:c=>({userId:c.userId,templateName:c.templateName})},
+
+  {grp:"3 · Bases de datos"},
+  {name:"Prefirm URL (S3)", method:"POST", path:"/Campaign/Prefirm-url", auth:true,
+    body:c=>({customer:c.customer,documentName:"base_qa.csv",documentType:"database"}),
+    after:(c,d)=>{ if(d&&d.path)c.s3Path=d.path; }},
+  {name:"Register file", method:"POST", path:"/Database/Register-file", auth:true,
+    skip:c=>c.s3Path?null:"falta la URL prefirmada (s3Path)",
+    body:c=>({customerId:c.customerId,customer:c.customer,fileName:"base_qa.csv",s3Path:c.s3Path,
+      totalRecords:100,validEmails:98,invalidEmails:2,channel:"EMAIL",columns:["Identificacion","Correo","Nombre"]}),
+    after:(c,d)=>{ if(d&&d.databaseFileId)c.databaseFileId=d.databaseFileId; }},
+  {name:"List databases", method:"POST", path:"/Database/List", auth:true,
+    body:c=>({customerId:c.customerId,customer:c.customer})},
+
+  {grp:"4 · Campañas"},
+  {name:"Create campaign", method:"POST", path:"/Campaign/Create-campaign", auth:true,
+    skip:c=>c.customerId?null:"falta login (customerId)",
+    body:c=>{ c.campaignName="Campaña QA Runner";
+      return {customerId:c.customerId,campaignName:c.campaignName,channelName:"EM",attachmentType:"NONE",
+        dataPath:c.s3Path||"",template:c.templateName||"",from:"comunicaciones"}; },
+    after:(c,d)=>{ if(d&&d.campaignId)c.campaignId=d.campaignId; }},
+  {name:"List campaigns", method:"POST", path:"/Campaign/List", auth:true, body:c=>({customerId:c.customerId})},
+  {name:"Update campaign", method:"POST", path:"/Campaign/Update", auth:true,
+    skip:c=>c.campaignId?null:"falta crear la campaña",
+    body:c=>({campaignId:c.campaignId,campaignName:c.campaignName+" (editada)",template:c.templateName||""})},
+
+  {grp:"5 · Plantillas multicanal"},
+  {name:"MessageTemplate Create (SMS)", method:"POST", path:"/MessageTemplate/Create", auth:true,
+    body:c=>({customerId:c.customerId,channel:"SMS",name:"Promo SMS QA",body:"Hola {{Nombre}}, mensaje QA"}),
+    after:(c,d)=>{ if(d&&d.messageTemplateId)c.messageTemplateId=d.messageTemplateId; }},
+  {name:"MessageTemplate List", method:"POST", path:"/MessageTemplate/List", auth:true,
+    body:c=>({customerId:c.customerId,channel:"SMS"})},
+
+  {grp:"6 · Lista negra"},
+  {name:"Blacklist Add", method:"POST", path:"/Blacklist/Add", auth:true,
+    body:c=>({email:"bloqueado.qa@test.com",reason:"runner",customerId:c.customerId,customer:c.customer})},
+  {name:"Blacklist List", method:"POST", path:"/Blacklist/List", auth:true,
+    body:c=>({customerId:c.customerId,customer:c.customer})},
+  {name:"Blacklist Delete", method:"POST", path:"/Blacklist/Delete", auth:true,
+    body:c=>({email:"bloqueado.qa@test.com",customerId:c.customerId,customer:c.customer})},
+
+  {grp:"7 · Clientes (ADMIN)"},
+  {name:"Customer List (admin)", method:"POST", path:"/Customer/List", auth:true, body:()=>({})},
+  {name:"Customer Update (admin)", method:"POST", path:"/Customer/Update", auth:true,
+    skip:c=>c.customerId?null:"falta login (customerId)",
+    body:c=>({customerId:c.customerId,realSendEnabled:true})},
+
+  {grp:"8 · Reportes y costo"},
+  {name:"Report Statistics", method:"POST", path:"/Report/Statistics", auth:true,
+    body:c=>({customerId:c.customerId,customer:c.customer})},
+  {name:"State report", method:"POST", path:"/Report", auth:true,
+    body:c=>({cliente:c.customer,idProceso:c.processId||"proceso-inexistente"})},
+  {name:"Cost estimate", method:"POST", path:"/Cost/Estimate", auth:true,
+    body:c=>({customerId:c.customerId,channel:"EMAIL",recipients:1000,emailMode:"EM"})},
+
+  {grp:"9 · Envíos (⚠️ efectos reales)"},
+  {name:"Send SAMPLES", method:"POST", path:"/Email/Send-batch-template-samples", auth:true, gate:"sends",
+    skip:c=>c.campaignName?null:"falta crear la campaña",
+    body:c=>({customerName:c.customer,campaignName:c.campaignName,userId:c.userId,template:c.templateName||"",
+      templateVersion:1,quantitySamples:1,selectiveSamples:false,recipients:[c.email],identifications:[]})},
+  {name:"Send REAL", method:"POST", path:"/Email/Send-batch-template", auth:true, gate:"sends",
+    skip:c=>c.campaignName?null:"falta crear la campaña",
+    body:c=>({customerName:c.customer,campaignName:c.campaignName,userId:c.userId,template:c.templateName||"",templateVersion:1})},
+  {name:"Send on-demand", method:"POST", path:"/Email/Send-ondemand-template", auth:true, gate:"sends",
+    body:c=>({customer:c.customer,template:c.templateName||"",to:c.email,data:{Nombre:"QA"}})},
+
+  {grp:"10 · Limpieza"},
+  {name:"MessageTemplate Delete", method:"POST", path:"/MessageTemplate/Delete", auth:true, gate:"cleanup",
+    skip:c=>c.messageTemplateId?null:"nada que borrar",
+    body:c=>({messageTemplateId:c.messageTemplateId})},
+  {name:"Delete database", method:"POST", path:"/Database/Delete", auth:true, gate:"cleanup",
+    skip:c=>c.databaseFileId?null:"nada que borrar",
+    body:c=>({databaseFileId:c.databaseFileId})},
+  {name:"Delete template", method:"POST", path:"/Template/Delete-template", auth:true, gate:"cleanup",
+    skip:c=>c.templateName?null:"nada que borrar",
+    body:c=>({userId:c.userId,templateName:c.templateName})},
+
+  {grp:"11 · Destructivos (opt-in)"},
+  {name:"Change password", method:"POST", path:"/Security/Change-password", auth:true, gate:"destructive",
+    body:c=>({user:c.email,password:c.password,otp:c.otp||undefined})},
+  {name:"Logout", method:"POST", path:"/Security/Logout", auth:true, gate:"destructive",
+    body:c=>({user:c.email})},
+];
+
+// ---------- render de filas ----------
+const state = []; // {def, tr, els}
+function buildRows(){
+  rowsEl.innerHTML=""; state.length=0;
+  let n=0;
+  for(const def of PLAN){
+    if(def.grp){
+      const tr=document.createElement("tr"); tr.className="grp";
+      tr.innerHTML='<td colspan="8">'+def.grp+'</td>'; rowsEl.appendChild(tr); continue;
+    }
+    n++;
+    const tr=document.createElement("tr");
+    tr.innerHTML=
+      '<td>'+n+'</td>'+
+      '<td><b>'+def.name+'</b><div class="path">'+def.path+'</div><div class="dethost"></div></td>'+
+      '<td><span class="meth">'+def.method+'</span></td>'+
+      '<td><span class="badge b-pend st">Pendiente</span></td>'+
+      '<td class="code http">—</td>'+
+      '<td class="code sc">—</td>'+
+      '<td class="desc msg"></td>'+
+      '<td class="code ms">—</td>';
+    rowsEl.appendChild(tr);
+    state.push({def, tr,
+      st:tr.querySelector(".st"), http:tr.querySelector(".http"), sc:tr.querySelector(".sc"),
+      msg:tr.querySelector(".msg"), ms:tr.querySelector(".ms"), det:tr.querySelector(".dethost")});
+  }
+}
+buildRows();
+
+const counts={total:0,ok:0,amber:0,red:0,skip:0};
+function setBadge(el,cls,txt){ el.className="badge "+cls+" st"; el.textContent=txt; }
+function refreshCounts(){
+  $("c-total").textContent=counts.total; $("c-ok").textContent=counts.ok;
+  $("c-amber").textContent=counts.amber; $("c-red").textContent=counts.red;
+  $("c-skip").textContent=counts.skip; $("c-func").textContent=(counts.ok+counts.amber);
+}
+
+// ---------- ejecución ----------
+async function doRequest(def){
+  const base=$("baseUrl").value.trim();
+  const url=joinUrl(base, def.path);
+  const headers={};
+  let bodyObj=null, bodyStr=undefined;
+  if(def.method!=="GET"){ headers["Content-Type"]="application/json";
+    bodyObj = def.body? def.body(ctx):{}; bodyStr=JSON.stringify(bodyObj); }
+  if(def.auth && ctx.token) headers["Authorization"]="Bearer "+ctx.token;
+
+  const ctrl=new AbortController(); const t=setTimeout(()=>ctrl.abort(), 30000);
+  const started=performance.now();
+  try{
+    const res=await fetch(url,{method:def.method,headers,body:bodyStr,signal:ctrl.signal});
+    clearTimeout(t);
+    const ms=Math.round(performance.now()-started);
+    const text=await res.text();
+    let json=null; try{ json=JSON.parse(text); }catch(e){}
+    return {ms, httpStatus:res.status, json, raw:text, reqBody:bodyObj, error:null};
+  }catch(err){
+    clearTimeout(t);
+    const ms=Math.round(performance.now()-started);
+    // fetch lanza TypeError en fallos de red/CORS/DNS.
+    return {ms, httpStatus:0, json:null, raw:"", reqBody:bodyObj,
+      error: err.name==="AbortError" ? "timeout (30s)" : (err.message||"error de red / CORS")};
+  }
+}
+
+function classify(r){
+  if(r.error) return {cls:"b-red", label:"CORS/Red", bucket:"red"};
+  if(r.httpStatus>=500) return {cls:"b-red", label:"Fallo 5xx", bucket:"red"};
+  const sc = r.json ? (r.json.statusCode!==undefined?r.json.statusCode:r.json.status_code) : undefined;
+  if(r.json && sc!==undefined){
+    if(sc>=200 && sc<300) return {cls:"b-ok", label:"Correcto", bucket:"ok"};
+    return {cls:"b-amber", label:"Negocio "+sc, bucket:"amber"};   // respondió: endpoint funcional
+  }
+  // sin envelope JSON: 200 HTML (activation/unsubscribe) o 3xx
+  if(r.httpStatus>=200 && r.httpStatus<400) return {cls:"b-amber", label:"Sin envelope", bucket:"amber"};
+  return {cls:"b-red", label:"HTTP "+r.httpStatus, bucket:"red"};
+}
+
+function detailBlock(def,r){
+  const sc = r.json ? (r.json.statusCode!==undefined?r.json.statusCode:r.json.status_code) : undefined;
+  const desc = r.json ? (r.json.description||r.json.message||"") : "";
+  const d=document.createElement("details"); d.className="det";
+  const respShown = r.json? JSON.stringify(r.json,null,2) : (r.raw? r.raw.slice(0,1200) : (r.error||""));
+  d.innerHTML='<summary>ver request / response</summary>'+
+    '<pre>REQUEST '+def.method+' '+def.path+'\n'+(r.reqBody?JSON.stringify(r.reqBody,null,2):'(sin body)')+
+    '\n\nRESPONSE  HTTP '+r.httpStatus+(sc!==undefined?'  envelope '+sc:'')+'\n'+respShown+'</pre>';
+  return {node:d, desc, sc};
+}
+
+let running=false, resultsForCopy=[];
+async function runAll(){
+  if(running) return;
+  const email=$("email").value.trim(), pass=$("password").value;
+  if(!email||!pass){ $("hint").textContent="Faltan email y/o password."; return; }
+  if($("optSends").checked && !confirm("Los ENVÍOS REALES están activados: se enviarán correos de verdad a "+email+" y/o a la base. ¿Continuar?")) return;
+
+  running=true; $("run").disabled=true; $("hint").textContent="Corriendo…";
+  resultsForCopy=[];
+  Object.keys(ctx).forEach(k=>delete ctx[k]);
+  ctx.email=email; ctx.password=pass; ctx.customer=$("customer").value.trim();
+  ctx.companyTin=$("companyTin").value.trim(); ctx.otp=$("otp").value.trim();
+  const gates={register:$("optRegister").checked, sends:$("optSends").checked,
+    destructive:$("optDestructive").checked, cleanup:$("optCleanup").checked};
+
+  counts.total=0;counts.ok=0;counts.amber=0;counts.red=0;counts.skip=0; refreshCounts();
+  const runnable=state.length; let done=0;
+
+  for(const s of state){
+    const def=s.def;
+    counts.total++;
+    // ¿gate desactivado?
+    if(def.gate && !gates[def.gate]){
+      setBadge(s.st,"b-skip","Omitido"); s.msg.textContent="opción “"+def.gate+"” desactivada";
+      counts.skip++; refreshCounts(); done++; $("bar").style.width=(done/runnable*100)+"%";
+      resultsForCopy.push({name:def.name,status:"skip",reason:"gate:"+def.gate}); continue;
+    }
+    // ¿dependencia faltante?
+    const sk = def.skip? def.skip(ctx):null;
+    if(sk){
+      setBadge(s.st,"b-skip","Omitido"); s.msg.textContent=sk; counts.skip++;
+      refreshCounts(); done++; $("bar").style.width=(done/runnable*100)+"%";
+      resultsForCopy.push({name:def.name,status:"skip",reason:sk}); continue;
+    }
+    setBadge(s.st,"b-run","Ejecutando…"); s.http.textContent="…";
+    const r=await doRequest(def);
+    if(def.after && r.json && r.json.data) { try{ def.after(ctx, r.json.data); }catch(e){} }
+    const cl=classify(r);
+    setBadge(s.st,cl.cls,cl.label);
+    s.http.textContent=r.error?"—":r.httpStatus;
+    const det=detailBlock(def,r);
+    s.sc.textContent=det.sc!==undefined?det.sc:"—";
+    s.msg.textContent=r.error? r.error : (det.desc||"");
+    s.ms.textContent=r.ms;
+    s.det.innerHTML=""; s.det.appendChild(det.node);
+    counts[cl.bucket]++; refreshCounts();
+    resultsForCopy.push({name:def.name,method:def.method,path:def.path,http:r.httpStatus,
+      envelope:det.sc,result:cl.label,ms:r.ms,description:det.desc,error:r.error});
+    done++; $("bar").style.width=(done/runnable*100)+"%";
+  }
+  running=false; $("run").disabled=false;
+  $("hint").textContent="Listo. Funcionales: "+(counts.ok+counts.amber)+"/"+counts.total+
+    " · Fallidos: "+counts.red+" · Omitidos: "+counts.skip;
+}
+
+$("run").addEventListener("click",runAll);
+$("copy").addEventListener("click",()=>{
+  const out={ranAt:new Date().toISOString(),baseUrl:$("baseUrl").value,summary:counts,results:resultsForCopy};
+  navigator.clipboard.writeText(JSON.stringify(out,null,2)).then(
+    ()=>{$("hint").textContent="Resultados copiados al portapapeles.";},
+    ()=>{$("hint").textContent="No se pudo copiar (portapapeles bloqueado).";});
+});
+</script>
+</body>
+</html>

@@ -25,6 +25,8 @@ EDITABLE = {
     'dataPath': 'dataPath',
     'template': 'template',
     'from': 'originEmail',
+    # Solo EAP: DOCX (combinación Word) / PDF (campos personalizados).
+    'documentFormat': 'documentFormat',
 }
 
 

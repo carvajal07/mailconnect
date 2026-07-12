@@ -16,7 +16,12 @@ import type { ApiResponse } from './apiClient';
  */
 
 export const REPORT_ENDPOINTS = {
-  STATE_REPORT: '/Report',
+  // Ruta del reporte de estado por proceso → lambda Api_V1_Reports_state-report.
+  // Antes era '/Report' (pelado), que se confundía con el módulo y no tenía CORS;
+  // ahora usa un path propio y paralelo a '/Report/Statistics'.
+  // ⚠️ [J]: crear en API Gateway el recurso /Report/State-report (POST, no-proxy,
+  //   authorizer + CORS) apuntando a la misma lambda Api_V1_Reports_state-report.
+  STATE_REPORT: '/Report/State-report',
 };
 
 export interface StateReportPayload {

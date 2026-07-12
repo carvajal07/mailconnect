@@ -29,9 +29,12 @@ export const blacklistService = {
   list: (customerId: string, customer?: string): Promise<ApiResponse<{ items?: BlacklistItem[]; count?: number }>> =>
     apiPost(BLACKLIST_ENDPOINTS.LIST, { customerId, customer }),
 
-  add: (email: string, reason?: string): Promise<ApiResponse> =>
-    apiPost(BLACKLIST_ENDPOINTS.ADD, { email, reason }),
+  // Add/Delete resuelven el tenant por el Authorizer, pero en integración no-proxy el
+  // context puede no llegar al body → se envían customerId Y customer como respaldo
+  // (igual que list). Sin esto el backend responde 400 "Indica customer o customerId".
+  add: (email: string, reason: string | undefined, customerId: string, customer?: string): Promise<ApiResponse> =>
+    apiPost(BLACKLIST_ENDPOINTS.ADD, { email, reason, customerId, customer }),
 
-  remove: (email: string): Promise<ApiResponse> =>
-    apiPost(BLACKLIST_ENDPOINTS.DELETE, { email }),
+  remove: (email: string, customerId: string, customer?: string): Promise<ApiResponse> =>
+    apiPost(BLACKLIST_ENDPOINTS.DELETE, { email, customerId, customer }),
 };
