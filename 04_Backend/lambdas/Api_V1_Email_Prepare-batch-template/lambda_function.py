@@ -58,6 +58,15 @@ DELIMITER = ';'          # delimitador por defecto si no se puede detectar
 CANDIDATE_DELIMITERS = [';', ',', '\t', '|']
 ENCODING = 'utf-8'
 
+# Headers CORS para las respuestas PROXY (samples/real). En integración Lambda-proxy,
+# "Enable CORS" en API Gateway solo crea el preflight OPTIONS; el header de la respuesta
+# real lo DEBE emitir la lambda. Sin esto el navegador bloquea el POST ("Failed to fetch").
+CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+    'Access-Control-Allow-Methods': 'POST,OPTIONS',
+}
+
 
 def detect_delimiter(temp_file, default=DELIMITER):
     """Detecta el delimitador del CSV leyendo el encabezado: elige, entre ; , tab |,
@@ -1008,7 +1017,8 @@ def lambda_handler(event, context):
             for record in event['Records']:
                 job = json.loads(record['body'])
                 procesar_parte(st, job, patron_email)  # st ya trae formatted_date
-            return {'statusCode': 200, 'body': json.dumps({'status': True, 'status_code': 200,
+            return {'statusCode': 200, 'headers': CORS_HEADERS,
+                    'body': json.dumps({'status': True, 'status_code': 200,
                     'description': 'Partes procesadas'})}
 
         # Obtener datos del evento
@@ -1177,9 +1187,10 @@ def lambda_handler(event, context):
         print(description)
         print(e)
     finally:
-        # Respuesta
+        # Respuesta PROXY (con header CORS para que el navegador no bloquee el POST).
         response = {
             'statusCode': status_code,
+            'headers': CORS_HEADERS,
             'body': json.dumps({
                 'status':status,
                 'status_code': status_code,

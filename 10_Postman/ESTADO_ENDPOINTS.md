@@ -18,6 +18,21 @@ lo confirma (dentro de un módulo, unos verbos andan y otros no).
 | 🔴 CORS/Red (falta ruta o CORS en API GW) | Refresh-token, Verify-code, Template Get/Delete, Campaign Update, Blacklist Delete, Customer Update, `/Report` (state-report), Email Send samples/real/on-demand, Database Delete |
 | ⚪ Omitido | Validate-OTP (falta pegar OTP), MessageTemplate Delete (Create no devolvió messageTemplateId) |
 
+### 2ª corrida (tras habilitar CORS): 20 ok · 8 negocio · 4 rojos · 2 omitidos
+Se desbloqueó casi todo. Quedan **4 rojos** y aparecieron 2 hallazgos nuevos:
+- **`/Report` (state-report)** sigue rojo → path pelado sin CORS/ruta. Renombrado a
+  `/Report/State-report` (crear el recurso en API GW). Lambda: `Api_V1_Reports_state-report`.
+- **`/Email/Send-*` (samples/real/on-demand)** siguen rojos → **samples/real son PROXY**
+  (Prepare-batch): "Enable CORS" no basta, la lambda debe emitir el header → **corregido en
+  código, redesplegar**. `on-demand` es no-proxy → habilitar CORS en su recurso.
+- **`Delete database` → 500** (nuevo): "Error no controlado al eliminar" → la lambda desplegada
+  falla en `delete_item`, casi seguro **falta permiso `dynamodb:DeleteItem`** sobre `databaseFile`.
+- **`Customer/Update` → 403** (ahora sí llega): correcto, rol `client` (para probar admin, promover
+  el usuario a `role=admin`).
+- **`Refresh-token` y `Get-template` → "Sin envelope"**: responden 200 pero con otra forma (no el
+  envelope estándar `{status,statusCode,description}`). Funcionan; revisar forma si se quiere.
+- **MessageTemplate/Create** sigue 200 sin id → la lambda desplegada aún está vieja → **redeploy**.
+
 ### Acciones (por prioridad)
 1. **Habilitar CORS** en API Gateway para las 12 rutas 🔴 (console: seleccionar el resource →
    *Enable CORS* → deploy). Es el 90% del "problema". El código de esas lambdas ya existe.
