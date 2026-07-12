@@ -1,5 +1,37 @@
 # Estado de los endpoints — MailConnect API (V1)
 
+## ⭐ Resultado de la corrida en vivo (2026-07-12, base `api.mailconnect.com.co/V1`)
+
+Corrida real con `test-runner.html` (34 ejecutados): **16 correctos · 4 error de negocio ·
+12 "CORS/Red" · 2 omitidos**.
+
+**Hallazgo principal:** los 12 `http:0` **NO son lambdas rotas** — son **rutas sin CORS (o sin
+desplegar) en API Gateway**. Todo POST con `application/json`/`Authorization` dispara un
+preflight OPTIONS; las rutas que respondieron tienen CORS, las que fallan no devuelven
+`Access-Control-Allow-Origin` y el navegador las bloquea al instante (~90–260 ms). El patrón
+lo confirma (dentro de un módulo, unos verbos andan y otros no).
+
+| Resultado | Endpoints |
+|---|---|
+| ✅ Correcto (envelope 2xx) | Login, Recovery-password, Template Create/List, Prefirm-url, Database Register/List, Campaign Create/List, MessageTemplate Create/List, Blacklist Add/List, Report/Statistics, Cost/Estimate, Logout |
+| 🟠 Negocio (funcional, error esperado) | Register 400 (validación / correo ya existe), **Create-OTP 500 (bug infra, ver abajo)**, Customer/List 403 (rol client ✅), Change-password 401 (sin OTP/sesión ✅) |
+| 🔴 CORS/Red (falta ruta o CORS en API GW) | Refresh-token, Verify-code, Template Get/Delete, Campaign Update, Blacklist Delete, Customer Update, `/Report` (state-report), Email Send samples/real/on-demand, Database Delete |
+| ⚪ Omitido | Validate-OTP (falta pegar OTP), MessageTemplate Delete (Create no devolvió messageTemplateId) |
+
+### Acciones (por prioridad)
+1. **Habilitar CORS** en API Gateway para las 12 rutas 🔴 (console: seleccionar el resource →
+   *Enable CORS* → deploy). Es el 90% del "problema". El código de esas lambdas ya existe.
+2. **Create-OTP 500:** el `put_item` sobre la tabla **`oneTimePassword`** (PK `oneTimePasswordId`)
+   falla → crear la tabla si no existe y dar permiso `dynamodb:PutItem` a la lambda.
+3. **MessageTemplate/Create:** el repo YA devuelve `data.messageTemplateId` + description con
+   statusCode 201, pero en vivo respondió **200 sin id** → la lambda **desplegada está
+   desactualizada** (versión vieja). **Redesplegar** `Api_V1_MessageTemplate_Create` (no es bug
+   de código). Por eso el runner no pudo encadenar el Delete.
+4. **Register 400:** reintentar con un correo NUEVO (el de prueba ya estaba registrado por Login).
+
+---
+
+
 > Acompaña a `01-MailConnect.postman_collection.json`. Resume, por endpoint, si la
 > **lambda está implementada** (revisión de código + pruebas moto) y si su **ruta/infra
 > está desplegada** en AWS. **No** es una prueba en vivo: la política de red de este
