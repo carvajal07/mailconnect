@@ -10,6 +10,14 @@ _Última verificación de código: suite moto **130/130 en verde**; base `https:
 
 ## Cómo probar en vivo (lo que yo no pude por el bloqueo de red)
 
+> **Lo más fácil:** abre **`test-runner.html`** en tu navegador, llena email/password/empresa
+> y dale a **▶ Iniciar pruebas**. Corre todos los endpoints en orden (con dependencias),
+> muestra el estado de cada uno en vivo y un resumen (correctos / error de negocio / fallidos /
+> omitidos). Los **envíos reales** vienen **desactivados** por defecto. Requiere que el API tenga
+> **CORS habilitado** (`[J]` pendiente); si no, verás los endpoints como "CORS/Red".
+
+### Alternativa: Postman / Newman
+
 1. Importa `01-MailConnect.postman_collection.json` en Postman.
 2. Ajusta variables: `baseUrl`, `email`, `password`, `customer`, `companyTin`.
 3. Corre **1) Seguridad → Login** (guarda `token`, `customerId`, `customer`, `userId`).
