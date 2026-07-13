@@ -21,6 +21,7 @@ import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
 import { useNavigate } from 'react-router-dom';
 import { authService, clearSession, getUser } from '../../services/authService';
+import { PortalDataProvider } from '../../context/PortalDataContext';
 
 const DRAWER_WIDTH = 240;
 
@@ -66,6 +67,10 @@ export const AdminPage = () => {
   };
 
   return (
+    // CampanasSection (y otras secciones reutilizadas del portal) consumen usePortalData(),
+    // que lanza excepción si no hay un <PortalDataProvider> ancestro → antes dejaba la página
+    // en blanco al abrir "Campañas". Se envuelve todo el panel admin en el provider.
+    <PortalDataProvider>
     <Box sx={{ display: 'flex' }}>
       {/* AppBar */}
       <AppBar
@@ -127,5 +132,6 @@ export const AdminPage = () => {
         </Container>
       </Box>
     </Box>
+    </PortalDataProvider>
   );
 };
