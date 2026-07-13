@@ -90,7 +90,7 @@ export const CampanasSection = () => {
   const customerId = getUser()?.customerId ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
   // Campañas y bases precargadas al entrar al portal (contexto compartido).
-  const { campaigns: campaignsCtx, databases, refreshCampaigns } = usePortalData();
+  const { campaigns: campaignsCtx, databases, refreshCampaigns, refreshStats } = usePortalData();
   const campanas = campaignsCtx.items;
   const loadingList = campaignsCtx.loading;
 
@@ -226,7 +226,7 @@ export const CampanasSection = () => {
       return;
     }
     setAttachmentUploading(true);
-    const presign = await campaignsService.presignUrl({ customer, documentName: file.name, documentType: 'document' });
+    const presign = await campaignsService.presignUrl({ customer, nit: getUser()?.nit ?? '', documentName: file.name, documentType: 'document' });
     if (!isOk(presign) || !presign.data?.url || !presign.data?.path) {
       setAttachmentUploading(false);
       return notify(presign.description || 'No se pudo crear la URL para el adjunto.', 'error');
@@ -294,6 +294,8 @@ export const CampanasSection = () => {
       notify(editingId ? 'Campaña actualizada correctamente.' : 'Campaña creada correctamente.', 'success');
       handleCloseDialog();
       loadCampaigns();
+      // Refresca también Estadísticas para que la campaña nueva aparezca sin darle "Actualizar".
+      refreshStats();
     } else {
       notify(res.description || `No se pudo ${editingId ? 'actualizar' : 'crear'} la campaña.`, 'error');
     }

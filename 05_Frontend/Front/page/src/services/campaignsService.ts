@@ -59,6 +59,8 @@ export interface CampaignSummary {
   samplesSentCount?: number;
   /** Formato del documento EAP (DOCX/PDF), si aplica. */
   documentFormat?: EapDocumentFormat;
+  /** processId del envío real (lo fija Prepare-batch al enviar). Sirve para el reporte de estado. */
+  sendProcessId?: string;
 }
 
 /** Máximo de envíos de muestras por campaña (debe coincidir con MAX_SAMPLE_SENDS del backend). */
@@ -108,9 +110,18 @@ export interface CampaignPayload {
 
 export interface PresignPayload {
   customer: string;
+  /** NIT del cliente (companyTin): define el bucket {prefix}-{nit}-{tipo}. */
+  nit?: string;
   documentName: string;
   documentType: 'database' | 'document';
 }
+
+/** Prefijo de los buckets por cliente (debe coincidir con el backend BUCKET_PREFIX). */
+export const BUCKET_PREFIX = 'mailconnect';
+
+/** Bucket S3 del cliente por NIT: {prefix}-{nit}-{database|document} (DNS-safe). */
+export const tenantBucket = (nit: string, documentType: 'database' | 'document'): string =>
+  `${BUCKET_PREFIX}-${(nit || '').toLowerCase().replace(/[^a-z0-9]/g, '')}-${documentType}`;
 
 export const campaignsService = {
   create: (payload: CampaignPayload): Promise<ApiResponse<{ campaignId?: string }>> =>
@@ -151,11 +162,10 @@ export const campaignsService = {
   },
 
   /**
-   * URL pública (lectura) de un objeto ya subido a S3. Se usa para el src de las
-   * imágenes del correo. Usa estilo path (compatible con buckets con punto, p. ej.
-   * "cliente.document"). El objeto/bucket debe permitir lectura pública para que la
-   * imagen se vea en los clientes de correo.
+   * URL pública (lectura) de un objeto ya subido a S3, para el src de las imágenes del
+   * correo. Usa el bucket del cliente por NIT ({prefix}-{nit}-{tipo}). El objeto/bucket
+   * debe permitir lectura pública para que la imagen se vea en los clientes de correo.
    */
-  publicUrl: (customer: string, documentType: 'database' | 'document', path: string): string =>
-    `https://s3.us-east-1.amazonaws.com/${customer.toLowerCase()}.${documentType}/${path}`,
+  publicUrl: (nit: string, documentType: 'database' | 'document', path: string): string =>
+    `https://s3.us-east-1.amazonaws.com/${tenantBucket(nit, documentType)}/${path}`,
 };

@@ -75,12 +75,14 @@ def env(monkeypatch):
             'template': 'T', 'samplesSentCount': 0,
         })
         res.Table('customer').put_item(Item={
-            'customerId': 'CU1', 'company': 'empresa', 'realSendEnabled': True})
+            'customerId': 'CU1', 'company': 'empresa', 'companyTin': '900123', 'realSendEnabled': True})
         res.Table('empresa_blackList').put_item(Item={'email': 'negro@test.com'})
 
+        # Bucket del cliente por NIT (nuevo esquema). La base vive aquí; el download y los
+        # part-files deben usar mailconnect-900123-database (no el viejo por nombre).
         s3 = boto3.client('s3', region_name='us-east-1')
-        s3.create_bucket(Bucket='empresa.database')
-        s3.put_object(Bucket='empresa.database', Key='bases/base.csv',
+        s3.create_bucket(Bucket='mailconnect-900123-database')
+        s3.put_object(Bucket='mailconnect-900123-database', Key='bases/base.csv',
                       Body=CSV_CONTENT.encode('utf-8'))
 
         sqs = boto3.client('sqs', region_name='us-east-1')
@@ -146,6 +148,9 @@ def test_split_trocea_y_encola_trabajos_de_parte(env):
     assert sorted(j['part'] for j in jobs) == [1, 2, 3]
     assert all(j['prepareJob'] and j['processId'] == process_id for j in jobs)
     assert all(j['channelQueue'] == channel_url for j in jobs)
+    # El NIT viaja en el trabajo y los part-files van al bucket por NIT (no al viejo).
+    assert all(j['nit'] == '900123' for j in jobs)
+    assert all(j['bucket'] == 'mailconnect-900123-database' for j in jobs)
 
     # Los part-files existen en S3.
     s3 = boto3.client('s3', region_name='us-east-1')

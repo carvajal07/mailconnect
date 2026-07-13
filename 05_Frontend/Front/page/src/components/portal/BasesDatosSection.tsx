@@ -196,6 +196,7 @@ export const BasesDatosSection = () => {
     // Paso 1: URL prefirmada.
     const presign = await campaignsService.presignUrl({
       customer: customer.trim(),
+      nit: getUser()?.nit ?? '',
       documentName: file.name,
       documentType: 'database',
     });
@@ -477,9 +478,6 @@ export const BasesDatosSection = () => {
               </Stack>
               <Typography variant="body2">
                 <strong>Ruta S3:</strong> <code>{viewBase.path}</code>
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Usa esta ruta como <strong>Data Path</strong> al crear la campaña.
               </Typography>
               <Divider />
               {viewBase.analysis ? (

@@ -1,5 +1,7 @@
 from docx import Document
 from datetime import datetime
+import os
+import re
 import boto3
 import copy
 import json
@@ -9,6 +11,14 @@ import io
 
 REGION = 'us-east-1'
 URL_SQS_EAP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-raw-EAP'
+
+# Bucket por cliente por NIT: {prefix}-{nit}-document (DNS-safe). Fallback al viejo por nombre.
+BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
+
+
+def tenant_bucket(nit, doc_type):
+    clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
 
 #Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb')
@@ -159,6 +169,7 @@ def lambda_handler(event, context):
         json_body = json.loads(body)
         customer_id = json_body["customerId"]
         customer_name = json_body["customerName"]
+        nit = json_body.get("nit")  # NIT → bucket S3 por NIT (fallback al viejo por nombre)
         process_id = json_body["processId"]
         campaign_id = json_body["campaignId"]
         attachment = json_body["attachment"]
@@ -194,7 +205,7 @@ def lambda_handler(event, context):
             raise ValueError("La parte ya ha sido procesada")
         
         insert_process_detail(registers,part,formatted_date,"Creando adjuntos")
-        bucket_name = f'{customer_name.lower()}.document'
+        bucket_name = tenant_bucket(nit, 'document') if nit else f'{customer_name.lower()}.document'
         template_file = download_attachments_data(campaign_id)
         # Carga la plantilla DOCX original
         docOriginal = Document(template_file)

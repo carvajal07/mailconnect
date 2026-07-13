@@ -1,20 +1,42 @@
 /**
- * Parser y análisis de CSV del lado del cliente (sin dependencias) para la sección
- * "Bases de datos". Permite previsualizar y validar la lista de destinatarios antes
- * de subirla a S3 (el proyecto usa ';' como delimitador por defecto).
+ * Parser y análisis de CSV del lado del cliente para la sección "Bases de datos".
+ * Permite previsualizar y validar la lista de destinatarios antes de subirla a S3
+ * (el proyecto usa ';' como delimitador por defecto).
  */
+import { isValidPhoneNumber } from 'libphonenumber-js';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-// Celular en formato E.164 (recomendado para SMS/WhatsApp/Voz): +<indicativo><número>.
-// Se aceptan 8 a 15 dígitos tras el '+'. Ej.: +573001234567.
-const PHONE_E164_RE = /^\+?[1-9]\d{7,14}$/;
+// País por defecto para números sin indicativo (Colombia). Un número con '+xx' se valida
+// contra SU país; uno sin '+' se interpreta como colombiano.
+const DEFAULT_COUNTRY = 'CO' as const;
 
-/** ¿Es un celular válido (E.164)? Para campañas SMS/WhatsApp/Voz la columna 2 es el celular. */
-export const isValidPhone = (raw: string): boolean =>
-  PHONE_E164_RE.test((raw || '').replace(/[\s()-]/g, ''));
+// Correo: validación práctica y estricta (RFC-ish). Local part 1–64 sin puntos al inicio/fin,
+// dominio con etiquetas válidas y TLD alfabético de 2+. Se rechazan puntos consecutivos.
+const EMAIL_RE =
+  /^[a-zA-Z0-9](?:[a-zA-Z0-9._%+-]*[a-zA-Z0-9])?@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
+
+/**
+ * ¿Es un celular válido? Usa libphonenumber-js (valida el patrón REAL del país, no solo la
+ * longitud). Acepta E.164 (`+57…`, `+1…`) o formato local colombiano (`3001234567`). Rechaza
+ * números con longitud/estructura imposible (p. ej. `567658787878675`).
+ */
+export const isValidPhone = (raw: string): boolean => {
+  const v = (raw || '').trim();
+  if (!v) return false;
+  try {
+    return isValidPhoneNumber(v, DEFAULT_COUNTRY);
+  } catch {
+    return false;
+  }
+};
 
 /** ¿Es un correo con formato válido? (misma regla que usa el análisis de bases). */
-export const isValidEmail = (raw: string): boolean => EMAIL_RE.test((raw || '').trim());
+export const isValidEmail = (raw: string): boolean => {
+  const v = (raw || '').trim();
+  if (!v || v.length > 254 || v.includes('..')) return false;
+  const at = v.indexOf('@');
+  if (at < 1 || at > 64) return false; // local part 1–64 chars
+  return EMAIL_RE.test(v);
+};
 
 /**
  * Valida un contacto de lista negra: si contiene '@' se valida como correo, si no,

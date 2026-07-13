@@ -15,6 +15,15 @@ from email.mime.application import MIMEApplication
 
 REGION = 'us-east-1'
 
+# Bucket por cliente por NIT: {prefix}-{nit}-document (DNS-safe). Fallback al viejo por nombre.
+BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
+
+
+def tenant_bucket(nit, doc_type):
+    clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+
+
 global customer_name
 global process_id
 global custom_fields_pattern
@@ -224,6 +233,7 @@ def lambda_handler(event, context):
         json_body = json.loads(body)
         customer_id = json_body["customerId"]
         customer_name = json_body["customerName"]
+        nit = json_body.get("nit")  # NIT → bucket S3 por NIT (fallback al viejo por nombre)
         print("Customer" + customer_name)
         process_id = json_body["processId"]
         campaign_id = json_body["campaignId"]
@@ -373,7 +383,7 @@ def lambda_handler(event, context):
             print("Campos faltantes: " + str(missing_custom_field))
             #sys.exit(1)
         print(f"Encabezados de personalizacion ({headers})")
-        bucket_name = f'{customer_name.lower()}.document'
+        bucket_name = tenant_bucket(nit, 'document') if nit else f'{customer_name.lower()}.document'
         
         #custom_fields_pattern = r'{{.*?}}'
         replace_pattern = r"{{|}}"

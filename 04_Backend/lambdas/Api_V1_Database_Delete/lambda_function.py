@@ -10,29 +10,60 @@ Respuesta: 200 ok · 400 falta id · 403 la base es de otro cliente · 404 no ex
 
 Verifica que la base pertenezca al cliente del token (Authorizer) antes de borrar.
 '''
+import os
+import re
 import json
 import boto3
 
 dynamodb = boto3.resource('dynamodb')
 s3 = boto3.client('s3')
 table_database = dynamodb.Table('databaseFile')
+table_customer = dynamodb.Table('customer')
+
+BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
+
+
+def tenant_bucket(nit, doc_type):
+    clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+
+
+def _customer_nit(customer_id):
+    """NIT (companyTin) del cliente por customerId, para el bucket por NIT."""
+    if not customer_id:
+        return None
+    try:
+        resp = table_customer.scan(
+            FilterExpression="customerId = :v",
+            ExpressionAttributeValues={":v": customer_id},
+            ProjectionExpression='companyTin')
+        if resp['Items']:
+            return resp['Items'][0].get('companyTin')
+    except Exception as e:
+        print('No se pudo obtener el NIT ({})'.format(e))
+    return None
 
 
 def _delete_s3_object(item):
-    """Borra el CSV en S3 (best-effort). El bucket es {customer}.database (minúsculas) y
-    la key es el s3Path guardado en el registro. No propaga errores para no bloquear el
-    borrado del registro si el objeto ya no está o falta un permiso puntual."""
+    """Borra el CSV en S3 (best-effort). Intenta el bucket por NIT y el viejo por nombre
+    (migración). No propaga errores para no bloquear el borrado del registro."""
     customer = item.get('customer')
     s3_path = item.get('s3Path')
-    if not customer or not s3_path:
-        print('Sin customer/s3Path en el registro; no se borra objeto en S3.')
+    if not s3_path:
+        print('Sin s3Path en el registro; no se borra objeto en S3.')
         return
-    bucket = '{}.database'.format(str(customer).lower())
-    try:
-        s3.delete_object(Bucket=bucket, Key=s3_path)
-        print('Objeto S3 borrado: s3://{}/{}'.format(bucket, s3_path))
-    except Exception as e:
-        print('No se pudo borrar el objeto en S3 (se continúa): {}'.format(e))
+    nit = item.get('companyTin') or _customer_nit(item.get('customerId'))
+    buckets = []
+    if nit:
+        buckets.append(tenant_bucket(nit, 'database'))
+    if customer:
+        buckets.append('{}.database'.format(str(customer).lower()))  # legacy por nombre
+    for bucket in buckets:
+        try:
+            s3.delete_object(Bucket=bucket, Key=s3_path)
+            print('Objeto S3 borrado: s3://{}/{}'.format(bucket, s3_path))
+        except Exception as e:
+            print('No se pudo borrar en {} (se continúa): {}'.format(bucket, e))
 
 
 def _get_payload(event):

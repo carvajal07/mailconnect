@@ -15,6 +15,35 @@ table_activation = dynamodb.Table('userActivation')
 
 # Cliente SES para el correo de activación
 ses = boto3.client('ses')
+# Cliente S3 para crear los buckets del cliente (por NIT) al registrar la empresa.
+s3 = boto3.client('s3')
+
+# Prefijo de los buckets por cliente. Convención: {prefix}-{nit}-{database|document}
+# (nombres S3 DNS-safe: minúsculas, sin espacios/acentos). Se usa el NIT (no el nombre)
+# para evitar colisiones y nombres inválidos.
+BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
+
+
+def tenant_bucket(nit, doc_type):
+    """Nombre del bucket S3 del cliente por NIT: {prefix}-{nit}-{database|document}."""
+    clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+
+
+def ensure_bucket(name):
+    """Crea el bucket si no existe (idempotente). No interrumpe el registro si falla."""
+    try:
+        s3.head_bucket(Bucket=name)
+        return
+    except Exception:
+        pass
+    try:
+        s3.create_bucket(Bucket=name)  # us-east-1: sin LocationConstraint
+        print('Bucket creado: {}'.format(name))
+    except s3.exceptions.BucketAlreadyOwnedByYou:
+        pass
+    except Exception as e:
+        print('No se pudo asegurar el bucket {}: {}'.format(name, e))
 
 # Configuración por variables de entorno (con valores por defecto)
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'comunicaciones@mailconnect.com.co')
@@ -186,6 +215,11 @@ def lambda_handler(event, context):
                                 'date': formattedDate
                             }
                         )
+                        # Crear los buckets S3 del cliente (por NIT) la PRIMERA vez que
+                        # aparece la empresa: {prefix}-{nit}-database y -document. Antes no
+                        # se creaban → el primer upload del cliente fallaba (NoSuchBucket).
+                        for _bucket_type in ('database', 'document'):
+                            ensure_bucket(tenant_bucket(companyTin, _bucket_type))
 
                     # Datos del usuario
                     table_userData.put_item(
