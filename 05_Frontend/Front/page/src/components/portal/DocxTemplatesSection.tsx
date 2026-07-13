@@ -29,6 +29,7 @@ import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { useConfirm } from '../../hooks/useConfirm';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 
 /**
@@ -43,6 +44,7 @@ export const DocxTemplatesSection = () => {
   const customerId = user?.customerId ?? '';
   const customer = user?.customer ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
+  const { confirm, ConfirmDialog } = useConfirm();
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -50,8 +52,11 @@ export const DocxTemplatesSection = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [name, setName] = useState('');
-  const [paramsText, setParamsText] = useState('');
+  // Campos de combinación: SOLO se agregan desde la base (no texto libre).
+  const [params, setParams] = useState<string[]>([]);
   const [file, setFile] = useState<File | null>(null);
+  const addParam = (f: string) => setParams((p) => (p.includes(f) ? p : [...p, f]));
+  const removeParam = (f: string) => setParams((p) => p.filter((x) => x !== f));
 
   const load = useCallback(async () => {
     if (!customerId) return;
@@ -92,7 +97,6 @@ export const DocxTemplatesSection = () => {
         return notify('No se pudo subir el archivo a S3.', 'error');
       }
       // 3) Registrar la metadata de la plantilla DOCX.
-      const params = paramsText.split(',').map((p) => p.trim()).filter(Boolean);
       const res = await messageTemplatesService.create({
         customerId,
         customer,
@@ -105,7 +109,7 @@ export const DocxTemplatesSection = () => {
       if (isOk(res)) {
         notify('Plantilla DOCX guardada correctamente.', 'success');
         setName('');
-        setParamsText('');
+        setParams([]);
         setFile(null);
         load();
       } else {
@@ -118,7 +122,13 @@ export const DocxTemplatesSection = () => {
   };
 
   const handleDelete = async (t: MessageTemplate) => {
-    if (!window.confirm(`¿Eliminar la plantilla "${t.name}"? (No borra el archivo en S3)`)) return;
+    const ok = await confirm({
+      title: 'Eliminar plantilla DOCX',
+      message: `¿Eliminar la plantilla "${t.name}"? Se quita del listado (el archivo en S3 no se borra).`,
+      confirmText: 'Eliminar',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
     setDeletingId(t.messageTemplateId);
     const res = await messageTemplatesService.delete(t.messageTemplateId);
     setDeletingId(null);
@@ -152,25 +162,24 @@ export const DocxTemplatesSection = () => {
         </Typography>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField label="Nombre de la plantilla" value={name} onChange={(e) => setName(e.target.value)} size="small" fullWidth />
-          <TextField
-            label="Campos de combinación (separados por coma)"
-            value={paramsText}
-            onChange={(e) => setParamsText(e.target.value)}
-            size="small"
-            fullWidth
-            placeholder="Nombre, Identificación, Valor"
-            helperText="Nombres de los campos que se reemplazan por cada destinatario."
-          />
-          <DatabaseFieldPicker
-            compact
-            onInsert={(f) =>
-              setParamsText((p) => {
-                const arr = p.split(',').map((s) => s.trim()).filter(Boolean);
-                if (!arr.includes(f)) arr.push(f);
-                return arr.join(', ');
-              })
-            }
-          />
+          {/* Campos de combinación: SOLO por selección desde la base (no texto libre). */}
+          <Box>
+            <Typography variant="subtitle2" fontWeight={700} gutterBottom>
+              Campos de combinación
+            </Typography>
+            {params.length > 0 ? (
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 1 }}>
+                {params.map((p) => (
+                  <Chip key={p} label={p} onDelete={() => removeParam(p)} color="primary" variant="outlined" size="small" />
+                ))}
+              </Stack>
+            ) : (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                Aún no agregas campos. Elígelos de una base abajo (no se escriben a mano).
+              </Typography>
+            )}
+            <DatabaseFieldPicker compact onInsert={addParam} />
+          </Box>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
             <Button variant="outlined" component="label" startIcon={<UploadFileIcon />}>
               {file ? 'Cambiar archivo' : 'Seleccionar .docx'}
@@ -245,6 +254,7 @@ export const DocxTemplatesSection = () => {
       </TableContainer>
 
       {FeedbackSnackbar}
+      {ConfirmDialog}
     </Box>
   );
 };

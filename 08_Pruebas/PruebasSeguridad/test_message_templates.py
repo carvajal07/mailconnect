@@ -70,6 +70,26 @@ def test_create_channel_invalido_400(mt):
     assert create.lambda_handler({'customerId': 'CU1', 'channel': 'EMAIL', 'name': 'X'}, None)['statusCode'] == 400
 
 
+def test_upsert_editar_conserva_id_y_actualiza(mt):
+    # Editar = Create con messageTemplateId: MISMO id, 200 (no 201), campos actualizados,
+    # y la fecha de creación original se conserva.
+    create, lst, _ = mt
+    creado = create.lambda_handler({'customerId': 'CU1', 'channel': 'SMS', 'name': 'Promo', 'body': 'Hola'}, None)
+    assert creado['statusCode'] == 201
+    tid = creado['data']['messageTemplateId']
+
+    editado = create.lambda_handler({'customerId': 'CU1', 'channel': 'SMS', 'name': 'Promo v2',
+                                     'body': 'Hola {{Nombre}}', 'messageTemplateId': tid}, None)
+    assert editado['statusCode'] == 200
+    assert editado['data']['messageTemplateId'] == tid
+
+    # No se duplicó: sigue habiendo UNA plantilla, con los datos nuevos.
+    items = lst.lambda_handler({'customerId': 'CU1'}, None)['data']['templates']
+    assert len(items) == 1
+    assert items[0]['name'] == 'Promo v2'
+    assert items[0]['body'] == 'Hola {{Nombre}}'
+
+
 def test_list_filtra_por_canal_y_tenant(mt):
     create, lst, _ = mt
     create.lambda_handler({'customerId': 'CU1', 'channel': 'SMS', 'name': 'A', 'body': 'x'}, None)

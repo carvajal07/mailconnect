@@ -19,6 +19,7 @@ import {
   Tooltip,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SmsIcon from '@mui/icons-material/Sms';
@@ -28,13 +29,17 @@ import { messageTemplatesService } from '../../services/messageTemplatesService'
 import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { useConfirm } from '../../hooks/useConfirm';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 
 /**
  * Sección de plantillas de mensaje para SMS y WhatsApp (WSP). Un mismo componente
  * parametrizado por canal:
  *  - SMS: nombre + texto con {{variables}} (contador de segmentos).
- *  - WSP: nombre + plantilla HSM (Meta) + idioma + etiquetas de parámetros {{1}},{{2}}…
+ *  - WSP: nombre + plantilla HSM (Meta) + idioma + parámetros {{1}},{{2}}…
+ *
+ * Los CAMPOS DE COMBINACIÓN (parámetros) NO se escriben a mano: solo se eligen desde una
+ * base de datos (DatabaseFieldPicker). Se puede crear y EDITAR (upsert por id).
  */
 export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' }) => {
   const isSms = channel === 'SMS';
@@ -42,6 +47,7 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
   const customerId = user?.customerId ?? '';
   const customer = user?.customer ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
+  const { confirm, ConfirmDialog } = useConfirm();
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -49,11 +55,13 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Campos del formulario.
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [body, setBody] = useState('');
   const [hsmName, setHsmName] = useState('');
   const [language, setLanguage] = useState('es');
-  const [paramsText, setParamsText] = useState('');
+  // Parámetros (campos de combinación): SOLO se agregan desde la base (no texto libre).
+  const [params, setParams] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     if (!customerId) return;
@@ -68,20 +76,33 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
   }, [load]);
 
   const resetForm = () => {
+    setEditingId(null);
     setName('');
     setBody('');
     setHsmName('');
     setLanguage('es');
-    setParamsText('');
+    setParams([]);
   };
 
-  const handleCreate = async () => {
+  const addParam = (f: string) => setParams((p) => (p.includes(f) ? p : [...p, f]));
+  const removeParam = (f: string) => setParams((p) => p.filter((x) => x !== f));
+
+  const handleEdit = (t: MessageTemplate) => {
+    setEditingId(t.messageTemplateId);
+    setName(t.name ?? '');
+    setBody(t.body ?? '');
+    setHsmName(t.hsmName ?? '');
+    setLanguage(t.language ?? 'es');
+    setParams(t.params ?? []);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSave = async () => {
     if (!customerId) return notify('Tu sesión no tiene cliente asociado. Vuelve a iniciar sesión.', 'warning');
     if (!name.trim()) return notify('Indica el nombre de la plantilla.', 'warning');
     if (isSms && !body.trim()) return notify('Escribe el texto del SMS.', 'warning');
     if (!isSms && !hsmName.trim()) return notify('Indica el nombre de la plantilla HSM de WhatsApp.', 'warning');
 
-    const params = paramsText.split(',').map((p) => p.trim()).filter(Boolean);
     setSaving(true);
     const res = await messageTemplatesService.create({
       customerId,
@@ -92,10 +113,11 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
       hsmName: isSms ? undefined : hsmName.trim(),
       language: isSms ? undefined : language.trim() || 'es',
       params: isSms ? undefined : params,
+      messageTemplateId: editingId ?? undefined, // upsert al editar
     });
     setSaving(false);
     if (isOk(res)) {
-      notify('Plantilla guardada correctamente.', 'success');
+      notify(editingId ? 'Plantilla actualizada correctamente.' : 'Plantilla guardada correctamente.', 'success');
       resetForm();
       load();
     } else {
@@ -104,12 +126,19 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
   };
 
   const handleDelete = async (t: MessageTemplate) => {
-    if (!window.confirm(`¿Eliminar la plantilla "${t.name}"?`)) return;
+    const ok = await confirm({
+      title: 'Eliminar plantilla',
+      message: `¿Eliminar la plantilla "${t.name}"? Esta acción no se puede deshacer.`,
+      confirmText: 'Eliminar',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
     setDeletingId(t.messageTemplateId);
     const res = await messageTemplatesService.delete(t.messageTemplateId);
     setDeletingId(null);
     if (isOk(res)) {
       setTemplates((prev) => prev.filter((x) => x.messageTemplateId !== t.messageTemplateId));
+      if (editingId === t.messageTemplateId) resetForm();
       notify('Plantilla eliminada.', 'success');
     } else {
       notify(res.description || 'No se pudo eliminar.', 'error');
@@ -126,42 +155,45 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         {isSms
-          ? 'Guarda textos reutilizables para tus campañas de SMS. Usa {{Columna}} para personalizar con la base.'
-          : 'Registra tus plantillas de WhatsApp (HSM) aprobadas por Meta para reutilizarlas en campañas. Los parámetros {{1}}, {{2}}… se toman de las columnas del CSV.'}
+          ? 'Guarda textos reutilizables para tus campañas de SMS. Inserta variables {{Columna}} desde tu base.'
+          : 'Registra tus plantillas de WhatsApp (HSM) aprobadas por Meta. Los parámetros {{1}}, {{2}}… se toman de los campos de tu base.'}
       </Typography>
 
       {!isSms && (
         <Alert severity="info" sx={{ mb: 2 }}>
           WhatsApp de marketing exige una <strong>plantilla pre-aprobada por Meta</strong>. Aquí solo
-          guardas su <strong>nombre</strong>, idioma y las etiquetas de los parámetros para mapear el CSV;
-          el contenido real vive en Meta.
+          guardas su <strong>nombre</strong>, idioma y el mapeo de parámetros; el contenido real vive en Meta.
         </Alert>
       )}
 
-      {/* Formulario de creación */}
+      {/* Formulario de creación / edición */}
       <Paper variant="outlined" sx={{ p: 3, mb: 2 }}>
-        <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-          Nueva plantilla
-        </Typography>
+        <Stack direction="row" justifyContent="space-between" alignItems="center">
+          <Typography variant="subtitle1" fontWeight={700} gutterBottom>
+            {editingId ? 'Editar plantilla' : 'Nueva plantilla'}
+          </Typography>
+          {editingId && (
+            <Button size="small" onClick={resetForm}>Cancelar edición</Button>
+          )}
+        </Stack>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField label="Nombre de la plantilla" value={name} onChange={(e) => setName(e.target.value)} size="small" fullWidth />
 
           {isSms ? (
-            <TextField
-              label="Texto del SMS"
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              multiline
-              minRows={3}
-              fullWidth
-              placeholder="Hola {{Nombre}}, tu mensaje aquí…"
-              helperText={`${body.length} caracteres · ~${segments} segmento(s). Admite variables {{Columna}}.`}
-            />
-          ) : null}
-          {isSms && (
-            <DatabaseFieldPicker compact onInsert={(f) => setBody((b) => `${b}{{${f}}}`)} />
-          )}
-          {!isSms && (
+            <>
+              <TextField
+                label="Texto del SMS"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                multiline
+                minRows={3}
+                fullWidth
+                placeholder="Hola {{Nombre}}, tu mensaje aquí…"
+                helperText={`${body.length} caracteres · ~${segments} segmento(s). Inserta variables con el selector de la base.`}
+              />
+              <DatabaseFieldPicker compact onInsert={(f) => setBody((b) => `${b}{{${f}}}`)} />
+            </>
+          ) : (
             <>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                 <TextField
@@ -181,36 +213,19 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
                   placeholder="es"
                 />
               </Stack>
-              <TextField
-                label="Parámetros del cuerpo (separados por coma)"
-                value={paramsText}
-                onChange={(e) => setParamsText(e.target.value)}
-                size="small"
-                fullWidth
-                placeholder="Nombre, Empresa, Valor"
-                helperText="Etiquetas para {{1}}, {{2}}… en orden. Se toman de las columnas del CSV desde 'Nombre'."
-              />
-              <DatabaseFieldPicker
-                compact
-                onInsert={(f) =>
-                  setParamsText((p) => {
-                    const arr = p.split(',').map((s) => s.trim()).filter(Boolean);
-                    if (!arr.includes(f)) arr.push(f);
-                    return arr.join(', ');
-                  })
-                }
-              />
+              {/* Parámetros SOLO por selección desde la base (no texto libre). */}
+              <ParamsSelector params={params} onAdd={addParam} onRemove={removeParam} />
             </>
           )}
 
           <Box>
             <Button
               variant="contained"
-              startIcon={saving ? <CircularProgress size={18} color="inherit" /> : <AddIcon />}
-              onClick={handleCreate}
+              startIcon={saving ? <CircularProgress size={18} color="inherit" /> : (editingId ? <EditIcon /> : <AddIcon />)}
+              onClick={handleSave}
               disabled={saving}
             >
-              Guardar plantilla
+              {editingId ? 'Guardar cambios' : 'Guardar plantilla'}
             </Button>
           </Box>
         </Stack>
@@ -245,7 +260,7 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
               </TableRow>
             )}
             {templates.map((t) => (
-              <TableRow key={t.messageTemplateId} hover>
+              <TableRow key={t.messageTemplateId} hover selected={editingId === t.messageTemplateId}>
                 <TableCell><Typography fontWeight={600}>{t.name}</Typography></TableCell>
                 <TableCell sx={{ maxWidth: 360 }}>
                   {isSms ? (
@@ -263,6 +278,11 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
                     : (t.params && t.params.length ? t.params.join(', ') : '—')}
                 </TableCell>
                 <TableCell align="right">
+                  <Tooltip title="Editar">
+                    <IconButton color="primary" size="small" onClick={() => handleEdit(t)}>
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                   <Tooltip title="Eliminar">
                     <span>
                       <IconButton color="error" size="small" onClick={() => handleDelete(t)} disabled={deletingId === t.messageTemplateId}>
@@ -278,6 +298,28 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
       </TableContainer>
 
       {FeedbackSnackbar}
+      {ConfirmDialog}
     </Box>
   );
 };
+
+/** Parámetros de combinación: chips (removibles) que SOLO se agregan desde la base. */
+const ParamsSelector = ({ params, onAdd, onRemove }: { params: string[]; onAdd: (f: string) => void; onRemove: (f: string) => void }) => (
+  <Box>
+    <Typography variant="subtitle2" fontWeight={700} gutterBottom>
+      Parámetros del cuerpo (en orden {'{{1}}'}, {'{{2}}'}…)
+    </Typography>
+    {params.length > 0 ? (
+      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 1 }}>
+        {params.map((p, i) => (
+          <Chip key={p} label={`${i + 1}. ${p}`} onDelete={() => onRemove(p)} color="primary" variant="outlined" size="small" />
+        ))}
+      </Stack>
+    ) : (
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+        Aún no agregas parámetros. Elígelos de una base abajo (no se escriben a mano).
+      </Typography>
+    )}
+    <DatabaseFieldPicker compact onInsert={onAdd} />
+  </Box>
+);

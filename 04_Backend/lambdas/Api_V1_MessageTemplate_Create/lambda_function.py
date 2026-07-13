@@ -84,8 +84,23 @@ def lambda_handler(event, context):
     if channel == 'DOCX' and not s3_path:
         return {'status': False, 'statusCode': 400, 'description': 'La plantilla DOCX necesita el s3Path del archivo.'}
 
-    message_template_id = str(uuid.uuid4())
     now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+    # UPSERT: si viene messageTemplateId se ACTUALIZA esa plantilla (editar); si no, se crea
+    # una nueva. Así "editar" reutiliza esta misma ruta sin una lambda/ruta aparte.
+    incoming_id = str(payload.get('messageTemplateId', '')).strip()
+    is_update = bool(incoming_id)
+    message_template_id = incoming_id or str(uuid.uuid4())
+
+    # Al actualizar, conservar la fecha de creación original (put_item reemplaza el item).
+    created = now
+    if is_update:
+        try:
+            existing = table.get_item(Key={'messageTemplateId': message_template_id}).get('Item')
+            if existing and existing.get('created'):
+                created = existing['created']
+        except Exception:
+            pass
 
     item = {
         'messageTemplateId': message_template_id,
@@ -98,17 +113,18 @@ def lambda_handler(event, context):
         'language': language,
         's3Path': s3_path,
         'params': params,
-        'created': now,
+        'created': created,
+        'updated': now,
     }
 
     try:
         table.put_item(Item=item)
         return {
             'status': True,
-            'statusCode': 201,
-            'description': 'Plantilla creada correctamente',
+            'statusCode': 200 if is_update else 201,
+            'description': 'Plantilla actualizada correctamente' if is_update else 'Plantilla creada correctamente',
             'data': {'messageTemplateId': message_template_id}
         }
     except Exception as e:
-        print('Error creando la plantilla de mensaje: {}'.format(e))
-        return {'status': False, 'statusCode': 500, 'description': 'Error no controlado al crear la plantilla'}
+        print('Error guardando la plantilla de mensaje: {}'.format(e))
+        return {'status': False, 'statusCode': 500, 'description': 'Error no controlado al guardar la plantilla'}
