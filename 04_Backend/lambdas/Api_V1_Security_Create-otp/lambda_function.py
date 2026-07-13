@@ -7,8 +7,31 @@ import secrets
 import boto3
 
 dynamodb = boto3.resource('dynamodb')
+ddb_client = boto3.client('dynamodb')
 table_otp = dynamodb.Table('oneTimePassword')
 table_user = dynamodb.Table('user')
+
+
+def _ensure_otp_table():
+    """Crea la tabla oneTimePassword (PK oneTimePasswordId) si no existe. Evita el
+    ResourceNotFoundException del PutItem cuando la tabla no ha sido aprovisionada."""
+    try:
+        ddb_client.describe_table(TableName='oneTimePassword')
+        return
+    except ddb_client.exceptions.ResourceNotFoundException:
+        pass
+    except Exception:
+        return
+    try:
+        ddb_client.create_table(
+            TableName='oneTimePassword',
+            KeySchema=[{'AttributeName': 'oneTimePasswordId', 'KeyType': 'HASH'}],
+            AttributeDefinitions=[{'AttributeName': 'oneTimePasswordId', 'AttributeType': 'S'}],
+            BillingMode='PAY_PER_REQUEST')
+        ddb_client.get_waiter('table_exists').wait(TableName='oneTimePassword')
+        print('Tabla oneTimePassword creada.')
+    except Exception as e:
+        print('No se pudo crear la tabla oneTimePassword: {}'.format(e))
 
 ses = boto3.client('ses')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'comunicaciones@mailconnect.com.co')

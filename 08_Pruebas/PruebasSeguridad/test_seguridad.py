@@ -228,7 +228,8 @@ def test_activacion_valida_activa_cuenta(ctx):
 def test_activacion_clave_invalida_redirige(ctx):
     resp = ctx.handler('activation')({'queryStringParameters': {'qs': 'clave-inexistente'}}, None)
     assert resp['statusCode'] == 302
-    assert 'activated=0' in resp['headers']['Location']
+    # Redirige a la página de resultado con estado de error (antes era ?activated=0).
+    assert 'estado=error' in resp['headers']['Location']
 
 
 # ============================ LOGIN ============================

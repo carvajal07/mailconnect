@@ -59,6 +59,8 @@ export interface CampaignSummary {
   samplesSentCount?: number;
   /** Formato del documento EAP (DOCX/PDF), si aplica. */
   documentFormat?: EapDocumentFormat;
+  /** processId del envío real (lo fija Prepare-batch al enviar). Sirve para el reporte de estado. */
+  sendProcessId?: string;
 }
 
 /** Máximo de envíos de muestras por campaña (debe coincidir con MAX_SAMPLE_SENDS del backend). */

@@ -78,7 +78,8 @@ export const MuestrasSection = () => {
   const customerId = user?.customerId ?? '';
   const [campaign, setCampaign] = useState('');
   const [template, setTemplate] = useState('');
-  const [version, setVersion] = useState(1);
+  // Versión de plantilla fija: el selector se quitó (por ahora no se necesita elegirla).
+  const version = 1;
 
   // Listas del backend: la campaña SE SELECCIONA (no se escribe a mano). La plantilla NO
   // se elige aquí: ya viene configurada en la campaña (al seleccionarla se conoce todo).
@@ -291,14 +292,6 @@ export const MuestrasSection = () => {
                 InputProps={{ readOnly: true }}
                 placeholder={campaign ? '' : 'Selecciona una campaña'}
                 helperText="Definida en la campaña; no se cambia desde muestras."
-              />
-              <TextField
-                label="Versión de plantilla"
-                type="number"
-                value={version}
-                onChange={(e) => setVersion(Math.max(1, parseInt(e.target.value) || 1))}
-                sx={{ width: { sm: 180 } }}
-                size="small"
               />
             </Stack>
           </Stack>

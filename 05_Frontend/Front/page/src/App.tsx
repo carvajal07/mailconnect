@@ -6,6 +6,7 @@ import { LoginPage } from './pages/auth/LoginPage';
 import { RegisterPage } from './pages/auth/RegisterPage';
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage';
+import { AccountActivatedPage } from './pages/auth/AccountActivatedPage';
 import { AdminPage } from './pages/admin/AdminPage';
 import { PortalPage } from './pages/portal/PortalPage';
 import { RequireAuth } from './components/RequireAuth';
@@ -28,6 +29,8 @@ function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          {/* Resultado de la activación de cuenta (destino del enlace del correo) */}
+          <Route path="/cuenta-activada" element={<AccountActivatedPage />} />
 
           {/* Portal del cliente (protegido) — destino del login */}
           <Route

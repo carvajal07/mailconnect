@@ -6,10 +6,13 @@ dynamodb = boto3.resource('dynamodb')
 table_activation = dynamodb.Table('userActivation')
 table_user = dynamodb.Table('user')
 
-# URLs de redirección (ajustables por variable de entorno)
-SUCCESS_URL = os.environ.get('ACTIVATION_SUCCESS_URL', 'https://www.mailconnect.com.co/?activated=1')
-ERROR_URL = os.environ.get('ACTIVATION_ERROR_URL', 'https://www.mailconnect.com.co/?activated=0')
-EXPIRED_URL = os.environ.get('ACTIVATION_EXPIRED_URL', 'https://www.mailconnect.com.co/?activated=expired')
+# URLs de redirección (ajustables por variable de entorno). Apuntan a la página del portal
+# /cuenta-activada?estado=ok|error|expirado, que muestra un mensaje claro (antes iba a la
+# landing sin decir nada). ⚠️ [J]: fijar estas env con el dominio real del portal.
+_APP = os.environ.get('APP_BASE_URL', 'https://www.mailconnect.com.co')
+SUCCESS_URL = os.environ.get('ACTIVATION_SUCCESS_URL', _APP + '/cuenta-activada?estado=ok')
+ERROR_URL = os.environ.get('ACTIVATION_ERROR_URL', _APP + '/cuenta-activada?estado=error')
+EXPIRED_URL = os.environ.get('ACTIVATION_EXPIRED_URL', _APP + '/cuenta-activada?estado=expirado')
 
 
 def _redirect(location):

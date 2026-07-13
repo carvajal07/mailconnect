@@ -90,7 +90,7 @@ export const CampanasSection = () => {
   const customerId = getUser()?.customerId ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
   // Campañas y bases precargadas al entrar al portal (contexto compartido).
-  const { campaigns: campaignsCtx, databases, refreshCampaigns } = usePortalData();
+  const { campaigns: campaignsCtx, databases, refreshCampaigns, refreshStats } = usePortalData();
   const campanas = campaignsCtx.items;
   const loadingList = campaignsCtx.loading;
 
@@ -294,6 +294,8 @@ export const CampanasSection = () => {
       notify(editingId ? 'Campaña actualizada correctamente.' : 'Campaña creada correctamente.', 'success');
       handleCloseDialog();
       loadCampaigns();
+      // Refresca también Estadísticas para que la campaña nueva aparezca sin darle "Actualizar".
+      refreshStats();
     } else {
       notify(res.description || `No se pudo ${editingId ? 'actualizar' : 'crear'} la campaña.`, 'error');
     }
