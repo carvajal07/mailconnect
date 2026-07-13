@@ -49,9 +49,12 @@ export interface CreateMessageTemplatePayload {
   language?: string;
   s3Path?: string;
   params?: string[];
+  /** Si se envía, la ruta Create ACTUALIZA esa plantilla (upsert) en vez de crear una nueva. */
+  messageTemplateId?: string;
 }
 
 export const messageTemplatesService = {
+  /** Crea (sin id) o ACTUALIZA (con messageTemplateId) una plantilla — upsert. */
   create: (payload: CreateMessageTemplatePayload): Promise<ApiResponse<{ messageTemplateId?: string }>> =>
     apiPost(MESSAGE_TEMPLATE_ENDPOINTS.CREATE, payload),
 
