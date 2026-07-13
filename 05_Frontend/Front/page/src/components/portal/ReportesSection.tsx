@@ -187,6 +187,30 @@ export const ReportesSection = () => {
     notify(`Reporte generado: ${data.length} envío(s).`, 'success');
   };
 
+  /* ------- DEMO (temporal): datos de ejemplo para ver el diseño del reporte -------
+     Genera envíos ficticios con estados variados. Se quita borrando esta función y su
+     botón. No pega al backend. */
+  const cargarDemo = () => {
+    const nombres = ['Ana', 'Luis', 'Eva', 'Carlos', 'Marta', 'Jorge', 'Sofía', 'Pedro', 'Lucía', 'Diego'];
+    const pool = ['2', '2', '2', '4', '4', '5', '1', '1', '9', '3', '6', '7', '8', '11', '12', '13'];
+    const demo: SendRow[] = Array.from({ length: 63 }, (_, i) => {
+      const st = pool[Math.floor(Math.random() * pool.length)];
+      const n = nombres[i % nombres.length];
+      return {
+        uniqueId: String(1030200 + i),
+        email: `${n.toLowerCase()}${i}@ejemplo.com`,
+        nombre: `${n} Demo`,
+        date: `2026-07-12 ${String(8 + (i % 10)).padStart(2, '0')}:${String((i * 13) % 60).padStart(2, '0')}:00`,
+        state: st,
+        stateDesc: estadoInfo(st).label,
+      };
+    });
+    setRows(demo);
+    setCsvBase64(null);
+    setPage(0);
+    notify('Datos de EJEMPLO (demo) cargados. Genera un reporte real para reemplazarlos.', 'info');
+  };
+
   const pageRows = useMemo(
     () => rows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
     [rows, page, rowsPerPage],
@@ -244,9 +268,15 @@ export const ReportesSection = () => {
               Generar
             </Button>
           </Stack>
-          <Button size="small" endIcon={<ExpandMoreIcon sx={{ transform: advanced ? 'rotate(180deg)' : 'none', transition: '.2s' }} />} onClick={() => setAdvanced((a) => !a)} sx={{ alignSelf: 'flex-start' }}>
-            ID de proceso manual (opcional)
-          </Button>
+          <Stack direction="row" spacing={1} flexWrap="wrap">
+            <Button size="small" endIcon={<ExpandMoreIcon sx={{ transform: advanced ? 'rotate(180deg)' : 'none', transition: '.2s' }} />} onClick={() => setAdvanced((a) => !a)}>
+              ID de proceso manual (opcional)
+            </Button>
+            {/* DEMO temporal: quitar este botón (y cargarDemo) cuando ya no se necesite. */}
+            <Button size="small" color="secondary" onClick={cargarDemo}>
+              Ver datos de ejemplo (demo)
+            </Button>
+          </Stack>
           <Collapse in={advanced}>
             <TextField label="ID de proceso" value={overrideId} onChange={(e) => setOverrideId(e.target.value)} fullWidth size="small" placeholder="uuid del envío real" helperText="Sobrescribe el de la campaña seleccionada." />
           </Collapse>

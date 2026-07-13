@@ -27,6 +27,9 @@ export const ForgotPasswordPage = () => {
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  // Tras solicitar el código NO saltamos solos a otra pantalla (era confuso): mostramos una
+  // confirmación y el usuario decide continuar a ingresar el código.
+  const [sent, setSent] = useState(false);
 
   const validateEmail = (email: string): string | undefined => {
     if (!email) return 'El correo electrónico es requerido';
@@ -53,12 +56,9 @@ export const ForgotPasswordPage = () => {
 
       if (res.status || res.statusCode === 200) {
         setSuccessMessage(
-          'Si el correo está registrado, te enviaremos un código para restablecer tu contraseña. Revisa tu bandeja de entrada.'
+          'Si el correo está registrado, te enviamos un código para restablecer tu contraseña. Revisa tu bandeja de entrada.'
         );
-        // Continuar a la pantalla de reseteo llevando el correo (para el OTP + nueva clave).
-        setTimeout(() => {
-          navigate('/reset-password', { state: { email } });
-        }, 1200);
+        setSent(true);
       } else if (res.statusCode === 0) {
         setError(res.description);
       } else {
@@ -109,45 +109,66 @@ export const ForgotPasswordPage = () => {
             Ingresa tu correo electrónico y te enviaremos las instrucciones para restablecer tu contraseña
           </Typography>
 
-          {successMessage && (
-            <Alert severity="success" sx={{ mb: 3 }}>
-              {successMessage}
-            </Alert>
-          )}
-
           {error && (
             <Alert severity="error" sx={{ mb: 3 }}>
               {error}
             </Alert>
           )}
 
-          <form onSubmit={handleSubmit} noValidate>
-            <TextField
-              fullWidth
-              label="Correo electrónico"
-              name="email"
-              type="email"
-              value={email}
-              onChange={handleEmailChange}
-              error={!!error && !successMessage}
-              disabled={isSubmitting}
-              margin="normal"
-              placeholder="tu@email.com"
-              required
-              autoFocus
-            />
+          {sent ? (
+            /* Confirmación: el usuario decide cuándo continuar a ingresar el código. */
+            <Box>
+              <Alert severity="success" sx={{ mb: 3 }}>
+                {successMessage}
+              </Alert>
+              <Button
+                fullWidth
+                variant="contained"
+                size="large"
+                onClick={() => navigate('/reset-password', { state: { email } })}
+                sx={authSubmitSx}
+              >
+                Ya tengo el código → Continuar
+              </Button>
+              <Button
+                fullWidth
+                variant="text"
+                size="small"
+                onClick={() => { setSent(false); setSuccessMessage(''); }}
+                sx={{ mt: 1 }}
+              >
+                Usar otro correo / reenviar
+              </Button>
+            </Box>
+          ) : (
+            <form onSubmit={handleSubmit} noValidate>
+              <TextField
+                fullWidth
+                label="Correo electrónico"
+                name="email"
+                type="email"
+                value={email}
+                onChange={handleEmailChange}
+                error={!!error}
+                disabled={isSubmitting}
+                margin="normal"
+                placeholder="tu@email.com"
+                required
+                autoFocus
+              />
 
-            <Button
-              type="submit"
-              fullWidth
-              variant="contained"
-              size="large"
-              disabled={isSubmitting}
-              sx={authSubmitSx}
-            >
-              {isSubmitting ? 'Enviando...' : 'Enviar instrucciones'}
-            </Button>
-          </form>
+              <Button
+                type="submit"
+                fullWidth
+                variant="contained"
+                size="large"
+                disabled={isSubmitting}
+                sx={authSubmitSx}
+              >
+                {isSubmitting ? 'Enviando...' : 'Enviar instrucciones'}
+              </Button>
+            </form>
+          )}
 
           <Box sx={{ textAlign: 'center', mt: 3 }}>
             <Typography variant="body2" color="text.secondary">

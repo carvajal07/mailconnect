@@ -1,6 +1,46 @@
-import { Link } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { MailConnectLogo } from '../../components/MailConnectLogo';
 import './landing.css';
+
+/* Resultado de la activación de cuenta. La lambda Acount-activation redirige a
+   /?activacion=ok|error|expirado (la raíz SIEMPRE carga, sin depender de rewrites del
+   host para rutas profundas). Se muestra un aviso claro sobre la landing. */
+const ACTIVACION_MSG: Record<string, { titulo: string; texto: string; color: string }> = {
+  ok: { titulo: '¡Cuenta activada!', texto: 'Tu cuenta quedó activada. Ya puedes iniciar sesión.', color: '#1fbf87' },
+  expirado: { titulo: 'El enlace expiró', texto: 'El enlace de activación ya no es válido (expira a las 24 horas). Regístrate de nuevo o solicita el reenvío.', color: '#ff9d2e' },
+  error: { titulo: 'No se pudo activar', texto: 'El enlace no es válido o ya fue usado. Si tu cuenta ya está activa, inicia sesión normalmente.', color: '#ff5c72' },
+};
+
+const ActivacionAviso = () => {
+  const [params] = useSearchParams();
+  const raw = (params.get('activacion') || '').toLowerCase();
+  const info = ACTIVACION_MSG[raw];
+  const [open, setOpen] = useState(true);
+  if (!info || !open) return null;
+  return (
+    <div role="dialog" aria-modal="true"
+      style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(10,18,32,.55)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+      onClick={() => setOpen(false)}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ background: '#fff', color: '#16233f', maxWidth: 420, width: '100%', borderRadius: 16,
+          padding: '28px 24px', textAlign: 'center', boxShadow: '0 20px 60px rgba(0,0,0,.3)' }}>
+        <div style={{ width: 64, height: 64, margin: '0 auto 12px', borderRadius: '50%',
+          background: info.color, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: '#fff', fontSize: 34, fontWeight: 800 }}>
+          {raw === 'ok' ? '✓' : raw === 'expirado' ? '⏱' : '!'}
+        </div>
+        <h2 style={{ margin: '0 0 8px', fontSize: 22 }}>{info.titulo}</h2>
+        <p style={{ margin: '0 0 20px', color: '#4b5b7e', lineHeight: 1.5 }}>{info.texto}</p>
+        <Link to="/login" style={{ display: 'inline-block', background: 'linear-gradient(135deg,#00c3ff,#0075be)',
+          color: '#04121f', fontWeight: 800, textDecoration: 'none', padding: '12px 26px', borderRadius: 10 }}>
+          Iniciar sesión
+        </Link>
+      </div>
+    </div>
+  );
+};
 
 /* === Configuración de contacto por WhatsApp ===
    1) Cambia WHATSAPP_PHONE por el número REAL de MailConnect en formato
@@ -16,6 +56,7 @@ const BARS = [38, 56, 47, 72, 63, 88, 70, 95, 80];
 export const LandingPage = () => {
   return (
     <div className="mc-landing">
+      <ActivacionAviso />
 
       {/* ================= NAV ================= */}
       <header className="nav">

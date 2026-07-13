@@ -37,6 +37,10 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
 
   useEffect(() => {
     localStorage.setItem('theme-mode', mode);
+    // El color-scheme del documento DEBE seguir el tema de la app (no el del SO). Antes
+    // index.css fijaba "color-scheme: light dark", así que con el SO en oscuro y la app en
+    // claro el navegador pintaba el caret/controles en blanco (invisible sobre fondo claro).
+    document.documentElement.style.colorScheme = mode;
   }, [mode]);
 
   const toggleTheme = () => {
