@@ -164,7 +164,8 @@ export const LoginPage = () => {
           role: res.data.role,
           email: formData.email,
         });
-        navigate('/panel');
+        // Los admin (personal interno) van al panel /admin; los clientes al portal /panel.
+        navigate(res.data.role === 'admin' ? '/admin' : '/panel');
         return;
       }
 

@@ -14,7 +14,9 @@ import { ThemeProvider } from './contexts/ThemeContext';
 function App() {
   return (
     <ThemeProvider>
-      <CssBaseline />
+      {/* enableColorScheme: el color-scheme del documento sigue el tema de la app (claro/oscuro),
+          así el caret y los controles del navegador no se pintan según el SO (cursor blanco en claro). */}
+      <CssBaseline enableColorScheme />
       <Router>
         <Routes>
           {/* Landing pública (marketing) */}

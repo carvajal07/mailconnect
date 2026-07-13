@@ -84,8 +84,9 @@ export const ResetPasswordPage = () => {
       const res = await authService.changePassword(email, password, Number(otp.trim()));
 
       if (res.status || res.statusCode === 200) {
+        // No saltamos solos al login (era confuso, el mensaje parpadeaba): mostramos la
+        // confirmación y el usuario pulsa "Ir a iniciar sesión".
         setSuccessMessage('¡Contraseña actualizada! Ya puedes iniciar sesión con tu nueva contraseña.');
-        setTimeout(() => navigate('/login'), 1500);
       } else if (res.statusCode === 0) {
         setError(res.description);
       } else if (res.statusCode === 401 || res.statusCode === 410) {
@@ -220,6 +221,18 @@ export const ResetPasswordPage = () => {
             {isSubmitting ? 'Actualizando...' : 'Restablecer contraseña'}
           </Button>
         </form>
+
+        {successMessage && (
+          <Button
+            fullWidth
+            variant="contained"
+            size="large"
+            onClick={() => navigate('/login')}
+            sx={authSubmitSx}
+          >
+            Ir a iniciar sesión
+          </Button>
+        )}
 
         <Box sx={{ textAlign: 'center', mt: 2 }}>
           <Typography variant="body2" color="text.secondary">
