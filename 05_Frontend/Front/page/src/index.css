@@ -8,7 +8,8 @@
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
+  /* El color-scheme lo fija el ThemeProvider según el tema de la app (light|dark) para que
+     el caret y los controles del navegador sigan la app y no el SO. No lo dejamos fijo aquí. */
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
