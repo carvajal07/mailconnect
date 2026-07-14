@@ -15,6 +15,7 @@ import CampaignIcon from '@mui/icons-material/Campaign';
 import DescriptionIcon from '@mui/icons-material/Description';
 import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
 import SendIcon from '@mui/icons-material/Send';
+import PaidIcon from '@mui/icons-material/Paid';
 
 interface SidebarProps {
   activeSection: string;
@@ -27,6 +28,7 @@ export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
   const menuItems = [
     { id: 'clientes', label: 'Clientes', icon: <PeopleIcon /> },
     { id: 'envios-clientes', label: 'Envíos por cliente', icon: <SendIcon /> },
+    { id: 'tarifas', label: 'Tarifas', icon: <PaidIcon /> },
     { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },
     { id: 'plantillas', label: 'Plantillas', icon: <DescriptionIcon /> },
     { id: 'plantillas-pre', label: 'Plantillas prediseñadas', icon: <ViewQuiltIcon /> },

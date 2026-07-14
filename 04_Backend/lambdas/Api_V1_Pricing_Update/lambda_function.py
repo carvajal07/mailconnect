@@ -1,0 +1,132 @@
+'''
+Lambda ADMIN para GUARDAR/ACTUALIZAR tarifas (tabla `pricingRate`).
+
+Ruta: POST /Pricing/Update  (integración no-proxy, envelope estándar)
+Request:  { customerId?, channel, fields:{...} }
+    - customerId : alcance. Default '*' (tarifa GLOBAL). Un customerId de cliente
+                   crea/actualiza el override de ese cliente.
+    - channel    : EMAIL | SMS | WHATSAPP | VOICE | COMMON
+                   COMMON escribe taxRate/minCampaign en los 4 canales (el estimador
+                   los lee por canal, no de una fila COMMON).
+    - fields     : mapa de campos numéricos a fijar (solo los enviados se tocan).
+Respuesta: 200 ok · 400 datos inválidos
+
+⚠️ Endpoint administrativo: restringir a rol admin en el despliegue.
+
+Tabla DynamoDB: pricingRate (PK customerId, SK channel). Valores en COP; deben quedar
+consistentes con Api_V1_Cost_Estimate / Api_V1_Pricing_List.
+'''
+import json
+import boto3
+from decimal import Decimal
+from botocore.exceptions import ClientError
+
+REGION = 'us-east-1'
+dynamodb = boto3.resource('dynamodb', region_name=REGION)
+table_rates = dynamodb.Table('pricingRate')
+
+CHANNELS = ('EMAIL', 'SMS', 'WHATSAPP', 'VOICE')
+
+# Campos numéricos permitidos por canal (evita escribir basura en la tabla).
+ALLOWED_FIELDS = {
+    'EMAIL': {'baseEM', 'baseEAU', 'baseEAP', 'attachmentPerMB', 'personalizedPdf', 'personalizedDocx', 'taxRate', 'minCampaign'},
+    'SMS': {'baseSms', 'taxRate', 'minCampaign'},
+    'WHATSAPP': {'baseMarketing', 'taxRate', 'minCampaign'},
+    'VOICE': {'basePerMinute', 'avgMinutes', 'taxRate', 'minCampaign'},
+}
+COMMON_FIELDS = {'taxRate', 'minCampaign'}
+
+
+def _get_payload(event):
+    if isinstance(event, dict) and isinstance(event.get('body'), str):
+        try:
+            parsed = json.loads(event['body'])
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    return event if isinstance(event, dict) else {}
+
+
+def _is_admin(event):
+    if not isinstance(event, dict):
+        return False
+    auth = (event.get('requestContext') or {}).get('authorizer') or {}
+    return str(auth.get('role', '')).lower() == 'admin'
+
+
+def _clean_fields(raw, allowed):
+    """Solo campos permitidos y convertibles a número (Decimal para DynamoDB)."""
+    out = {}
+    if not isinstance(raw, dict):
+        return out
+    for k, v in raw.items():
+        if k not in allowed:
+            continue
+        try:
+            out[k] = Decimal(str(v))
+        except Exception:
+            continue
+    return out
+
+
+def _upsert(customer_id, channel, fields):
+    """SET de los campos dados en la fila (customerId, channel) — la crea si no existe."""
+    if not fields:
+        return
+    expr = 'SET ' + ', '.join(f'#{i} = :{i}' for i in range(len(fields)))
+    names = {f'#{i}': k for i, k in enumerate(fields)}
+    values = {f':{i}': v for i, (_, v) in enumerate(fields.items())}
+    table_rates.update_item(
+        Key={'customerId': customer_id, 'channel': channel},
+        UpdateExpression=expr,
+        ExpressionAttributeNames=names,
+        ExpressionAttributeValues=values,
+    )
+
+
+def lambda_handler(event, context):
+    if not _is_admin(event):
+        return {'status': False, 'statusCode': 403, 'description': 'Acceso restringido a administradores.'}
+
+    payload = _get_payload(event)
+    customer_id = str(payload.get('customerId', '') or '*').strip() or '*'
+    channel = str(payload.get('channel', '')).upper()
+    fields_in = payload.get('fields', {})
+
+    if channel not in CHANNELS and channel != 'COMMON':
+        return {'status': False, 'statusCode': 400,
+                'description': 'channel inválido. Usa EMAIL, SMS, WHATSAPP, VOICE o COMMON.'}
+
+    try:
+        if channel == 'COMMON':
+            # taxRate/minCampaign se escriben en los 4 canales (el estimador los lee por canal).
+            common = _clean_fields(fields_in, COMMON_FIELDS)
+            if not common:
+                return {'status': False, 'statusCode': 400,
+                        'description': 'Envía al menos taxRate o minCampaign.'}
+            for ch in CHANNELS:
+                _upsert(customer_id, ch, common)
+            touched = list(common.keys())
+        else:
+            fields = _clean_fields(fields_in, ALLOWED_FIELDS[channel])
+            if not fields:
+                return {'status': False, 'statusCode': 400,
+                        'description': 'Envía al menos un campo válido para el canal.'}
+            _upsert(customer_id, channel, fields)
+            touched = list(fields.keys())
+
+        return {
+            'status': True, 'statusCode': 200,
+            'description': 'Tarifa actualizada correctamente',
+            'data': {'customerId': customer_id, 'channel': channel, 'fields': touched}
+        }
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            return {'status': False, 'statusCode': 500,
+                    'description': 'La tabla pricingRate no existe. Créala en el despliegue.'}
+        print('Error actualizando tarifa: {}'.format(e))
+        return {'status': False, 'statusCode': 500, 'description': 'Error no controlado al guardar la tarifa'}
+    except Exception as e:
+        print('Error actualizando tarifa: {}'.format(e))
+        return {'status': False, 'statusCode': 500, 'description': 'Error no controlado al guardar la tarifa'}
