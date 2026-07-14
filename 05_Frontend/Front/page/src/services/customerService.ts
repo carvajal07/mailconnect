@@ -16,6 +16,8 @@ import type { ApiResponse } from './apiClient';
 export const CUSTOMER_ENDPOINTS = {
   LIST: '/Customer/List',
   UPDATE: '/Customer/Update',
+  DETAIL: '/Customer/Detail',
+  SET_ROLE: '/User/SetRole',
 };
 
 export interface CustomerSummary {
@@ -24,6 +26,24 @@ export interface CustomerSummary {
   companyTin?: string | number;
   realSendEnabled: boolean;
   date?: string;
+}
+
+export type UserRole = 'admin' | 'client';
+
+export interface CustomerUser {
+  userId: string;
+  email: string;
+  name: string;
+  phone: string;
+  role: UserRole;
+  active: boolean;
+  date?: string;
+}
+
+export interface CustomerDetail {
+  customer: CustomerSummary;
+  users: CustomerUser[];
+  count: number;
 }
 
 export const customerService = {
@@ -37,4 +57,15 @@ export const customerService = {
     realSendEnabled: boolean,
   ): Promise<ApiResponse<{ customerId?: string; realSendEnabled?: boolean }>> =>
     apiPost(CUSTOMER_ENDPOINTS.UPDATE, { customerId, realSendEnabled }),
+
+  /** Ficha de un cliente: sus datos + los usuarios de la empresa (admin). */
+  detail: (customerId: string): Promise<ApiResponse<CustomerDetail>> =>
+    apiPost(CUSTOMER_ENDPOINTS.DETAIL, { customerId }),
+
+  /** Cambia el rol de un usuario entre admin y client (admin). */
+  setUserRole: (
+    userId: string,
+    role: UserRole,
+  ): Promise<ApiResponse<{ userId?: string; role?: UserRole }>> =>
+    apiPost(CUSTOMER_ENDPOINTS.SET_ROLE, { userId, role }),
 };

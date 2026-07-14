@@ -92,3 +92,87 @@ def test_update_cliente_inexistente_404(cust):
 def test_update_sin_datos_400(cust):
     _, upd = cust
     assert upd.lambda_handler(_admin({'customerId': 'CU1'}), None)['statusCode'] == 400
+
+
+# --- Ficha de cliente (Customer/Detail) + cambio de rol (User/SetRole) --------------
+
+def _pk_table(name, pk):
+    boto3.client('dynamodb', region_name='us-east-1').create_table(
+        TableName=name,
+        KeySchema=[{'AttributeName': pk, 'KeyType': 'HASH'}],
+        AttributeDefinitions=[{'AttributeName': pk, 'AttributeType': 'S'}],
+        BillingMode='PAY_PER_REQUEST')
+
+
+@pytest.fixture
+def ficha():
+    with mock_aws():
+        _pk_table('customer', 'customerId')
+        _pk_table('user', 'userId')
+        _pk_table('userData', 'userDataId')
+        ddb = boto3.resource('dynamodb', region_name='us-east-1')
+        ddb.Table('customer').put_item(Item={'customerId': 'CU1', 'company': 'Acme', 'companyTin': '900', 'realSendEnabled': True, 'date': '2026-01-01'})
+        ddb.Table('userData').put_item(Item={'userDataId': 'D1', 'customerId': 'CU1', 'userName': 'Ana', 'phone': '+573001112233'})
+        ddb.Table('userData').put_item(Item={'userDataId': 'D2', 'customerId': 'CU1', 'userName': 'Beto', 'phone': '+573004445566'})
+        ddb.Table('user').put_item(Item={'userId': 'U1', 'userDataId': 'D1', 'customerId': 'CU1', 'email': 'ana@acme.co', 'role': 'admin', 'active': True})
+        ddb.Table('user').put_item(Item={'userId': 'U2', 'userDataId': 'D2', 'customerId': 'CU1', 'email': 'beto@acme.co', 'role': 'client', 'active': True})
+        ddb.Table('user').put_item(Item={'userId': 'U9', 'userDataId': 'D9', 'customerId': 'CU2', 'email': 'root@mc.co', 'role': 'admin', 'active': True})
+        yield _load('Api_V1_Customer_Detail'), _load('Api_V1_User_SetRole')
+
+
+def test_detail_requiere_admin(ficha):
+    detail, _ = ficha
+    resp = detail.lambda_handler({'requestContext': {'authorizer': {'role': 'client'}}, 'customerId': 'CU1'}, None)
+    assert resp['statusCode'] == 403
+
+
+def test_detail_une_usuarios_y_perfil(ficha):
+    detail, _ = ficha
+    resp = detail.lambda_handler(_admin({'customerId': 'CU1'}), None)
+    assert resp['statusCode'] == 200
+    assert resp['data']['customer']['company'] == 'Acme'
+    assert resp['data']['count'] == 2
+    ana = next(u for u in resp['data']['users'] if u['email'] == 'ana@acme.co')
+    assert ana['name'] == 'Ana' and ana['role'] == 'admin' and ana['phone'] == '+573001112233'
+
+
+def test_detail_404_si_no_existe(ficha):
+    detail, _ = ficha
+    assert detail.lambda_handler(_admin({'customerId': 'NOPE'}), None)['statusCode'] == 404
+
+
+def test_setrole_promueve_client_a_admin(ficha):
+    _, setrole = ficha
+    resp = setrole.lambda_handler(_admin({'userId': 'U2', 'role': 'admin'}), None)
+    assert resp['statusCode'] == 200 and resp['data']['role'] == 'admin'
+
+
+def test_setrole_degrada_admin_a_client(ficha):
+    _, setrole = ficha
+    # U1 es admin pero hay otro admin (U9) → se permite degradar.
+    resp = setrole.lambda_handler(_admin({'userId': 'U1', 'role': 'client'}), None)
+    assert resp['statusCode'] == 200 and resp['data']['role'] == 'client'
+
+
+def test_setrole_no_degrada_ultimo_admin(ficha):
+    _, setrole = ficha
+    # Degradar U9 deja a U1 como único admin; luego degradar U1 debe fallar (409).
+    setrole.lambda_handler(_admin({'userId': 'U9', 'role': 'client'}), None)
+    resp = setrole.lambda_handler(_admin({'userId': 'U1', 'role': 'client'}), None)
+    assert resp['statusCode'] == 409
+
+
+def test_setrole_rol_invalido_400(ficha):
+    _, setrole = ficha
+    assert setrole.lambda_handler(_admin({'userId': 'U1', 'role': 'superuser'}), None)['statusCode'] == 400
+
+
+def test_setrole_usuario_inexistente_404(ficha):
+    _, setrole = ficha
+    assert setrole.lambda_handler(_admin({'userId': 'ZZZ', 'role': 'admin'}), None)['statusCode'] == 404
+
+
+def test_setrole_requiere_admin(ficha):
+    _, setrole = ficha
+    resp = setrole.lambda_handler({'requestContext': {'authorizer': {'role': 'client'}}, 'userId': 'U2', 'role': 'admin'}, None)
+    assert resp['statusCode'] == 403
