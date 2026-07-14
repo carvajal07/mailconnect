@@ -124,6 +124,9 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `User/SetRole` | `{ userId, role (admin\|client) }` (**admin**) | 200 ok · 400 · 404 · 409 (no degradar al último admin) |
 | `Billing/Summary` | `{ month?, customerId? }` (**admin**) | 200 `data:{customers:[{company, totalSent, subtotal, tax, total, byChannel[]}], totals, truncated}` |
 | `Admin/Dashboard` | `{ month? }` (**admin**) | 200 `data:{kpis, funnel[], byChannel[], health:[{company, sent, bounceRate, complaintRate, level}], truncated}` (panel global + reputación) |
+| `Admin/Jobs` | `{ month?, state? }` (**admin**) | 200 `data:{jobs:[{campaignName, company, channelLabel, processState, campaignState, sent, registersToSend, progress, blocked{}}], counts, truncated}` (solo lectura) |
+| `Config/Get` | `{}` (**admin**) | 200 `data:{settings:[{key, label, group, type, default, value, isOverridden, consumers[]}]}` |
+| `Config/Set` | `{ key, value }` (**admin**) | 200 ok · 400 key/valor inválido. Crea `platformConfig` si no existe |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -326,6 +329,23 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
 - Reusa la lógica de estados de `Api_V1_Reports_Statistics` (misma `STATE_PRIORITY` y conteos)
   y los componentes `StatTile`/`Funnel` de `portal/charts.tsx`. Filtro por **mes**; tope de
   procesos (`MAX_PROCESSES`) con aviso de parcial. `dashboardService.ts` en el front.
+
+### Trabajos / colas + Configuración de plataforma (jul 2026)
+- **Trabajos** (`JobsSection`, tab admin): `Api_V1_Admin_Jobs` da visibilidad **solo lectura**
+  de los envíos en curso y recientes. Enriquece la tabla `process` con el estado de la campaña
+  y el conteo de envíos (`sendStatus`) → **progreso** (enviados/a-enviar) y los contactos
+  filtrados en la preparación (lista negra, desuscritos, inválidos). Filtros por mes/estado,
+  chips de conteo por `processState`, orden reciente primero, tope con aviso. La profundidad
+  real de SQS no se lee (requiere permisos SQS + URLs); el reencolado queda para otra iteración.
+- **Configuración** (`ConfiguracionSection`, tab admin): tabla **`platformConfig`** (PK
+  `configKey`) + lambdas `Api_V1_Config_{Get,Set}`. Centraliza ajustes globales que antes eran
+  env vars sueltas. **Ajustes cableados hoy** (las lambdas los leen con fallback a su env var,
+  así un cambio aplica **sin redesplegar**):
+  - `SENDER_EMAIL` → `Register`, `Create-otp`, `Recovery-password` (remitente de los correos).
+  - `ACTIVATION_URL` → `Register` (enlace del botón "Activar mi cuenta").
+  - `OTP_EXPIRATION_MIN` → `Create-otp`, `Recovery-password` (vigencia del OTP).
+  El patrón `_platform_cfg(key)` (get_item defensivo con fallback) se puede adoptar en más
+  lambdas. `Config/Get` devuelve el catálogo con `value`/`isOverridden`/`consumers` para la UI.
 
 ### Plantillas multicanal: SMS / DOCX / WhatsApp (jul 2026)
 - Las plantillas de **correo HTML** siguen en **SES** (`Template/Create-template`, `Template/List`).
@@ -620,6 +640,15 @@ se puede leer del objeto ya subido a S3.)
         función vacía antes del CD) + ruta `/Admin/Dashboard` (authorizer + CORS, **admin-only**,
         mismo mapping template de `role`). Permisos: `Scan` sobre `customer`/`campaign`/`process`
         y `Query` sobre `*_sendStatus`. Mismo patrón de agregación que `Reports_Statistics`.
+      - **Trabajos / colas (jul 2026):** desplegar `Api_V1_Admin_Jobs` (crear vacía) + ruta
+        `/Admin/Jobs` (authorizer + CORS, **admin-only**, mapping de `role`). Permisos: `Scan`
+        sobre `process`/`campaign` y `Query` sobre `*_sendStatus`.
+      - **Configuración de plataforma (jul 2026):** tabla **`platformConfig`** (PK `configKey`)
+        + lambdas `Api_V1_Config_{Get,Set}` (crear vacías) + rutas `/Config/Get`, `/Config/Set`
+        (authorizer + CORS, **admin-only**). Permisos: `Scan/GetItem/PutItem` + `CreateTable/
+        DescribeTable` sobre `platformConfig`. Las lambdas **consumidoras** (`Register`,
+        `Create-otp`, `Recovery-password`) necesitan `dynamodb:GetItem` sobre `platformConfig`
+        (leen con fallback a env, así que sin permiso/tabla siguen funcionando con la env var).
 - [ ] Sacar **SES del sandbox** y verificar remitente/dominio.
 - [ ] Configurar las **variables de entorno** de §3 en cada lambda.
 - [ ] Definir `VITE_API_BASE_URL` de producción en el front.

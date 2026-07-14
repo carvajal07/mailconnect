@@ -37,6 +37,20 @@ ses = boto3.client('ses')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'comunicaciones@mailconnect.com.co')
 DEFAULT_EXPIRATION_MIN = int(os.environ.get('OTP_EXPIRATION_MIN', '5'))
 
+# Ajustes de plataforma (tabla platformConfig, editable desde /admin) con fallback a env.
+_cfg_table = dynamodb.Table('platformConfig')
+
+
+def _platform_cfg(key):
+    """Lee un ajuste global desde platformConfig. Nunca falla: None si no existe."""
+    try:
+        item = _cfg_table.get_item(Key={'configKey': key}).get('Item')
+        if item and item.get('value') not in (None, ''):
+            return item['value']
+    except Exception:
+        return None
+    return None
+
 # Mensaje genérico: no revela si el correo existe o no (evita enumeración de usuarios).
 GENERIC_DESCRIPTION = ("Si el correo está registrado, enviaremos un código para "
                        "restablecer la contraseña.")
@@ -98,7 +112,7 @@ def send_recovery_email(email, code):
     text_body = "Tu código para restablecer la contraseña de MailConnect es: {code}".format(code=code)
 
     ses.send_email(
-        Source=SENDER_EMAIL,
+        Source=str(_platform_cfg('SENDER_EMAIL') or SENDER_EMAIL),
         Destination={'ToAddresses': [email]},
         Message={
             'Subject': {'Data': subject, 'Charset': 'UTF-8'},
@@ -146,10 +160,18 @@ def lambda_handler(event, context):
     """
     payload = _get_payload(event)
     ip = payload.get('ip', '')
+    # Vigencia por defecto: ajuste de plataforma → env → 5 min.
+    default_exp = DEFAULT_EXPIRATION_MIN
+    _cfg_exp = _platform_cfg('OTP_EXPIRATION_MIN')
+    if _cfg_exp not in (None, ''):
+        try:
+            default_exp = int(float(_cfg_exp))
+        except Exception:
+            default_exp = DEFAULT_EXPIRATION_MIN
     try:
-        expiration_min = int(payload.get('expiration', DEFAULT_EXPIRATION_MIN))
+        expiration_min = int(payload.get('expiration', default_exp))
     except Exception:
-        expiration_min = DEFAULT_EXPIRATION_MIN
+        expiration_min = default_exp
 
     generic_ok = {'status': True, 'statusCode': 200, 'description': GENERIC_DESCRIPTION}
 
