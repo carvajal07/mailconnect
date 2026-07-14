@@ -32,9 +32,8 @@ inyecta**. Hoy no se está pasando el `role`, por eso el panel da 403. En el
 usa este **body mapping template**:
 
 ```velocity
-#set($body = $input.json('$'))
 {
-  "body": $body,
+  "body": "$util.escapeJavaScript($input.json('$')).replaceAll("\\'","'")",
   "requestContext": {
     "authorizer": {
       "role": "$context.authorizer.role",
@@ -47,13 +46,19 @@ usa este **body mapping template**:
 }
 ```
 
-> Las lambdas leen el payload real tanto si viene como `event` directo (legacy) como
-> dentro de `event['body']` (este template) — el helper `_get_payload` lo maneja.
+> **IMPORTANTE — el body va como STRING escapado**, no como objeto crudo. El helper
+> `_get_payload` de las lambdas espera `event['body']` como **string JSON** (lo parsea);
+> si se inyecta como objeto (`"body": $body`) las rutas que reciben datos
+> (Pricing/Update, User/SetRole, Config/Set) no encuentran sus campos → 400. El
+> `.replaceAll("\\'","'")` corrige el sobre-escapado de comillas simples de
+> `escapeJavaScript` (patrón estándar de API Gateway).
+>
 > `role` habilita el acceso; `user`/`userId` identifican al **actor en la auditoría**;
 > `customerId`/`customer` sirven al multi-tenant de las read-lambdas.
 >
-> **Alternativa:** pasar esas rutas a integración **proxy** (ahí el context llega solo),
-> pero entonces la lambda recibe `event['body']` como string JSON (ya soportado).
+> **No pasar estas rutas a proxy:** las lambdas devuelven el envelope
+> `{status, statusCode, description, data}` en el cuerpo (estilo no-proxy). En proxy
+> API Gateway esperaría `{statusCode, headers, body}` y daría 502. Quédate en **no-proxy**.
 
 - [ ] `[J]` Aplicar el template en: `/Pricing/List`, `/Pricing/Update`, `/Customer/List`,
   `/Customer/Update`, `/Customer/Detail`, `/User/SetRole`, `/Billing/Summary`,
