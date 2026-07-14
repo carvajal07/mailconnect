@@ -118,6 +118,11 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Blacklist/List` | `{ customerId }` o `{ customer }` | 200 `data:{items:[{email, rejectionType, description, date}], count}` (tabla `{customer}_blackList`) |
 | `Blacklist/Add` | `{ email (correo o celular), reason? }` | 201 ok · 400 datos. Crea la tabla si no existe (PK `email`) |
 | `Blacklist/Delete` | `{ email }` | 200 ok · 404 no estaba · 400 datos |
+| `Pricing/List` | `{ customerId? }` (**admin**) | 200 `data:{customerId, defaults, effective, overrides, currency}` (alcance `*` global o cliente) |
+| `Pricing/Update` | `{ customerId?, channel, fields }` (**admin**) | 200 ok · 400. `channel` ∈ EMAIL·SMS·WHATSAPP·VOICE·COMMON (COMMON escribe taxRate/minCampaign en los 4) |
+| `Customer/Detail` | `{ customerId }` (**admin**) | 200 `data:{customer, users:[{userId,email,name,phone,role,active}], count}` · 404 |
+| `User/SetRole` | `{ userId, role (admin\|client) }` (**admin**) | 200 ok · 400 · 404 · 409 (no degradar al último admin) |
+| `Billing/Summary` | `{ month?, customerId? }` (**admin**) | 200 `data:{customers:[{company, totalSent, subtotal, tax, total, byChannel[]}], totals, truncated}` |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -286,6 +291,26 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   `realSendEnabled`) + sección `/admin` **"Envíos por cliente"** (tabla con switch por cliente).
   ⚠️ Son endpoints administrativos (afectan a todos los clientes): restringir a **rol admin**
   en el despliegue (pendiente seguridad).
+
+### Panel administrativo ampliado: Tarifas, Ficha de cliente, Facturación (jul 2026)
+Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`):
+- **Tarifas** (`TarifasSection`): edita `pricingRate` por canal a nivel **global (`*`)** o
+  **override por cliente**. Lambdas `Api_V1_Pricing_{List,Update}`. `List` devuelve `defaults`
+  (embebidos), `effective` (defaults→global→cliente) y `overrides` (lo explícito del alcance,
+  para el chip heredado/propio). `Update` hace upsert de campos por canal; el pseudo-canal
+  **COMMON** escribe `taxRate`/`minCampaign` en los 4 canales (el estimador los lee por canal).
+  Consistente con `Api_V1_Cost_Estimate` (mismos `DEFAULT_RATES`; **si cambian allá, cambian
+  en Pricing_List y Billing_Summary**).
+- **Clientes → Ficha** (`ClientesSection` reescrita): lista clientes reales (`Customer/List`) y
+  abre una ficha (`Api_V1_Customer_Detail`) con datos + **usuarios de la empresa** (une `user`
+  con `userData`), toggle de envíos reales y **promover/degradar admin** vía
+  `Api_V1_User_SetRole` (bloquea degradar al **último admin**, 409). Esto **cierra el `[J]` de
+  promover admins a mano** en DynamoDB.
+- **Facturación** (`FacturacionSection`): `Api_V1_Billing_Summary` convierte los envíos reales
+  (messageId en `{customer}_sendStatus`) en consumo por cliente y canal, aplica `pricingRate` +
+  IVA + mínimo por campaña. Filtros por **mes** y **cliente**; tope de procesos con aviso de
+  parcial. Aproximaciones: no suma recargo por MB de adjunto, SMS asume 1 segmento, Voz usa
+  `avgMinutes`. Es un **resumen operativo, no una factura fiscal**. Export CSV en el front.
 
 ### Plantillas multicanal: SMS / DOCX / WhatsApp (jul 2026)
 - Las plantillas de **correo HTML** siguen en **SES** (`Template/Create-template`, `Template/List`).
@@ -562,6 +587,20 @@ se puede leer del objeto ya subido a S3.)
         Authorizers deben reenviar `role` en el context (proxy directo; en no-proxy, el mapping
         template debe inyectar `$context.authorizer.role`). **Promover manualmente** al menos un
         usuario a `role='admin'`. Campos `termsAccepted`/`termsAcceptedAt`/`termsVersion` en `user`.
+      - **⚠️ Mapping template del rol en rutas admin (bug de "Acceso restringido"):** las rutas
+        admin **no-proxy** (`/Customer/*`, `/User/SetRole`, `/Pricing/*`, `/Billing/Summary`) NO
+        reciben el `role` a menos que el body mapping template inyecte
+        `$context.authorizer.role` (y `customerId`/`customer`). Sin eso la lambda ve el context
+        vacío → 403 aunque el usuario SÍ sea admin. Alternativa: pasar esas rutas a **proxy**.
+      - **Panel admin ampliado (jul 2026):** desplegar `Api_V1_Pricing_List`,
+        `Api_V1_Pricing_Update`, `Api_V1_Customer_Detail`, `Api_V1_User_SetRole`,
+        `Api_V1_Billing_Summary` (crear la función vacía antes del CD) + sus rutas
+        `/Pricing/List`, `/Pricing/Update`, `/Customer/Detail`, `/User/SetRole`,
+        `/Billing/Summary` (authorizer + CORS, **admin-only**). Permisos:
+        `dynamodb:GetItem/UpdateItem` sobre **`pricingRate`**; `Scan` sobre `user`/`userData`/
+        `customer`/`campaign`/`process` y `UpdateItem` sobre `user` (SetRole); `Query` sobre
+        `*_sendStatus` (Billing). La tabla **`pricingRate`** (PK `customerId` + SK `channel`)
+        ya era requisito del estimador — ahora también la escribe Pricing_Update.
 - [ ] Sacar **SES del sandbox** y verificar remitente/dominio.
 - [ ] Configurar las **variables de entorno** de §3 en cada lambda.
 - [ ] Definir `VITE_API_BASE_URL` de producción en el front.
