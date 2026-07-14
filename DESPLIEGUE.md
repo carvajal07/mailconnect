@@ -161,6 +161,48 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 
 ---
 
+## 7b. Troubleshooting: "CORS error" + el Authorizer no deja logs
+
+> **El "No 'Access-Control-Allow-Origin' header" suele ser un disfraz.** Si el
+> Authorizer **deniega o crashea**, API Gateway responde 401/403/500 **sin** headers
+> CORS y el navegador lo reporta como CORS aunque el problema real sea la autorización.
+
+**1. Ver el error REAL con curl (ignora CORS):**
+```bash
+curl -i -X POST 'https://api.mailconnect.com.co/V1/Customer/List' \
+  -H 'Authorization: Bearer <TU_JWT>' -H 'Content-Type: application/json' -d '{}'
+```
+- 401 → el Authorizer denegó o reventó · 500 → el Authorizer **crasheó al iniciar**
+  (falta layer PyJWT o env `SECRET_KEY`) · 403 "Acceso restringido" → corrió pero no
+  mandó `role` (falta el mapping template §1) · 200 → ya funciona.
+
+**2. El Authorizer "no deja log / no se ejecuta":**
+- **Caché:** API Gateway cachea el resultado por token (TTL 300s) → no re-ejecuta → sin
+  logs nuevos. Para depurar: Authorizers → **Authorization Caching TTL = 0** → Deploy.
+- **Permisos de logs:** la función `Authorizer` necesita `AWSLambdaBasicExecutionRole`
+  (`logs:*`). Sin eso nunca escribe en CloudWatch.
+- **Crash al iniciar (lo más común):** sin el **layer de PyJWT** o la env **`SECRET_KEY`**
+  revienta en `import jwt` → 500 sin CORS. Probar con Lambda → `Authorizer` → **Test**.
+
+**3. Que los errores dejen de enmascararse como CORS:**
+- API Gateway → **Gateway Responses** → `DEFAULT_4XX`, `DEFAULT_5XX` (y `UNAUTHORIZED`,
+  `ACCESS_DENIED`) → agregar headers: `Access-Control-Allow-Origin='*'`,
+  `Access-Control-Allow-Headers='Content-Type,Authorization'`,
+  `Access-Control-Allow-Methods='POST,OPTIONS'` → **Deploy**.
+
+**4. Confirmar el preflight OPTIONS:**
+```bash
+curl -i -X OPTIONS 'https://api.mailconnect.com.co/V1/Customer/List' \
+  -H 'Origin: http://localhost:5173' -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: content-type,authorization'
+```
+Debe volver 200 con `Access-Control-Allow-*` (incluyendo `Authorization`). Es **custom
+domain** (`api.mailconnect.com.co/V1`): el CORS va en la API/stage detrás del dominio + **Deploy**.
+
+- [ ] `[J]` Confirmar layer PyJWT + env `SECRET_KEY` en `Authorizer`/`Authorizer2`.
+- [ ] `[J]` CORS en Gateway Responses `DEFAULT_4XX`/`DEFAULT_5XX`.
+- [ ] `[J]` Verificar preflight OPTIONS por curl en las rutas admin.
+
 ## 8. Pendiente de MI lado (código) `[C]`
 
 Lo que queda por hacer en el repo (no es despliegue):
