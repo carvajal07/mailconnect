@@ -176,6 +176,22 @@ curl -i -X POST 'https://api.mailconnect.com.co/V1/Customer/List' \
   (falta layer PyJWT o env `SECRET_KEY`) · 403 "Acceso restringido" → corrió pero no
   mandó `role` (falta el mapping template §1) · 200 → ya funciona.
 
+**1b. "AuthorizerConfigurationException / Invalid permissions on Lambda function":**
+Si el test del Authorizer (o CloudWatch de API Gateway) muestra
+`Execution failed due to configuration error: Invalid permissions on Lambda function`,
+**API Gateway no tiene permiso para invocar la función Authorizer** (falta su
+*resource-based policy*). Por eso "no deja logs": nunca se ejecuta. Arreglo (ajusta
+apiId/authorizerId/cuenta a los tuyos, salen en el log del test):
+```bash
+aws lambda add-permission --function-name Authorizer \
+  --statement-id apigw-invoke-authorizer --action lambda:InvokeFunction \
+  --principal apigateway.amazonaws.com \
+  --source-arn "arn:aws:execute-api:us-east-1:<ACCOUNT>:<API_ID>/authorizers/<AUTHORIZER_ID>"
+```
+Por consola: API Gateway → Authorizers → editar → re-seleccionar la función Lambda →
+aceptar el popup *"grant API Gateway permission to invoke"* → **Deploy**. Repetir para
+`Authorizer2` si se usa. Es **distinto** del execution role (logs).
+
 **2. El Authorizer "no deja log / no se ejecuta":**
 - **Caché:** API Gateway cachea el resultado por token (TTL 300s) → no re-ejecuta → sin
   logs nuevos. Para depurar: Authorizers → **Authorization Caching TTL = 0** → Deploy.
