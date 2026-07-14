@@ -118,6 +118,16 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Blacklist/List` | `{ customerId }` o `{ customer }` | 200 `data:{items:[{email, rejectionType, description, date}], count}` (tabla `{customer}_blackList`) |
 | `Blacklist/Add` | `{ email (correo o celular), reason? }` | 201 ok · 400 datos. Crea la tabla si no existe (PK `email`) |
 | `Blacklist/Delete` | `{ email }` | 200 ok · 404 no estaba · 400 datos |
+| `Pricing/List` | `{ customerId? }` (**admin**) | 200 `data:{customerId, defaults, effective, overrides, currency}` (alcance `*` global o cliente) |
+| `Pricing/Update` | `{ customerId?, channel, fields }` (**admin**) | 200 ok · 400. `channel` ∈ EMAIL·SMS·WHATSAPP·VOICE·COMMON (COMMON escribe taxRate/minCampaign en los 4) |
+| `Customer/Detail` | `{ customerId }` (**admin**) | 200 `data:{customer, users:[{userId,email,name,phone,role,active}], count}` · 404 |
+| `User/SetRole` | `{ userId, role (admin\|client) }` (**admin**) | 200 ok · 400 · 404 · 409 (no degradar al último admin) |
+| `Billing/Summary` | `{ month?, customerId? }` (**admin**) | 200 `data:{customers:[{company, totalSent, subtotal, tax, total, byChannel[]}], totals, truncated}` |
+| `Admin/Dashboard` | `{ month? }` (**admin**) | 200 `data:{kpis, funnel[], byChannel[], health:[{company, sent, bounceRate, complaintRate, level}], truncated}` (panel global + reputación) |
+| `Admin/Jobs` | `{ month?, state? }` (**admin**) | 200 `data:{jobs:[{campaignName, company, channelLabel, processState, campaignState, sent, registersToSend, progress, blocked{}}], counts, truncated}` (solo lectura) |
+| `Config/Get` | `{}` (**admin**) | 200 `data:{settings:[{key, label, group, type, default, value, isOverridden, consumers[]}]}` |
+| `Config/Set` | `{ key, value }` (**admin**) | 200 ok · 400 key/valor inválido. Crea `platformConfig` si no existe |
+| `Admin/Audit` | `{ month?, action?, actor? }` (**admin**) | 200 `data:{entries:[{date, actor, action, target, detail}], count, actions[], truncated}` (bitácora, solo lectura) |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -286,6 +296,70 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   `realSendEnabled`) + sección `/admin` **"Envíos por cliente"** (tabla con switch por cliente).
   ⚠️ Son endpoints administrativos (afectan a todos los clientes): restringir a **rol admin**
   en el despliegue (pendiente seguridad).
+
+### Panel administrativo ampliado: Tarifas, Ficha de cliente, Facturación (jul 2026)
+Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`):
+- **Tarifas** (`TarifasSection`): edita `pricingRate` por canal a nivel **global (`*`)** o
+  **override por cliente**. Lambdas `Api_V1_Pricing_{List,Update}`. `List` devuelve `defaults`
+  (embebidos), `effective` (defaults→global→cliente) y `overrides` (lo explícito del alcance,
+  para el chip heredado/propio). `Update` hace upsert de campos por canal; el pseudo-canal
+  **COMMON** escribe `taxRate`/`minCampaign` en los 4 canales (el estimador los lee por canal).
+  Consistente con `Api_V1_Cost_Estimate` (mismos `DEFAULT_RATES`; **si cambian allá, cambian
+  en Pricing_List y Billing_Summary**).
+- **Clientes → Ficha** (`ClientesSection` reescrita): lista clientes reales (`Customer/List`) y
+  abre una ficha (`Api_V1_Customer_Detail`) con datos + **usuarios de la empresa** (une `user`
+  con `userData`), toggle de envíos reales y **promover/degradar admin** vía
+  `Api_V1_User_SetRole` (bloquea degradar al **último admin**, 409). Esto **cierra el `[J]` de
+  promover admins a mano** en DynamoDB.
+- **Facturación** (`FacturacionSection`): `Api_V1_Billing_Summary` convierte los envíos reales
+  (messageId en `{customer}_sendStatus`) en consumo por cliente y canal, aplica `pricingRate` +
+  IVA + mínimo por campaña. Filtros por **mes** y **cliente**; tope de procesos con aviso de
+  parcial. Aproximaciones: no suma recargo por MB de adjunto, SMS asume 1 segmento, Voz usa
+  `avgMinutes`. Es un **resumen operativo, no una factura fiscal**. Export CSV en el front.
+
+### Panel de control global + salud de envíos (jul 2026)
+- **Tab "Panel de control"** (`DashboardSection`, primer tab y default de `/admin`):
+  `Api_V1_Admin_Dashboard` agrega métricas **macro de todos los clientes** (no acotado por
+  tenant): KPIs (clientes, campañas activas/por aprobar, envíos, tasa de entrega, clientes
+  en riesgo), **embudo de entrega global** (enviados→entregados→abiertos→clics), **volumen
+  por canal** y **salud de envíos por cliente**.
+- **Salud / reputación:** por cada cliente con actividad calcula `bounceRate`/`complaintRate`
+  y asigna nivel **ok/warning/critical** según umbrales de referencia de SES (rebote >5%/>10%,
+  queja >0.1%/>0.5%). La tabla ordena **riesgo primero**. Recordatorio en la UI: la reputación
+  de SES es **compartida** entre todos los clientes de la plataforma.
+- Reusa la lógica de estados de `Api_V1_Reports_Statistics` (misma `STATE_PRIORITY` y conteos)
+  y los componentes `StatTile`/`Funnel` de `portal/charts.tsx`. Filtro por **mes**; tope de
+  procesos (`MAX_PROCESSES`) con aviso de parcial. `dashboardService.ts` en el front.
+
+### Trabajos / colas + Configuración de plataforma (jul 2026)
+- **Trabajos** (`JobsSection`, tab admin): `Api_V1_Admin_Jobs` da visibilidad **solo lectura**
+  de los envíos en curso y recientes. Enriquece la tabla `process` con el estado de la campaña
+  y el conteo de envíos (`sendStatus`) → **progreso** (enviados/a-enviar) y los contactos
+  filtrados en la preparación (lista negra, desuscritos, inválidos). Filtros por mes/estado,
+  chips de conteo por `processState`, orden reciente primero, tope con aviso. La profundidad
+  real de SQS no se lee (requiere permisos SQS + URLs); el reencolado queda para otra iteración.
+- **Configuración** (`ConfiguracionSection`, tab admin): tabla **`platformConfig`** (PK
+  `configKey`) + lambdas `Api_V1_Config_{Get,Set}`. Centraliza ajustes globales que antes eran
+  env vars sueltas. **Ajustes cableados hoy** (las lambdas los leen con fallback a su env var,
+  así un cambio aplica **sin redesplegar**):
+  - `SENDER_EMAIL` → `Register`, `Create-otp`, `Recovery-password` (remitente de los correos).
+  - `ACTIVATION_URL` → `Register` (enlace del botón "Activar mi cuenta").
+  - `OTP_EXPIRATION_MIN` → `Create-otp`, `Recovery-password` (vigencia del OTP).
+  El patrón `_platform_cfg(key)` (get_item defensivo con fallback) se puede adoptar en más
+  lambdas. `Config/Get` devuelve el catálogo con `value`/`isOverridden`/`consumers` para la UI.
+
+### Auditoría de acciones admin (jul 2026)
+- **Auditoría** (`AuditoriaSection`, tab admin): tabla **`adminAudit`** (PK `auditId`) + lambda
+  `Api_V1_Admin_Audit` (solo lectura). Registra **quién hizo qué y cuándo** en las acciones
+  administrativas sensibles. Las lambdas que mutan escriben con un helper **best-effort**
+  `_audit(event, action, target, detail)` (nunca rompe la operación; el actor sale de
+  `authorizer.user`/`userId`). Acciones registradas hoy:
+  - `customer.realSend` → `Customer_Update` (habilitar/deshabilitar envíos).
+  - `user.role` → `User_SetRole` (promover/degradar, guarda `rol_anterior → rol_nuevo`).
+  - `pricing.update` → `Pricing_Update` (alcance/canal + campos tocados).
+  - `config.set` → `Config_Set` (key + valor).
+  Filtros por mes, acción y actor (substring); orden reciente primero; tope con aviso. El
+  lector devuelve vacío si la tabla no existe (no es error).
 
 ### Plantillas multicanal: SMS / DOCX / WhatsApp (jul 2026)
 - Las plantillas de **correo HTML** siguen en **SES** (`Template/Create-template`, `Template/List`).
@@ -562,6 +636,40 @@ se puede leer del objeto ya subido a S3.)
         Authorizers deben reenviar `role` en el context (proxy directo; en no-proxy, el mapping
         template debe inyectar `$context.authorizer.role`). **Promover manualmente** al menos un
         usuario a `role='admin'`. Campos `termsAccepted`/`termsAcceptedAt`/`termsVersion` en `user`.
+      - **⚠️ Mapping template del rol en rutas admin (bug de "Acceso restringido"):** las rutas
+        admin **no-proxy** (`/Customer/*`, `/User/SetRole`, `/Pricing/*`, `/Billing/Summary`) NO
+        reciben el `role` a menos que el body mapping template inyecte
+        `$context.authorizer.role` (y `customerId`/`customer`). Sin eso la lambda ve el context
+        vacío → 403 aunque el usuario SÍ sea admin. Alternativa: pasar esas rutas a **proxy**.
+      - **Panel admin ampliado (jul 2026):** desplegar `Api_V1_Pricing_List`,
+        `Api_V1_Pricing_Update`, `Api_V1_Customer_Detail`, `Api_V1_User_SetRole`,
+        `Api_V1_Billing_Summary` (crear la función vacía antes del CD) + sus rutas
+        `/Pricing/List`, `/Pricing/Update`, `/Customer/Detail`, `/User/SetRole`,
+        `/Billing/Summary` (authorizer + CORS, **admin-only**). Permisos:
+        `dynamodb:GetItem/UpdateItem` sobre **`pricingRate`**; `Scan` sobre `user`/`userData`/
+        `customer`/`campaign`/`process` y `UpdateItem` sobre `user` (SetRole); `Query` sobre
+        `*_sendStatus` (Billing). La tabla **`pricingRate`** (PK `customerId` + SK `channel`)
+        ya era requisito del estimador — ahora también la escribe Pricing_Update.
+      - **Panel de control global (jul 2026):** desplegar `Api_V1_Admin_Dashboard` (crear la
+        función vacía antes del CD) + ruta `/Admin/Dashboard` (authorizer + CORS, **admin-only**,
+        mismo mapping template de `role`). Permisos: `Scan` sobre `customer`/`campaign`/`process`
+        y `Query` sobre `*_sendStatus`. Mismo patrón de agregación que `Reports_Statistics`.
+      - **Trabajos / colas (jul 2026):** desplegar `Api_V1_Admin_Jobs` (crear vacía) + ruta
+        `/Admin/Jobs` (authorizer + CORS, **admin-only**, mapping de `role`). Permisos: `Scan`
+        sobre `process`/`campaign` y `Query` sobre `*_sendStatus`.
+      - **Configuración de plataforma (jul 2026):** tabla **`platformConfig`** (PK `configKey`)
+        + lambdas `Api_V1_Config_{Get,Set}` (crear vacías) + rutas `/Config/Get`, `/Config/Set`
+        (authorizer + CORS, **admin-only**). Permisos: `Scan/GetItem/PutItem` + `CreateTable/
+        DescribeTable` sobre `platformConfig`. Las lambdas **consumidoras** (`Register`,
+        `Create-otp`, `Recovery-password`) necesitan `dynamodb:GetItem` sobre `platformConfig`
+        (leen con fallback a env, así que sin permiso/tabla siguen funcionando con la env var).
+      - **Auditoría (jul 2026):** tabla **`adminAudit`** (PK `auditId`) + lambda
+        `Api_V1_Admin_Audit` (crear vacía) + ruta `/Admin/Audit` (authorizer + CORS, **admin-only**).
+        Permisos: `Scan` sobre `adminAudit` (lectura) y `PutItem` sobre `adminAudit` para las
+        lambdas que mutan (`Customer_Update`, `User_SetRole`, `Pricing_Update`, `Config_Set`;
+        escriben best-effort, así que sin permiso/tabla la operación sigue pero no se audita).
+        Para que el actor quede identificado, el Authorizer ya reenvía `user`/`userId` en el
+        context (en no-proxy, inyectarlos en el mapping template junto con `role`).
 - [ ] Sacar **SES del sandbox** y verificar remitente/dominio.
 - [ ] Configurar las **variables de entorno** de §3 en cada lambda.
 - [ ] Definir `VITE_API_BASE_URL` de producción en el front.
@@ -651,6 +759,8 @@ README.md
 ---
 
 ## 7. Referencias rápidas
+- **Checklist de despliegue consolidado (panel admin + pendientes): `DESPLIEGUE.md`** (raíz).
+  Todo lo `[J]` (tablas, lambdas, rutas, IAM, mapping template de rol) y lo `[C]` (código pendiente).
 - **Plan de salida a producción (MVP) y canales SMS/WhatsApp/Voz: `PLAN_MVP.md`** (raíz).
 - Arquitectura completa y catálogo: **`README.md`** (raíz).
 - Contrato de la API: **`09_Herramientas/01-MailConnect.postman_collection.json`**.

@@ -53,6 +53,20 @@ ACTIVATION_URL = os.environ.get(
     'https://mtgt9qpb77.execute-api.us-east-1.amazonaws.com/Test/api/account-activation'
 )
 
+# Ajustes de plataforma (tabla platformConfig, editable desde /admin) con fallback a env.
+_cfg_table = dynamodb.Table('platformConfig')
+
+
+def _platform_cfg(key):
+    """Lee un ajuste global desde platformConfig. Nunca falla: None si no existe."""
+    try:
+        item = _cfg_table.get_item(Key={'configKey': key}).get('Item')
+        if item and item.get('value') not in (None, ''):
+            return item['value']
+    except Exception:
+        return None
+    return None
+
 
 def _get_payload(event):
     """Soporta integración directa (event = body) y Lambda-proxy (event['body'] string)."""
@@ -95,7 +109,8 @@ def get_customerId(companyTin):
 
 def send_activation_email(email, name, activation_key):
     """Envía el correo de activación con el enlace. No interrumpe el registro si falla."""
-    link = "{base}?qs={key}".format(base=ACTIVATION_URL, key=activation_key)
+    base = str(_platform_cfg('ACTIVATION_URL') or ACTIVATION_URL)
+    link = "{base}?qs={key}".format(base=base, key=activation_key)
     subject = "Activa tu cuenta de MailConnect"
     html_body = """
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#16233f">
@@ -118,7 +133,7 @@ def send_activation_email(email, name, activation_key):
     text_body = "Activa tu cuenta de MailConnect en este enlace: {link} (expira en 24 horas).".format(link=link)
 
     ses.send_email(
-        Source=SENDER_EMAIL,
+        Source=str(_platform_cfg('SENDER_EMAIL') or SENDER_EMAIL),
         Destination={'ToAddresses': [email]},
         Message={
             'Subject': {'Data': subject, 'Charset': 'UTF-8'},

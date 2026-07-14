@@ -15,6 +15,12 @@ import CampaignIcon from '@mui/icons-material/Campaign';
 import DescriptionIcon from '@mui/icons-material/Description';
 import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
 import SendIcon from '@mui/icons-material/Send';
+import PaidIcon from '@mui/icons-material/Paid';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import WorkHistoryIcon from '@mui/icons-material/WorkHistory';
+import SettingsIcon from '@mui/icons-material/Settings';
+import HistoryIcon from '@mui/icons-material/History';
 
 interface SidebarProps {
   activeSection: string;
@@ -25,11 +31,17 @@ const DRAWER_WIDTH = 240;
 
 export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
   const menuItems = [
+    { id: 'dashboard', label: 'Panel de control', icon: <DashboardIcon /> },
     { id: 'clientes', label: 'Clientes', icon: <PeopleIcon /> },
     { id: 'envios-clientes', label: 'Envíos por cliente', icon: <SendIcon /> },
+    { id: 'tarifas', label: 'Tarifas', icon: <PaidIcon /> },
+    { id: 'facturacion', label: 'Facturación', icon: <ReceiptLongIcon /> },
+    { id: 'trabajos', label: 'Trabajos', icon: <WorkHistoryIcon /> },
     { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },
     { id: 'plantillas', label: 'Plantillas', icon: <DescriptionIcon /> },
     { id: 'plantillas-pre', label: 'Plantillas prediseñadas', icon: <ViewQuiltIcon /> },
+    { id: 'configuracion', label: 'Configuración', icon: <SettingsIcon /> },
+    { id: 'auditoria', label: 'Auditoría', icon: <HistoryIcon /> },
   ];
 
   return (

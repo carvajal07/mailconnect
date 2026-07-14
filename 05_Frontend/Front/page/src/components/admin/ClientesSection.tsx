@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -17,206 +17,187 @@ import {
   TableRow,
   IconButton,
   Stack,
-  InputAdornment
+  InputAdornment,
+  Chip,
+  Switch,
+  CircularProgress,
+  Alert,
+  Divider,
+  Tooltip,
 } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
-import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
-import { API_CONFIG, buildUrl } from '../../config/api';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import ApartmentIcon from '@mui/icons-material/Apartment';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import PersonIcon from '@mui/icons-material/Person';
+import { customerService } from '../../services/customerService';
+import type { CustomerSummary, CustomerDetail, CustomerUser, UserRole } from '../../services/customerService';
+import { isOk } from '../../services/apiClient';
+import { useFeedback } from '../../hooks/useFeedback';
+import { useConfirm } from '../../hooks/useConfirm';
+import { getUser } from '../../services/authService';
 
-interface Cliente {
-  id?: string;
-  name: string;
-  phone: string;
-  email: string;
-  company: string;
-  companyTin: number;
-  password?: string;
-}
-
+/**
+ * Sección admin: CLIENTES. Lista los clientes reales (customerService.list) y abre
+ * la FICHA de cada uno: datos, toggle de envíos reales y los usuarios de la empresa,
+ * con promover/degradar rol (admin ↔ client) sin tocar la consola de DynamoDB.
+ */
 export const ClientesSection = () => {
-  const [clientes, setClientes] = useState<Cliente[]>([]);
-  const [openDialog, setOpenDialog] = useState(false);
-  const [dialogMode, setDialogMode] = useState<'create' | 'edit'>('create');
-  const [selectedCliente, setSelectedCliente] = useState<Cliente | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [formData, setFormData] = useState<Cliente>({
-    name: '',
-    phone: '',
-    email: '',
-    company: '',
-    companyTin: 0,
-    password: '',
-  });
+  const { notify, FeedbackSnackbar } = useFeedback();
+  const { confirm, ConfirmDialog } = useConfirm();
+  const me = getUser();
 
-  const handleOpenDialog = (mode: 'create' | 'edit', cliente?: Cliente) => {
-    setDialogMode(mode);
-    if (mode === 'edit' && cliente) {
-      setSelectedCliente(cliente);
-      setFormData({ ...cliente, password: '' });
+  const [customers, setCustomers] = useState<CustomerSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<CustomerDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [savingSend, setSavingSend] = useState(false);
+  const [roleBusy, setRoleBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    const res = await customerService.list();
+    setLoading(false);
+    if (isOk(res) && res.data?.customers) setCustomers(res.data.customers);
+    else setError(res.description || 'No se pudieron cargar los clientes.');
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const openFicha = async (c: CustomerSummary) => {
+    setOpen(true);
+    setDetail(null);
+    setDetailLoading(true);
+    const res = await customerService.detail(c.customerId);
+    setDetailLoading(false);
+    if (isOk(res) && res.data) setDetail(res.data);
+    else notify(res.description || 'No se pudo cargar la ficha.', 'error');
+  };
+
+  const closeFicha = () => {
+    setOpen(false);
+    setDetail(null);
+  };
+
+  const toggleSend = async () => {
+    if (!detail) return;
+    const next = !detail.customer.realSendEnabled;
+    setSavingSend(true);
+    const res = await customerService.setRealSendEnabled(detail.customer.customerId, next);
+    setSavingSend(false);
+    if (isOk(res)) {
+      setDetail({ ...detail, customer: { ...detail.customer, realSendEnabled: next } });
+      setCustomers((prev) => prev.map((x) => (x.customerId === detail.customer.customerId ? { ...x, realSendEnabled: next } : x)));
+      notify(`Envíos reales ${next ? 'habilitados' : 'deshabilitados'}.`, next ? 'success' : 'warning');
     } else {
-      setFormData({
-        name: '',
-        phone: '',
-        email: '',
-        company: '',
-        companyTin: 0,
-        password: '',
-      });
-    }
-    setOpenDialog(true);
-  };
-
-  const handleCloseDialog = () => {
-    setOpenDialog(false);
-    setSelectedCliente(null);
-  };
-
-  const handleInputChange = (field: keyof Cliente, value: string | number) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleSubmit = async () => {
-    try {
-      const url = dialogMode === 'create'
-        ? buildUrl(API_CONFIG.CLIENTS.REGISTER)
-        : buildUrl(API_CONFIG.CLIENTS.UPDATE, { id: selectedCliente?.id || '' });
-
-      const response = await fetch(url, {
-        method: dialogMode === 'create' ? 'POST' : 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData),
-      });
-
-      if (response.ok) {
-        console.log('Cliente guardado exitosamente');
-        handleCloseDialog();
-        loadClientes();
-      } else {
-        console.error('Error al guardar cliente');
-      }
-    } catch (error) {
-      console.error('Error:', error);
+      notify(res.description || 'No se pudo actualizar.', 'error');
     }
   };
 
-  const loadClientes = async () => {
-    try {
-      const response = await fetch(buildUrl(API_CONFIG.CLIENTS.LIST));
-      if (response.ok) {
-        const data = await response.json();
-        setClientes(data);
-      }
-    } catch (error) {
-      console.error('Error al cargar clientes:', error);
+  const changeRole = async (u: CustomerUser) => {
+    if (!detail) return;
+    const next: UserRole = u.role === 'admin' ? 'client' : 'admin';
+    const ok = await confirm({
+      title: next === 'admin' ? 'Promover a administrador' : 'Quitar administrador',
+      message:
+        next === 'admin'
+          ? `¿Dar rol de administrador a ${u.email}? Podrá gestionar clientes, tarifas y configuración global.`
+          : `¿Quitar el rol de administrador a ${u.email}? Volverá a ser usuario cliente.`,
+      confirmText: next === 'admin' ? 'Promover' : 'Degradar',
+      confirmColor: next === 'admin' ? 'primary' : 'error',
+    });
+    if (!ok) return;
+    setRoleBusy(u.userId);
+    const res = await customerService.setUserRole(u.userId, next);
+    setRoleBusy(null);
+    if (isOk(res)) {
+      setDetail({ ...detail, users: detail.users.map((x) => (x.userId === u.userId ? { ...x, role: next } : x)) });
+      notify(`Rol actualizado a ${next === 'admin' ? 'administrador' : 'cliente'}.`, 'success');
+    } else {
+      notify(res.description || 'No se pudo cambiar el rol.', 'error');
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (window.confirm('¿Está seguro de eliminar este cliente?')) {
-      try {
-        const response = await fetch(buildUrl(API_CONFIG.CLIENTS.DELETE, { id }), {
-          method: 'DELETE',
-        });
-
-        if (response.ok) {
-          console.log('Cliente eliminado exitosamente');
-          loadClientes();
-        }
-      } catch (error) {
-        console.error('Error al eliminar cliente:', error);
-      }
-    }
-  };
-
-  const handleSearch = async () => {
-    try {
-      const url = `${buildUrl(API_CONFIG.CLIENTS.SEARCH)}?term=${searchTerm}`;
-      const response = await fetch(url);
-      if (response.ok) {
-        const data = await response.json();
-        setClientes(data);
-      }
-    } catch (error) {
-      console.error('Error en búsqueda:', error);
-    }
-  };
+  const filtered = customers.filter((c) =>
+    `${c.company} ${c.companyTin ?? ''}`.toLowerCase().includes(search.trim().toLowerCase()),
+  );
 
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={1} flexWrap="wrap" useFlexGap>
         <Typography variant="h4">Clientes</Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog('create')}
-        >
-          Registrar Cliente
+        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={load} disabled={loading}>
+          Refrescar
         </Button>
       </Stack>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Empresas registradas en la plataforma. Abre la <strong>ficha</strong> para ver sus
+        usuarios, habilitar/deshabilitar envíos reales y promover administradores.
+      </Typography>
 
-      <Paper sx={{ p: 2, mb: 3 }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="center">
-          <TextField
-            fullWidth
-            placeholder="Buscar clientes..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon />
-                </InputAdornment>
-              ),
-            }}
-            sx={{ flex: { md: 2 } }}
-          />
-          <Button variant="outlined" onClick={handleSearch} sx={{ minWidth: 120 }}>
-            Buscar
-          </Button>
-          <Button variant="outlined" onClick={loadClientes} sx={{ minWidth: 120 }}>
-            Listar Todos
-          </Button>
-        </Stack>
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} action={<Button color="inherit" size="small" onClick={load}>Reintentar</Button>}>
+          {error}
+        </Alert>
+      )}
+
+      <Paper sx={{ p: 2, mb: 2 }}>
+        <TextField
+          fullWidth
+          size="small"
+          placeholder="Buscar por empresa o NIT…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }}
+        />
       </Paper>
 
       <TableContainer component={Paper}>
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell>Nombre</TableCell>
-              <TableCell>Email</TableCell>
-              <TableCell>Teléfono</TableCell>
               <TableCell>Empresa</TableCell>
               <TableCell>NIT</TableCell>
+              <TableCell>Envíos reales</TableCell>
               <TableCell align="right">Acciones</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {clientes.map((cliente) => (
-              <TableRow key={cliente.id}>
-                <TableCell>{cliente.name}</TableCell>
-                <TableCell>{cliente.email}</TableCell>
-                <TableCell>{cliente.phone}</TableCell>
-                <TableCell>{cliente.company}</TableCell>
-                <TableCell>{cliente.companyTin}</TableCell>
+            {loading && customers.length === 0 && (
+              <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><CircularProgress size={26} /></TableCell></TableRow>
+            )}
+            {!loading && filtered.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={4} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                  {customers.length === 0 ? 'No hay clientes registrados.' : 'Sin resultados para la búsqueda.'}
+                </TableCell>
+              </TableRow>
+            )}
+            {filtered.map((c) => (
+              <TableRow key={c.customerId} hover>
+                <TableCell>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <ApartmentIcon fontSize="small" color="action" />
+                    <Typography fontWeight={600}>{c.company || '—'}</Typography>
+                  </Stack>
+                </TableCell>
+                <TableCell>{c.companyTin ?? '—'}</TableCell>
+                <TableCell>
+                  <Chip size="small" variant="outlined" color={c.realSendEnabled ? 'success' : 'error'}
+                    label={c.realSendEnabled ? 'Habilitado' : 'Deshabilitado'} />
+                </TableCell>
                 <TableCell align="right">
-                  <IconButton
-                    color="primary"
-                    onClick={() => handleOpenDialog('edit', cliente)}
-                  >
-                    <EditIcon />
-                  </IconButton>
-                  <IconButton
-                    color="error"
-                    onClick={() => cliente.id && handleDelete(cliente.id)}
-                  >
-                    <DeleteIcon />
-                  </IconButton>
+                  <Button size="small" startIcon={<EditIcon />} onClick={() => openFicha(c)}>
+                    Ver ficha
+                  </Button>
                 </TableCell>
               </TableRow>
             ))}
@@ -224,68 +205,108 @@ export const ClientesSection = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
+      {/* Ficha del cliente */}
+      <Dialog open={open} onClose={closeFicha} maxWidth="md" fullWidth>
         <DialogTitle>
-          {dialogMode === 'create' ? 'Registrar Cliente' : 'Editar Cliente'}
+          <Stack direction="row" spacing={1} alignItems="center">
+            <ApartmentIcon color="primary" />
+            <span>{detail?.customer.company || 'Ficha del cliente'}</span>
+          </Stack>
         </DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 2 }}>
+        <DialogContent dividers>
+          {detailLoading && <Box sx={{ textAlign: 'center', py: 4 }}><CircularProgress /></Box>}
+          {!detailLoading && detail && (
             <Stack spacing={2}>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <TextField
-                  fullWidth
-                  label="Nombre"
-                  value={formData.name}
-                  onChange={(e) => handleInputChange('name', e.target.value)}
-                />
-                <TextField
-                  fullWidth
-                  label="Teléfono"
-                  value={formData.phone}
-                  onChange={(e) => handleInputChange('phone', e.target.value)}
-                />
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3} flexWrap="wrap" useFlexGap>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">NIT</Typography>
+                  <Typography fontWeight={600}>{detail.customer.companyTin || '—'}</Typography>
+                </Box>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">Registrado</Typography>
+                  <Typography fontWeight={600}>{detail.customer.date || '—'}</Typography>
+                </Box>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">Usuarios</Typography>
+                  <Typography fontWeight={600}>{detail.count}</Typography>
+                </Box>
               </Stack>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <TextField
-                  fullWidth
-                  label="Email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => handleInputChange('email', e.target.value)}
-                />
-                <TextField
-                  fullWidth
-                  label="Empresa"
-                  value={formData.company}
-                  onChange={(e) => handleInputChange('company', e.target.value)}
-                />
-              </Stack>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <TextField
-                  fullWidth
-                  label="NIT de la Empresa"
-                  type="number"
-                  value={formData.companyTin}
-                  onChange={(e) => handleInputChange('companyTin', parseInt(e.target.value) || 0)}
-                />
-                <TextField
-                  fullWidth
-                  label={dialogMode === 'create' ? 'Contraseña' : 'Nueva Contraseña (opcional)'}
-                  type="password"
-                  value={formData.password}
-                  onChange={(e) => handleInputChange('password', e.target.value)}
-                />
-              </Stack>
+
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Box>
+                    <Typography fontWeight={700}>Envíos reales</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Si se deshabilita, el cliente solo puede enviar muestras.
+                    </Typography>
+                  </Box>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Chip size="small" variant="outlined" color={detail.customer.realSendEnabled ? 'success' : 'error'}
+                      label={detail.customer.realSendEnabled ? 'Habilitado' : 'Deshabilitado'} />
+                    {savingSend ? <CircularProgress size={20} /> : (
+                      <Switch checked={detail.customer.realSendEnabled} onChange={toggleSend} color="success" />
+                    )}
+                  </Stack>
+                </Stack>
+              </Paper>
+
+              <Box>
+                <Typography variant="subtitle1" fontWeight={700} gutterBottom>Usuarios de la empresa</Typography>
+                <Divider sx={{ mb: 1 }} />
+                <TableContainer component={Paper} variant="outlined">
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Nombre</TableCell>
+                        <TableCell>Email</TableCell>
+                        <TableCell>Rol</TableCell>
+                        <TableCell>Estado</TableCell>
+                        <TableCell align="right">Acciones</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {detail.users.length === 0 && (
+                        <TableRow><TableCell colSpan={5} align="center" sx={{ py: 2, color: 'text.secondary' }}>Sin usuarios.</TableCell></TableRow>
+                      )}
+                      {detail.users.map((u) => (
+                        <TableRow key={u.userId} hover>
+                          <TableCell>{u.name || '—'}{me?.email && u.email === me.email && <Chip size="small" label="tú" sx={{ ml: 1, height: 18 }} />}</TableCell>
+                          <TableCell>{u.email}</TableCell>
+                          <TableCell>
+                            <Chip size="small" icon={u.role === 'admin' ? <AdminPanelSettingsIcon /> : <PersonIcon />}
+                              color={u.role === 'admin' ? 'primary' : 'default'} variant={u.role === 'admin' ? 'filled' : 'outlined'}
+                              label={u.role === 'admin' ? 'Administrador' : 'Cliente'} />
+                          </TableCell>
+                          <TableCell>
+                            <Chip size="small" variant="outlined" color={u.active ? 'success' : 'warning'}
+                              label={u.active ? 'Activo' : 'Inactivo'} />
+                          </TableCell>
+                          <TableCell align="right">
+                            <Tooltip title={u.role === 'admin' ? 'Quitar administrador' : 'Promover a administrador'}>
+                              <span>
+                                <IconButton size="small" color={u.role === 'admin' ? 'error' : 'primary'}
+                                  onClick={() => changeRole(u)} disabled={roleBusy === u.userId}>
+                                  {roleBusy === u.userId ? <CircularProgress size={16} /> : (u.role === 'admin' ? <PersonIcon fontSize="small" /> : <AdminPanelSettingsIcon fontSize="small" />)}
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Box>
             </Stack>
-          </Box>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseDialog}>Cancelar</Button>
-          <Button variant="contained" onClick={handleSubmit}>
-            {dialogMode === 'create' ? 'Registrar' : 'Guardar'}
-          </Button>
+          <Button onClick={closeFicha}>Cerrar</Button>
         </DialogActions>
       </Dialog>
+
+      {FeedbackSnackbar}
+      {ConfirmDialog}
     </Box>
   );
 };

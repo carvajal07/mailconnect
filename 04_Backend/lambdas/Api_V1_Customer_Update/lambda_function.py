@@ -13,10 +13,31 @@ campañas de ese cliente (las muestras siguen permitidas).
 despliegue (Authorizer de admin). Pendiente [J]/seguridad: role-based access.
 '''
 import json
+import time
+import uuid
 import boto3
 
 dynamodb = boto3.resource('dynamodb')
 table_customer = dynamodb.Table('customer')
+_audit_table = dynamodb.Table('adminAudit')
+
+
+def _audit(event, action, target='', detail=''):
+    """Registra una acción admin en adminAudit (best-effort; nunca rompe la operación)."""
+    try:
+        auth = (event.get('requestContext') or {}).get('authorizer') or {}
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'admin'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 
 def _get_payload(event):
@@ -82,6 +103,7 @@ def lambda_handler(event, context):
         )
 
         estado = 'habilitados' if real_send_enabled else 'deshabilitados'
+        _audit(event, 'customer.realSend', customer_id, f'Envíos reales {estado}')
         return {
             'status': True,
             'statusCode': 200,

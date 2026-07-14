@@ -12,8 +12,14 @@ import {
   Avatar,
 } from '@mui/material';
 import { Sidebar } from '../../components/admin/Sidebar';
+import { DashboardSection } from '../../components/admin/DashboardSection';
 import { ClientesSection } from '../../components/admin/ClientesSection';
 import { EnviosClientesSection } from '../../components/admin/EnviosClientesSection';
+import { TarifasSection } from '../../components/admin/TarifasSection';
+import { FacturacionSection } from '../../components/admin/FacturacionSection';
+import { JobsSection } from '../../components/admin/JobsSection';
+import { ConfiguracionSection } from '../../components/admin/ConfiguracionSection';
+import { AuditoriaSection } from '../../components/admin/AuditoriaSection';
 import { PlantillasSection } from '../../components/admin/PlantillasSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
@@ -21,11 +27,12 @@ import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
 import { useNavigate } from 'react-router-dom';
 import { authService, clearSession, getUser } from '../../services/authService';
+import { PortalDataProvider } from '../../context/PortalDataContext';
 
 const DRAWER_WIDTH = 240;
 
 export const AdminPage = () => {
-  const [activeSection, setActiveSection] = useState('clientes');
+  const [activeSection, setActiveSection] = useState('dashboard');
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
   const user = getUser();
@@ -50,22 +57,38 @@ export const AdminPage = () => {
 
   const renderSection = () => {
     switch (activeSection) {
+      case 'dashboard':
+        return <DashboardSection />;
       case 'clientes':
         return <ClientesSection />;
       case 'envios-clientes':
         return <EnviosClientesSection />;
+      case 'tarifas':
+        return <TarifasSection />;
+      case 'facturacion':
+        return <FacturacionSection />;
+      case 'trabajos':
+        return <JobsSection />;
       case 'plantillas':
         return <PlantillasSection />;
       case 'plantillas-pre':
         return <HtmlBuilderSection allowSavePreset />;
+      case 'configuracion':
+        return <ConfiguracionSection />;
+      case 'auditoria':
+        return <AuditoriaSection />;
       case 'campanas':
         return <CampanasSection />;
       default:
-        return <ClientesSection />;
+        return <DashboardSection />;
     }
   };
 
   return (
+    // CampanasSection (y otras secciones reutilizadas del portal) consumen usePortalData(),
+    // que lanza excepción si no hay un <PortalDataProvider> ancestro → antes dejaba la página
+    // en blanco al abrir "Campañas". Se envuelve todo el panel admin en el provider.
+    <PortalDataProvider>
     <Box sx={{ display: 'flex' }}>
       {/* AppBar */}
       <AppBar
@@ -127,5 +150,6 @@ export const AdminPage = () => {
         </Container>
       </Box>
     </Box>
+    </PortalDataProvider>
   );
 };

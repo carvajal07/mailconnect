@@ -37,6 +37,21 @@ ses = boto3.client('ses')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'comunicaciones@mailconnect.com.co')
 DEFAULT_EXPIRATION_MIN = int(os.environ.get('OTP_EXPIRATION_MIN', '5'))
 
+# Ajustes de plataforma (tabla platformConfig, editable desde /admin) con fallback a
+# las env vars de arriba. Se leen en cada invocación para reflejar cambios sin redesplegar.
+_cfg_table = dynamodb.Table('platformConfig')
+
+
+def _platform_cfg(key):
+    """Lee un ajuste global desde platformConfig. Nunca falla: None si no existe."""
+    try:
+        item = _cfg_table.get_item(Key={'configKey': key}).get('Item')
+        if item and item.get('value') not in (None, ''):
+            return item['value']
+    except Exception:
+        return None
+    return None
+
 
 def _get_payload(event):
     if isinstance(event, dict) and isinstance(event.get('body'), str):
@@ -94,7 +109,7 @@ def send_otp_email(email, code, system):
     text_body = "Tu código de verificación MailConnect es: {code}".format(code=code)
 
     ses.send_email(
-        Source=SENDER_EMAIL,
+        Source=str(_platform_cfg('SENDER_EMAIL') or SENDER_EMAIL),
         Destination={'ToAddresses': [email]},
         Message={
             'Subject': {'Data': subject, 'Charset': 'UTF-8'},
@@ -111,10 +126,18 @@ def lambda_handler(event, context):
 
     system = payload.get('system', 'Autenticacion')
     ip = payload.get('ip', '')
+    # Vigencia por defecto: ajuste de plataforma → env → 5 min.
+    default_exp = DEFAULT_EXPIRATION_MIN
+    _cfg_exp = _platform_cfg('OTP_EXPIRATION_MIN')
+    if _cfg_exp not in (None, ''):
+        try:
+            default_exp = int(float(_cfg_exp))
+        except Exception:
+            default_exp = DEFAULT_EXPIRATION_MIN
     try:
-        expiration_min = int(payload.get('expiration', DEFAULT_EXPIRATION_MIN))
+        expiration_min = int(payload.get('expiration', default_exp))
     except Exception:
-        expiration_min = DEFAULT_EXPIRATION_MIN
+        expiration_min = default_exp
 
     try:
         user_id, email = _resolve_user(payload)
