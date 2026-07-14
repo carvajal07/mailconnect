@@ -15,6 +15,7 @@ import { Sidebar } from '../../components/admin/Sidebar';
 import { ClientesSection } from '../../components/admin/ClientesSection';
 import { EnviosClientesSection } from '../../components/admin/EnviosClientesSection';
 import { TarifasSection } from '../../components/admin/TarifasSection';
+import { FacturacionSection } from '../../components/admin/FacturacionSection';
 import { PlantillasSection } from '../../components/admin/PlantillasSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
@@ -58,6 +59,8 @@ export const AdminPage = () => {
         return <EnviosClientesSection />;
       case 'tarifas':
         return <TarifasSection />;
+      case 'facturacion':
+        return <FacturacionSection />;
       case 'plantillas':
         return <PlantillasSection />;
       case 'plantillas-pre':
