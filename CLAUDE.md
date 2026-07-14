@@ -759,6 +759,8 @@ README.md
 ---
 
 ## 7. Referencias rápidas
+- **Checklist de despliegue consolidado (panel admin + pendientes): `DESPLIEGUE.md`** (raíz).
+  Todo lo `[J]` (tablas, lambdas, rutas, IAM, mapping template de rol) y lo `[C]` (código pendiente).
 - **Plan de salida a producción (MVP) y canales SMS/WhatsApp/Voz: `PLAN_MVP.md`** (raíz).
 - Arquitectura completa y catálogo: **`README.md`** (raíz).
 - Contrato de la API: **`09_Herramientas/01-MailConnect.postman_collection.json`**.
