@@ -17,6 +17,7 @@ import { ClientesSection } from '../../components/admin/ClientesSection';
 import { EnviosClientesSection } from '../../components/admin/EnviosClientesSection';
 import { TarifasSection } from '../../components/admin/TarifasSection';
 import { FacturacionSection } from '../../components/admin/FacturacionSection';
+import { JobsSection } from '../../components/admin/JobsSection';
 import { PlantillasSection } from '../../components/admin/PlantillasSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
@@ -64,6 +65,8 @@ export const AdminPage = () => {
         return <TarifasSection />;
       case 'facturacion':
         return <FacturacionSection />;
+      case 'trabajos':
+        return <JobsSection />;
       case 'plantillas':
         return <PlantillasSection />;
       case 'plantillas-pre':

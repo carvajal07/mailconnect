@@ -18,6 +18,7 @@ import SendIcon from '@mui/icons-material/Send';
 import PaidIcon from '@mui/icons-material/Paid';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import DashboardIcon from '@mui/icons-material/Dashboard';
+import WorkHistoryIcon from '@mui/icons-material/WorkHistory';
 
 interface SidebarProps {
   activeSection: string;
@@ -33,6 +34,7 @@ export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
     { id: 'envios-clientes', label: 'Envíos por cliente', icon: <SendIcon /> },
     { id: 'tarifas', label: 'Tarifas', icon: <PaidIcon /> },
     { id: 'facturacion', label: 'Facturación', icon: <ReceiptLongIcon /> },
+    { id: 'trabajos', label: 'Trabajos', icon: <WorkHistoryIcon /> },
     { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },
     { id: 'plantillas', label: 'Plantillas', icon: <DescriptionIcon /> },
     { id: 'plantillas-pre', label: 'Plantillas prediseñadas', icon: <ViewQuiltIcon /> },
