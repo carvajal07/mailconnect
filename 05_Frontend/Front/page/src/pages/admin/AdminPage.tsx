@@ -19,6 +19,7 @@ import { TarifasSection } from '../../components/admin/TarifasSection';
 import { FacturacionSection } from '../../components/admin/FacturacionSection';
 import { JobsSection } from '../../components/admin/JobsSection';
 import { ConfiguracionSection } from '../../components/admin/ConfiguracionSection';
+import { AuditoriaSection } from '../../components/admin/AuditoriaSection';
 import { PlantillasSection } from '../../components/admin/PlantillasSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
@@ -74,6 +75,8 @@ export const AdminPage = () => {
         return <HtmlBuilderSection allowSavePreset />;
       case 'configuracion':
         return <ConfiguracionSection />;
+      case 'auditoria':
+        return <AuditoriaSection />;
       case 'campanas':
         return <CampanasSection />;
       default:

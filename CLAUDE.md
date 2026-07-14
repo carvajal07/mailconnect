@@ -127,6 +127,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Admin/Jobs` | `{ month?, state? }` (**admin**) | 200 `data:{jobs:[{campaignName, company, channelLabel, processState, campaignState, sent, registersToSend, progress, blocked{}}], counts, truncated}` (solo lectura) |
 | `Config/Get` | `{}` (**admin**) | 200 `data:{settings:[{key, label, group, type, default, value, isOverridden, consumers[]}]}` |
 | `Config/Set` | `{ key, value }` (**admin**) | 200 ok · 400 key/valor inválido. Crea `platformConfig` si no existe |
+| `Admin/Audit` | `{ month?, action?, actor? }` (**admin**) | 200 `data:{entries:[{date, actor, action, target, detail}], count, actions[], truncated}` (bitácora, solo lectura) |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -346,6 +347,19 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   - `OTP_EXPIRATION_MIN` → `Create-otp`, `Recovery-password` (vigencia del OTP).
   El patrón `_platform_cfg(key)` (get_item defensivo con fallback) se puede adoptar en más
   lambdas. `Config/Get` devuelve el catálogo con `value`/`isOverridden`/`consumers` para la UI.
+
+### Auditoría de acciones admin (jul 2026)
+- **Auditoría** (`AuditoriaSection`, tab admin): tabla **`adminAudit`** (PK `auditId`) + lambda
+  `Api_V1_Admin_Audit` (solo lectura). Registra **quién hizo qué y cuándo** en las acciones
+  administrativas sensibles. Las lambdas que mutan escriben con un helper **best-effort**
+  `_audit(event, action, target, detail)` (nunca rompe la operación; el actor sale de
+  `authorizer.user`/`userId`). Acciones registradas hoy:
+  - `customer.realSend` → `Customer_Update` (habilitar/deshabilitar envíos).
+  - `user.role` → `User_SetRole` (promover/degradar, guarda `rol_anterior → rol_nuevo`).
+  - `pricing.update` → `Pricing_Update` (alcance/canal + campos tocados).
+  - `config.set` → `Config_Set` (key + valor).
+  Filtros por mes, acción y actor (substring); orden reciente primero; tope con aviso. El
+  lector devuelve vacío si la tabla no existe (no es error).
 
 ### Plantillas multicanal: SMS / DOCX / WhatsApp (jul 2026)
 - Las plantillas de **correo HTML** siguen en **SES** (`Template/Create-template`, `Template/List`).
@@ -649,6 +663,13 @@ se puede leer del objeto ya subido a S3.)
         DescribeTable` sobre `platformConfig`. Las lambdas **consumidoras** (`Register`,
         `Create-otp`, `Recovery-password`) necesitan `dynamodb:GetItem` sobre `platformConfig`
         (leen con fallback a env, así que sin permiso/tabla siguen funcionando con la env var).
+      - **Auditoría (jul 2026):** tabla **`adminAudit`** (PK `auditId`) + lambda
+        `Api_V1_Admin_Audit` (crear vacía) + ruta `/Admin/Audit` (authorizer + CORS, **admin-only**).
+        Permisos: `Scan` sobre `adminAudit` (lectura) y `PutItem` sobre `adminAudit` para las
+        lambdas que mutan (`Customer_Update`, `User_SetRole`, `Pricing_Update`, `Config_Set`;
+        escriben best-effort, así que sin permiso/tabla la operación sigue pero no se audita).
+        Para que el actor quede identificado, el Authorizer ya reenvía `user`/`userId` en el
+        context (en no-proxy, inyectarlos en el mapping template junto con `role`).
 - [ ] Sacar **SES del sandbox** y verificar remitente/dominio.
 - [ ] Configurar las **variables de entorno** de §3 en cada lambda.
 - [ ] Definir `VITE_API_BASE_URL` de producción en el front.

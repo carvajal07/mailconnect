@@ -20,6 +20,7 @@ import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import WorkHistoryIcon from '@mui/icons-material/WorkHistory';
 import SettingsIcon from '@mui/icons-material/Settings';
+import HistoryIcon from '@mui/icons-material/History';
 
 interface SidebarProps {
   activeSection: string;
@@ -40,6 +41,7 @@ export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
     { id: 'plantillas', label: 'Plantillas', icon: <DescriptionIcon /> },
     { id: 'plantillas-pre', label: 'Plantillas prediseñadas', icon: <ViewQuiltIcon /> },
     { id: 'configuracion', label: 'Configuración', icon: <SettingsIcon /> },
+    { id: 'auditoria', label: 'Auditoría', icon: <HistoryIcon /> },
   ];
 
   return (

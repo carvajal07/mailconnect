@@ -13,6 +13,7 @@ sin redesplegar.
 '''
 import json
 import time
+import uuid
 import boto3
 from decimal import Decimal
 from botocore.exceptions import ClientError
@@ -20,6 +21,25 @@ from botocore.exceptions import ClientError
 dynamodb = boto3.resource('dynamodb')
 ddb_client = boto3.client('dynamodb')
 table = dynamodb.Table('platformConfig')
+_audit_table = dynamodb.Table('adminAudit')
+
+
+def _audit(event, action, target='', detail=''):
+    """Registra una acción admin en adminAudit (best-effort; nunca rompe la operación)."""
+    try:
+        auth = (event.get('requestContext') or {}).get('authorizer') or {}
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'admin'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 # Tipos permitidos por clave (debe reflejar el SCHEMA de Config/Get).
 FIELD_TYPES = {
@@ -115,6 +135,7 @@ def lambda_handler(event, context):
             'updatedAt': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
             'updatedBy': _actor(event),
         })
+        _audit(event, 'config.set', key, str(value))
         return {'status': True, 'statusCode': 200, 'description': 'Ajuste guardado',
                 'data': {'key': key}}
     except ClientError as e:

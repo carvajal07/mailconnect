@@ -12,13 +12,34 @@ Nota de seguridad: al degradar (admin→client) se verifica que quede al menos o
 admin, para no quedar sin acceso administrativo.
 '''
 import json
+import time
+import uuid
 import boto3
 from boto3.dynamodb.conditions import Attr
 
 dynamodb = boto3.resource('dynamodb')
 table_user = dynamodb.Table('user')
+_audit_table = dynamodb.Table('adminAudit')
 
 VALID_ROLES = ('admin', 'client')
+
+
+def _audit(event, action, target='', detail=''):
+    """Registra una acción admin en adminAudit (best-effort; nunca rompe la operación)."""
+    try:
+        auth = (event.get('requestContext') or {}).get('authorizer') or {}
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'admin'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 
 def _get_payload(event):
@@ -87,6 +108,7 @@ def lambda_handler(event, context):
             ExpressionAttributeNames={'#r': 'role'},
             ExpressionAttributeValues={':role': role},
         )
+        _audit(event, 'user.role', user_id, f'{current_role} → {role}')
         return {'status': True, 'statusCode': 200,
                 'description': f'Rol actualizado a {role}.',
                 'data': {'userId': user_id, 'role': role}}
