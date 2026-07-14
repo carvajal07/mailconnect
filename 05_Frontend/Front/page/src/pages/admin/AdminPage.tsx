@@ -12,6 +12,7 @@ import {
   Avatar,
 } from '@mui/material';
 import { Sidebar } from '../../components/admin/Sidebar';
+import { DashboardSection } from '../../components/admin/DashboardSection';
 import { ClientesSection } from '../../components/admin/ClientesSection';
 import { EnviosClientesSection } from '../../components/admin/EnviosClientesSection';
 import { TarifasSection } from '../../components/admin/TarifasSection';
@@ -28,7 +29,7 @@ import { PortalDataProvider } from '../../context/PortalDataContext';
 const DRAWER_WIDTH = 240;
 
 export const AdminPage = () => {
-  const [activeSection, setActiveSection] = useState('clientes');
+  const [activeSection, setActiveSection] = useState('dashboard');
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
   const user = getUser();
@@ -53,6 +54,8 @@ export const AdminPage = () => {
 
   const renderSection = () => {
     switch (activeSection) {
+      case 'dashboard':
+        return <DashboardSection />;
       case 'clientes':
         return <ClientesSection />;
       case 'envios-clientes':
@@ -68,7 +71,7 @@ export const AdminPage = () => {
       case 'campanas':
         return <CampanasSection />;
       default:
-        return <ClientesSection />;
+        return <DashboardSection />;
     }
   };
 

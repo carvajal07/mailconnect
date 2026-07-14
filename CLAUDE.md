@@ -123,6 +123,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Customer/Detail` | `{ customerId }` (**admin**) | 200 `data:{customer, users:[{userId,email,name,phone,role,active}], count}` · 404 |
 | `User/SetRole` | `{ userId, role (admin\|client) }` (**admin**) | 200 ok · 400 · 404 · 409 (no degradar al último admin) |
 | `Billing/Summary` | `{ month?, customerId? }` (**admin**) | 200 `data:{customers:[{company, totalSent, subtotal, tax, total, byChannel[]}], totals, truncated}` |
+| `Admin/Dashboard` | `{ month? }` (**admin**) | 200 `data:{kpis, funnel[], byChannel[], health:[{company, sent, bounceRate, complaintRate, level}], truncated}` (panel global + reputación) |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -311,6 +312,20 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   IVA + mínimo por campaña. Filtros por **mes** y **cliente**; tope de procesos con aviso de
   parcial. Aproximaciones: no suma recargo por MB de adjunto, SMS asume 1 segmento, Voz usa
   `avgMinutes`. Es un **resumen operativo, no una factura fiscal**. Export CSV en el front.
+
+### Panel de control global + salud de envíos (jul 2026)
+- **Tab "Panel de control"** (`DashboardSection`, primer tab y default de `/admin`):
+  `Api_V1_Admin_Dashboard` agrega métricas **macro de todos los clientes** (no acotado por
+  tenant): KPIs (clientes, campañas activas/por aprobar, envíos, tasa de entrega, clientes
+  en riesgo), **embudo de entrega global** (enviados→entregados→abiertos→clics), **volumen
+  por canal** y **salud de envíos por cliente**.
+- **Salud / reputación:** por cada cliente con actividad calcula `bounceRate`/`complaintRate`
+  y asigna nivel **ok/warning/critical** según umbrales de referencia de SES (rebote >5%/>10%,
+  queja >0.1%/>0.5%). La tabla ordena **riesgo primero**. Recordatorio en la UI: la reputación
+  de SES es **compartida** entre todos los clientes de la plataforma.
+- Reusa la lógica de estados de `Api_V1_Reports_Statistics` (misma `STATE_PRIORITY` y conteos)
+  y los componentes `StatTile`/`Funnel` de `portal/charts.tsx`. Filtro por **mes**; tope de
+  procesos (`MAX_PROCESSES`) con aviso de parcial. `dashboardService.ts` en el front.
 
 ### Plantillas multicanal: SMS / DOCX / WhatsApp (jul 2026)
 - Las plantillas de **correo HTML** siguen en **SES** (`Template/Create-template`, `Template/List`).
@@ -601,6 +616,10 @@ se puede leer del objeto ya subido a S3.)
         `customer`/`campaign`/`process` y `UpdateItem` sobre `user` (SetRole); `Query` sobre
         `*_sendStatus` (Billing). La tabla **`pricingRate`** (PK `customerId` + SK `channel`)
         ya era requisito del estimador — ahora también la escribe Pricing_Update.
+      - **Panel de control global (jul 2026):** desplegar `Api_V1_Admin_Dashboard` (crear la
+        función vacía antes del CD) + ruta `/Admin/Dashboard` (authorizer + CORS, **admin-only**,
+        mismo mapping template de `role`). Permisos: `Scan` sobre `customer`/`campaign`/`process`
+        y `Query` sobre `*_sendStatus`. Mismo patrón de agregación que `Reports_Statistics`.
 - [ ] Sacar **SES del sandbox** y verificar remitente/dominio.
 - [ ] Configurar las **variables de entorno** de §3 en cada lambda.
 - [ ] Definir `VITE_API_BASE_URL` de producción en el front.

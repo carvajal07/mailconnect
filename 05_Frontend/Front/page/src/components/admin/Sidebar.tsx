@@ -17,6 +17,7 @@ import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
 import SendIcon from '@mui/icons-material/Send';
 import PaidIcon from '@mui/icons-material/Paid';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import DashboardIcon from '@mui/icons-material/Dashboard';
 
 interface SidebarProps {
   activeSection: string;
@@ -27,6 +28,7 @@ const DRAWER_WIDTH = 240;
 
 export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
   const menuItems = [
+    { id: 'dashboard', label: 'Panel de control', icon: <DashboardIcon /> },
     { id: 'clientes', label: 'Clientes', icon: <PeopleIcon /> },
     { id: 'envios-clientes', label: 'Envíos por cliente', icon: <SendIcon /> },
     { id: 'tarifas', label: 'Tarifas', icon: <PaidIcon /> },
