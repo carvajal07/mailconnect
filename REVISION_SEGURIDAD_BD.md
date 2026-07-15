@@ -411,6 +411,16 @@ mismo con `sendDetail`** → tabla `{customer}_sendDetail` con PK `processId` + 
 >   había roto 3 tests que codificaban el comportamiento viejo; se actualizaron para
 >   esperar la excepción (SQS retiene/reintenta).
 >
+> **Estado de despliegue del aislamiento tenant (jul 2026):** el workflow `deploy-api.yml`
+> corrió una vez (al mergear el PR #26) y **FALLÓ** porque la **variable de repo `API_ID`
+> no está configurada** (Settings → Variables) → `sync_api.py` nunca tocó AWS (por eso "no
+> se ven cambios en API Gateway"). Además el mapping template solo se aplicaba a rutas admin.
+> **Ya corregido en código:** `sync_api.py` aplica el template de context a TODA ruta
+> no-proxy autenticada, y `routes.json` incluye las 19 rutas de cliente (+shim de compat en
+> las lambdas que leían `event[...]` directo). **Falta (infra):** (1) configurar las
+> variables de repo `API_ID`, `AUTHORIZER_ID`, `STAGE`, `PREFIX`; (2) re-lanzar el workflow
+> (`--plan` primero para revisar); (3) verificar 1-2 rutas y luego activar `STRICT_TENANT=true`.
+>
 > **Pendiente de Fase 4 (infra):** mover `SECRET_KEY` a **AWS Secrets Manager** y
 > **rotarla** (la clave vieja quedó en el historial git). El endurecimiento de la
 > enumeración por HTTP code (404 vs 423) queda como decisión de producto (hoy es contrato
