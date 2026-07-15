@@ -9,6 +9,7 @@ import { blacklistService, type BlacklistItem } from '../services/blacklistServi
 import { messageTemplatesService, type MessageTemplate } from '../services/messageTemplatesService';
 import type { CampaignStat } from '../components/portal/campaignData';
 import { readCache, writeCache } from '../services/portalCache';
+import { bootstrapService } from '../services/bootstrapService';
 
 /**
  * Contexto de datos del portal (Capa 1: precarga + caché Stale-While-Revalidate).
@@ -144,6 +145,29 @@ export const PortalDataProvider = ({ children }: { children: ReactNode }) => {
     });
   }, [customerId]);
 
+  // Capa 2: una sola llamada de arranque (/Portal/Bootstrap) llena los 4 datasets
+  // ligeros de golpe. Devuelve false si el endpoint no está desplegado o falla,
+  // para caer a los refrescos individuales (degradación elegante durante el rollout).
+  const hydrateFromBootstrap = useCallback(async (): Promise<boolean> => {
+    if (!customerId) return false;
+    const res = await bootstrapService.load();
+    if (!isOk(res) || !res.data) return false;
+    const d = res.data;
+    const campaignsItems = d.campaigns ?? [];
+    const databasesItems = d.databases ?? [];
+    const blacklistItems = d.blacklist ?? [];
+    const templatesItems = d.messageTemplates ?? [];
+    writeCache(customerId, CK.campaigns, campaignsItems);
+    writeCache(customerId, CK.databases, databasesItems);
+    writeCache(customerId, CK.blacklist, blacklistItems);
+    writeCache(customerId, CK.messageTemplates, templatesItems);
+    setCampaigns({ items: campaignsItems, loading: false, loaded: true, error: '' });
+    setDatabases({ items: databasesItems, loading: false, loaded: true, error: '' });
+    setBlacklist({ items: blacklistItems, loading: false, loaded: true, error: '' });
+    setMessageTemplates({ items: templatesItems, loading: false, loaded: true, error: '' });
+    return true;
+  }, [customerId]);
+
   // Precarga al montar el portal: refresca en segundo plano solo lo que esté viejo
   // (la caché fresca ya hidrató el estado inicial, así que no se re-pide).
   useEffect(() => {
@@ -151,12 +175,21 @@ export const PortalDataProvider = ({ children }: { children: ReactNode }) => {
       const c = readCache(customerId, name);
       return !c || !c.fresh;
     };
-    if (stale(CK.campaigns)) refreshCampaigns();
-    if (stale(CK.databases)) refreshDatabases();
+    const lightStale =
+      stale(CK.campaigns) || stale(CK.databases) || stale(CK.blacklist) || stale(CK.messageTemplates);
+    if (lightStale) {
+      // 1 request de arranque; si no está disponible, refrescos individuales.
+      hydrateFromBootstrap().then((ok) => {
+        if (ok) return;
+        if (stale(CK.campaigns)) refreshCampaigns();
+        if (stale(CK.databases)) refreshDatabases();
+        if (stale(CK.blacklist)) refreshBlacklist();
+        if (stale(CK.messageTemplates)) refreshMessageTemplates();
+      });
+    }
+    // Las estadísticas van aparte (agregación pesada), no en el bootstrap.
     if (stale(CK.stats)) refreshStats();
-    if (stale(CK.blacklist)) refreshBlacklist();
-    if (stale(CK.messageTemplates)) refreshMessageTemplates();
-  }, [customerId, refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates]);
+  }, [customerId, hydrateFromBootstrap, refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates]);
 
   const value = useMemo<PortalData>(
     () => ({

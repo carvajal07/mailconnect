@@ -33,6 +33,7 @@
     { "path": "/Blacklist/Add",            "lambda": "Api_V1_Blacklist_Add" },
     { "path": "/Blacklist/Delete",         "lambda": "Api_V1_Blacklist_Delete" },
     { "path": "/Report/Statistics",        "lambda": "Api_V1_Reports_Statistics" },
-    { "path": "/Cost/Estimate",            "lambda": "Api_V1_Cost_Estimate" }
+    { "path": "/Cost/Estimate",            "lambda": "Api_V1_Cost_Estimate" },
+    { "path": "/Portal/Bootstrap",         "lambda": "Api_V1_Portal_Bootstrap" }
   ]
 }
