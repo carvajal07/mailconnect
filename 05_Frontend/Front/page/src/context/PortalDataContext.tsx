@@ -165,8 +165,16 @@ export const PortalDataProvider = ({ children }: { children: ReactNode }) => {
     setDatabases({ items: databasesItems, loading: false, loaded: true, error: '' });
     setBlacklist({ items: blacklistItems, loading: false, loaded: true, error: '' });
     setMessageTemplates({ items: templatesItems, loading: false, loaded: true, error: '' });
+    // Estadísticas: si el bootstrap las trae, se usan; si no (versión vieja del
+    // endpoint), se cargan aparte.
+    if (d.stats) {
+      writeCache(customerId, CK.stats, d.stats);
+      setStats({ items: d.stats, loading: false, loaded: true, error: '' });
+    } else {
+      refreshStats();
+    }
     return true;
-  }, [customerId]);
+  }, [customerId, refreshStats]);
 
   // Precarga al montar el portal: refresca en segundo plano solo lo que esté viejo
   // (la caché fresca ya hidrató el estado inicial, así que no se re-pide).
@@ -175,20 +183,21 @@ export const PortalDataProvider = ({ children }: { children: ReactNode }) => {
       const c = readCache(customerId, name);
       return !c || !c.fresh;
     };
-    const lightStale =
-      stale(CK.campaigns) || stale(CK.databases) || stale(CK.blacklist) || stale(CK.messageTemplates);
-    if (lightStale) {
-      // 1 request de arranque; si no está disponible, refrescos individuales.
+    const anyStale =
+      stale(CK.campaigns) || stale(CK.databases) || stale(CK.blacklist) ||
+      stale(CK.messageTemplates) || stale(CK.stats);
+    if (anyStale) {
+      // 1 sola request de arranque (incluye estadísticas). Si el endpoint no está
+      // disponible, cae a los refrescos individuales.
       hydrateFromBootstrap().then((ok) => {
         if (ok) return;
         if (stale(CK.campaigns)) refreshCampaigns();
         if (stale(CK.databases)) refreshDatabases();
         if (stale(CK.blacklist)) refreshBlacklist();
         if (stale(CK.messageTemplates)) refreshMessageTemplates();
+        if (stale(CK.stats)) refreshStats();
       });
     }
-    // Las estadísticas van aparte (agregación pesada), no en el bootstrap.
-    if (stale(CK.stats)) refreshStats();
   }, [customerId, hydrateFromBootstrap, refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates]);
 
   const value = useMemo<PortalData>(

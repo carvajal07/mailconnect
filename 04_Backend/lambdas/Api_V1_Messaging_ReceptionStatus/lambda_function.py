@@ -15,9 +15,11 @@ parámetro Context de send_text_message / send_voice_message): {customer, proces
 Códigos de estado (mismos que email):
   1 Enviado · 2 Entregado · 3 Rechazado/Fallido
 '''
+import os
 import json
 import uuid
 import boto3
+from botocore.exceptions import ClientError
 
 REGION = 'us-east-1'
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
@@ -89,6 +91,89 @@ def _record_status(customer_name, process_id, item):
     table.put_item(Item=item)
 
 
+# ───────────────────────── Pre-agregación de contadores (opcional) ─────────────────────────
+# Mantiene un RESUMEN por proceso ({customer}_sendSummary, PK processId) con el embudo ya
+# contado, para que los reportes lean O(1) en vez de escanear millones de filas. Es
+# transición-consciente: un mensaje que avanza de estado se mueve de bucket (suma el
+# ganado, resta el perdido) usando su estado actual en {customer}_sendState (PK processId
+# + SK messageId), actualizado con condición atómica (solo avanza en prioridad).
+#
+# Best-effort + gated por SEND_SUMMARY_ENABLED: si está apagado o algo falla (tablas no
+# provisionadas, etc.), NO rompe la recepción; los reportes caen al scan. Activa la
+# escritura, BACKFILL los procesos existentes y recién entonces activa la lectura
+# (SEND_SUMMARY_READ) en los reportes.
+SEND_SUMMARY_ENABLED = os.environ.get('SEND_SUMMARY_ENABLED', 'false').strip().lower() == 'true'
+_SUMMARY_PRIORITY = {1: 1, 9: 2, 8: 3, 3: 4, 2: 5, 6: 6, 10: 7, 7: 8, 4: 9, 5: 10}
+
+
+def _summary_milestones(state_num):
+    '''Buckets del embudo que implica un estado (mismo criterio que los reportes).'''
+    if not state_num:
+        return set()
+    s = int(state_num)
+    ms = {'enviados'}
+    if s in (2, 4, 5, 7):
+        ms.add('entregados')
+    if s in (4, 5):
+        ms.add('abiertos')
+    if s == 5:
+        ms.add('clics')
+    if s in (3, 6):
+        ms.add('rebotes')
+    if s == 7:
+        ms.add('quejas')
+    return ms
+
+
+def bump_send_summary(customer_name, process_id, message_id, state):
+    '''Actualiza el resumen agregado del proceso ante un nuevo estado de un mensaje.
+    Idempotente y transición-consciente; best-effort (nunca lanza).'''
+    if not SEND_SUMMARY_ENABLED or not (customer_name and process_id and message_id):
+        return
+    try:
+        new_state = int(state)
+    except (TypeError, ValueError):
+        return
+    if new_state <= 0:
+        return
+    new_prio = _SUMMARY_PRIORITY.get(new_state, 0)
+    try:
+        # Avanza el estado del mensaje SOLO si el nuevo tiene mayor prioridad (atómico).
+        resp = dynamodb.Table('{}_sendState'.format(customer_name)).update_item(
+            Key={'processId': process_id, 'messageId': message_id},
+            UpdateExpression='SET #s = :s, #p = :p',
+            ConditionExpression='attribute_not_exists(#p) OR #p < :p',
+            ExpressionAttributeNames={'#s': 'state', '#p': 'prio'},
+            ExpressionAttributeValues={':s': new_state, ':p': new_prio},
+            ReturnValues='ALL_OLD')
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return  # el mensaje ya estaba en un estado igual o mayor: nada que sumar
+        print('sendSummary(state): {}'.format(e))
+        return
+    except Exception as e:
+        print('sendSummary(state): {}'.format(e))
+        return
+    old_state = (resp.get('Attributes') or {}).get('state')
+    gained = _summary_milestones(new_state) - _summary_milestones(old_state)
+    lost = _summary_milestones(old_state) - _summary_milestones(new_state)
+    if not gained and not lost:
+        return
+    parts, names, vals = [], {}, {}
+    for i, m in enumerate(list(gained) + list(lost)):
+        parts.append('#m{0} :v{0}'.format(i))
+        names['#m{0}'.format(i)] = m
+        vals[':v{0}'.format(i)] = 1 if m in gained else -1
+    try:
+        dynamodb.Table('{}_sendSummary'.format(customer_name)).update_item(
+            Key={'processId': process_id},
+            UpdateExpression='ADD ' + ', '.join(parts),
+            ExpressionAttributeNames=names,
+            ExpressionAttributeValues=vals)
+    except Exception as e:
+        print('sendSummary(counters): {}'.format(e))
+
+
 def lambda_handler(event, context):
     procesados = 0
     for ev in _iter_events(event):
@@ -123,6 +208,7 @@ def lambda_handler(event, context):
         }
         try:
             _record_status(customer_name, process_id, item)
+            bump_send_summary(customer_name, process_id, message_id, state)
             procesados += 1
         except Exception as e:
             print('No se pudo registrar el estado EUM ({}): {}'.format(event_type, e))
