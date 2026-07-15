@@ -29,7 +29,7 @@ _HEADERS = {
 }
 
 
-PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '600000'))
+PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '100000'))
 
 
 def _hash_password(password, salt):
