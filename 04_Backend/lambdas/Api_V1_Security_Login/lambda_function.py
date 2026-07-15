@@ -1,11 +1,15 @@
 import os
 import jwt
+import time
 import uuid
 import boto3
 import hashlib
 import hmac
 from datetime import datetime, timedelta
 from boto3.dynamodb.conditions import Key
+
+# Vigencia del JWT (segundos). 1 día.
+JWT_TTL_SECONDS = 24 * 60 * 60
 
 # Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb')
@@ -49,18 +53,24 @@ def generate_jwt(username, customer_id="", customer="", user_id="", role="client
     # Información de la carga útil. Se embeben la identidad del tenant (customerId,
     # customer), el userId y el rol como claims: el Authorizer los reenvía en el
     # context y las lambdas pueden confiar en ellos (multi-tenant + roles) en vez del body.
+    # exp/iat como TIMESTAMP ENTERO (UTC), no como objeto datetime: es robusto entre
+    # versiones de PyJWT (algunas serializan mal el datetime) y evita ambigüedad de zona.
+    now_ts = int(time.time())
     payload = {
         'user': username,
         'customerId': customer_id,
         'customer': customer,
         'userId': user_id,
         'role': role,
-        'iat': datetime.utcnow(),  # Inicio de sesión: reloj de la vida máxima (refresh)
-        'exp': datetime.utcnow() + timedelta(days=1)  # Expira en 1 día
+        'iat': now_ts,
+        'exp': now_ts + JWT_TTL_SECONDS,  # Expira en 1 día
     }
 
     # Generar el token JWT
     token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+    # PyJWT < 2 devuelve bytes; normalizar a str para que el envelope JSON no lo altere.
+    if isinstance(token, bytes):
+        token = token.decode('utf-8')
     return token
 
 def _client_info(event):

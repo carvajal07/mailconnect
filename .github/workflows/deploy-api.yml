@@ -1,0 +1,71 @@
+name: Desplegar API (rutas)
+
+# Sincroniza API Gateway desde infra/api/routes.json (IaC ligero):
+#   crea/configura recursos, métodos, integración Lambda, mapping template de rol,
+#   OPTIONS/CORS y permisos; luego despliega el stage. Idempotente.
+#
+# Se dispara al cambiar la config o el motor (o manualmente). Así, cada vez que
+# edites routes.json, se aplica solo.
+#
+# Requisitos (Settings → Secrets and variables → Actions):
+#   Secrets:   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (permisos apigateway:* + lambda:AddPermission)
+#   Variables: API_ID (obligatoria), STAGE (default V1), PREFIX (opcional; sobreescribe routes.json),
+#              AUTHORIZER_ID (para rutas con auth), AWS_REGION (default us-east-1)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/api/**'
+      - 'scripts/sync_api.py'
+      - '.github/workflows/deploy-api.yml'
+  workflow_dispatch:
+    inputs:
+      plan_only:
+        description: 'Solo mostrar el plan (no aplica cambios)'
+        type: boolean
+        default: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  sync:
+    name: Sincronizar API Gateway
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python + boto3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install --quiet boto3
+
+      - name: Plan (siempre, para el log)
+        run: python scripts/sync_api.py --plan
+
+      - name: Configurar credenciales de AWS
+        if: ${{ github.event.inputs.plan_only != 'true' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validar API_ID
+        if: ${{ github.event.inputs.plan_only != 'true' }}
+        run: |
+          if [ -z "${{ vars.API_ID }}" ]; then
+            echo "❌ Falta la variable de repositorio API_ID (Settings → Variables)."; exit 1
+          fi
+
+      - name: Aplicar (crea rutas + template + CORS + deploy)
+        if: ${{ github.event.inputs.plan_only != 'true' }}
+        env:
+          API_ID: ${{ vars.API_ID }}
+          STAGE: ${{ vars.STAGE || 'V1' }}
+          PREFIX: ${{ vars.PREFIX }}
+          AUTHORIZER_ID: ${{ vars.AUTHORIZER_ID }}
+        run: python scripts/sync_api.py

@@ -32,9 +32,8 @@ inyecta**. Hoy no se está pasando el `role`, por eso el panel da 403. En el
 usa este **body mapping template**:
 
 ```velocity
-#set($body = $input.json('$'))
 {
-  "body": $body,
+  "body": $input.json('$'),
   "requestContext": {
     "authorizer": {
       "role": "$context.authorizer.role",
@@ -47,17 +46,50 @@ usa este **body mapping template**:
 }
 ```
 
-> Las lambdas leen el payload real tanto si viene como `event` directo (legacy) como
-> dentro de `event['body']` (este template) — el helper `_get_payload` lo maneja.
+> **Body como OBJETO JSON crudo** (`$input.json('$')`), sin escapes. Es VTL limpio y
+> siempre produce JSON válido. Las lambdas (`_get_payload`) aceptan el body como
+> **objeto** (este template) o como **string** (proxy), así que funciona en ambos casos.
+> ⚠️ Requiere el código con `_get_payload` actualizado (soporta body dict). Si aún
+> corres una versión vieja de las lambdas, **redespliégalas** antes de usar este template.
+>
 > `role` habilita el acceso; `user`/`userId` identifican al **actor en la auditoría**;
 > `customerId`/`customer` sirven al multi-tenant de las read-lambdas.
 >
-> **Alternativa:** pasar esas rutas a integración **proxy** (ahí el context llega solo),
-> pero entonces la lambda recibe `event['body']` como string JSON (ya soportado).
+> **No pasar estas rutas a proxy:** las lambdas devuelven el envelope
+> `{status, statusCode, description, data}` en el cuerpo (estilo no-proxy). En proxy
+> API Gateway esperaría `{statusCode, headers, body}` y daría 502. Quédate en **no-proxy**.
+>
+> _Nota: la versión anterior de este doc usaba `escapeJavaScript(...).replaceAll(...)`
+> para pasar el body como string; era frágil (400 por VTL). Con `_get_payload` aceptando
+> objeto, esta forma cruda es la recomendada._
 
 - [ ] `[J]` Aplicar el template en: `/Pricing/List`, `/Pricing/Update`, `/Customer/List`,
   `/Customer/Update`, `/Customer/Detail`, `/User/SetRole`, `/Billing/Summary`,
   `/Admin/Dashboard`, `/Admin/Jobs`, `/Admin/Audit`, `/Config/Get`, `/Config/Set`.
+
+### ¿Hay que ponerlo a mano en cada ruta? No — se despliega desde GitHub
+
+**IaC ligero (implementado):** la config de las rutas vive en **`infra/api/routes.json`** y el
+workflow **`.github/workflows/deploy-api.yml`** (motor `scripts/sync_api.py`, Python+boto3) la
+aplica en cada push. **Crea recursos/métodos/integración/OPTIONS/permisos que falten** y ajusta
+lo existente (idempotente) + CORS de errores + deploy. Ver **`infra/api/README.md`**.
+- **Setup 1 vez:** en Settings → Variables define `API_ID` (y `STAGE`/`PREFIX=/V1`/`AUTHORIZER_ID`);
+  reusa los secrets AWS del CD de lambdas (el IAM necesita `apigateway:*` + `lambda:AddPermission`).
+- **Uso:** editas `routes.json`, haces push, y se aplica solo. Preview: `python scripts/sync_api.py --plan`.
+- **Crear rutas nuevas:** agrega una entrada a `routes.json` (path/lambda/flags) → se crea sola.
+
+**¿Cuenta nueva → un comando → todo? Todavía NO.** Este flujo cubre la **capa de API Gateway**.
+Un bootstrap completo de cuenta necesita además IaC de: tablas DynamoDB, **crear** las funciones
+Lambda (el CD solo actualiza código), SES (dominio/sandbox), SQS + triggers, S3, roles/políticas
+IAM, layer de PyJWT y custom domain + certificado. Ese es el salto a **Terraform/CDK** (abajo).
+
+**Alternativa — Proxy (evita el template):** con integración **Lambda Proxy** el context y el
+body llegan solos, pero hay que envolver las respuestas en `{statusCode, headers, body}` (cambio
+de código en todas las lambdas). `routes.json` ya soporta `proxy: true` por ruta.
+
+**Evolución — IaC completo (Terraform):** para reproducir una cuenta entera desde cero (todos
+los recursos, no solo API Gateway), migrar a Terraform/CDK con estado remoto. Es el paso que da
+el "cuenta nueva → apply → todo".
 
 ---
 
@@ -155,6 +187,64 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 - [ ] **Auditoría:** cada acción anterior aparece en la bitácora con el actor correcto.
 
 ---
+
+## 7b. Troubleshooting: "CORS error" + el Authorizer no deja logs
+
+> **El "No 'Access-Control-Allow-Origin' header" suele ser un disfraz.** Si el
+> Authorizer **deniega o crashea**, API Gateway responde 401/403/500 **sin** headers
+> CORS y el navegador lo reporta como CORS aunque el problema real sea la autorización.
+
+**1. Ver el error REAL con curl (ignora CORS):**
+```bash
+curl -i -X POST 'https://api.mailconnect.com.co/V1/Customer/List' \
+  -H 'Authorization: Bearer <TU_JWT>' -H 'Content-Type: application/json' -d '{}'
+```
+- 401 → el Authorizer denegó o reventó · 500 → el Authorizer **crasheó al iniciar**
+  (falta layer PyJWT o env `SECRET_KEY`) · 403 "Acceso restringido" → corrió pero no
+  mandó `role` (falta el mapping template §1) · 200 → ya funciona.
+
+**1b. "AuthorizerConfigurationException / Invalid permissions on Lambda function":**
+Si el test del Authorizer (o CloudWatch de API Gateway) muestra
+`Execution failed due to configuration error: Invalid permissions on Lambda function`,
+**API Gateway no tiene permiso para invocar la función Authorizer** (falta su
+*resource-based policy*). Por eso "no deja logs": nunca se ejecuta. Arreglo (ajusta
+apiId/authorizerId/cuenta a los tuyos, salen en el log del test):
+```bash
+aws lambda add-permission --function-name Authorizer \
+  --statement-id apigw-invoke-authorizer --action lambda:InvokeFunction \
+  --principal apigateway.amazonaws.com \
+  --source-arn "arn:aws:execute-api:us-east-1:<ACCOUNT>:<API_ID>/authorizers/<AUTHORIZER_ID>"
+```
+Por consola: API Gateway → Authorizers → editar → re-seleccionar la función Lambda →
+aceptar el popup *"grant API Gateway permission to invoke"* → **Deploy**. Repetir para
+`Authorizer2` si se usa. Es **distinto** del execution role (logs).
+
+**2. El Authorizer "no deja log / no se ejecuta":**
+- **Caché:** API Gateway cachea el resultado por token (TTL 300s) → no re-ejecuta → sin
+  logs nuevos. Para depurar: Authorizers → **Authorization Caching TTL = 0** → Deploy.
+- **Permisos de logs:** la función `Authorizer` necesita `AWSLambdaBasicExecutionRole`
+  (`logs:*`). Sin eso nunca escribe en CloudWatch.
+- **Crash al iniciar (lo más común):** sin el **layer de PyJWT** o la env **`SECRET_KEY`**
+  revienta en `import jwt` → 500 sin CORS. Probar con Lambda → `Authorizer` → **Test**.
+
+**3. Que los errores dejen de enmascararse como CORS:**
+- API Gateway → **Gateway Responses** → `DEFAULT_4XX`, `DEFAULT_5XX` (y `UNAUTHORIZED`,
+  `ACCESS_DENIED`) → agregar headers: `Access-Control-Allow-Origin='*'`,
+  `Access-Control-Allow-Headers='Content-Type,Authorization'`,
+  `Access-Control-Allow-Methods='POST,OPTIONS'` → **Deploy**.
+
+**4. Confirmar el preflight OPTIONS:**
+```bash
+curl -i -X OPTIONS 'https://api.mailconnect.com.co/V1/Customer/List' \
+  -H 'Origin: http://localhost:5173' -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: content-type,authorization'
+```
+Debe volver 200 con `Access-Control-Allow-*` (incluyendo `Authorization`). Es **custom
+domain** (`api.mailconnect.com.co/V1`): el CORS va en la API/stage detrás del dominio + **Deploy**.
+
+- [ ] `[J]` Confirmar layer PyJWT + env `SECRET_KEY` en `Authorizer`/`Authorizer2`.
+- [ ] `[J]` CORS en Gateway Responses `DEFAULT_4XX`/`DEFAULT_5XX`.
+- [ ] `[J]` Verificar preflight OPTIONS por curl en las rutas admin.
 
 ## 8. Pendiente de MI lado (código) `[C]`
 
