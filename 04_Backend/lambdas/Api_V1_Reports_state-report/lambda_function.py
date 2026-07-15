@@ -68,12 +68,21 @@ def _parse_data_field(raw):
 def _now_utc_compact():
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
+def _csv_safe(value):
+    """Neutraliza inyección de fórmulas CSV/Excel: si el valor empieza con
+    = + - @ (o tab/CR), se antepone un apóstrofo para que Excel no lo ejecute."""
+    s = "" if value is None else str(value)
+    if s and s[0] in ('=', '+', '-', '@', '\t', '\r'):
+        return "'" + s
+    return s
+
+
 def _write_csv_semicolon(rows, header):
     buf = io.StringIO(newline="")
     writer = csv.DictWriter(buf, fieldnames=header, delimiter=";", quoting=csv.QUOTE_MINIMAL)
     writer.writeheader()
     for r in rows:
-        writer.writerow(r)
+        writer.writerow({k: _csv_safe(v) for k, v in r.items()})
     text = buf.getvalue()
     buf.close()
     return text, text.encode("utf-8")
@@ -169,16 +178,33 @@ def build_report(cliente: str, id_proceso: str, s3_bucket: str | None, s3_prefix
         "csv_base64": base64.b64encode(csv_bytes).decode("ascii") if not s3_bucket else None,
     }
 
+STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
+
+
 def lambda_handler(event, context):
     try:
-        cliente = (event.get("cliente") or os.environ.get("CLIENTE") or "").strip()
+        # El cliente (tenant) debe salir del Authorizer, NO del body: si no,
+        # cualquier usuario descargaría el reporte (con correos/nombres) de otro
+        # cliente enumerando 'cliente' + 'idProceso'. Sin contexto se cae al body
+        # (legacy) salvo STRICT_TENANT=true.
+        auth = (event.get("requestContext") or {}).get("authorizer") or {} if isinstance(event, dict) else {}
+        auth_customer = str(auth.get("customer") or "").strip()
+        if auth_customer:
+            cliente = auth_customer
+        elif STRICT_TENANT:
+            return {"statusCode": 403, "body": json.dumps({"error": "Sesión sin identidad de cliente."})}
+        else:
+            cliente = (event.get("cliente") or os.environ.get("CLIENTE") or "").strip()
+
         id_proceso = (event.get("idProceso") or os.environ.get("ID_PROCESO") or "").strip()
 
         if not cliente or not id_proceso:
             return {"statusCode": 400, "body": json.dumps({"error": "Faltan 'cliente' o 'idProceso'."})}
 
-        s3_bucket = (event.get("s3_bucket") or os.environ.get("OUTPUT_BUCKET") or "").strip() or None
-        s3_prefix = (event.get("s3_prefix") or os.environ.get("OUTPUT_PREFIX") or "").strip() or None
+        # El bucket/prefijo de salida NO se toman del request (evita exfiltración a
+        # un bucket ajeno). Solo por configuración del servidor.
+        s3_bucket = (os.environ.get("OUTPUT_BUCKET") or "").strip() or None
+        s3_prefix = (os.environ.get("OUTPUT_PREFIX") or "").strip() or None
 
         result = build_report(cliente, id_proceso, s3_bucket, s3_prefix)
         return {"statusCode": 200, "body": json.dumps(result, ensure_ascii=False)}

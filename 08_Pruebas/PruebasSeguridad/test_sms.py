@@ -72,12 +72,13 @@ def test_sms_envia_y_registra_estado(sms, monkeypatch):
     assert all(int(i['state']) == 1 for i in items)
 
 
-def test_sms_sin_identidad_marca_rechazado(sms, monkeypatch):
+def test_sms_sin_identidad_lanza(sms, monkeypatch):
     monkeypatch.setattr(sms, 'ORIGINATION_IDENTITY', '')  # sin origen configurado
-    sms.lambda_handler(_event('empresa', 'P1', 'x', [['1', '+573001112233', 'Ana']]), None)
-    items = _status_items()
-    assert len(items) == 1
-    assert int(items[0]['state']) == 3  # rechazado
+    # Sin identidad de origen, la lambda falla ruidosamente para que SQS RETENGA
+    # y reintente los mensajes, en vez de marcarlos 'Rechazado' y borrarlos.
+    with pytest.raises(RuntimeError):
+        sms.lambda_handler(_event('empresa', 'P1', 'x', [['1', '+573001112233', 'Ana']]), None)
+    assert _status_items() == []
 
 
 def test_personalize(sms):

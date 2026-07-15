@@ -16,6 +16,7 @@ Request:
 Respuesta: 201 { data: { databaseFileId } }
 '''
 import uuid
+import os
 import json
 import boto3
 from datetime import datetime
@@ -54,6 +55,25 @@ def _tenant_from_authorizer(event):
     return auth if isinstance(auth, dict) else {}
 
 
+STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
+
+
+def _resolve_tenant(event, payload):
+    """(customerId, customer) a usar en la consulta.
+    Si el Authorizer trae identidad, se usa SOLO esa (ignora el body por completo
+    para no mezclar tenants). Sin contexto del Authorizer cae al body (legacy)
+    salvo STRICT_TENANT=true, que corta el acceso (fail-closed). Actívalo cuando
+    el mapping template que inyecta $context.authorizer.* esté desplegado."""
+    a = _tenant_from_authorizer(event) or {}
+    cid, cust = a.get('customerId'), a.get('customer')
+    if cid or cust:
+        return cid, cust
+    if STRICT_TENANT:
+        return None, None
+    return payload.get('customerId'), payload.get('customer')
+
+
+
 def lambda_handler(event, context):
     status = True
     description = "Base de datos registrada correctamente"
@@ -64,7 +84,9 @@ def lambda_handler(event, context):
     formatted_date = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     payload = _get_payload(event)
-    auth = _tenant_from_authorizer(event)
+    tenant_id, tenant_customer = _resolve_tenant(event, payload)
+    if STRICT_TENANT and not (tenant_id or tenant_customer):
+        return {'status': False, 'statusCode': 403, 'description': 'Sesión sin identidad de cliente.'}
 
     # Encabezados del CSV (campos usables como {{variables}}). Se normaliza a lista de str.
     raw_columns = payload.get('columns', [])
@@ -72,8 +94,8 @@ def lambda_handler(event, context):
 
     # Campos obligatorios (customerId/customer prefieren el context del Authorizer).
     try:
-        customer_id = auth.get('customerId') or payload['customerId']
-        customer = auth.get('customer') or payload['customer']
+        customer_id = tenant_id or payload['customerId']
+        customer = tenant_customer or payload['customer']
         file_name = payload['fileName']
         s3_path = payload['s3Path']
     except (KeyError, TypeError):

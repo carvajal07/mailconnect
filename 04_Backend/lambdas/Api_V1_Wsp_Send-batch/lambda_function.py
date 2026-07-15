@@ -33,6 +33,11 @@ ORIGINATION_PHONE_NUMBER_ID = os.environ.get('WSP_ORIGINATION_PHONE_NUMBER_ID', 
 TEMPLATE_LANGUAGE = os.environ.get('WSP_TEMPLATE_LANGUAGE', 'es')
 META_API_VERSION = os.environ.get('WSP_META_API_VERSION', 'v20.0')
 
+
+def _mask_phone(phone):
+    p = str(phone)
+    return (p[:4] + '***' + p[-2:]) if len(p) > 6 else '***'
+
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 social = boto3.client('socialmessaging', region_name=REGION)
 
@@ -69,6 +74,9 @@ def _record_status(customer_name, process_id, rows):
 def lambda_handler(event, context):
     now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
+    if not ORIGINATION_PHONE_NUMBER_ID:
+        raise RuntimeError('WSP_ORIGINATION_PHONE_NUMBER_ID no configurada; no se procesa el lote.')
+
     for record in event.get('Records', []):
         try:
             body = json.loads(record['body'])
@@ -83,8 +91,6 @@ def lambda_handler(event, context):
         data = body.get('data', [])
         print(f'WSP lote: cliente={customer_name} proceso={process_id} plantilla={template_name} registros={len(data)}')
 
-        if not ORIGINATION_PHONE_NUMBER_ID:
-            print('WSP_ORIGINATION_PHONE_NUMBER_ID no configurada; no se puede enviar.')
 
         status_rows = []
         for row in data:
@@ -98,8 +104,6 @@ def lambda_handler(event, context):
             message_id = str(uuid.uuid4())
             error = ''
             try:
-                if not ORIGINATION_PHONE_NUMBER_ID:
-                    raise RuntimeError('Sin número de origen WhatsApp configurado')
                 if not template_name:
                     raise RuntimeError('La campaña no tiene plantilla de WhatsApp (HSM)')
                 message = build_whatsapp_message(phone, template_name, params)
@@ -112,7 +116,7 @@ def lambda_handler(event, context):
             except (ClientError, Exception) as e:
                 state = STATE_REJECTED
                 error = str(e)
-                print(f'Fallo WhatsApp a {phone}: {error}')
+                print(f'Fallo WhatsApp a {_mask_phone(phone)}: {error}')
 
             status_rows.append({
                 'sendStatusId': str(uuid.uuid4()),

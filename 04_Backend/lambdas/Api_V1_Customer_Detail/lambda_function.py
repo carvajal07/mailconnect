@@ -73,10 +73,10 @@ def lambda_handler(event, context):
         return {'status': False, 'statusCode': 400, 'description': 'Indica el customerId.', 'data': {}}
 
     try:
-        cust_items = _scan_all(table_customer, FilterExpression=Attr('customerId').eq(customer_id))
-        if not cust_items:
+        # customerId es la PK de customer: GetItem O(1) en vez de Scan O(tabla).
+        c = table_customer.get_item(Key={'customerId': customer_id}).get('Item')
+        if not c:
             return {'status': False, 'statusCode': 404, 'description': 'El cliente no existe.', 'data': {}}
-        c = cust_items[0]
         customer = {
             'customerId': c.get('customerId'),
             'company': c.get('company', ''),

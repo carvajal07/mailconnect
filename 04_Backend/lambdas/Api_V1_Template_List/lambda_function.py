@@ -49,14 +49,9 @@ def _customer_name(payload):
     customer_id = payload.get('customerId')
     if not customer_id:
         return None
-    response = table_customer.scan(
-        FilterExpression="customerId = :value",
-        ExpressionAttributeValues={":value": customer_id},
-        ProjectionExpression='company'
-    )
-    if response['Items']:
-        return response['Items'][0]['company']
-    return None
+    item = table_customer.get_item(Key={'customerId': customer_id},
+                                   ProjectionExpression='company').get('Item')
+    return item['company'] if item else None
 
 
 def lambda_handler(event, context):

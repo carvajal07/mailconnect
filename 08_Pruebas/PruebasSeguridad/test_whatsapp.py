@@ -77,12 +77,12 @@ def test_wsp_envia_y_registra_estado(wsp, monkeypatch):
     assert all(int(i['state']) == 1 for i in items)  # enviado
 
 
-def test_wsp_sin_numero_origen_marca_rechazado(wsp, monkeypatch):
+def test_wsp_sin_numero_origen_lanza(wsp, monkeypatch):
     monkeypatch.setattr(wsp, 'ORIGINATION_PHONE_NUMBER_ID', '')  # sin origen configurado
-    wsp.lambda_handler(_event('empresa', 'P1', 'promo_julio', [['1', '+573001112233', 'Ana']]), None)
-    items = _status_items()
-    assert len(items) == 1
-    assert int(items[0]['state']) == 3  # rechazado
+    # Sin número de origen, la lambda falla ruidosamente (SQS retiene/reintenta).
+    with pytest.raises(RuntimeError):
+        wsp.lambda_handler(_event('empresa', 'P1', 'promo_julio', [['1', '+573001112233', 'Ana']]), None)
+    assert _status_items() == []
 
 
 def test_wsp_sin_plantilla_marca_rechazado(wsp, monkeypatch):

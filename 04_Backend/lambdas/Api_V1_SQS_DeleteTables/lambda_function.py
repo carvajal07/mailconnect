@@ -1,12 +1,25 @@
+import os
+import re
 import time
 import boto3
 
 ddb = boto3.client("dynamodb")
 dynamodb = boto3.resource("dynamodb")
+s3 = boto3.client("s3")
 
-BUCKET = "email-campaign-archive"
-REGION = "us-east-1"
-ACCOUNT = "ACCOUNT_ID"
+BUCKET = os.environ.get("ARCHIVE_BUCKET", "email-campaign-archive")
+REGION = os.environ.get("AWS_REGION", "us-east-1")
+# La cuenta se resuelve del ARN de la invocación (fallback a env var).
+ACCOUNT = os.environ.get("ACCOUNT_ID", "")
+
+# Solo se permite borrar tablas temporales de proceso; nunca tablas core
+# (user, customer, campaign, pricingRate, etc.). Defensa en profundidad
+# además de la política IAM del rol, que también debe restringirse por prefijo.
+ALLOWED_TABLE_RE = re.compile(r"_(sendDetail|sendStatus)(_|$)")
+
+
+def _is_deletable(table_name):
+    return bool(table_name) and bool(ALLOWED_TABLE_RE.search(table_name))
 
 def ensure_lifecycle_rule(s3_days, glacier_days):
     rule_id = f"lifecycle_S3-{s3_days}Dias_Glacier-{glacier_days}Dias"
@@ -62,9 +75,15 @@ def lambda_handler(event, context):
     s3_days = event["expirationDaysS3"]
     glacier_days = event["expirationDaysGlacier"]
 
+    # Allowlist: no borrar nunca tablas que no sean temporales de proceso.
+    if not _is_deletable(table_name):
+        raise ValueError(f"Tabla no permitida para borrado: {table_name}")
+
+    account = ACCOUNT or context.invoked_function_arn.split(":")[4]
+
     prefix = f"retention_S3-{s3_days}Dias_Glacier-{glacier_days}Dias/customerId={customer_id}/table={table_name}"
 
-    arn = f"arn:aws:dynamodb:{REGION}:{ACCOUNT}:table/{table_name}"
+    arn = f"arn:aws:dynamodb:{REGION}:{account}:table/{table_name}"
 
     # 1. Marcar como DELETING
     key = {
@@ -102,7 +121,7 @@ def lambda_handler(event, context):
             # Revertir estado si falla
             table.update_item(
                 Key=key,
-                UpdateExpression="SET lifecycleStatus = :s",
+                UpdateExpression="SET lifeCycleStatus = :s",
                 ExpressionAttributeValues={":s": "TABLE-ACTIVE"}
             )
             raise Exception(f"Export falló: {status['ExportDescription'].get('FailureMessage')}")
@@ -115,7 +134,7 @@ def lambda_handler(event, context):
     # 5. Actualizar lifecycle a DELETE
     table.update_item(
         Key=key,
-        UpdateExpression="SET lifecycleStatus = :s, s3Prefix = :p",
+        UpdateExpression="SET lifeCycleStatus = :s, s3Prefix = :p",
         ExpressionAttributeValues={
             ":s": "TABLE-DELETE",
             ":p": f"s3://{BUCKET}/{prefix}"

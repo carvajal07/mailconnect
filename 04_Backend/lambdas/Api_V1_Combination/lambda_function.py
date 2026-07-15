@@ -43,12 +43,15 @@ def send_sqs(url_sqs:str,message:list)->None:
     try:
         response = sqs.send_message(
             QueueUrl=url_sqs,
-            MessageBody=message
+            MessageBody=json.dumps(message) if not isinstance(message, str) else message
         )
         print(response)
 
     except Exception as e:
+        # Relanzar: si no se encola el mensaje, SQS debe reintentar / DLQ
+        # (antes se tragaba el error y la parte se perdía en silencio).
         print(e)
+        raise
 
     #Validar la posibilidad de reintentos si no se puede encolar
 
@@ -140,6 +143,16 @@ def lambda_handler(event, context):
     Returns:
         None: Personalizado
     """
+
+    # Procesa TODOS los records del batch SQS (antes solo se leia Records[0],
+    # perdiendo el resto si el trigger usa BatchSize>1). Se re-invoca el handler
+    # con un record a la vez para reutilizar el flujo existente por-registro.
+    _records = event.get("Records") if isinstance(event, dict) else None
+    if _records and len(_records) > 1:
+        _results = []
+        for _rec in _records:
+            _results.append(lambda_handler({"Records": [_rec]}, context))
+        return _results
     global process_detail_id
     global formatted_date
     global customer_name

@@ -1,8 +1,11 @@
+import os
 import re
 import uuid
 import boto3
 from datetime import datetime, timedelta
 from boto3.dynamodb.conditions import Key
+
+STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
 
 # Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb')
@@ -36,19 +39,32 @@ def select_channelName(channelId):
     )
     return response['Items'][0]['channelName']
 
-def consult_consecutive(customerId):
-    #Inicio de consulta del consecutivo para la campaña
-    #consulta por scan
-    consecutive = "0000"       
-    projectionConsecutive_expression = 'numeration'  # Lista de campos a consultar
+def _find_control(customerId, projection):
+    """Primer ítem de campaignControl del cliente. Pagina el Scan (LastEvaluatedKey)
+    para no perder el ítem si la tabla supera 1 MB (antes, sin paginar, devolvía
+    vacío → el consecutivo se reiniciaba a 0001 e insertaba un duplicado)."""
+    kwargs = {
+        'FilterExpression': 'customerId = :value',
+        'ExpressionAttributeValues': {':value': customerId},
+        'ProjectionExpression': projection,
+    }
+    while True:
+        resp = tabla_consecutive.scan(**kwargs)
+        if resp.get('Items'):
+            return resp['Items'][0]
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            return None
+        kwargs['ExclusiveStartKey'] = last
 
-    responseConsecutive = tabla_consecutive.scan(
-        FilterExpression="customerId = :value",
-        ExpressionAttributeValues={":value": customerId},
-        ProjectionExpression=projectionConsecutive_expression
-    )
-    if responseConsecutive['Items']:
-        consecutive = responseConsecutive['Items'][0]['numeration']
+
+def consult_consecutive(customerId):
+    # NOTA: sigue habiendo carrera si dos creaciones concurren (mismo consecutivo);
+    # el fix atómico (ADD sobre PK=customerId) requiere migrar la tabla (Fase 3).
+    consecutive = "0000"
+    item = _find_control(customerId, 'numeration')
+    if item:
+        consecutive = item['numeration']
 
     consecutiveInt = int(consecutive)
     consecutiveInt += 1
@@ -57,27 +73,18 @@ def consult_consecutive(customerId):
     return consecutive
 
 def update_consecutive(customerId,consecutive):
-    if (consecutive == "0001"):
-        # Debo realizar el insert a la tabla 
-        campaignControlId = str(uuid.uuid4())
-        # Insertar datos en la tabla de consecutivos
+    item = _find_control(customerId, 'campaignControlId')
+    if not item:
+        # No existe el control del cliente: crear (primer consecutivo o tabla vacía).
         tabla_consecutive.put_item(
             Item={
-                'campaignControlId': campaignControlId,
+                'campaignControlId': str(uuid.uuid4()),
                 'customerId': customerId,
                 'numeration': consecutive
             }
         )
-    else:           
-        projectionConsecutive_expression = 'campaignControlId'  # Lista de campos a consultar
-        responseId = tabla_consecutive.scan(
-            FilterExpression='customerId = :c',
-            ExpressionAttributeValues={':c': customerId},
-            ProjectionExpression=projectionConsecutive_expression
-        )
-        if responseId['Items']:
-            campaignControlId = responseId['Items'][0]['campaignControlId']
-
+    else:
+        campaignControlId = item['campaignControlId']
         responseUpdateConsecutive = tabla_consecutive.update_item(
             Key={'campaignControlId':campaignControlId},
             UpdateExpression='SET numeration = :s',
@@ -155,8 +162,16 @@ def lambda_handler(event, context):
     formattedDate = now.strftime("%Y-%m-%d %H:%M:%S")
     
     try:
-        # Obtener datos del evento
-        customerId = event['customerId']
+        # customerId: preferir SIEMPRE la identidad del Authorizer sobre el body,
+        # para que un cliente no cree campañas a nombre de otro tenant. Sin
+        # contexto se cae al body (legacy) salvo STRICT_TENANT=true.
+        _auth = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
+        customerId = _auth.get('customerId')
+        if not customerId:
+            if STRICT_TENANT:
+                return {'status': False, 'statusCode': 403,
+                        'description': 'Sesión sin identidad de cliente.'}
+            customerId = event['customerId']
         campaignName = event['campaignName']
         channelName = event['channelName']
         attachment_type = event['attachmentType']  
@@ -180,8 +195,10 @@ def lambda_handler(event, context):
         documentFormat = str(event.get('documentFormat', '') or '').upper() or None
 
         #Validar si la mascara contiene informacion para agregarla al from
-        if (not "" in mask):
-            source = f"<{mask}>{source}>"
+        # (display-name RFC 5322: 'Nombre <correo@dominio>'). Antes la condición
+        # '(not "" in mask)' era siempre falsa y la máscara nunca se aplicaba.
+        if mask:
+            source = f"{mask} <{source}>"
 
         #channel
         #1 - EAU-Email con adjunto unico

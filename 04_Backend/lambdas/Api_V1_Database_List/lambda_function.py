@@ -7,9 +7,10 @@ Request:  { customerId }  (o { customer } como alternativa)
 Respuesta: 200 { data: { files: [...], count } }  ordenadas por fecha (desc)
 '''
 import json
+import os
 import boto3
 from decimal import Decimal
-from boto3.dynamodb.conditions import Attr
+from boto3.dynamodb.conditions import Attr, Key
 
 dynamodb = boto3.resource('dynamodb')
 table_database = dynamodb.Table('databaseFile')
@@ -45,11 +46,61 @@ def _clean(item):
     return out
 
 
+STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
+
+
+def _resolve_tenant(event, payload):
+    """(customerId, customer) a usar en la consulta.
+    Si el Authorizer trae identidad, se usa SOLO esa (ignora el body por completo
+    para no mezclar tenants). Sin contexto del Authorizer cae al body (legacy)
+    salvo STRICT_TENANT=true, que corta el acceso (fail-closed). Actívalo cuando
+    el mapping template que inyecta $context.authorizer.* esté desplegado."""
+    a = _tenant_from_authorizer(event) or {}
+    cid, cust = a.get('customerId'), a.get('customer')
+    if cid or cust:
+        return cid, cust
+    if STRICT_TENANT:
+        return None, None
+    return payload.get('customerId'), payload.get('customer')
+
+
+
+USE_GSI = os.environ.get('USE_GSI', 'false').strip().lower() == 'true'
+# Nombre del GSI por customerId (override por env al desplegarlo). Cuando USE_GSI=true
+# la consulta es Query O(resultado); si no, cae a Scan paginado O(tabla) (correcto,
+# pero costoso). Así el código queda listo para el GSI sin romper hoy.
+GSI_CUSTOMER_INDEX = os.environ.get('GSI_CUSTOMER_INDEX', 'customerId-index')
+
+
+def _items_by_customer(_tbl, customer_id, extra_filter=None):
+    """Devuelve todos los ítems del cliente (paginado). Query por GSI si USE_GSI,
+    si no Scan con FilterExpression. En ambos casos pagina con LastEvaluatedKey."""
+    items = []
+    if USE_GSI:
+        kwargs = {'IndexName': GSI_CUSTOMER_INDEX,
+                  'KeyConditionExpression': Key('customerId').eq(customer_id)}
+        if extra_filter is not None:
+            kwargs['FilterExpression'] = extra_filter
+        op = _tbl.query
+    else:
+        expr = Attr('customerId').eq(customer_id)
+        if extra_filter is not None:
+            expr = expr & extra_filter
+        kwargs = {'FilterExpression': expr}
+        op = _tbl.scan
+    while True:
+        resp = op(**kwargs)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            break
+        kwargs['ExclusiveStartKey'] = last
+    return items
+
+
 def lambda_handler(event, context):
     payload = _get_payload(event)
-    auth = _tenant_from_authorizer(event)
-    customer_id = auth.get('customerId') or payload.get('customerId')
-    customer = auth.get('customer') or payload.get('customer')
+    customer_id, customer = _resolve_tenant(event, payload)
 
     if not customer_id and not customer:
         return {
@@ -61,17 +112,22 @@ def lambda_handler(event, context):
 
     try:
         items = []
-        # 1) Buscar por customerId (llave principal).
+        # 1) Buscar por customerId (llave principal): Query por GSI si USE_GSI, si no
+        #    Scan paginado.
         if customer_id:
-            response = table_database.scan(FilterExpression=Attr('customerId').eq(customer_id))
-            items = response.get('Items', [])
+            items = _items_by_customer(table_database, customer_id)
         # 2) Fallback por nombre de empresa (customer): robusto ante desalineación del
-        #    customerId entre el registro y la consulta (p. ej. mapping template del
-        #    Authorizer que inyecta un customerId distinto/ vacío). El nombre de empresa
-        #    es estable en toda la sesión.
+        #    customerId entre el registro y la consulta. Scan paginado (no hay GSI por
+        #    nombre); antes no paginaba y podía truncar el listado.
         if not items and customer:
-            response = table_database.scan(FilterExpression=Attr('customer').eq(customer))
-            items = response.get('Items', [])
+            kwargs = {'FilterExpression': Attr('customer').eq(customer)}
+            while True:
+                response = table_database.scan(**kwargs)
+                items.extend(response.get('Items', []))
+                last = response.get('LastEvaluatedKey')
+                if not last:
+                    break
+                kwargs['ExclusiveStartKey'] = last
 
         items = [_clean(i) for i in items]
         # Orden descendente por fecha de carga (ISO -> ordena como texto)

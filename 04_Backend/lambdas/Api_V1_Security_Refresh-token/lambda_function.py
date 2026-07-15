@@ -16,12 +16,19 @@ Env: SECRET_KEY (la misma de Login/Authorizers).
 import os
 import json
 import time
+from datetime import datetime, timedelta
 
+import boto3
 import jwt
 
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
 # Duración del nuevo token (días). Igual que Login por defecto.
 TOKEN_TTL_DAYS = int(os.environ.get('TOKEN_TTL_DAYS', '1'))
+# Vida MÁXIMA absoluta de una sesión (días): tope al refresco deslizante infinito.
+MAX_SESSION_DAYS = int(os.environ.get('MAX_SESSION_DAYS', '30'))
+
+dynamodb = boto3.resource('dynamodb')
+table_user = dynamodb.Table('user')
 
 
 def _get_payload(event):
@@ -73,17 +80,42 @@ def lambda_handler(event, context):
         print('Refresh-token: token inválido: {}'.format(e))
         return {'status': False, 'statusCode': 401, 'description': 'Token inválido.'}
 
-    # Reemitir con los mismos claims (incluido el rol) y un exp fresco.
-    # exp/iat como timestamp entero (robusto entre versiones de PyJWT).
-    now_ts = int(time.time())
+    now = int(time.time())
+    # Vida máxima absoluta: se preserva el iat original a través de los refrescos;
+    # pasado el tope, hay que volver a iniciar sesión (no refresco infinito).
+    orig_iat = decoded.get('iat')
+    if orig_iat is not None and (now - int(orig_iat)) > MAX_SESSION_DAYS * 86400:
+        return {'status': False, 'statusCode': 401,
+                'description': 'La sesión alcanzó su duración máxima. Inicia sesión nuevamente.'}
+
+    # Revalidar contra la base: un usuario desactivado o con el rol cambiado NO debe
+    # conservar sus claims viejos indefinidamente.
+    role = decoded.get('role', 'client')
+    user_id = decoded.get('userId', '')
+    if user_id:
+        try:
+            user_item = table_user.get_item(
+                Key={'userId': user_id},
+                ProjectionExpression='active, #r',
+                ExpressionAttributeNames={'#r': 'role'}).get('Item')
+        except Exception as e:
+            print('Refresh-token: no se pudo releer el usuario: {}'.format(e))
+            user_item = None
+        if user_item is not None:
+            if not user_item.get('active', False):
+                return {'status': False, 'statusCode': 401,
+                        'description': 'La cuenta está inactiva. Inicia sesión nuevamente.'}
+            role = user_item.get('role', role) or role
+
+    # Reemitir con los mismos claims (rol refrescado), iat preservado y exp fresco.
     new_payload = {
         'user': decoded.get('user', ''),
         'customerId': decoded.get('customerId', ''),
         'customer': decoded.get('customer', ''),
-        'userId': decoded.get('userId', ''),
-        'role': decoded.get('role', 'client'),
-        'iat': now_ts,
-        'exp': now_ts + TOKEN_TTL_DAYS * 24 * 60 * 60,
+        'userId': user_id,
+        'role': role,
+        'iat': int(orig_iat) if orig_iat is not None else now,
+        'exp': datetime.utcnow() + timedelta(days=TOKEN_TTL_DAYS),
     }
     new_token = jwt.encode(new_payload, SECRET_KEY, algorithm='HS256')
     if not isinstance(new_token, str):

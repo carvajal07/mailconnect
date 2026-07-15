@@ -9,9 +9,10 @@ Cada campaña incluye: campaignId, campaignName, consecutive, channel,
 campaignState, dataPath, template, originEmail, date.
 '''
 import json
+import os
 import boto3
 from decimal import Decimal
-from boto3.dynamodb.conditions import Attr
+from boto3.dynamodb.conditions import Attr, Key
 
 dynamodb = boto3.resource('dynamodb')
 table_campaign = dynamodb.Table('campaign')
@@ -51,10 +52,62 @@ def _clean(item):
     return out
 
 
+STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
+
+
+def _resolve_tenant(event, payload):
+    """(customerId, customer) a usar en la consulta.
+    Si el Authorizer trae identidad, se usa SOLO esa (ignora el body por completo
+    para no mezclar tenants). Sin contexto del Authorizer cae al body (legacy)
+    salvo STRICT_TENANT=true, que corta el acceso (fail-closed). Actívalo cuando
+    el mapping template que inyecta $context.authorizer.* esté desplegado."""
+    a = _tenant_from_authorizer(event) or {}
+    cid, cust = a.get('customerId'), a.get('customer')
+    if cid or cust:
+        return cid, cust
+    if STRICT_TENANT:
+        return None, None
+    return payload.get('customerId'), payload.get('customer')
+
+
+
+USE_GSI = os.environ.get('USE_GSI', 'false').strip().lower() == 'true'
+# Nombre del GSI por customerId (override por env al desplegarlo). Cuando USE_GSI=true
+# la consulta es Query O(resultado); si no, cae a Scan paginado O(tabla) (correcto,
+# pero costoso). Así el código queda listo para el GSI sin romper hoy.
+GSI_CUSTOMER_INDEX = os.environ.get('GSI_CUSTOMER_INDEX', 'customerId-index')
+
+
+def _items_by_customer(_tbl, customer_id, extra_filter=None):
+    """Devuelve todos los ítems del cliente (paginado). Query por GSI si USE_GSI,
+    si no Scan con FilterExpression. En ambos casos pagina con LastEvaluatedKey."""
+    items = []
+    if USE_GSI:
+        kwargs = {'IndexName': GSI_CUSTOMER_INDEX,
+                  'KeyConditionExpression': Key('customerId').eq(customer_id)}
+        if extra_filter is not None:
+            kwargs['FilterExpression'] = extra_filter
+        op = _tbl.query
+    else:
+        expr = Attr('customerId').eq(customer_id)
+        if extra_filter is not None:
+            expr = expr & extra_filter
+        kwargs = {'FilterExpression': expr}
+        op = _tbl.scan
+    while True:
+        resp = op(**kwargs)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            break
+        kwargs['ExclusiveStartKey'] = last
+    return items
+
+
 def lambda_handler(event, context):
     payload = _get_payload(event)
-    # Preferir la identidad del token (Authorizer) sobre lo que mande el body.
-    customer_id = _tenant_from_authorizer(event).get('customerId') or payload.get('customerId')
+    # Identidad del token (Authorizer); ignora el body si el token trae identidad.
+    customer_id, _customer = _resolve_tenant(event, payload)
 
     if not customer_id:
         return {
@@ -65,15 +118,7 @@ def lambda_handler(event, context):
         }
 
     try:
-        items = []
-        scan_kwargs = {'FilterExpression': Attr('customerId').eq(customer_id)}
-        while True:
-            response = table_campaign.scan(**scan_kwargs)
-            items.extend(_clean(i) for i in response.get('Items', []))
-            last_key = response.get('LastEvaluatedKey')
-            if not last_key:
-                break
-            scan_kwargs['ExclusiveStartKey'] = last_key
+        items = [_clean(i) for i in _items_by_customer(table_campaign, customer_id)]
 
         # Orden descendente por fecha ('YYYY-MM-DD HH:MM:SS' ordena como texto).
         items.sort(key=lambda x: x.get('date', ''), reverse=True)

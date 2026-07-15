@@ -42,8 +42,7 @@ def _get_key(event):
 
 
 def lambda_handler(event, context):
-    print(event)
-
+    # No se loguea el evento completo: la query string trae la activationKey.
     activation_key = _get_key(event)
     if not activation_key:
         return _redirect(ERROR_URL)
@@ -71,7 +70,9 @@ def lambda_handler(event, context):
         except Exception:
             exp = None
 
-        if exp is not None and datetime.utcnow() > exp:
+        # Fail-CLOSED: si no hay fecha o no se puede parsear, se trata como
+        # expirado (antes se omitía la verificación y se activaba igual).
+        if exp is None or datetime.utcnow() > exp:
             return _redirect(EXPIRED_URL)
 
         # Activar la cuenta del usuario

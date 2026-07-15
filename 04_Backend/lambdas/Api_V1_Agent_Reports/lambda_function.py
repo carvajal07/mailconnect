@@ -499,13 +499,17 @@ def generar_excel(records):
         cell.fill = header_fill
         cell.font = header_font
     
-    # Datos
+    # Datos (neutraliza inyección de fórmulas: prefija ' si empieza con = + - @)
+    def _safe(value):
+        s = '' if value is None else str(value)
+        return ("'" + s) if (s and s[0] in ('=', '+', '-', '@', '\t', '\r')) else s
+
     for item in items:
         ws.append([
-            item.get('nombre', ''),
-            item['email'],
-            item['currentState'],
-            item['sendDate']
+            _safe(item.get('nombre', '')),
+            _safe(item['email']),
+            _safe(item['currentState']),
+            _safe(item['sendDate'])
         ])
     
     # Auto-ajustar columnas

@@ -267,13 +267,21 @@ def lambda_handler(event, context):
 
         budget = [MAX_PROCESSES]
         truncated = False
+        skipped = 0   # clientes no computados por agotarse el tope (no "sin actividad")
         rows = []
         for cust in all_customers:
             row, tr = _bill_customer(cust, month, budget)
             truncated = truncated or tr
             # Solo incluir clientes con algún envío (evita ruido de clientes sin actividad).
             if row['totalSent'] > 0:
+                # 'partial': el tope se agotó mientras se calculaba este cliente, así
+                # que su total está SUBESTIMADO (no es la cifra final).
+                row['partial'] = tr
                 rows.append(row)
+            elif tr:
+                # totalSent=0 por tope agotado, no por falta de actividad → se omite,
+                # pero se cuenta para no reportarlo como $0 silencioso.
+                skipped += 1
 
         rows.sort(key=lambda x: x['total'], reverse=True)
         totals = {
@@ -292,8 +300,12 @@ def lambda_handler(event, context):
                 'customers': rows,
                 'totals': totals,
                 'truncated': truncated,
+                'skippedCustomers': skipped,
                 'note': 'Estimado de consumo basado en envíos reales y tarifas configuradas; '
-                        'no incluye recargo por peso de adjunto. No es una factura fiscal.',
+                        'no incluye recargo por peso de adjunto. No es una factura fiscal.'
+                        + (' Resultado PARCIAL: se alcanzó el tope de procesos; '
+                           'los clientes con "partial":true están subestimados y '
+                           '{} cliente(s) no se computaron.'.format(skipped) if truncated else ''),
             }
         }
     except Exception as e:

@@ -1,40 +1,66 @@
+import os
 import boto3
 import uuid
 from datetime import datetime
 
 # Inicializar el cliente SES
-ses_client = boto3.client('ses', region_name='us-east-2')
+ses_client = boto3.client('ses', region_name=os.environ.get('SES_REGION', 'us-east-1'))
 # Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb')
 
 table_templateAudit = dynamodb.Table('templateAudit')
 
+STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
+
+
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _owns_template(event, template_name):
+    """Verifica que la plantilla pertenezca al tenant del token.
+    Convención de nombre: '{customer}_{consecutivo}_{canal}_{nombre}'.
+    Si el Authorizer trae 'customer', se exige el prefijo '{customer}_'.
+    Sin contexto del Authorizer se permite (legacy) salvo STRICT_TENANT=true."""
+    customer = str(_authorizer(event).get('customer', '')).strip()
+    if customer:
+        return str(template_name).startswith('{}_'.format(customer))
+    return not STRICT_TENANT
+
+
 def lambda_handler(event, context):
     status = True
     description = "Plantilla recuperada correctamente"
     statusCode = 200
+    responseTemplate = None
 
     try:
-        # Obtener datos del evento
-        userId = event['userId'] 
+        # Obtener datos del evento (userId del token si viene; si no, del body)
+        userId = _authorizer(event).get('userId') or event['userId']
         templateName = event['templateName']
-    except:
+    except Exception:
         status = False
-        statusCode = 500
-        description = "Error no controlado en el servicio"
+        statusCode = 400
+        description = "Faltan datos obligatorios"
     else:
-        # Crear la plantilla de correo electrónico
+        if not _owns_template(event, templateName):
+            return {
+                'status': False,
+                'statusCode': 403,
+                'description': 'La plantilla no pertenece a tu cuenta.',
+                'template': None,
+            }
+        # Recuperar la plantilla de correo electrónico
         try:
             responseTemplate = ses_client.get_template(TemplateName=templateName)
             print("plantilla recuperada correctamente")
-            
+
             templateAuditId = str(uuid.uuid4())
-            # Obtener la fecha y hora actual
             now = datetime.utcnow()
-            # Formatear la fecha y hora según un formato específico
             formattedDate = now.strftime("%Y-%m-%d %H:%M:%S")
-            
-            # Insertar datos en la tabla de datos de usuarios
+
             table_templateAudit.put_item(
                 Item={
                     'templateAuditId': templateAuditId,
@@ -49,13 +75,10 @@ def lambda_handler(event, context):
             status = False
             statusCode = 500
             description = "Error no controlado en el servicio"
-    finally:
-        # Respuesta
-        response = {
-            'status':status,
-            'statusCode': statusCode,
-            'description':description,
-            'template':responseTemplate['Template']
-        }
 
-    return response
+    return {
+        'status': status,
+        'statusCode': statusCode,
+        'description': description,
+        'template': responseTemplate['Template'] if responseTemplate else None,
+    }

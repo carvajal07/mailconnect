@@ -4,6 +4,7 @@ import json
 import uuid
 import boto3
 import hashlib
+import hmac
 from datetime import datetime, timedelta
 
 # Configurar el cliente de DynamoDB
@@ -22,6 +23,34 @@ s3 = boto3.client('s3')
 # (nombres S3 DNS-safe: minúsculas, sin espacios/acentos). Se usa el NIT (no el nombre)
 # para evitar colisiones y nombres inválidos.
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
+
+
+PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '600000'))
+
+
+def _hash_password(password, salt):
+    """PBKDF2-HMAC-SHA256 (stdlib, sin dependencias/layer). Formato auto-descriptivo
+    'pbkdf2$<iter>$<hex>'. Reemplaza el SHA-256 de una sola pasada (débil ante GPU)."""
+    dk = hashlib.pbkdf2_hmac('sha256', str(password).encode(), str(salt).encode(), PBKDF2_ITERATIONS)
+    return 'pbkdf2${}${}'.format(PBKDF2_ITERATIONS, dk.hex())
+
+
+def _verify_password(password, stored_hash, salt):
+    """Verifica contra el hash nuevo (pbkdf2) o el viejo (sha256), timing-safe."""
+    stored = str(stored_hash or '')
+    if stored.startswith('pbkdf2$'):
+        try:
+            _, iters, hexhash = stored.split('$', 2)
+            dk = hashlib.pbkdf2_hmac('sha256', str(password).encode(), str(salt).encode(), int(iters))
+            return hmac.compare_digest(dk.hex(), hexhash)
+        except Exception:
+            return False
+    legacy = hashlib.sha256((str(password) + str(salt)).encode()).hexdigest()
+    return hmac.compare_digest(legacy, stored)
+
+
+def _is_legacy_hash(stored_hash):
+    return not str(stored_hash or '').startswith('pbkdf2$')
 
 
 def tenant_bucket(nit, doc_type):
@@ -80,6 +109,14 @@ def _get_payload(event):
         except Exception:
             return {}
     return event if isinstance(event, dict) else {}
+
+
+def _valid_password(password):
+    """Reglas mínimas de contraseña (coinciden con change-password y el front)."""
+    if not password or len(str(password)) < 8:
+        return False
+    p = str(password)
+    return bool(re.search(r'[a-z]', p) and re.search(r'[A-Z]', p) and re.search(r'\d', p))
 
 
 def valid_email(email):
@@ -161,7 +198,9 @@ def lambda_handler(event, context):
         # Obtener datos del evento
         password = payload['password']
         name = payload['name']
-        email = payload['email']
+        # Normalizar email a minúsculas: evita cuentas duplicadas por diferencia de
+        # mayúsculas (User@x.com vs user@x.com) y hace consistentes los lookups.
+        email = str(payload['email']).strip().lower()
         phone = payload['phone']
         company = payload['company']
         # La tabla 'customer' define companyTin como String (S) en el índice
@@ -192,6 +231,16 @@ def lambda_handler(event, context):
             validData = False
             print("Email inválido")
 
+        # Validación de fortaleza de la contraseña (mismas reglas que change-password
+        # y el front): >=8, minúscula, mayúscula y dígito.
+        if not _valid_password(password):
+            validData = False
+            print("Contraseña débil")
+
+    except KeyError:
+        status = False
+        statusCode = 400
+        description = "Faltan datos obligatorios"
     except Exception:
         status = False
         statusCode = 500
@@ -212,10 +261,9 @@ def lambda_handler(event, context):
                     activationId = str(uuid.uuid4())
                     activationKey = str(uuid.uuid4())
 
-                    # Generar un salt aleatorio y hashear la contraseña
+                    # Generar un salt aleatorio y hashear la contraseña (PBKDF2)
                     salt = str(uuid.uuid4())
-                    saltedPassword = password + salt
-                    hashed_password = hashlib.sha256(saltedPassword.encode()).hexdigest()
+                    hashed_password = _hash_password(password, salt)
 
                     # Cliente (customer) por NIT: reutilizar o crear
                     if exist_companyTin(companyTin):

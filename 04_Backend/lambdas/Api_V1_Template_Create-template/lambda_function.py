@@ -14,19 +14,32 @@ table_customer = dynamodb.Table('customer')
 tabla_consecutive = dynamodb.Table('templateControl')
 table_templateAudit = dynamodb.Table('templateAudit')
 
-def consult_consecutive(customerId):
-    #Inicio de consulta del consecutivo para la campaña
-    #consulta por scan
-    consecutive = "0000"       
-    projectionConsecutive_expression = 'numeration'  # Lista de campos a consultar
+def _find_control(customerId, projection):
+    """Primer ítem de templateControl del cliente. Pagina el Scan (LastEvaluatedKey)
+    para no perder el ítem si la tabla supera 1 MB (antes, sin paginar, devolvía
+    vacío → el consecutivo se reiniciaba a 0001 e insertaba un duplicado)."""
+    kwargs = {
+        'FilterExpression': 'customerId = :value',
+        'ExpressionAttributeValues': {':value': customerId},
+        'ProjectionExpression': projection,
+    }
+    while True:
+        resp = tabla_consecutive.scan(**kwargs)
+        if resp.get('Items'):
+            return resp['Items'][0]
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            return None
+        kwargs['ExclusiveStartKey'] = last
 
-    responseConsecutive = tabla_consecutive.scan(
-        FilterExpression="customerId = :value",
-        ExpressionAttributeValues={":value": customerId},
-        ProjectionExpression=projectionConsecutive_expression
-    )
-    if responseConsecutive['Items']:
-        consecutive = responseConsecutive['Items'][0]['numeration']
+
+def consult_consecutive(customerId):
+    # NOTA: sigue habiendo carrera si dos creaciones concurren (mismo consecutivo);
+    # el fix atómico (ADD sobre PK=customerId) requiere migrar la tabla (Fase 3).
+    consecutive = "0000"
+    item = _find_control(customerId, 'numeration')
+    if item:
+        consecutive = item['numeration']
 
     consecutiveInt = int(consecutive)
     consecutiveInt += 1
@@ -35,27 +48,18 @@ def consult_consecutive(customerId):
     return consecutive
 
 def update_consecutive(customerId,consecutive):
-    if (consecutive == "0001"):
-        # Debo realizar el insert a la tabla 
-        templateControlId = str(uuid.uuid4())
-        # Insertar datos en la tabla de consecutivos
+    item = _find_control(customerId, 'templateControlId')
+    if not item:
+        # No existe el control del cliente: crear (primer consecutivo o tabla vacía).
         tabla_consecutive.put_item(
             Item={
-                'templateControlId': templateControlId,
+                'templateControlId': str(uuid.uuid4()),
                 'customerId': customerId,
                 'numeration': consecutive
             }
         )
-    else:           
-        projectionConsecutive_expression = 'templateControlId'  # Lista de campos a consultar
-        responseId = tabla_consecutive.scan(
-            FilterExpression='customerId = :c',
-            ExpressionAttributeValues={':c': customerId},
-            ProjectionExpression=projectionConsecutive_expression
-        )
-        if responseId['Items']:
-            templateControlId = responseId['Items'][0]['templateControlId']
-
+    else:
+        templateControlId = item['templateControlId']
         responseUpdateConsecutive = tabla_consecutive.update_item(
             Key={'templateControlId':templateControlId},
             UpdateExpression='SET numeration = :s',

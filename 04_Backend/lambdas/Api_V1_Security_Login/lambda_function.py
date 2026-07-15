@@ -4,6 +4,7 @@ import time
 import uuid
 import boto3
 import hashlib
+import hmac
 from datetime import datetime, timedelta
 from boto3.dynamodb.conditions import Key
 
@@ -19,6 +20,34 @@ table_customer = dynamodb.Table("customer")
 table_user_data = dynamodb.Table("userData")
 table_session = dynamodb.Table('session')
 SECRET_KEY = os.environ['SECRET_KEY']  # Variable de entorno en la consola Lambda
+
+PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '600000'))
+
+
+def _hash_password(password, salt):
+    """PBKDF2-HMAC-SHA256 (stdlib, sin dependencias/layer). Formato auto-descriptivo
+    'pbkdf2$<iter>$<hex>'. Reemplaza el SHA-256 de una sola pasada (débil ante GPU)."""
+    dk = hashlib.pbkdf2_hmac('sha256', str(password).encode(), str(salt).encode(), PBKDF2_ITERATIONS)
+    return 'pbkdf2${}${}'.format(PBKDF2_ITERATIONS, dk.hex())
+
+
+def _verify_password(password, stored_hash, salt):
+    """Verifica contra el hash nuevo (pbkdf2) o el viejo (sha256), timing-safe."""
+    stored = str(stored_hash or '')
+    if stored.startswith('pbkdf2$'):
+        try:
+            _, iters, hexhash = stored.split('$', 2)
+            dk = hashlib.pbkdf2_hmac('sha256', str(password).encode(), str(salt).encode(), int(iters))
+            return hmac.compare_digest(dk.hex(), hexhash)
+        except Exception:
+            return False
+    legacy = hashlib.sha256((str(password) + str(salt)).encode()).hexdigest()
+    return hmac.compare_digest(legacy, stored)
+
+
+def _is_legacy_hash(stored_hash):
+    return not str(stored_hash or '').startswith('pbkdf2$')
+
 
 def generate_jwt(username, customer_id="", customer="", user_id="", role="client"):
     # Información de la carga útil. Se embeben la identidad del tenant (customerId,
@@ -117,8 +146,8 @@ def lambda_handler(event, context):
     realSendEnabled = True
     role = "client"
     try:
-        # Obtener datos del evento
-        user = event['user']
+        # Obtener datos del evento (email normalizado a minúsculas, como en Register)
+        user = str(event['user']).strip().lower()
 
         '''
         #consulta por query
@@ -147,7 +176,13 @@ def lambda_handler(event, context):
             ExpressionAttributeNames={"#r": "role"},  # 'role' via alias por seguridad
             ProjectionExpression=projectionUser_expression
         )
-    except:
+    except KeyError:
+        # Falta un campo obligatorio del cliente → 400 (no 500).
+        status = False
+        statusCode = 400
+        description = "Faltan datos obligatorios"
+    except Exception as e:
+        print("Error en login: {}".format(e))
         status = False
         statusCode = 500
         description = "Error no controlado en el servicio"
@@ -166,17 +201,26 @@ def lambda_handler(event, context):
                     description = "Usuario bloqueado"
                 else:
                     #validar la contraseña enviada
-                    password = event['password']
+                    password = event.get('password', '')
                     userHash = responseUser['Items'][0]['userHash']
-                    
-                    # Concatenar la contraseña y el salt
                     salt = responseUser['Items'][0]['userSalt']
-                    saltedPassword = password + salt
-                    hashObject = hashlib.sha256(saltedPassword.encode())
-                    inputHashed = hashObject.hexdigest()
-                    if (inputHashed == userHash):
-                        customerId = responseUser['Items'][0]['customerId']
+
+                    if _verify_password(password, userHash, salt):
                         userId = responseUser['Items'][0]['userId']
+                        # Rehash transparente: si el hash guardado es el viejo (sha256),
+                        # se regenera con PBKDF2 + nuevo salt en este login exitoso.
+                        if _is_legacy_hash(userHash):
+                            try:
+                                new_salt = str(uuid.uuid4())
+                                table_user.update_item(
+                                    Key={'userId': userId},
+                                    UpdateExpression='SET userHash = :h, userSalt = :s',
+                                    ExpressionAttributeValues={
+                                        ':h': _hash_password(password, new_salt), ':s': new_salt}
+                                )
+                            except Exception as _e:
+                                print('No se pudo re-hashear (se continúa): {}'.format(_e))
+                        customerId = responseUser['Items'][0]['customerId']
                         # Rol del usuario (default 'client' si el usuario es antiguo/no lo tiene).
                         role = responseUser['Items'][0].get('role', 'client') or 'client'
                         customer, companyTin, realSendEnabled = select_client(customerId)
@@ -184,7 +228,6 @@ def lambda_handler(event, context):
                         name = select_name(userDataId)
                         # Token con los claims del tenant + rol (multi-tenant + roles vía Authorizer).
                         token = generate_jwt(user, customerId, customer, userId, role)
-                        print(name)
                         # Registrar la sesión. No debe romper el login si falla
                         # (p. ej. permisos de la tabla), por eso va en su propio try.
                         try:
@@ -196,17 +239,19 @@ def lambda_handler(event, context):
                         statusCode = 200
                         description = "Usuario correcto"
                     else:
-                        print("Contraseña incorrecta")
                         status = False
                         statusCode = 404
-                        description = 'Usuario o contraseña incorrectos' 
+                        description = 'Usuario o contraseña incorrectos'
             else:
                 status = False
                 statusCode = 423
                 description = 'Usuario o cuenta inactiva, cuenta sin verificar'
 
         else:
-            print(f"No se encontró el usuario {user}")
+            # Usuario no existe: se computa un hash "dummy" para igualar el tiempo de
+            # respuesta con el caso de usuario existente (evita enumeración por timing).
+            _verify_password(event.get('password', ''),
+                             'pbkdf2${}${}'.format(PBKDF2_ITERATIONS, '0' * 64), 'x')
             status = False
             statusCode = 404
             description = 'Usuario o contraseña incorrectos'

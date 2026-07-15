@@ -76,12 +76,12 @@ def test_voz_llama_y_registra_estado(voice, monkeypatch):
     assert all(int(i['state']) == 1 for i in items)
 
 
-def test_voz_sin_origen_marca_rechazado(voice, monkeypatch):
+def test_voz_sin_origen_lanza(voice, monkeypatch):
     monkeypatch.setattr(voice, 'ORIGINATION_IDENTITY', '')  # sin origen configurado
-    voice.lambda_handler(_event('empresa', 'P1', 'x', [['1', '+573001112233', 'Ana']]), None)
-    items = _status_items()
-    assert len(items) == 1
-    assert int(items[0]['state']) == 3  # rechazado
+    # Sin identidad de origen, la lambda falla ruidosamente (SQS retiene/reintenta).
+    with pytest.raises(RuntimeError):
+        voice.lambda_handler(_event('empresa', 'P1', 'x', [['1', '+573001112233', 'Ana']]), None)
+    assert _status_items() == []
 
 
 def test_voz_sin_mensaje_marca_rechazado(voice, monkeypatch):

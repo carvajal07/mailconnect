@@ -11,6 +11,7 @@ La tabla `platformConfig` se crea sola si no existe (PK configKey). Las lambdas
 consumidoras la leen con fallback a su env var, así que un cambio aquí se refleja
 sin redesplegar.
 '''
+import re
 import json
 import time
 import uuid
@@ -96,6 +97,13 @@ def _ensure_table():
         print('No se pudo crear platformConfig: {}'.format(e))
 
 
+# Rangos por clave numérica (evita valores absurdos que rompen la seguridad/flujo).
+_NUMBER_RANGES = {
+    'OTP_EXPIRATION_MIN': (1, 60),
+}
+_EMAIL_RE = re.compile(r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
+
+
 def _validate(key, value):
     """Devuelve (valor_normalizado, error). El valor numérico se guarda como Decimal."""
     type_ = FIELD_TYPES[key]
@@ -104,15 +112,22 @@ def _validate(key, value):
             num = float(value)
         except (TypeError, ValueError):
             return None, 'El valor debe ser numérico.'
-        if num < 0:
-            return None, 'El valor no puede ser negativo.'
+        lo, hi = _NUMBER_RANGES.get(key, (0, None))
+        if num < lo:
+            return None, 'El valor mínimo es {}.'.format(lo)
+        if hi is not None and num > hi:
+            return None, 'El valor máximo es {}.'.format(hi)
         return (Decimal(str(int(num))) if num % 1 == 0 else Decimal(str(num))), None
     # string / email
     text = str(value).strip()
     if not text:
         return None, 'El valor no puede estar vacío.'
-    if type_ == 'email' and '@' not in text:
+    if type_ == 'email' and not _EMAIL_RE.match(text):
         return None, 'Ingresa un correo válido.'
+    # ACTIVATION_URL alimenta el enlace de activación de TODOS los correos:
+    # exigir https:// (evita inyectar un dominio de phishing por HTTP).
+    if key == 'ACTIVATION_URL' and not text.lower().startswith('https://'):
+        return None, 'La URL debe empezar con https://'
     return text, None
 
 

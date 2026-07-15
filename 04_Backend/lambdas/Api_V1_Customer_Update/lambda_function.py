@@ -16,6 +16,7 @@ import json
 import time
 import uuid
 import boto3
+from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource('dynamodb')
 table_customer = dynamodb.Table('customer')
@@ -54,15 +55,6 @@ def _get_payload(event):
     return event if isinstance(event, dict) else {}
 
 
-def _customer_exists(customer_id):
-    response = table_customer.scan(
-        FilterExpression="customerId = :value",
-        ExpressionAttributeValues={":value": customer_id},
-        ProjectionExpression='customerId'
-    )
-    return bool(response['Items'])
-
-
 def _is_admin(event):
     """Solo un administrador (rol en el context del Authorizer) puede usar este endpoint."""
     if not isinstance(event, dict):
@@ -92,19 +84,20 @@ def lambda_handler(event, context):
         real_send_enabled = bool(raw_flag)
 
     try:
-        if not _customer_exists(customer_id):
-            return {
-                'status': False,
-                'statusCode': 404,
-                'description': 'El cliente no existe.'
-            }
-
-        table_customer.update_item(
-            Key={'customerId': customer_id},
-            UpdateExpression='SET realSendEnabled = :v',
-            ExpressionAttributeValues={':v': real_send_enabled},
-            ReturnValues='UPDATED_NEW'
-        )
+        # customerId es la PK: update condicional (atómico, sin Scan previo).
+        # attribute_exists evita crear un ítem fantasma si el cliente no existe.
+        try:
+            table_customer.update_item(
+                Key={'customerId': customer_id},
+                UpdateExpression='SET realSendEnabled = :v',
+                ConditionExpression='attribute_exists(customerId)',
+                ExpressionAttributeValues={':v': real_send_enabled},
+                ReturnValues='UPDATED_NEW'
+            )
+        except ClientError as ce:
+            if ce.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
+                return {'status': False, 'statusCode': 404, 'description': 'El cliente no existe.'}
+            raise
 
         estado = 'habilitados' if real_send_enabled else 'deshabilitados'
         _audit(event, 'customer.realSend', customer_id, f'Envíos reales {estado}')
