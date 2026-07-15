@@ -117,6 +117,21 @@ def test_update_campo_no_permitido_se_ignora_400(pr):
     assert upd.lambda_handler(_admin({'channel': 'SMS', 'fields': {'hackerField': 1}}), None)['statusCode'] == 400
 
 
+def test_mapping_template_body_como_objeto(pr):
+    # Simula el evento que arma el mapping template no-proxy: body como OBJETO dict
+    # + requestContext.authorizer con el rol. _get_payload debe leer ese body.
+    lst, upd = pr
+    event_update = {
+        'body': {'customerId': '*', 'channel': 'SMS', 'fields': {'baseSms': 88}},
+        'requestContext': {'authorizer': {'role': 'admin'}},
+    }
+    assert upd.lambda_handler(event_update, None)['statusCode'] == 200
+    event_list = {'body': {'customerId': '*'}, 'requestContext': {'authorizer': {'role': 'admin'}}}
+    resp = lst.lambda_handler(event_list, None)
+    assert resp['statusCode'] == 200
+    assert resp['data']['effective']['SMS']['baseSms'] == 88
+
+
 def test_estimador_usa_la_tarifa_guardada(pr):
     _, upd = pr
     # Guardar una tarifa y comprobar que el estimador la lee (misma tabla).

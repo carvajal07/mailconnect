@@ -75,3 +75,16 @@ desktop.ini
 04_Backend/lambdas/*/lambda_config.json
 04_Backend/lambdas-prueba/*/lambda_config.json
 04_Backend/scripts/Lambdas/
+
+# ============================================================
+# Terraform (estado, build y variables con secretos)
+# ============================================================
+**/.terraform/
+*.tfstate
+*.tfstate.*
+infra/terraform/.build/
+infra/terraform/terraform.tfvars
+infra/terraform/*.auto.tfvars
+infra/terraform/layers/*.zip
+crash.log
+crash.*.log

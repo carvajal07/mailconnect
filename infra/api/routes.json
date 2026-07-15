@@ -1,0 +1,18 @@
+{
+  "_comment": "Catálogo declarativo de rutas de API Gateway. Fuente de verdad del workflow deploy-api.yml. Agrega una entrada y haz push para crearla/configurarla. Campos por ruta: path (bajo el prefix), lambda (nombre de la función AWS), method (default POST), admin (inyecta role/tenant + solo admin; default false), auth (adjunta el authorizer; default true), proxy (integración AWS_PROXY; default false), cors (crea OPTIONS de preflight; default true).",
+  "prefix": "/V1",
+  "routes": [
+    { "path": "/Customer/List",    "lambda": "Api_V1_Customer_List",    "admin": true },
+    { "path": "/Customer/Update",  "lambda": "Api_V1_Customer_Update",  "admin": true },
+    { "path": "/Customer/Detail",  "lambda": "Api_V1_Customer_Detail",  "admin": true },
+    { "path": "/User/SetRole",     "lambda": "Api_V1_User_SetRole",     "admin": true },
+    { "path": "/Pricing/List",     "lambda": "Api_V1_Pricing_List",     "admin": true },
+    { "path": "/Pricing/Update",   "lambda": "Api_V1_Pricing_Update",   "admin": true },
+    { "path": "/Billing/Summary",  "lambda": "Api_V1_Billing_Summary",  "admin": true },
+    { "path": "/Admin/Dashboard",  "lambda": "Api_V1_Admin_Dashboard",  "admin": true },
+    { "path": "/Admin/Jobs",       "lambda": "Api_V1_Admin_Jobs",       "admin": true },
+    { "path": "/Admin/Audit",      "lambda": "Api_V1_Admin_Audit",      "admin": true },
+    { "path": "/Config/Get",       "lambda": "Api_V1_Config_Get",       "admin": true },
+    { "path": "/Config/Set",       "lambda": "Api_V1_Config_Set",       "admin": true }
+  ]
+}
