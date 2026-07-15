@@ -340,6 +340,18 @@ mismo con `sendDetail`** → tabla `{customer}_sendDetail` con PK `processId` + 
 
 ## 6. Plan de remediación por fases
 
+> **Estado de implementación (rama `claude/lambda-security-db-review-4yxm8o`):**
+> **Fase 0 ✅** (salvo registro de estados en EAP y el render de `CombinacionPython3-9`,
+> que requieren verificación del pipeline real y quedan pendientes). **Fase 1 ✅** a nivel
+> de código: aislamiento tenant fail-closed opcional vía `STRICT_TENANT`, verificación de
+> dueño e higiene de identidad. **Falta el paso de infraestructura**: desplegar el mapping
+> template que inyecta `$context.authorizer.*` (o pasar a proxy) y luego **activar
+> `STRICT_TENANT=true`** en las lambdas para que el fail-closed entre en vigor. Mientras
+> `STRICT_TENANT` esté desactivado, el comportamiento es el legacy (no rompe la app, pero
+> el fallback al body sigue disponible). Pendientes de Fase 1: JWT como segunda barrera en
+> lambdas admin, y tenant del agente Bedrock (`Agent_Reports`) por sessionAttributes.
+> Pruebas: **179/179 en verde**.
+
 ### Fase 0 — Bugs que rompen producción hoy (rápido, alto impacto)
 - [ ] EAU: descomentar `html = response_template["Template"]["HtmlPart"]` y borrar el HTML de
       Mercacaldas (`Send-batch-template-EAU:477-618`).

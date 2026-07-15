@@ -1,8 +1,11 @@
+import os
 import re
 import uuid
 import boto3
 from datetime import datetime, timedelta
 from boto3.dynamodb.conditions import Key
+
+STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
 
 # Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb')
@@ -155,8 +158,16 @@ def lambda_handler(event, context):
     formattedDate = now.strftime("%Y-%m-%d %H:%M:%S")
     
     try:
-        # Obtener datos del evento
-        customerId = event['customerId']
+        # customerId: preferir SIEMPRE la identidad del Authorizer sobre el body,
+        # para que un cliente no cree campañas a nombre de otro tenant. Sin
+        # contexto se cae al body (legacy) salvo STRICT_TENANT=true.
+        _auth = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
+        customerId = _auth.get('customerId')
+        if not customerId:
+            if STRICT_TENANT:
+                return {'status': False, 'statusCode': 403,
+                        'description': 'Sesión sin identidad de cliente.'}
+            customerId = event['customerId']
         campaignName = event['campaignName']
         channelName = event['channelName']
         attachment_type = event['attachmentType']  
@@ -180,8 +191,10 @@ def lambda_handler(event, context):
         documentFormat = str(event.get('documentFormat', '') or '').upper() or None
 
         #Validar si la mascara contiene informacion para agregarla al from
-        if (not "" in mask):
-            source = f"<{mask}>{source}>"
+        # (display-name RFC 5322: 'Nombre <correo@dominio>'). Antes la condición
+        # '(not "" in mask)' era siempre falsa y la máscara nunca se aplicaba.
+        if mask:
+            source = f"{mask} <{source}>"
 
         #channel
         #1 - EAU-Email con adjunto unico
