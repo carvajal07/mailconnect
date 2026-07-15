@@ -30,6 +30,15 @@ from botocore.exceptions import ClientError
 REGION = 'us-east-1'
 ORIGINATION_IDENTITY = os.environ.get('SMS_ORIGINATION_IDENTITY', '')
 CONFIGURATION_SET = os.environ.get('SMS_CONFIGURATION_SET', '')
+# Tipo de mensaje: para campañas de marketing debería ser PROMOTIONAL (implicaciones
+# regulatorias / de enrutamiento). Configurable por env.
+MESSAGE_TYPE = os.environ.get('SMS_MESSAGE_TYPE', 'TRANSACTIONAL')
+
+
+def _mask_phone(phone):
+    """Enmascara el celular para no volcar PII completa a CloudWatch."""
+    p = str(phone)
+    return (p[:4] + '***' + p[-2:]) if len(p) > 6 else '***'
 
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 sms = boto3.client('pinpoint-sms-voice-v2', region_name=REGION)
@@ -62,6 +71,12 @@ def _record_status(customer_name, process_id, rows):
 def lambda_handler(event, context):
     now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
+    # Falla ruidosamente si falta la identidad de origen: así SQS RETIENE los
+    # mensajes (y los reintenta cuando se configure) en vez de marcar todo el lote
+    # como "Rechazado" permanente y borrarlo.
+    if not ORIGINATION_IDENTITY:
+        raise RuntimeError('SMS_ORIGINATION_IDENTITY no configurada; no se procesa el lote.')
+
     for record in event.get('Records', []):
         try:
             body = json.loads(record['body'])
@@ -76,9 +91,6 @@ def lambda_handler(event, context):
         data = body.get('data', [])
         print(f'SMS lote: cliente={customer_name} proceso={process_id} registros={len(data)}')
 
-        if not ORIGINATION_IDENTITY:
-            print('SMS_ORIGINATION_IDENTITY no configurada; no se puede enviar.')
-
         status_rows = []
         for row in data:
             if not isinstance(row, list) or len(row) < 2:
@@ -91,13 +103,11 @@ def lambda_handler(event, context):
             message_id = str(uuid.uuid4())
             error = ''
             try:
-                if not ORIGINATION_IDENTITY:
-                    raise RuntimeError('Sin identidad de origen SMS configurada')
                 params = {
                     'DestinationPhoneNumber': phone,
                     'OriginationIdentity': ORIGINATION_IDENTITY,
                     'MessageBody': message,
-                    'MessageType': 'TRANSACTIONAL',
+                    'MessageType': MESSAGE_TYPE,
                     # Metadata que EUM incluye en los eventos de entrega (SNS) para que
                     # ReceptionStatus sepa a qué cliente/proceso pertenece cada estado.
                     'Context': {'customer': customer_name, 'processId': process_id, 'uniqueId': unique_id},
@@ -109,7 +119,7 @@ def lambda_handler(event, context):
             except (ClientError, Exception) as e:
                 state = STATE_REJECTED
                 error = str(e)
-                print(f'Fallo SMS a {phone}: {error}')
+                print(f'Fallo SMS a {_mask_phone(phone)}: {error}')
 
             status_rows.append({
                 'sendStatusId': str(uuid.uuid4()),

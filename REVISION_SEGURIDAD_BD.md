@@ -370,6 +370,26 @@ mismo con `sendDetail`** → tabla `{customer}_sendDetail` con PK `processId` + 
 > `Reports_Statistics` (hoy recuentan mensaje a mensaje sobre `*_sendStatus`), unificación
 > de `sendDetail` a tabla única, y contadores atómicos (consecutivos, último admin) que
 > requieren migrar la PK.
+>
+> **Fase 3 ✅ (auth) + parte segura del pipeline:**
+> - **Hashing:** PBKDF2-HMAC-SHA256 (stdlib) con formato `pbkdf2$iter$hex`, verificación
+>   compatible con el sha256 viejo (timing-safe) y **rehash transparente al login**;
+>   iteraciones por env (`PBKDF2_ITERATIONS`, default 600000).
+> - **OTP:** tope de vigencia (`MAX_OTP_EXPIRATION_MIN`), un solo OTP activo por usuario
+>   (invalida previos en Create-otp/Recovery), **límite de intentos** (`MAX_OTP_ATTEMPTS`) y
+>   **consumo atómico** (`ConditionExpression active=true`) en Validate-otp y change-password;
+>   comparación de hash timing-safe y scans paginados.
+> - **Refresh-token:** revalida `active`/`role` contra la tabla `user` y aplica **vida máxima
+>   de sesión** (`MAX_SESSION_DAYS`) con `iat` preservado; Login emite `iat`.
+> - **Canales SMS/WSP/Voz (parte segura):** fallan ruidosamente si falta la identidad de
+>   origen (SQS retiene y reintenta, en vez de marcar todo "Rechazado" y borrarlo),
+>   enmascaran el celular en logs (PII) y el `MessageType` de SMS es configurable.
+>
+> **Pendiente de Fase 3 (infra + verificación del pipeline real, no se improvisa):**
+> DLQ por cola, `ReportBatchItemFailures` + **idempotencia** por `(processId, uniqueId)` en
+> los consumidores (para retry sin duplicar envíos — cambio con riesgo de doble cobro si se
+> hace a ciegas), rate limiting/backoff hacia SES/EUM y reserved/maximum concurrency (infra),
+> y contadores atómicos que requieren migrar la PK (compartido con Fase 2).
 > Pruebas: **179/179 en verde**.
 
 ### Fase 0 — Bugs que rompen producción hoy (rápido, alto impacto)
