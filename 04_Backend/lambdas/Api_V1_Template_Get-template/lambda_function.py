@@ -22,7 +22,7 @@ def _owns_template(event, template_name):
     """Verifica que la plantilla pertenezca al tenant del token.
     Convención de nombre: '{customer}_{consecutivo}_{canal}_{nombre}'.
     Si el Authorizer trae 'customer', se exige el prefijo '{customer}_'.
-    Sin contexto del Authorizer se permite (legacy)."""
+    Sin contexto del Authorizer (token) se DENIEGA (multi-tenant obligatorio)."""
     customer = str(_authorizer(event).get('customer', '')).strip()
     if customer:
         return str(template_name).startswith('{}_'.format(customer))
