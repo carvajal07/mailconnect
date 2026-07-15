@@ -1,0 +1,31 @@
+# Copia como terraform.tfvars y ajusta. NO commitees terraform.tfvars (está en .gitignore).
+
+region    = "us-east-1"
+env       = "prod"
+project   = "mailconnect"
+
+# API Gateway
+api_name   = "MailConnect-API"
+api_stage  = "V1"     # tu stage de prod
+api_prefix = "/V1"    # V1 es un recurso (coincide con routes.json)
+cors_origin = "https://app.mailconnect.com.co"   # en prod, NO uses "*"
+
+# Layer de PyJWT: construye el zip una vez (ver README) y apunta aquí.
+# pyjwt_layer_zip = "./layers/pyjwt.zip"
+
+# Secretos / config (mejor pásalos por variables de entorno TF_VAR_*, no aquí):
+#   export TF_VAR_secret_key="<clave nueva de 32+ bytes>"
+sender_email = "comunicaciones@mailconnect.com.co"
+
+# Canales (End User Messaging) — opcional:
+# channel_env = {
+#   SMS_ORIGINATION_IDENTITY        = "arn:aws:sms-voice:...:phone-number/..."
+#   VOICE_ORIGINATION_IDENTITY      = "arn:aws:sms-voice:...:phone-number/..."
+#   WSP_ORIGINATION_PHONE_NUMBER_ID = "..."
+# }
+
+# SES (opcional): dominio a verificar.
+# ses_domain = "mailconnect.com.co"
+
+# S3 de salida (opcional):
+# output_bucket = "mailconnect-output"
