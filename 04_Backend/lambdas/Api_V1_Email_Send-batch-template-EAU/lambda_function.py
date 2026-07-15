@@ -457,6 +457,16 @@ def lambda_handler(event, context):
         None: Personalizado
     """
 
+    # Procesa TODOS los records del batch SQS (antes solo se leia Records[0],
+    # perdiendo el resto si el trigger usa BatchSize>1). Se re-invoca el handler
+    # con un record a la vez para reutilizar el flujo existente por-registro.
+    _records = event.get("Records") if isinstance(event, dict) else None
+    if _records and len(_records) > 1:
+        _results = []
+        for _rec in _records:
+            _results.append(lambda_handler({"Records": [_rec]}, context))
+        return _results
+
     global customer_name
     global campaign_id
     global from_email
@@ -474,82 +484,7 @@ def lambda_handler(event, context):
     global file_content
 
     text = ""
-    html = """
-    <!doctype html>
-<html lang="es" xmlns="http://www.w3.org/1999/xhtml">
-  <head>
-    <meta charset="utf-8">
-    <title>Mercacaldas Octubre 2025</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <!-- Evita auto-escala en iOS -->
-    <meta name="x-apple-disable-message-reformatting">
-    <!-- For Outlook -->
-    <!--[if mso]>
-      <style type="text/css">
-        body, table, td {font-family: Arial, sans-serif !important;}
-      </style>
-    <![endif]-->
-    <style>
-      /* Reseteos mínimos para clientes modernos */
-      img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
-      table { border-collapse:collapse; }
-      a { text-decoration:none; }
-      /* Dark mode hint */
-      @media (prefers-color-scheme: dark) {
-        body { background:#111111 !important; }
-      }
-    </style>
-  </head>
-  <body style="margin:0; padding:0; background:#f3f4f6;">
-    <!-- Preheader (invisible en la mayoría de clientes) -->
-    <div style="display:none; max-height:0; overflow:hidden; opacity:0; mso-hide:all;">
-      Mercacaldas – Campaña Octubre 2025
-    </div>
-
-    <!-- Contenedor -->
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" align="center" style="background:#f3f4f6;">
-      <tr>
-        <td align="center" style="padding:20px;">
-          <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="width:600px; max-width:100%; background:#ffffff;">
-            <tr>
-              <td style="padding:0; line-height:0;">
-                <!-- Imagen hero -->
-                <a href="https://s3.us-east-1.amazonaws.com/merkacaldas.resources/MerkacaldasOctubre2025.jpeg" target="_blank">
-                  <img 
-                    src="https://s3.us-east-1.amazonaws.com/merkacaldas.resources/MerkacaldasOctubre2025.jpeg"
-                    width="600"
-                    alt="Mercacaldas Octubre 2025"
-                    style="display:block; width:100%; height:auto; border:0; outline:0; text-decoration:none;">
-                </a>
-              </td>
-            </tr>
-
-            <!-- Texto alterno/fallback por si bloquean imágenes -->
-            
-            <tr>
-              <td style="padding:16px 20px 24px 20px; font-family:Arial,Helvetica,sans-serif; color:#111827; font-size:14px; line-height:1.5;">
-                Conoce todas las promociones, regalos y descuentos <a href="https://s3.us-east-1.amazonaws.com/merkacaldas.document/2025-10-17/PromocionesAniversario.pdf" style="color:#0ea5e9;">aquí</a>.
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:16px 20px 24px 20px; font-family:Arial,Helvetica,sans-serif; color:#111827; font-size:14px; line-height:1.5;">
-                Si no ves la imagen, puedes <a href="https://s3.us-east-1.amazonaws.com/merkacaldas.resources/MerkacaldasOctubre2025.jpeg" style="color:#0ea5e9;">abrirla aquí</a>.
-              </td>
-            </tr>
-
-            <!-- Pie -->
-            <tr>
-              <td style="padding:0 20px 20px 20px; font-family:Arial,Helvetica,sans-serif; color:#6b7280; font-size:12px; line-height:1.5;">
-                © 2025 Merkacaldas. Todos los derechos reservados.
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
-</html>
-    """
+    html = ""
     # Obtener la fecha y hora actual
     now = datetime.utcnow()
     # Formatear la fecha y hora según un formato específico
@@ -615,7 +550,7 @@ def lambda_handler(event, context):
 
         response_template = select_template(template_name)
         subject = response_template["Template"]["SubjectPart"]
-        #html = response_template["Template"]["HtmlPart"]
+        html = response_template["Template"]["HtmlPart"]
         text = response_template["Template"].get("TextPart","")
         #print(text)
         #print(html)
