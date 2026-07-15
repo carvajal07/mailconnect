@@ -17,7 +17,6 @@ REGION = 'us-east-1'
 # Bucket por cliente por NIT: {prefix}-{nit}-{database|document} (DNS-safe). Se usa el NIT
 # en vez del nombre de empresa (evita nombres inválidos/colisiones).
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
-STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
 # Tipos de documento permitidos (evita apuntar a buckets arbitrarios por doc_type).
 ALLOWED_DOC_TYPES = {'database', 'document'}
 # Duración corta para el PUT prefirmado (antes 1 h).
@@ -65,6 +64,16 @@ def lambda_handler(event, context):
     Returns:
         None: Personalizado
     """
+
+    # Compat mapping template no-proxy: si el payload llega como
+    # {body:{...}, requestContext:{...}}, se aplana el body al nivel de event
+    # (preservando requestContext para el context del Authorizer). Si ya viene
+    # plano (passthrough legacy), no hace nada.
+    if isinstance(event, dict) and isinstance(event.get("body"), dict):
+        _rc = event.get("requestContext")
+        event = dict(event["body"])
+        if _rc:
+            event["requestContext"] = _rc
     status = True
     description = "Url creada correctamente"
     status_code = 200
@@ -79,12 +88,9 @@ def lambda_handler(event, context):
     if auth_nit or auth_customer:
         nit = auth_nit
         customer = auth_customer or ''
-    elif STRICT_TENANT:
+    else:
         return {'status': False, 'statusCode': 403,
                 'description': 'Sesión sin identidad de cliente.', 'data': {}}
-    else:
-        customer = event.get('customer', '')
-        nit = event.get('nit') or event.get('companyTin')
 
     document_name = _safe_name(event.get('documentName'))
     document_type = str(event.get('documentType', '')).strip().lower()

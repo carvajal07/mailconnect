@@ -133,7 +133,7 @@ def test_refresh_token_sin_token_401(mods):
 # ───────────────────────── Campaign / List ─────────────────────────
 
 def test_campaign_list_por_customer(mods):
-    resp = mods['campaign_list'].lambda_handler({'customerId': 'CU1'}, None)
+    resp = mods['campaign_list'].lambda_handler(_auth_event({}), None)
     assert resp['statusCode'] == 200
     nombres = [c['campaignName'] for c in resp['data']['campaigns']]
     assert 'Promo' in nombres and 'Ajena' not in nombres  # aislamiento por cliente
@@ -164,7 +164,7 @@ def test_template_list_authorizer_manda(mods):
 # ───────────────────────── Database / List ─────────────────────────
 
 def test_database_list_por_customer(mods):
-    resp = mods['database_list'].lambda_handler({'customerId': 'CU1'}, None)
+    resp = mods['database_list'].lambda_handler(_auth_event({}), None)
     archivos = [f['fileName'] for f in resp['data']['files']]
     assert archivos == ['base.csv']
 
@@ -172,7 +172,7 @@ def test_database_list_por_customer(mods):
 # ───────────────────────── Statistics ─────────────────────────
 
 def test_statistics_agrega_estados(mods):
-    resp = mods['statistics'].lambda_handler({'customerId': 'CU1', 'customer': 'empresa'}, None)
+    resp = mods['statistics'].lambda_handler(_auth_event({}), None)
     assert resp['statusCode'] == 200
     c1 = next(c for c in resp['data']['campaigns'] if c['id'] == 'C1')
     assert c1['enviados'] == 3       # m1, m2, m3

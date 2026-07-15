@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -28,6 +28,7 @@ import { getUser } from '../../services/authService';
 import { messageTemplatesService } from '../../services/messageTemplatesService';
 import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { isOk } from '../../services/apiClient';
+import { usePortalData } from '../../context/PortalDataContext';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
@@ -49,8 +50,10 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
   const { notify, FeedbackSnackbar } = useFeedback();
   const { confirm, ConfirmDialog } = useConfirm();
 
-  const [templates, setTemplates] = useState<MessageTemplate[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Datos del contexto precargado del portal (Capa 1), filtrados por el canal de esta sección.
+  const { messageTemplates: mt, refreshMessageTemplates } = usePortalData();
+  const templates = mt.items.filter((t) => t.channel === channel);
+  const loading = mt.loading;
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -63,17 +66,7 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
   // Parámetros (campos de combinación): SOLO se agregan desde la base (no texto libre).
   const [params, setParams] = useState<string[]>([]);
 
-  const load = useCallback(async () => {
-    if (!customerId) return;
-    setLoading(true);
-    const res = await messageTemplatesService.list(customerId, channel);
-    setLoading(false);
-    if (isOk(res) && res.data?.templates) setTemplates(res.data.templates);
-  }, [customerId, channel]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const load = useCallback(() => refreshMessageTemplates(), [refreshMessageTemplates]);
 
   const resetForm = () => {
     setEditingId(null);
@@ -137,7 +130,7 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
     const res = await messageTemplatesService.delete(t.messageTemplateId);
     setDeletingId(null);
     if (isOk(res)) {
-      setTemplates((prev) => prev.filter((x) => x.messageTemplateId !== t.messageTemplateId));
+      refreshMessageTemplates();
       if (editingId === t.messageTemplateId) resetForm();
       notify('Plantilla eliminada.', 'success');
     } else {

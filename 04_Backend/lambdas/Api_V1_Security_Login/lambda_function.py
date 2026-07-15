@@ -21,7 +21,7 @@ table_user_data = dynamodb.Table("userData")
 table_session = dynamodb.Table('session')
 SECRET_KEY = os.environ['SECRET_KEY']  # Variable de entorno en la consola Lambda
 
-PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '600000'))
+PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '100000'))
 
 
 def _hash_password(password, salt):

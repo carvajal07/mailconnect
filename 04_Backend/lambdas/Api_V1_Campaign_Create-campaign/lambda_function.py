@@ -5,7 +5,6 @@ import boto3
 from datetime import datetime, timedelta
 from boto3.dynamodb.conditions import Key
 
-STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
 
 # Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb')
@@ -150,6 +149,16 @@ def insert_attachment(campaignId,attachment_type,documentPath,variableDocument,d
     table_document.put_item(Item=item)
 
 def lambda_handler(event, context):
+
+    # Compat mapping template no-proxy: si el payload llega como
+    # {body:{...}, requestContext:{...}}, se aplana el body al nivel de event
+    # (preservando requestContext para el context del Authorizer). Si ya viene
+    # plano (passthrough legacy), no hace nada.
+    if isinstance(event, dict) and isinstance(event.get("body"), dict):
+        _rc = event.get("requestContext")
+        event = dict(event["body"])
+        if _rc:
+            event["requestContext"] = _rc
     status = True
     description = "Campaña creada correctamente"
     statusCode = 201
@@ -164,14 +173,12 @@ def lambda_handler(event, context):
     try:
         # customerId: preferir SIEMPRE la identidad del Authorizer sobre el body,
         # para que un cliente no cree campañas a nombre de otro tenant. Sin
-        # contexto se cae al body (legacy) salvo STRICT_TENANT=true.
+        # contexto: si no llega, se deniega.
         _auth = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
         customerId = _auth.get('customerId')
         if not customerId:
-            if STRICT_TENANT:
-                return {'status': False, 'statusCode': 403,
-                        'description': 'Sesión sin identidad de cliente.'}
-            customerId = event['customerId']
+            return {'status': False, 'statusCode': 403,
+                    'description': 'Sesión sin identidad de cliente.'}
         campaignName = event['campaignName']
         channelName = event['channelName']
         attachment_type = event['attachmentType']  

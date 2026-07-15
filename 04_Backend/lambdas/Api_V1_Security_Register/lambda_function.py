@@ -25,7 +25,7 @@ s3 = boto3.client('s3')
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 
 
-PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '600000'))
+PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '100000'))
 
 
 def _hash_password(password, salt):

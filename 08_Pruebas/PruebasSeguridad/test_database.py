@@ -37,17 +37,22 @@ def db():
         yield _load('Api_V1_Database_Register-file'), _load('Api_V1_Database_List'), _load('Api_V1_Database_Delete')
 
 
+# El tenant SIEMPRE sale del context del Authorizer (multi-tenant obligatorio):
+# los tests inyectan requestContext.authorizer como lo hará el mapping template.
+def _ctx(body, cid='CU1', cust='empresa'):
+    return {**body, 'requestContext': {'authorizer': {'customerId': cid, 'customer': cust}}}
+
+
 def _register(reg, **kw):
-    body = {'customerId': 'CU1', 'customer': 'empresa', 'fileName': 'base.csv',
-            's3Path': 'x/base.csv', 'totalRecords': 100, 'channel': 'EMAIL'}
+    body = {'fileName': 'base.csv', 's3Path': 'x/base.csv', 'totalRecords': 100, 'channel': 'EMAIL'}
     body.update(kw)
-    return reg.lambda_handler(body, None)
+    return reg.lambda_handler(_ctx(body), None)
 
 
 def test_registrar_y_listar_por_customerid(db):
     reg, lst, _ = db
     assert _register(reg)['statusCode'] == 201
-    resp = lst.lambda_handler({'customerId': 'CU1', 'customer': 'empresa'}, None)
+    resp = lst.lambda_handler(_ctx({}), None)
     assert resp['statusCode'] == 200
     assert [f['fileName'] for f in resp['data']['files']] == ['base.csv']
 
@@ -55,7 +60,7 @@ def test_registrar_y_listar_por_customerid(db):
 def test_guarda_channel(db):
     reg, lst, _ = db
     _register(reg, channel='SMS')
-    resp = lst.lambda_handler({'customerId': 'CU1'}, None)
+    resp = lst.lambda_handler(_ctx({}), None)
     assert resp['data']['files'][0]['channel'] == 'SMS'
 
 
@@ -63,28 +68,29 @@ def test_guarda_y_lista_columns(db):
     # Los encabezados del CSV se guardan como campos usables en plantillas.
     reg, lst, _ = db
     _register(reg, columns=['Identificacion', 'Correo', 'Nombre', 'Ciudad'])
-    resp = lst.lambda_handler({'customerId': 'CU1'}, None)
+    resp = lst.lambda_handler(_ctx({}), None)
     assert resp['data']['files'][0]['columns'] == ['Identificacion', 'Correo', 'Nombre', 'Ciudad']
 
 
 def test_columns_por_defecto_lista_vacia(db):
     reg, lst, _ = db
     _register(reg)  # sin columns
-    resp = lst.lambda_handler({'customerId': 'CU1'}, None)
+    resp = lst.lambda_handler(_ctx({}), None)
     assert resp['data']['files'][0]['columns'] == []
 
 
 def test_fallback_por_empresa_cuando_customerid_no_coincide(db):
-    # Registrada con CU1; se lista con un customerId distinto (p. ej. desalineado por
-    # el mapping template del Authorizer) pero MISMA empresa → el fallback la encuentra.
+    # Registrada con CU1; se lista con un customerId distinto (desalineado) pero MISMA
+    # empresa en el token → el fallback por nombre de empresa la encuentra.
     reg, lst, _ = db
     _register(reg, customerId='CU1', customer='empresa')
-    resp = lst.lambda_handler({'customerId': 'OTRO-ID', 'customer': 'empresa'}, None)
+    resp = lst.lambda_handler(_ctx({}, cid='OTRO-ID', cust='empresa'), None)
     assert resp['statusCode'] == 200
     assert len(resp['data']['files']) == 1  # la encontró por nombre de empresa
 
 
 def test_sin_identificadores_400(db):
+    # Sin identidad de cliente en el token → 400 (indica customerId/customer).
     _, lst, _ = db
     assert lst.lambda_handler({}, None)['statusCode'] == 400
 
@@ -96,25 +102,24 @@ def _new_id(reg, **kw):
 def test_eliminar_base(db):
     reg, lst, delete = db
     bid = _new_id(reg)
-    resp = delete.lambda_handler({'databaseFileId': bid}, None)
+    resp = delete.lambda_handler(_ctx({'databaseFileId': bid}), None)
     assert resp['statusCode'] == 200
     # Ya no aparece en el listado.
-    assert lst.lambda_handler({'customerId': 'CU1'}, None)['data']['count'] == 0
+    assert lst.lambda_handler(_ctx({}), None)['data']['count'] == 0
 
 
 def test_eliminar_verifica_dueno(db):
     reg, _, delete = db
     bid = _new_id(reg, customerId='CU1', customer='empresa')
     # Otro cliente (por token) no puede borrarla.
-    event = {'databaseFileId': bid, 'requestContext': {'authorizer': {'customerId': 'OTRO', 'customer': 'otra'}}}
-    assert delete.lambda_handler(event, None)['statusCode'] == 403
+    assert delete.lambda_handler(_ctx({'databaseFileId': bid}, cid='OTRO', cust='otra'), None)['statusCode'] == 403
 
 
 def test_eliminar_inexistente_404(db):
     _, _, delete = db
-    assert delete.lambda_handler({'databaseFileId': 'nope'}, None)['statusCode'] == 404
+    assert delete.lambda_handler(_ctx({'databaseFileId': 'nope'}), None)['statusCode'] == 404
 
 
 def test_eliminar_sin_id_400(db):
     _, _, delete = db
-    assert delete.lambda_handler({}, None)['statusCode'] == 400
+    assert delete.lambda_handler(_ctx({}), None)['statusCode'] == 400

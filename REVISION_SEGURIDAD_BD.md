@@ -411,6 +411,24 @@ mismo con `sendDetail`** → tabla `{customer}_sendDetail` con PK `processId` + 
 >   había roto 3 tests que codificaban el comportamiento viejo; se actualizaron para
 >   esperar la excepción (SQS retiene/reintenta).
 >
+> **Aislamiento tenant ahora OBLIGATORIO (jul 2026):** se eliminó la variable
+> `STRICT_TENANT`. Las 17 lambdas multi-tenant leen el `customerId`/`customer` **solo del
+> context del Authorizer** y **deniegan (403/400) si no llega** — ya no hay fallback al body.
+> ⚠️ **Orden de despliegue crítico:** el mapping template (que inyecta el context) debe estar
+> desplegado **ANTES** que estas lambdas; si no, las rutas de cliente responderán 403. Como
+> `deploy-lambdas.yml` auto-despliega en cada push a `main`, primero configura `API_ID`/
+> `AUTHORIZER_ID` y corre `deploy-api.yml`, y solo después mergea/despliega estas lambdas.
+>
+> **Estado de despliegue del aislamiento tenant (jul 2026):** el workflow `deploy-api.yml`
+> corrió una vez (al mergear el PR #26) y **FALLÓ** porque la **variable de repo `API_ID`
+> no está configurada** (Settings → Variables) → `sync_api.py` nunca tocó AWS (por eso "no
+> se ven cambios en API Gateway"). Además el mapping template solo se aplicaba a rutas admin.
+> **Ya corregido en código:** `sync_api.py` aplica el template de context a TODA ruta
+> no-proxy autenticada, y `routes.json` incluye las 19 rutas de cliente (+shim de compat en
+> las lambdas que leían `event[...]` directo). **Falta (infra):** (1) configurar las
+> variables de repo `API_ID`, `AUTHORIZER_ID`, `STAGE`, `PREFIX`; (2) re-lanzar el workflow
+> (`--plan` primero para revisar); (3) verificar 1-2 rutas y luego activar `STRICT_TENANT=true`.
+>
 > **Pendiente de Fase 4 (infra):** mover `SECRET_KEY` a **AWS Secrets Manager** y
 > **rotarla** (la clave vieja quedó en el historial git). El endurecimiento de la
 > enumeración por HTTP code (404 vs 423) queda como decisión de producto (hoy es contrato
