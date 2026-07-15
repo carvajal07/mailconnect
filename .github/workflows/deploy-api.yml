@@ -1,0 +1,60 @@
+name: Desplegar API (rutas admin)
+
+# Sincroniza la configuración de API Gateway desde el repo (IaC ligero):
+#   - aplica el mapping template de rol/tenant a las rutas admin (no-proxy),
+#   - pone CORS en las respuestas de error (DEFAULT_4XX/5XX),
+#   - (opcional) adjunta el Authorizer,
+#   - despliega la API al stage.
+#
+# Se dispara SOLO cuando cambian la config o el script (o manualmente). Así, cada
+# vez que edites infra/api/admin-routes.txt o el template, se aplica solo.
+#
+# Requisitos (Settings → Secrets and variables → Actions):
+#   Secrets:   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (permisos apigateway:*)
+#   Variables: API_ID (obligatoria)
+#              STAGE (default V1), PREFIX (default ""), AUTHORIZER_ID (opcional),
+#              AWS_REGION (default us-east-1)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/api/**'
+      - 'scripts/sync-api.sh'
+      - '.github/workflows/deploy-api.yml'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  sync:
+    name: Sincronizar API Gateway
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validar API_ID
+        run: |
+          if [ -z "${{ vars.API_ID }}" ]; then
+            echo "❌ Falta la variable de repositorio API_ID (Settings → Variables)."
+            exit 1
+          fi
+
+      - name: Sincronizar (mapping template + CORS + deploy)
+        env:
+          API_ID: ${{ vars.API_ID }}
+          STAGE: ${{ vars.STAGE || 'V1' }}
+          PREFIX: ${{ vars.PREFIX || '' }}
+          AUTHORIZER_ID: ${{ vars.AUTHORIZER_ID || '' }}
+        run: |
+          chmod +x scripts/sync-api.sh
+          ./scripts/sync-api.sh

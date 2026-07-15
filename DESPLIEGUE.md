@@ -67,22 +67,25 @@ usa este **body mapping template**:
   `/Customer/Update`, `/Customer/Detail`, `/User/SetRole`, `/Billing/Summary`,
   `/Admin/Dashboard`, `/Admin/Jobs`, `/Admin/Audit`, `/Config/Get`, `/Config/Set`.
 
-### ¿Hay que ponerlo a mano en cada ruta? No — 3 formas de evitarlo
+### ¿Hay que ponerlo a mano en cada ruta? No — se despliega desde GitHub
 
-1. **Script (recomendado ahora):** `scripts/apply-admin-mapping.sh` aplica el template a
-   TODAS las rutas admin y despliega, en un comando:
-   ```bash
-   API_ID=<tu-rest-api-id> STAGE=V1 ./scripts/apply-admin-mapping.sh
-   ```
-   (ajusta `PREFIX` si tus recursos son `/V1/Customer/List` en vez de `/Customer/List`).
-   No cambia código; solo evita el clic-por-clic.
-2. **Proxy (evita el template del todo):** con integración **Lambda Proxy**, el context del
-   Authorizer y el body llegan **automáticamente** (sin template) y la lambda puede emitir el
-   header CORS ella misma. **Costo:** hay que envolver las respuestas en el formato
-   `{statusCode, headers, body}` (hoy devuelven el envelope directo). Es un cambio de código
-   en todas las lambdas; si te interesa, se hace con un wrapper común.
-3. **IaC (largo plazo):** definir rutas + template + CORS en SAM/CloudFormation/Terraform o
-   importar un OpenAPI; el despliegue queda versionado y reproducible (no más consola).
+**IaC ligero (implementado):** la config de las rutas admin vive en `infra/api/admin-routes.txt`
+y el workflow **`.github/workflows/deploy-api.yml`** la aplica automáticamente en cada push
+(mapping template + CORS de errores + opcional authorizer + deploy). Ver **`infra/api/README.md`**.
+- **Setup 1 vez:** en Settings → Variables define `API_ID` (y `STAGE`/`PREFIX`/`AUTHORIZER_ID`
+  si aplica); reusa los secrets AWS del CD de lambdas.
+- **Uso:** editas `admin-routes.txt` (o el template en `scripts/sync-api.sh`), haces push, y
+  se aplica solo. También corre local: `API_ID=<id> STAGE=V1 ./scripts/sync-api.sh`.
+- **Requisito:** las rutas/métodos ya deben existir en API Gateway (este flujo configura la
+  integración, no crea recursos desde cero).
+
+**Alternativa — Proxy (evita el template del todo):** con integración **Lambda Proxy** el
+context y el body llegan solos, pero hay que envolver las respuestas en `{statusCode, headers,
+body}` (cambio de código en todas las lambdas). Útil si quieres cero plantillas.
+
+**Evolución — IaC completo:** para gestionar también la creación de recursos, migrar a
+**OpenAPI import** (`put-rest-api`) o **Terraform** deja todo (rutas, integración, CORS,
+authorizer) versionado y reproducible.
 
 ---
 
