@@ -36,6 +36,33 @@ def _ensure_otp_table():
 ses = boto3.client('ses')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'comunicaciones@mailconnect.com.co')
 DEFAULT_EXPIRATION_MIN = int(os.environ.get('OTP_EXPIRATION_MIN', '5'))
+MAX_OTP_EXPIRATION_MIN = int(os.environ.get('MAX_OTP_EXPIRATION_MIN', '15'))
+
+
+def _invalidate_active_otps(user_id):
+    """Desactiva los OTP activos del usuario (paginado): solo uno válido a la vez."""
+    kwargs = {
+        'FilterExpression': 'userId = :u AND active = :a',
+        'ExpressionAttributeValues': {':u': user_id, ':a': True},
+        'ProjectionExpression': 'oneTimePasswordId',
+    }
+    while True:
+        try:
+            resp = table_otp.scan(**kwargs)
+        except Exception:
+            return
+        for it in resp.get('Items', []):
+            try:
+                table_otp.update_item(
+                    Key={'oneTimePasswordId': it['oneTimePasswordId']},
+                    UpdateExpression='SET active = :f',
+                    ExpressionAttributeValues={':f': False})
+            except Exception as e:
+                print('No se pudo invalidar OTP previo: {}'.format(e))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            break
+        kwargs['ExclusiveStartKey'] = last
 
 # Ajustes de plataforma (tabla platformConfig, editable desde /admin) con fallback a env.
 _cfg_table = dynamodb.Table('platformConfig')
@@ -133,6 +160,8 @@ def _create_and_send_otp(user_id, email, ip, expiration_min):
     expiration_time = int(time.time()) + expiration_min * 60
 
     _ensure_otp_table()
+    # Un solo OTP activo por usuario a la vez (reduce fuerza bruta).
+    _invalidate_active_otps(user_id)
     table_otp.put_item(
         Item={
             'oneTimePasswordId': otp_id,
@@ -140,6 +169,7 @@ def _create_and_send_otp(user_id, email, ip, expiration_min):
             'otpHash': otp_hash,
             'expirationTime': expiration_time,
             'active': True,
+            'attempts': 0,
             'system': 'RecuperacionPassword',
             'ip': ip,
             'createdAt': int(time.time())
@@ -172,6 +202,7 @@ def lambda_handler(event, context):
         expiration_min = int(payload.get('expiration', default_exp))
     except Exception:
         expiration_min = default_exp
+    expiration_min = max(1, min(expiration_min, MAX_OTP_EXPIRATION_MIN))
 
     generic_ok = {'status': True, 'statusCode': 200, 'description': GENERIC_DESCRIPTION}
 

@@ -3,6 +3,7 @@ import jwt
 import uuid
 import boto3
 import hashlib
+import hmac
 from datetime import datetime, timedelta
 from boto3.dynamodb.conditions import Key
 
@@ -16,6 +17,34 @@ table_user_data = dynamodb.Table("userData")
 table_session = dynamodb.Table('session')
 SECRET_KEY = os.environ['SECRET_KEY']  # Variable de entorno en la consola Lambda
 
+PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '600000'))
+
+
+def _hash_password(password, salt):
+    """PBKDF2-HMAC-SHA256 (stdlib, sin dependencias/layer). Formato auto-descriptivo
+    'pbkdf2$<iter>$<hex>'. Reemplaza el SHA-256 de una sola pasada (débil ante GPU)."""
+    dk = hashlib.pbkdf2_hmac('sha256', str(password).encode(), str(salt).encode(), PBKDF2_ITERATIONS)
+    return 'pbkdf2${}${}'.format(PBKDF2_ITERATIONS, dk.hex())
+
+
+def _verify_password(password, stored_hash, salt):
+    """Verifica contra el hash nuevo (pbkdf2) o el viejo (sha256), timing-safe."""
+    stored = str(stored_hash or '')
+    if stored.startswith('pbkdf2$'):
+        try:
+            _, iters, hexhash = stored.split('$', 2)
+            dk = hashlib.pbkdf2_hmac('sha256', str(password).encode(), str(salt).encode(), int(iters))
+            return hmac.compare_digest(dk.hex(), hexhash)
+        except Exception:
+            return False
+    legacy = hashlib.sha256((str(password) + str(salt)).encode()).hexdigest()
+    return hmac.compare_digest(legacy, stored)
+
+
+def _is_legacy_hash(stored_hash):
+    return not str(stored_hash or '').startswith('pbkdf2$')
+
+
 def generate_jwt(username, customer_id="", customer="", user_id="", role="client"):
     # Información de la carga útil. Se embeben la identidad del tenant (customerId,
     # customer), el userId y el rol como claims: el Authorizer los reenvía en el
@@ -26,6 +55,7 @@ def generate_jwt(username, customer_id="", customer="", user_id="", role="client
         'customer': customer,
         'userId': user_id,
         'role': role,
+        'iat': datetime.utcnow(),  # Inicio de sesión: reloj de la vida máxima (refresh)
         'exp': datetime.utcnow() + timedelta(days=1)  # Expira en 1 día
     }
 
@@ -157,15 +187,24 @@ def lambda_handler(event, context):
                     #validar la contraseña enviada
                     password = event['password']
                     userHash = responseUser['Items'][0]['userHash']
-                    
-                    # Concatenar la contraseña y el salt
                     salt = responseUser['Items'][0]['userSalt']
-                    saltedPassword = password + salt
-                    hashObject = hashlib.sha256(saltedPassword.encode())
-                    inputHashed = hashObject.hexdigest()
-                    if (inputHashed == userHash):
-                        customerId = responseUser['Items'][0]['customerId']
+
+                    if _verify_password(password, userHash, salt):
                         userId = responseUser['Items'][0]['userId']
+                        # Rehash transparente: si el hash guardado es el viejo (sha256),
+                        # se regenera con PBKDF2 + nuevo salt en este login exitoso.
+                        if _is_legacy_hash(userHash):
+                            try:
+                                new_salt = str(uuid.uuid4())
+                                table_user.update_item(
+                                    Key={'userId': userId},
+                                    UpdateExpression='SET userHash = :h, userSalt = :s',
+                                    ExpressionAttributeValues={
+                                        ':h': _hash_password(password, new_salt), ':s': new_salt}
+                                )
+                            except Exception as _e:
+                                print('No se pudo re-hashear (se continúa): {}'.format(_e))
+                        customerId = responseUser['Items'][0]['customerId']
                         # Rol del usuario (default 'client' si el usuario es antiguo/no lo tiene).
                         role = responseUser['Items'][0].get('role', 'client') or 'client'
                         customer, companyTin, realSendEnabled = select_client(customerId)
