@@ -1,28 +1,30 @@
-name: Desplegar API (rutas admin)
+name: Desplegar API (rutas)
 
-# Sincroniza la configuración de API Gateway desde el repo (IaC ligero):
-#   - aplica el mapping template de rol/tenant a las rutas admin (no-proxy),
-#   - pone CORS en las respuestas de error (DEFAULT_4XX/5XX),
-#   - (opcional) adjunta el Authorizer,
-#   - despliega la API al stage.
+# Sincroniza API Gateway desde infra/api/routes.json (IaC ligero):
+#   crea/configura recursos, métodos, integración Lambda, mapping template de rol,
+#   OPTIONS/CORS y permisos; luego despliega el stage. Idempotente.
 #
-# Se dispara SOLO cuando cambian la config o el script (o manualmente). Así, cada
-# vez que edites infra/api/admin-routes.txt o el template, se aplica solo.
+# Se dispara al cambiar la config o el motor (o manualmente). Así, cada vez que
+# edites routes.json, se aplica solo.
 #
 # Requisitos (Settings → Secrets and variables → Actions):
-#   Secrets:   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (permisos apigateway:*)
-#   Variables: API_ID (obligatoria)
-#              STAGE (default V1), PREFIX (default ""), AUTHORIZER_ID (opcional),
-#              AWS_REGION (default us-east-1)
+#   Secrets:   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (permisos apigateway:* + lambda:AddPermission)
+#   Variables: API_ID (obligatoria), STAGE (default V1), PREFIX (opcional; sobreescribe routes.json),
+#              AUTHORIZER_ID (para rutas con auth), AWS_REGION (default us-east-1)
 
 on:
   push:
     branches: [main]
     paths:
       - 'infra/api/**'
-      - 'scripts/sync-api.sh'
+      - 'scripts/sync_api.py'
       - '.github/workflows/deploy-api.yml'
   workflow_dispatch:
+    inputs:
+      plan_only:
+        description: 'Solo mostrar el plan (no aplica cambios)'
+        type: boolean
+        default: false
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -35,7 +37,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Python + boto3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install --quiet boto3
+
+      - name: Plan (siempre, para el log)
+        run: python scripts/sync_api.py --plan
+
       - name: Configurar credenciales de AWS
+        if: ${{ github.event.inputs.plan_only != 'true' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -43,18 +55,17 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Validar API_ID
+        if: ${{ github.event.inputs.plan_only != 'true' }}
         run: |
           if [ -z "${{ vars.API_ID }}" ]; then
-            echo "❌ Falta la variable de repositorio API_ID (Settings → Variables)."
-            exit 1
+            echo "❌ Falta la variable de repositorio API_ID (Settings → Variables)."; exit 1
           fi
 
-      - name: Sincronizar (mapping template + CORS + deploy)
+      - name: Aplicar (crea rutas + template + CORS + deploy)
+        if: ${{ github.event.inputs.plan_only != 'true' }}
         env:
           API_ID: ${{ vars.API_ID }}
           STAGE: ${{ vars.STAGE || 'V1' }}
-          PREFIX: ${{ vars.PREFIX || '' }}
-          AUTHORIZER_ID: ${{ vars.AUTHORIZER_ID || '' }}
-        run: |
-          chmod +x scripts/sync-api.sh
-          ./scripts/sync-api.sh
+          PREFIX: ${{ vars.PREFIX }}
+          AUTHORIZER_ID: ${{ vars.AUTHORIZER_ID }}
+        run: python scripts/sync_api.py

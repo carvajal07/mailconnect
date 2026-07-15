@@ -69,23 +69,27 @@ usa este **body mapping template**:
 
 ### ¿Hay que ponerlo a mano en cada ruta? No — se despliega desde GitHub
 
-**IaC ligero (implementado):** la config de las rutas admin vive en `infra/api/admin-routes.txt`
-y el workflow **`.github/workflows/deploy-api.yml`** la aplica automáticamente en cada push
-(mapping template + CORS de errores + opcional authorizer + deploy). Ver **`infra/api/README.md`**.
-- **Setup 1 vez:** en Settings → Variables define `API_ID` (y `STAGE`/`PREFIX`/`AUTHORIZER_ID`
-  si aplica); reusa los secrets AWS del CD de lambdas.
-- **Uso:** editas `admin-routes.txt` (o el template en `scripts/sync-api.sh`), haces push, y
-  se aplica solo. También corre local: `API_ID=<id> STAGE=V1 ./scripts/sync-api.sh`.
-- **Requisito:** las rutas/métodos ya deben existir en API Gateway (este flujo configura la
-  integración, no crea recursos desde cero).
+**IaC ligero (implementado):** la config de las rutas vive en **`infra/api/routes.json`** y el
+workflow **`.github/workflows/deploy-api.yml`** (motor `scripts/sync_api.py`, Python+boto3) la
+aplica en cada push. **Crea recursos/métodos/integración/OPTIONS/permisos que falten** y ajusta
+lo existente (idempotente) + CORS de errores + deploy. Ver **`infra/api/README.md`**.
+- **Setup 1 vez:** en Settings → Variables define `API_ID` (y `STAGE`/`PREFIX=/V1`/`AUTHORIZER_ID`);
+  reusa los secrets AWS del CD de lambdas (el IAM necesita `apigateway:*` + `lambda:AddPermission`).
+- **Uso:** editas `routes.json`, haces push, y se aplica solo. Preview: `python scripts/sync_api.py --plan`.
+- **Crear rutas nuevas:** agrega una entrada a `routes.json` (path/lambda/flags) → se crea sola.
 
-**Alternativa — Proxy (evita el template del todo):** con integración **Lambda Proxy** el
-context y el body llegan solos, pero hay que envolver las respuestas en `{statusCode, headers,
-body}` (cambio de código en todas las lambdas). Útil si quieres cero plantillas.
+**¿Cuenta nueva → un comando → todo? Todavía NO.** Este flujo cubre la **capa de API Gateway**.
+Un bootstrap completo de cuenta necesita además IaC de: tablas DynamoDB, **crear** las funciones
+Lambda (el CD solo actualiza código), SES (dominio/sandbox), SQS + triggers, S3, roles/políticas
+IAM, layer de PyJWT y custom domain + certificado. Ese es el salto a **Terraform/CDK** (abajo).
 
-**Evolución — IaC completo:** para gestionar también la creación de recursos, migrar a
-**OpenAPI import** (`put-rest-api`) o **Terraform** deja todo (rutas, integración, CORS,
-authorizer) versionado y reproducible.
+**Alternativa — Proxy (evita el template):** con integración **Lambda Proxy** el context y el
+body llegan solos, pero hay que envolver las respuestas en `{statusCode, headers, body}` (cambio
+de código en todas las lambdas). `routes.json` ya soporta `proxy: true` por ruta.
+
+**Evolución — IaC completo (Terraform):** para reproducir una cuenta entera desde cero (todos
+los recursos, no solo API Gateway), migrar a Terraform/CDK con estado remoto. Es el paso que da
+el "cuenta nueva → apply → todo".
 
 ---
 

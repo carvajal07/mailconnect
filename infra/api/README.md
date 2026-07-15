@@ -1,53 +1,61 @@
-# infra/api — Configuración de API Gateway como código (IaC ligero)
+# infra/api — API Gateway como código (IaC ligero)
 
-La config de las **rutas admin** de API Gateway vive aquí y se aplica **automáticamente
-desde GitHub** en cada push (workflow `.github/workflows/deploy-api.yml`). Así no hay
-que tocar la consola ruta por ruta.
+La config de las rutas de API Gateway vive en **`routes.json`** y se aplica
+**automáticamente desde GitHub** en cada push (`.github/workflows/deploy-api.yml`).
+Motor: **`scripts/sync_api.py`** (Python + boto3), **idempotente** — crea lo que falte
+y ajusta lo existente.
 
-## Qué gestiona
+## Qué hace por cada ruta de `routes.json`
 
-Para cada ruta listada en `admin-routes.txt`, el script `scripts/sync-api.sh`:
-1. Aplica el **mapping template** de rol/tenant a la integración POST (no-proxy), para
-   que la lambda reciba `role`/`user`/`customerId` desde el Authorizer.
-2. Pone **CORS** en las respuestas de error (`DEFAULT_4XX`/`DEFAULT_5XX`) para que los
-   errores no se vean como "CORS error" en el navegador.
-3. (Opcional) Adjunta el **Authorizer** a cada ruta si defines `AUTHORIZER_ID`.
-4. **Despliega** la API al stage.
+1. **Crea el árbol de recursos** si falta (p. ej. `/V1`, `/V1/Customer`, `/V1/Customer/List`).
+2. **Crea el método** (POST por defecto), con Authorizer (`auth: true`) o público (`auth: false`).
+3. **Configura la integración Lambda**: no-proxy con el **mapping template** de rol/tenant
+   si `admin: true`; o `AWS_PROXY` si `proxy: true`.
+4. **Crea el `OPTIONS`** de preflight con headers CORS (`cors: true`).
+5. **Da permiso** a API Gateway para invocar la Lambda.
 
-Es **idempotente**: se puede correr las veces que sea.
+Al final: **CORS en Gateway Responses** (`DEFAULT_4XX/5XX`, para no enmascarar errores) y
+**despliegue** al stage.
 
-## Cómo se dispara
+## `routes.json`
 
-- **Automático:** cualquier push a `main` que toque `infra/api/**` o `scripts/sync-api.sh`.
-- **Manual:** pestaña Actions → "Desplegar API (rutas admin)" → Run workflow. O local:
-  ```bash
-  API_ID=<id> STAGE=V1 PREFIX="" AUTHORIZER_ID=<id> ./scripts/sync-api.sh
-  ```
+`prefix` (p. ej. `/V1`) + lista de `routes`. Campos por ruta:
 
-## Configuración (una sola vez)
+| campo | default | qué hace |
+|-------|---------|----------|
+| `path` | — | ruta bajo el prefix (`/Customer/List`) |
+| `lambda` | — | nombre de la función AWS |
+| `method` | `POST` | método HTTP |
+| `admin` | `false` | inyecta role/tenant (template) — endpoint solo-admin |
+| `auth` | `true` | adjunta el Authorizer (público si `false`) |
+| `proxy` | `false` | integración `AWS_PROXY` (la lambda controla la respuesta) |
+| `cors` | `true` | crea el `OPTIONS` de preflight |
 
-En **Settings → Secrets and variables → Actions**:
+**Agregar una ruta nueva:** añade una entrada, haz push → se crea y configura sola.
 
-- **Secrets:** `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (mismos del CD de lambdas;
-  el usuario IAM necesita permisos `apigateway:*` sobre la API).
-- **Variables:**
-  - `API_ID` (obligatoria) — id de la REST API (p. ej. `jj9ulp7d59`).
-  - `STAGE` — stage a desplegar (default `V1`).
-  - `PREFIX` — prefijo de los resource paths. Si en API Gateway tus recursos son
-    `/Customer/List` deja vacío; si son `/V1/Customer/List` pon `/V1`.
-  - `AUTHORIZER_ID` — (opcional) para que también adjunte el authorizer.
-  - `AWS_REGION` — default `us-east-1`.
+## Disparo
 
-## Agregar/quitar una ruta admin
+- **Automático:** push a `main` que toque `infra/api/**` o `scripts/sync_api.py`.
+- **Manual:** Actions → "Desplegar API (rutas)" → Run workflow (opción `plan_only` para
+  previsualizar sin aplicar).
+- **Local (preview):** `python scripts/sync_api.py --plan` (no toca AWS).
+- **Local (aplicar):** `API_ID=<id> STAGE=V1 AUTHORIZER_ID=<id> python scripts/sync_api.py`.
 
-Edita `admin-routes.txt` (una ruta por línea), haz push, y el workflow la aplica.
-**Requisito:** la ruta/método ya debe existir en API Gateway (este flujo configura la
-integración; no crea el recurso desde cero). Para crear recursos nuevos desde cero,
-la evolución natural es migrar a OpenAPI import o Terraform (ver DESPLIEGUE.md).
+## Configuración (una sola vez) — Settings → Secrets and variables → Actions
 
-## Alcance y límites
+- **Secrets:** `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (permisos `apigateway:*` +
+  `lambda:AddPermission`).
+- **Variables:** `API_ID` (obligatoria); `STAGE` (default `V1`); `PREFIX` (sobreescribe el
+  de routes.json — para tu setup `/V1`); `AUTHORIZER_ID`; `AWS_REGION` (default us-east-1).
 
-- Sincroniza integración (template), CORS de errores y (opcional) authorizer + deploy.
-- **No** crea recursos/métodos nuevos, ni gestiona el preflight `OPTIONS` (eso lo deja
-  "Enable CORS" de la consola una vez, o se añade a este flujo si hace falta).
-- **No** toca las lambdas (eso es `deploy-lambdas.yml`) ni otras rutas fuera de la lista.
+> **Tu estructura:** los recursos en API Gateway son `/V1/Customer/List` (V1 es un recurso),
+> y el **stage** es aparte (en dev la URL trae `/Dev/V1/...`, en prod el custom domain mapea
+> `/V1/...` sin stage). Por eso `PREFIX=/V1` y `STAGE` = tu stage de prod.
+
+## Alcance — importante
+
+Esto gestiona **solo la capa de API Gateway** (rutas, integración, CORS, authorizer, deploy).
+**No** crea el resto de la infraestructura. Para un bootstrap de cuenta nueva "todo con un
+comando" faltaría IaC de: tablas DynamoDB, **crear** las funciones Lambda, SES (dominio/
+sandbox), SQS + triggers, S3, roles/políticas IAM, el layer de PyJWT y el custom domain +
+certificado. Ese es el paso a **Terraform/CDK** (ver `DESPLIEGUE.md`).
