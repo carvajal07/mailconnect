@@ -77,12 +77,10 @@ def lambda_handler(event, context):
         return {'status': False, 'statusCode': 403, 'description': 'Sesión sin identidad de cliente.'}
 
     try:
-        # Buscar la campaña (por campaignId) y validar estado + dueño.
-        resp = table_campaign.scan(FilterExpression=Attr('campaignId').eq(campaign_id))
-        items = resp.get('Items', [])
-        if not items:
+        # campaignId es la PK de campaign: GetItem O(1) en vez de Scan O(tabla).
+        campaign = table_campaign.get_item(Key={'campaignId': campaign_id}).get('Item')
+        if not campaign:
             return {'status': False, 'statusCode': 404, 'description': 'Campaña no encontrada.'}
-        campaign = items[0]
 
         if tenant_customer_id and campaign.get('customerId') != tenant_customer_id:
             return {'status': False, 'statusCode': 403, 'description': 'La campaña no pertenece a tu cuenta.'}

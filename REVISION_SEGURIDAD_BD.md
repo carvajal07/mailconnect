@@ -350,6 +350,26 @@ mismo con `sendDetail`** → tabla `{customer}_sendDetail` con PK `processId` + 
 > `STRICT_TENANT` esté desactivado, el comportamiento es el legacy (no rompe la app, pero
 > el fallback al body sigue disponible). Pendientes de Fase 1: JWT como segunda barrera en
 > lambdas admin, y tenant del agente Bedrock (`Agent_Reports`) por sessionAttributes.
+>
+> **Fase 2 ✅ (parte A + B ready):**
+> - **Scan-sobre-PK → GetItem** (correcciones puras, sin infra): `Customer_Update`
+>   (además update condicional atómico, sin falso 404), `Customer_Detail`, `Campaign_Update`,
+>   `Admin_Jobs` (lookup de campaña), `Template_List` y `Blacklist_{Add,Delete,List}`
+>   (`_customer_name`), `Database_Delete` (`_customer_nit`).
+> - **Paginación** de los Scan del consecutivo en `Campaign_Create-campaign` y
+>   `Template_Create-template` (elimina el reinicio a "0001" + inserción de duplicados);
+>   y del fallback por nombre en `Database_List`.
+> - **Facturación honesta:** `Billing_Summary` marca cada fila `partial` y reporta
+>   `skippedCustomers` cuando se agota el tope (antes desaparecían/subestimaban en silencio).
+> - **Listo para GSI (gate `USE_GSI`):** `Campaign_List`, `MessageTemplate_List`,
+>   `Database_List` usan `_items_by_customer` → Query por GSI si `USE_GSI=true`, si no Scan
+>   paginado. Al desplegar el GSI `customerId-index` se activa con `USE_GSI=true`.
+>
+> **Pendiente de Fase 2 (arquitectural, requiere verificación del pipeline real):**
+> pre-agregación de contadores por proceso para `Admin_Dashboard`/`Billing_Summary`/
+> `Reports_Statistics` (hoy recuentan mensaje a mensaje sobre `*_sendStatus`), unificación
+> de `sendDetail` a tabla única, y contadores atómicos (consecutivos, último admin) que
+> requieren migrar la PK.
 > Pruebas: **179/179 en verde**.
 
 ### Fase 0 — Bugs que rompen producción hoy (rápido, alto impacto)

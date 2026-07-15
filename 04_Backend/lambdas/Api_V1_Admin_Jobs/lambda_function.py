@@ -136,11 +136,14 @@ def lambda_handler(event, context):
                 return camp_state[campaign_id], camp_channel[campaign_id]
             state, channel = '', ''
             if campaign_id:
-                items = _scan_all(table_campaign, FilterExpression=Attr('campaignId').eq(campaign_id),
-                                  ProjectionExpression='campaignState, channel')
-                if items:
-                    state = items[0].get('campaignState', '')
-                    channel = items[0].get('channel', '')
+                # campaignId es la PK de campaign: GetItem O(1) en vez de Scan O(tabla)
+                # por cada campaña distinta.
+                item = table_campaign.get_item(
+                    Key={'campaignId': campaign_id},
+                    ProjectionExpression='campaignState, channel').get('Item')
+                if item:
+                    state = item.get('campaignState', '')
+                    channel = item.get('channel', '')
             camp_state[campaign_id] = state
             camp_channel[campaign_id] = channel
             return state, channel

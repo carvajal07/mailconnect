@@ -42,11 +42,9 @@ def _customer_name(auth, payload):
     customer_id = auth.get('customerId') or payload.get('customerId')
     if not customer_id:
         return None
-    resp = table_customer.scan(
-        FilterExpression="customerId = :v",
-        ExpressionAttributeValues={":v": customer_id},
-        ProjectionExpression='company')
-    return resp['Items'][0]['company'] if resp['Items'] else None
+    item = table_customer.get_item(Key={'customerId': customer_id},
+                                   ProjectionExpression='company').get('Item')
+    return item['company'] if item else None
 
 
 STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'

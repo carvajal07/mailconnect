@@ -33,12 +33,10 @@ def _customer_nit(customer_id):
     if not customer_id:
         return None
     try:
-        resp = table_customer.scan(
-            FilterExpression="customerId = :v",
-            ExpressionAttributeValues={":v": customer_id},
-            ProjectionExpression='companyTin')
-        if resp['Items']:
-            return resp['Items'][0].get('companyTin')
+        item = table_customer.get_item(Key={'customerId': customer_id},
+                                       ProjectionExpression='companyTin').get('Item')
+        if item:
+            return item.get('companyTin')
     except Exception as e:
         print('No se pudo obtener el NIT ({})'.format(e))
     return None

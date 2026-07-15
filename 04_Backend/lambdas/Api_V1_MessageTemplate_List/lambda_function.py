@@ -11,7 +11,7 @@ sus plantillas.
 import json
 import os
 import boto3
-from boto3.dynamodb.conditions import Attr
+from boto3.dynamodb.conditions import Attr, Key
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('messageTemplate')
@@ -52,6 +52,39 @@ def _resolve_tenant(event, payload):
 
 
 
+USE_GSI = os.environ.get('USE_GSI', 'false').strip().lower() == 'true'
+# Nombre del GSI por customerId (override por env al desplegarlo). Cuando USE_GSI=true
+# la consulta es Query O(resultado); si no, cae a Scan paginado O(tabla) (correcto,
+# pero costoso). Así el código queda listo para el GSI sin romper hoy.
+GSI_CUSTOMER_INDEX = os.environ.get('GSI_CUSTOMER_INDEX', 'customerId-index')
+
+
+def _items_by_customer(_tbl, customer_id, extra_filter=None):
+    """Devuelve todos los ítems del cliente (paginado). Query por GSI si USE_GSI,
+    si no Scan con FilterExpression. En ambos casos pagina con LastEvaluatedKey."""
+    items = []
+    if USE_GSI:
+        kwargs = {'IndexName': GSI_CUSTOMER_INDEX,
+                  'KeyConditionExpression': Key('customerId').eq(customer_id)}
+        if extra_filter is not None:
+            kwargs['FilterExpression'] = extra_filter
+        op = _tbl.query
+    else:
+        expr = Attr('customerId').eq(customer_id)
+        if extra_filter is not None:
+            expr = expr & extra_filter
+        kwargs = {'FilterExpression': expr}
+        op = _tbl.scan
+    while True:
+        resp = op(**kwargs)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            break
+        kwargs['ExclusiveStartKey'] = last
+    return items
+
+
 def lambda_handler(event, context):
     payload = _get_payload(event)
     customer_id, _customer = _resolve_tenant(event, payload)
@@ -63,20 +96,8 @@ def lambda_handler(event, context):
                 'description': 'Indica el customerId.', 'data': {'templates': [], 'count': 0}}
 
     try:
-        filter_expr = Attr('customerId').eq(customer_id)
-        if channel:
-            filter_expr = filter_expr & Attr('channel').eq(channel)
-
-        items = []
-        scan_kwargs = {'FilterExpression': filter_expr}
-        while True:
-            response = table.scan(**scan_kwargs)
-            items.extend(response.get('Items', []))
-            last_key = response.get('LastEvaluatedKey')
-            if not last_key:
-                break
-            scan_kwargs['ExclusiveStartKey'] = last_key
-
+        extra = Attr('channel').eq(channel) if channel else None
+        items = _items_by_customer(table, customer_id, extra_filter=extra)
         items.sort(key=lambda x: x.get('created', ''), reverse=True)
 
         return {
