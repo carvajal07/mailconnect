@@ -36,7 +36,7 @@ def boot():
     with mock_aws():
         ddb = boto3.client('dynamodb', region_name='us-east-1')
         for table, pk in [('campaign', 'campaignId'), ('databaseFile', 'databaseFileId'),
-                          ('messageTemplate', 'messageTemplateId')]:
+                          ('messageTemplate', 'messageTemplateId'), ('process', 'processId')]:
             ddb.create_table(
                 TableName=table,
                 KeySchema=[{'AttributeName': pk, 'KeyType': 'HASH'}],
@@ -47,6 +47,14 @@ def boot():
             KeySchema=[{'AttributeName': 'email', 'KeyType': 'HASH'}],
             AttributeDefinitions=[{'AttributeName': 'email', 'AttributeType': 'S'}],
             BillingMode='PAY_PER_REQUEST')
+        # Tabla de estados de envío del cliente (PK processId + SK sendStatusId).
+        ddb.create_table(
+            TableName='empresa_sendStatus',
+            KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'},
+                       {'AttributeName': 'sendStatusId', 'KeyType': 'RANGE'}],
+            AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'},
+                                  {'AttributeName': 'sendStatusId', 'AttributeType': 'S'}],
+            BillingMode='PAY_PER_REQUEST')
         res = boto3.resource('dynamodb', region_name='us-east-1')
         # CU1 (empresa) tiene datos; CU2 (otra) no debe verlos.
         res.Table('campaign').put_item(Item={'campaignId': 'C1', 'customerId': 'CU1', 'campaignName': 'Promo', 'date': '2026-07-01'})
@@ -54,6 +62,12 @@ def boot():
         res.Table('databaseFile').put_item(Item={'databaseFileId': 'D1', 'customerId': 'CU1', 'customer': 'empresa', 'fileName': 'base.csv', 'uploadDate': '2026-07-01T00:00:00Z'})
         res.Table('messageTemplate').put_item(Item={'messageTemplateId': 'M1', 'customerId': 'CU1', 'channel': 'SMS', 'name': 'Hola', 'created': '2026-07-01'})
         res.Table('empresa_blackList').put_item(Item={'email': 'malo@x.com', 'rejectionType': 'manual', 'date': '2026-07-01'})
+        # Un proceso de la campaña C1 con 3 mensajes: 1 abierto (4), 1 entregado (2), 1 enviado (1).
+        res.Table('process').put_item(Item={'processId': 'P1', 'campaignId': 'C1', 'customerName': 'empresa'})
+        st = res.Table('empresa_sendStatus')
+        st.put_item(Item={'processId': 'P1', 'sendStatusId': 's1', 'messageId': 'm1', 'state': 4})
+        st.put_item(Item={'processId': 'P1', 'sendStatusId': 's2', 'messageId': 'm2', 'state': 2})
+        st.put_item(Item={'processId': 'P1', 'sendStatusId': 's3', 'messageId': 'm3', 'state': 1})
         yield _load('Api_V1_Portal_Bootstrap')
 
 
@@ -65,6 +79,11 @@ def test_bootstrap_devuelve_todo_del_tenant(boot):
     assert [f['fileName'] for f in d['databases']] == ['base.csv']
     assert [t['name'] for t in d['messageTemplates']] == ['Hola']
     assert [b['email'] for b in d['blacklist']] == ['malo@x.com']
+    # Estadísticas agregadas (mismo cálculo que Reports_Statistics).
+    c1 = next(c for c in d['stats'] if c['id'] == 'C1')
+    assert c1['enviados'] == 3
+    assert c1['entregados'] == 2   # m1 (abierto) + m2 (entregado)
+    assert c1['abiertos'] == 1     # m1
     assert d['errors'] == {}
 
 

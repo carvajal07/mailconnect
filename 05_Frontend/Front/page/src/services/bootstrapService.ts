@@ -3,6 +3,7 @@ import type { CampaignSummary } from './campaignsService';
 import type { DatabaseFile } from './databaseService';
 import type { BlacklistItem } from './blacklistService';
 import type { MessageTemplate } from './messageTemplatesService';
+import type { CampaignStat } from '../components/portal/campaignData';
 
 /**
  * Servicio de ARRANQUE del portal (Capa 2 del caché): una sola llamada que trae
@@ -19,6 +20,7 @@ export interface BootstrapData {
   databases?: DatabaseFile[];
   blacklist?: BlacklistItem[];
   messageTemplates?: MessageTemplate[];
+  stats?: CampaignStat[];
   errors?: Record<string, string>;
 }
 
