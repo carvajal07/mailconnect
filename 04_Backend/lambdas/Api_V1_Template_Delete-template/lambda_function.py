@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 # Inicializar el cliente SES
-ses_client = boto3.client('ses', region_name='us-east-2')
+ses_client = boto3.client('ses', region_name=os.environ.get('SES_REGION', 'us-east-1'))
 # Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb')
 

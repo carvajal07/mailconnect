@@ -172,7 +172,7 @@ def lambda_handler(event, context):
     payload = _get_payload(event)
 
     try:
-        email = payload['user']
+        email = str(payload['user']).strip().lower()
         new_password = payload['password']
         otp = payload.get('otp')
     except Exception:

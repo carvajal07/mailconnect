@@ -107,6 +107,14 @@ def _get_payload(event):
     return event if isinstance(event, dict) else {}
 
 
+def _valid_password(password):
+    """Reglas mínimas de contraseña (coinciden con change-password y el front)."""
+    if not password or len(str(password)) < 8:
+        return False
+    p = str(password)
+    return bool(re.search(r'[a-z]', p) and re.search(r'[A-Z]', p) and re.search(r'\d', p))
+
+
 def valid_email(email):
     response = table_user.scan(
         FilterExpression="email = :value",
@@ -186,7 +194,9 @@ def lambda_handler(event, context):
         # Obtener datos del evento
         password = payload['password']
         name = payload['name']
-        email = payload['email']
+        # Normalizar email a minúsculas: evita cuentas duplicadas por diferencia de
+        # mayúsculas (User@x.com vs user@x.com) y hace consistentes los lookups.
+        email = str(payload['email']).strip().lower()
         phone = payload['phone']
         company = payload['company']
         # La tabla 'customer' define companyTin como String (S) en el índice
@@ -217,6 +227,16 @@ def lambda_handler(event, context):
             validData = False
             print("Email inválido")
 
+        # Validación de fortaleza de la contraseña (mismas reglas que change-password
+        # y el front): >=8, minúscula, mayúscula y dígito.
+        if not _valid_password(password):
+            validData = False
+            print("Contraseña débil")
+
+    except KeyError:
+        status = False
+        statusCode = 400
+        description = "Faltan datos obligatorios"
     except Exception:
         status = False
         statusCode = 500

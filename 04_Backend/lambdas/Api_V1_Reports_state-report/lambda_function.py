@@ -68,12 +68,21 @@ def _parse_data_field(raw):
 def _now_utc_compact():
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
+def _csv_safe(value):
+    """Neutraliza inyección de fórmulas CSV/Excel: si el valor empieza con
+    = + - @ (o tab/CR), se antepone un apóstrofo para que Excel no lo ejecute."""
+    s = "" if value is None else str(value)
+    if s and s[0] in ('=', '+', '-', '@', '\t', '\r'):
+        return "'" + s
+    return s
+
+
 def _write_csv_semicolon(rows, header):
     buf = io.StringIO(newline="")
     writer = csv.DictWriter(buf, fieldnames=header, delimiter=";", quoting=csv.QUOTE_MINIMAL)
     writer.writeheader()
     for r in rows:
-        writer.writerow(r)
+        writer.writerow({k: _csv_safe(v) for k, v in r.items()})
     text = buf.getvalue()
     buf.close()
     return text, text.encode("utf-8")

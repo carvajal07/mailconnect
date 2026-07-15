@@ -91,6 +91,7 @@ def _resolve_user(payload):
     """Devuelve (userId, email) a partir de userId o user(email)."""
     user_id = payload.get('userId')
     email = payload.get('user') or payload.get('email')
+    email = str(email).strip().lower() if email else email
 
     if user_id and email:
         return user_id, email

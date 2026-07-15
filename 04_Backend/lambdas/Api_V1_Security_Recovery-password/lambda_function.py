@@ -96,6 +96,7 @@ def _resolve_user(payload):
     """Devuelve (userId, email, active) a partir del email (o userId)."""
     user_id = payload.get('userId')
     email = payload.get('user') or payload.get('email')
+    email = str(email).strip().lower() if email else email
 
     if email:
         resp = table_user.scan(

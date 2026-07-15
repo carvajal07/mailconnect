@@ -136,8 +136,8 @@ def lambda_handler(event, context):
     realSendEnabled = True
     role = "client"
     try:
-        # Obtener datos del evento
-        user = event['user']
+        # Obtener datos del evento (email normalizado a minúsculas, como en Register)
+        user = str(event['user']).strip().lower()
 
         '''
         #consulta por query
@@ -166,7 +166,13 @@ def lambda_handler(event, context):
             ExpressionAttributeNames={"#r": "role"},  # 'role' via alias por seguridad
             ProjectionExpression=projectionUser_expression
         )
-    except:
+    except KeyError:
+        # Falta un campo obligatorio del cliente → 400 (no 500).
+        status = False
+        statusCode = 400
+        description = "Faltan datos obligatorios"
+    except Exception as e:
+        print("Error en login: {}".format(e))
         status = False
         statusCode = 500
         description = "Error no controlado en el servicio"
@@ -185,7 +191,7 @@ def lambda_handler(event, context):
                     description = "Usuario bloqueado"
                 else:
                     #validar la contraseña enviada
-                    password = event['password']
+                    password = event.get('password', '')
                     userHash = responseUser['Items'][0]['userHash']
                     salt = responseUser['Items'][0]['userSalt']
 
@@ -212,7 +218,6 @@ def lambda_handler(event, context):
                         name = select_name(userDataId)
                         # Token con los claims del tenant + rol (multi-tenant + roles vía Authorizer).
                         token = generate_jwt(user, customerId, customer, userId, role)
-                        print(name)
                         # Registrar la sesión. No debe romper el login si falla
                         # (p. ej. permisos de la tabla), por eso va en su propio try.
                         try:
@@ -224,17 +229,19 @@ def lambda_handler(event, context):
                         statusCode = 200
                         description = "Usuario correcto"
                     else:
-                        print("Contraseña incorrecta")
                         status = False
                         statusCode = 404
-                        description = 'Usuario o contraseña incorrectos' 
+                        description = 'Usuario o contraseña incorrectos'
             else:
                 status = False
                 statusCode = 423
                 description = 'Usuario o cuenta inactiva, cuenta sin verificar'
 
         else:
-            print(f"No se encontró el usuario {user}")
+            # Usuario no existe: se computa un hash "dummy" para igualar el tiempo de
+            # respuesta con el caso de usuario existente (evita enumeración por timing).
+            _verify_password(event.get('password', ''),
+                             'pbkdf2${}${}'.format(PBKDF2_ITERATIONS, '0' * 64), 'x')
             status = False
             statusCode = 404
             description = 'Usuario o contraseña incorrectos'

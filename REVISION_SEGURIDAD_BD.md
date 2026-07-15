@@ -390,6 +390,31 @@ mismo con `sendDetail`** → tabla `{customer}_sendDetail` con PK `processId` + 
 > los consumidores (para retry sin duplicar envíos — cambio con riesgo de doble cobro si se
 > hace a ciegas), rate limiting/backoff hacia SES/EUM y reserved/maximum concurrency (infra),
 > y contadores atómicos que requieren migrar la PK (compartido con Fase 2).
+>
+> **Fase 4 ✅ (hardening fino):**
+> - **Login:** hash "dummy" cuando el usuario no existe (anti-timing/enumeración),
+>   `except:` desnudo → `KeyError`(400)/`Exception`(500), y se quitó el log con el nombre.
+>   Los códigos 404/423 se mantienen (contrato de producto + tests).
+> - **Email en minúsculas** en Register (almacenamiento) y en los lookups de
+>   Login/Create-otp/Validate-otp/Change-password/Recovery (evita cuentas duplicadas por
+>   mayúsculas). **Register valida fortaleza de contraseña** y `KeyError`→400.
+> - **Unsubscribe:** `html.escape` del email (defensa en profundidad XSS).
+> - **Inyección de fórmulas CSV/Excel** neutralizada en `Reports_state-report` y
+>   `Agent_Reports` (prefija `'` si la celda empieza con `= + - @`).
+> - **Config_Set:** `ACTIVATION_URL` exige `https://`, `OTP_EXPIRATION_MIN` acotado 1..60,
+>   email con regex real.
+> - **Account-activation:** ya no loguea el evento (traía la activationKey) y trata la
+>   fecha no parseable como **expirada** (fail-closed; antes activaba igual).
+> - **Región SES** de Template Get/Delete alineada con Create/List vía `SES_REGION`
+>   (default us-east-1); antes us-east-2 → plantillas "no encontradas".
+> - **Fix de regresión:** el cambio de canales de Fase 3 (lanzar sin config de origen)
+>   había roto 3 tests que codificaban el comportamiento viejo; se actualizaron para
+>   esperar la excepción (SQS retiene/reintenta).
+>
+> **Pendiente de Fase 4 (infra):** mover `SECRET_KEY` a **AWS Secrets Manager** y
+> **rotarla** (la clave vieja quedó en el historial git). El endurecimiento de la
+> enumeración por HTTP code (404 vs 423) queda como decisión de producto (hoy es contrato
+> con el frontend).
 > Pruebas: **179/179 en verde**.
 
 ### Fase 0 — Bugs que rompen producción hoy (rápido, alto impacto)

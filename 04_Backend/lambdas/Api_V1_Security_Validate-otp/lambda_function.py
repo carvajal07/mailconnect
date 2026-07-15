@@ -57,6 +57,7 @@ def _resolve_user_id(payload):
     if user_id:
         return user_id
     email = payload.get('user') or payload.get('email')
+    email = str(email).strip().lower() if email else email
     if email:
         resp = table_user.scan(
             FilterExpression="email = :v",

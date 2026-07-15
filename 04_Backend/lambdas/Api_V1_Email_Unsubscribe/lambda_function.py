@@ -20,6 +20,7 @@ Env:
   SECRET_KEY  — la misma de Login/Authorizers (firma del token).
 '''
 import os
+import html
 import json
 import hmac
 import uuid
@@ -156,8 +157,11 @@ def lambda_handler(event, context):
             }
         )
         print(f'{email} desuscrito de {customer}')
+        # Escapar el email antes de interponerlo en el HTML (defensa en profundidad
+        # contra XSS reflejado si algún firmante no valida el correo).
+        safe_email = html.escape(str(email))
         return _html_page('Suscripción cancelada',
-                          f'La dirección <b>{email}</b> no volverá a recibir correos de esta lista. '
+                          f'La dirección <b>{safe_email}</b> no volverá a recibir correos de esta lista. '
                           'Si fue un error, contacta al remitente.')
     except Exception as e:
         print('Error en unsubscribe: {}'.format(e))
