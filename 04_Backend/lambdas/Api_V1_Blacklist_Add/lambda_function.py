@@ -74,22 +74,15 @@ def _ensure_table(table_name):
     waiter.wait(TableName=table_name)
 
 
-STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
 
 
 def _resolve_tenant(event, payload):
-    """(customerId, customer) a usar en la consulta.
-    Si el Authorizer trae identidad, se usa SOLO esa (ignora el body por completo
-    para no mezclar tenants). Sin contexto del Authorizer cae al body (legacy)
-    salvo STRICT_TENANT=true, que corta el acceso (fail-closed). Actívalo cuando
-    el mapping template que inyecta $context.authorizer.* esté desplegado."""
+    """(customerId, customer) del token (Authorizer). Multi-tenant OBLIGATORIO:
+    el tenant nunca sale del body; si el context no llega, el handler deniega."""
+    # El tenant SIEMPRE sale del token (Authorizer); NUNCA del body. Si el context
+    # no llega (mapping template no desplegado), devuelve None -> el handler deniega.
     a = _tenant_from_authorizer(event) or {}
-    cid, cust = a.get('customerId'), a.get('customer')
-    if cid or cust:
-        return cid, cust
-    if STRICT_TENANT:
-        return None, None
-    return payload.get('customerId'), payload.get('customer')
+    return a.get('customerId'), a.get('customer')
 
 
 
@@ -115,7 +108,7 @@ def lambda_handler(event, context):
     if not contact:
         return {'status': False, 'statusCode': 400, 'description': 'Indica el contacto (email o celular).'}
 
-    if STRICT_TENANT and not (auth.get('customer') or auth.get('customerId')):
+    if not (auth.get('customer') or auth.get('customerId')):
         return {'status': False, 'statusCode': 403, 'description': 'Sesión sin identidad de cliente.'}
 
     customer = _safe_table_customer(_customer_name(auth, payload))

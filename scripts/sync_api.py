@@ -39,8 +39,9 @@ PLAN = '--plan' in sys.argv or os.environ.get('DRY_RUN') == '1'
 # Se aplica a TODA ruta no-proxy autenticada (no solo admin): así las lambdas de
 # cliente reciben customerId/customer del token (aislamiento multi-tenant), y las
 # admin además el role. Las lambdas ya leen event['body'] (objeto) y
-# event.requestContext.authorizer.*; con STRICT_TENANT=false siguen aceptando el
-# body legacy si el context no llega.
+# event.requestContext.authorizer.*. El tenant es OBLIGATORIO: las lambdas
+# multi-tenant deniegan (403) si el context no llega, así que este template debe
+# estar desplegado ANTES de esas lambdas o las rutas de cliente responderán 403.
 CONTEXT_TEMPLATE = (
     '{\n'
     '  "body": $input.json(\'$\'),\n'

@@ -55,22 +55,15 @@ def _tenant_from_authorizer(event):
     return auth if isinstance(auth, dict) else {}
 
 
-STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
 
 
 def _resolve_tenant(event, payload):
-    """(customerId, customer) a usar en la consulta.
-    Si el Authorizer trae identidad, se usa SOLO esa (ignora el body por completo
-    para no mezclar tenants). Sin contexto del Authorizer cae al body (legacy)
-    salvo STRICT_TENANT=true, que corta el acceso (fail-closed). Actívalo cuando
-    el mapping template que inyecta $context.authorizer.* esté desplegado."""
+    """(customerId, customer) del token (Authorizer). Multi-tenant OBLIGATORIO:
+    el tenant nunca sale del body; si el context no llega, el handler deniega."""
+    # El tenant SIEMPRE sale del token (Authorizer); NUNCA del body. Si el context
+    # no llega (mapping template no desplegado), devuelve None -> el handler deniega.
     a = _tenant_from_authorizer(event) or {}
-    cid, cust = a.get('customerId'), a.get('customer')
-    if cid or cust:
-        return cid, cust
-    if STRICT_TENANT:
-        return None, None
-    return payload.get('customerId'), payload.get('customer')
+    return a.get('customerId'), a.get('customer')
 
 
 
@@ -85,7 +78,7 @@ def lambda_handler(event, context):
 
     payload = _get_payload(event)
     tenant_id, tenant_customer = _resolve_tenant(event, payload)
-    if STRICT_TENANT and not (tenant_id or tenant_customer):
+    if not (tenant_id or tenant_customer):
         return {'status': False, 'statusCode': 403, 'description': 'Sesión sin identidad de cliente.'}
 
     # Encabezados del CSV (campos usables como {{variables}}). Se normaliza a lista de str.

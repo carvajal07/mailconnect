@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -26,8 +26,8 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
 import { getUser } from '../../services/authService';
 import { blacklistService } from '../../services/blacklistService';
-import type { BlacklistItem } from '../../services/blacklistService';
 import { isOk } from '../../services/apiClient';
+import { usePortalData } from '../../context/PortalDataContext';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
 import { validateContact } from './csv';
@@ -44,25 +44,17 @@ export const ListaNegraSection = () => {
   const { notify, FeedbackSnackbar } = useFeedback();
   const { confirm, ConfirmDialog } = useConfirm();
 
-  const [items, setItems] = useState<BlacklistItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Los datos vienen del contexto precargado del portal (Capa 1: SWR + caché).
+  const { blacklist, refreshBlacklist } = usePortalData();
+  const items = blacklist.items;
+  const loading = blacklist.loading;
   const [adding, setAdding] = useState(false);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [newContact, setNewContact] = useState('');
   const [reason, setReason] = useState('');
   const [search, setSearch] = useState('');
 
-  const load = useCallback(async () => {
-    if (!customerId && !customer) return;
-    setLoading(true);
-    const res = await blacklistService.list(customerId, customer);
-    setLoading(false);
-    if (isOk(res) && res.data?.items) setItems(res.data.items);
-  }, [customerId, customer]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const load = useCallback(() => refreshBlacklist(), [refreshBlacklist]);
 
   // Validación en vivo del contacto (correo o celular E.164) para avisar antes de enviar.
   const contactError =
@@ -108,7 +100,7 @@ export const ListaNegraSection = () => {
     const res = await blacklistService.remove(contact, customerId, customer);
     setDeletingKey(null);
     if (isOk(res)) {
-      setItems((prev) => prev.filter((x) => x.email !== contact));
+      refreshBlacklist();
       notify('Contacto quitado de la lista negra.', 'success');
     } else {
       notify(res.description || 'No se pudo quitar el contacto.', 'error');

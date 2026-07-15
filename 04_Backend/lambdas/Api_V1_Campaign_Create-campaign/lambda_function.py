@@ -5,7 +5,6 @@ import boto3
 from datetime import datetime, timedelta
 from boto3.dynamodb.conditions import Key
 
-STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
 
 # Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb')
@@ -174,14 +173,12 @@ def lambda_handler(event, context):
     try:
         # customerId: preferir SIEMPRE la identidad del Authorizer sobre el body,
         # para que un cliente no cree campañas a nombre de otro tenant. Sin
-        # contexto se cae al body (legacy) salvo STRICT_TENANT=true.
+        # contexto: si no llega, se deniega.
         _auth = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
         customerId = _auth.get('customerId')
         if not customerId:
-            if STRICT_TENANT:
-                return {'status': False, 'statusCode': 403,
-                        'description': 'Sesión sin identidad de cliente.'}
-            customerId = event['customerId']
+            return {'status': False, 'statusCode': 403,
+                    'description': 'Sesión sin identidad de cliente.'}
         campaignName = event['campaignName']
         channelName = event['channelName']
         attachment_type = event['attachmentType']  

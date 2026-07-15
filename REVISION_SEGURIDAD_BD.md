@@ -411,6 +411,14 @@ mismo con `sendDetail`** → tabla `{customer}_sendDetail` con PK `processId` + 
 >   había roto 3 tests que codificaban el comportamiento viejo; se actualizaron para
 >   esperar la excepción (SQS retiene/reintenta).
 >
+> **Aislamiento tenant ahora OBLIGATORIO (jul 2026):** se eliminó la variable
+> `STRICT_TENANT`. Las 17 lambdas multi-tenant leen el `customerId`/`customer` **solo del
+> context del Authorizer** y **deniegan (403/400) si no llega** — ya no hay fallback al body.
+> ⚠️ **Orden de despliegue crítico:** el mapping template (que inyecta el context) debe estar
+> desplegado **ANTES** que estas lambdas; si no, las rutas de cliente responderán 403. Como
+> `deploy-lambdas.yml` auto-despliega en cada push a `main`, primero configura `API_ID`/
+> `AUTHORIZER_ID` y corre `deploy-api.yml`, y solo después mergea/despliega estas lambdas.
+>
 > **Estado de despliegue del aislamiento tenant (jul 2026):** el workflow `deploy-api.yml`
 > corrió una vez (al mergear el PR #26) y **FALLÓ** porque la **variable de repo `API_ID`
 > no está configurada** (Settings → Variables) → `sync_api.py` nunca tocó AWS (por eso "no

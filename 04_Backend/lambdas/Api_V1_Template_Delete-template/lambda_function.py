@@ -10,7 +10,6 @@ dynamodb = boto3.resource('dynamodb')
 
 table_templateAudit = dynamodb.Table('templateAudit')
 
-STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
 
 
 def _authorizer(event):
@@ -23,11 +22,11 @@ def _owns_template(event, template_name):
     """Verifica que la plantilla pertenezca al tenant del token.
     Convención de nombre: '{customer}_{consecutivo}_{canal}_{nombre}'.
     Si el Authorizer trae 'customer', se exige el prefijo '{customer}_'.
-    Sin contexto del Authorizer se permite (legacy) salvo STRICT_TENANT=true."""
+    Sin contexto del Authorizer se permite (legacy)."""
     customer = str(_authorizer(event).get('customer', '')).strip()
     if customer:
         return str(template_name).startswith('{}_'.format(customer))
-    return not STRICT_TENANT
+    return False  # sin context del token: denegar
 
 
 def lambda_handler(event, context):
