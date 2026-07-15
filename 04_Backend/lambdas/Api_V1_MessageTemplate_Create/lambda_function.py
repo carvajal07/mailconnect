@@ -19,6 +19,7 @@ Respuesta: 201 { data: { messageTemplateId } } · 400 datos inválidos
 Tabla DynamoDB: messageTemplate (PK messageTemplateId).
 '''
 import json
+import os
 import uuid
 import boto3
 from datetime import datetime
@@ -50,12 +51,31 @@ def _tenant_from_authorizer(event):
     return auth if isinstance(auth, dict) else {}
 
 
+STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
+
+
+def _resolve_tenant(event, payload):
+    """(customerId, customer) a usar en la consulta.
+    Si el Authorizer trae identidad, se usa SOLO esa (ignora el body por completo
+    para no mezclar tenants). Sin contexto del Authorizer cae al body (legacy)
+    salvo STRICT_TENANT=true, que corta el acceso (fail-closed). Actívalo cuando
+    el mapping template que inyecta $context.authorizer.* esté desplegado."""
+    a = _tenant_from_authorizer(event) or {}
+    cid, cust = a.get('customerId'), a.get('customer')
+    if cid or cust:
+        return cid, cust
+    if STRICT_TENANT:
+        return None, None
+    return payload.get('customerId'), payload.get('customer')
+
+
+
 def lambda_handler(event, context):
     payload = _get_payload(event)
-    auth = _tenant_from_authorizer(event)
-
-    customer_id = auth.get('customerId') or payload.get('customerId')
-    customer = auth.get('customer') or payload.get('customer', '')
+    customer_id, customer = _resolve_tenant(event, payload)
+    customer = customer or ''
+    if STRICT_TENANT and not customer_id:
+        return {'status': False, 'statusCode': 403, 'description': 'Sesión sin identidad de cliente.'}
     channel = str(payload.get('channel', '')).upper()
     name = str(payload.get('name', '')).strip()
 
@@ -97,10 +117,16 @@ def lambda_handler(event, context):
     if is_update:
         try:
             existing = table.get_item(Key={'messageTemplateId': message_template_id}).get('Item')
-            if existing and existing.get('created'):
-                created = existing['created']
         except Exception:
-            pass
+            existing = None
+        if existing:
+            # Verificar dueño: no permitir sobrescribir la plantilla de otro tenant.
+            if customer_id and existing.get('customerId') and existing.get('customerId') != customer_id:
+                return {'status': False, 'statusCode': 403,
+                        'description': 'La plantilla no pertenece a tu cuenta.',
+                        'data': {}}
+            if existing.get('created'):
+                created = existing['created']
 
     item = {
         'messageTemplateId': message_template_id,

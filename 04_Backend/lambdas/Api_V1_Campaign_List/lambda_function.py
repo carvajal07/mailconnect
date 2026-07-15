@@ -9,6 +9,7 @@ Cada campaña incluye: campaignId, campaignName, consecutive, channel,
 campaignState, dataPath, template, originEmail, date.
 '''
 import json
+import os
 import boto3
 from decimal import Decimal
 from boto3.dynamodb.conditions import Attr
@@ -47,10 +48,29 @@ def _clean(item):
     return out
 
 
+STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
+
+
+def _resolve_tenant(event, payload):
+    """(customerId, customer) a usar en la consulta.
+    Si el Authorizer trae identidad, se usa SOLO esa (ignora el body por completo
+    para no mezclar tenants). Sin contexto del Authorizer cae al body (legacy)
+    salvo STRICT_TENANT=true, que corta el acceso (fail-closed). Actívalo cuando
+    el mapping template que inyecta $context.authorizer.* esté desplegado."""
+    a = _tenant_from_authorizer(event) or {}
+    cid, cust = a.get('customerId'), a.get('customer')
+    if cid or cust:
+        return cid, cust
+    if STRICT_TENANT:
+        return None, None
+    return payload.get('customerId'), payload.get('customer')
+
+
+
 def lambda_handler(event, context):
     payload = _get_payload(event)
-    # Preferir la identidad del token (Authorizer) sobre lo que mande el body.
-    customer_id = _tenant_from_authorizer(event).get('customerId') or payload.get('customerId')
+    # Identidad del token (Authorizer); ignora el body si el token trae identidad.
+    customer_id, _customer = _resolve_tenant(event, payload)
 
     if not customer_id:
         return {

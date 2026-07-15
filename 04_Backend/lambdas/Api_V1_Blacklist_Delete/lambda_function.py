@@ -9,6 +9,8 @@ Respuesta: 200 ok · 400 datos inválidos · 404 no estaba en la lista
 Al quitarlo, el contacto vuelve a poder recibir envíos.
 '''
 import json
+import os
+import re
 import boto3
 from botocore.exceptions import ClientError
 
@@ -47,6 +49,37 @@ def _customer_name(auth, payload):
     return resp['Items'][0]['company'] if resp['Items'] else None
 
 
+STRICT_TENANT = os.environ.get('STRICT_TENANT', 'false').strip().lower() == 'true'
+
+
+def _resolve_tenant(event, payload):
+    """(customerId, customer) a usar en la consulta.
+    Si el Authorizer trae identidad, se usa SOLO esa (ignora el body por completo
+    para no mezclar tenants). Sin contexto del Authorizer cae al body (legacy)
+    salvo STRICT_TENANT=true, que corta el acceso (fail-closed). Actívalo cuando
+    el mapping template que inyecta $context.authorizer.* esté desplegado."""
+    a = _tenant_from_authorizer(event) or {}
+    cid, cust = a.get('customerId'), a.get('customer')
+    if cid or cust:
+        return cid, cust
+    if STRICT_TENANT:
+        return None, None
+    return payload.get('customerId'), payload.get('customer')
+
+
+
+
+_SAFE_CUSTOMER_RE = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def _safe_table_customer(customer):
+    """Nombre de empresa validado para usar como prefijo de tabla DynamoDB.
+    Evita inyección/confusión de tenant (p. ej. apuntar a la tabla de otro
+    cliente o crear tablas arbitrarias). Devuelve None si no es válido."""
+    c = (customer or "").strip()
+    return c if _SAFE_CUSTOMER_RE.match(c) else None
+
+
 def lambda_handler(event, context):
     payload = _get_payload(event)
     auth = _tenant_from_authorizer(event)
@@ -55,9 +88,12 @@ def lambda_handler(event, context):
     if not contact:
         return {'status': False, 'statusCode': 400, 'description': 'Indica el contacto a quitar.'}
 
-    customer = _customer_name(auth, payload)
+    if STRICT_TENANT and not (auth.get('customer') or auth.get('customerId')):
+        return {'status': False, 'statusCode': 403, 'description': 'Sesión sin identidad de cliente.'}
+
+    customer = _safe_table_customer(_customer_name(auth, payload))
     if not customer:
-        return {'status': False, 'statusCode': 400, 'description': 'Indica customer o customerId.'}
+        return {'status': False, 'statusCode': 400, 'description': 'Indica customer o customerId válido.'}
 
     table = dynamodb.Table(f'{customer}_blackList')
     try:
