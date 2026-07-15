@@ -19,6 +19,7 @@ Las ESTADÍSTICAS (agregación de estados de envío) se incluyen con el MISMO c�
 que Api_V1_Reports_Statistics (mantener en sync). Es la parte más pesada, así que
 se carga al final; a futuro, con pre-agregación de contadores, sería O(1).
 '''
+import os
 import re
 import json
 import boto3
@@ -26,6 +27,12 @@ from decimal import Decimal
 from collections import defaultdict
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
+
+# Lee el RESUMEN pre-agregado por proceso ({customer}_sendSummary) en vez de escanear
+# los estados de cada mensaje. Gated: actívalo SOLO tras habilitar la escritura
+# (SEND_SUMMARY_ENABLED en ReceptionStatus) y hacer backfill de los procesos existentes.
+SEND_SUMMARY_READ = os.environ.get('SEND_SUMMARY_READ', 'false').strip().lower() == 'true'
+_SUMMARY_FIELDS = ('enviados', 'entregados', 'abiertos', 'clics', 'rebotes', 'quejas')
 
 dynamodb = boto3.resource('dynamodb')
 table_campaign = dynamodb.Table('campaign')
@@ -176,6 +183,20 @@ def _load_stats(customer_id, customer):
         procs_by_campaign[p.get('campaignId')].append(p)
 
     status_table = dynamodb.Table('{}_sendStatus'.format(customer))
+    summary_table = dynamodb.Table('{}_sendSummary'.format(customer))
+
+    def _counts_for(process_id):
+        # 1) Resumen pre-agregado (O(1)) si está activo y existe para este proceso.
+        if SEND_SUMMARY_READ:
+            try:
+                item = summary_table.get_item(Key={'processId': process_id}).get('Item')
+            except Exception:
+                item = None
+            if item:
+                return {k: _to_int(item.get(k, 0)) for k in _SUMMARY_FIELDS}
+        # 2) Fallback: agregación por scan de los estados del proceso.
+        return _counts_from_states(_current_state_per_message(_query_process(status_table, process_id)))
+
     result = []
     scanned = 0
     for c in campaigns:
@@ -189,8 +210,7 @@ def _load_stats(customer_id, customer):
             if not process_id:
                 continue
             scanned += 1
-            states = _current_state_per_message(_query_process(status_table, process_id))
-            counts = _counts_from_states(states)
+            counts = _counts_for(process_id)
             for k in totals:
                 totals[k] += counts[k]
         result.append({

@@ -55,6 +55,12 @@ def boot():
             AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'},
                                   {'AttributeName': 'sendStatusId', 'AttributeType': 'S'}],
             BillingMode='PAY_PER_REQUEST')
+        # Resumen pre-agregado por proceso (para la prueba del read-path O(1)).
+        ddb.create_table(
+            TableName='empresa_sendSummary',
+            KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'}],
+            AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'}],
+            BillingMode='PAY_PER_REQUEST')
         res = boto3.resource('dynamodb', region_name='us-east-1')
         # CU1 (empresa) tiene datos; CU2 (otra) no debe verlos.
         res.Table('campaign').put_item(Item={'campaignId': 'C1', 'customerId': 'CU1', 'campaignName': 'Promo', 'date': '2026-07-01'})
@@ -101,3 +107,17 @@ def test_bootstrap_aislamiento_por_tenant(boot):
 def test_bootstrap_sin_token_403(boot):
     resp = boot.lambda_handler({}, None)  # sin context del Authorizer
     assert resp['statusCode'] == 403
+
+
+def test_bootstrap_usa_resumen_pre_agregado(boot):
+    # Con SEND_SUMMARY_READ activo y un resumen del proceso, las estadísticas salen
+    # del resumen (O(1)) en vez del scan de estados.
+    boot.SEND_SUMMARY_READ = True
+    res = boto3.resource('dynamodb', region_name='us-east-1')
+    res.Table('empresa_sendSummary').put_item(Item={
+        'processId': 'P1', 'enviados': 99, 'entregados': 40, 'abiertos': 10,
+        'clics': 3, 'rebotes': 2, 'quejas': 1})
+    d = boot.lambda_handler(_ctx(), None)['data']
+    c1 = next(c for c in d['stats'] if c['id'] == 'C1')
+    assert c1['enviados'] == 99 and c1['entregados'] == 40 and c1['abiertos'] == 10  # del resumen
+    boot.SEND_SUMMARY_READ = False  # no afectar otras pruebas
