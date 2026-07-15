@@ -33,6 +33,10 @@ def _get_payload(event):
     # OJO: el canal SMS trae un campo 'body' (el texto del mensaje) que colisiona con
     # la convención Lambda-proxy (event['body'] = JSON string). Solo se interpreta como
     # proxy si event['body'] parsea a un DICT; si es texto plano (SMS), event ES el payload.
+    # API Gateway (mapping template) puede inyectar el body como OBJETO JSON
+    # (integración no-proxy) o como STRING (proxy). Se aceptan ambos.
+    if isinstance(event, dict) and isinstance(event.get('body'), dict):
+        return event['body']
     if isinstance(event, dict) and isinstance(event.get('body'), str):
         try:
             parsed = json.loads(event['body'])

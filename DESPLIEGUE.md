@@ -33,7 +33,7 @@ usa este **body mapping template**:
 
 ```velocity
 {
-  "body": "$util.escapeJavaScript($input.json('$')).replaceAll("\\'","'")",
+  "body": $input.json('$'),
   "requestContext": {
     "authorizer": {
       "role": "$context.authorizer.role",
@@ -46,12 +46,11 @@ usa este **body mapping template**:
 }
 ```
 
-> **IMPORTANTE — el body va como STRING escapado**, no como objeto crudo. El helper
-> `_get_payload` de las lambdas espera `event['body']` como **string JSON** (lo parsea);
-> si se inyecta como objeto (`"body": $body`) las rutas que reciben datos
-> (Pricing/Update, User/SetRole, Config/Set) no encuentran sus campos → 400. El
-> `.replaceAll("\\'","'")` corrige el sobre-escapado de comillas simples de
-> `escapeJavaScript` (patrón estándar de API Gateway).
+> **Body como OBJETO JSON crudo** (`$input.json('$')`), sin escapes. Es VTL limpio y
+> siempre produce JSON válido. Las lambdas (`_get_payload`) aceptan el body como
+> **objeto** (este template) o como **string** (proxy), así que funciona en ambos casos.
+> ⚠️ Requiere el código con `_get_payload` actualizado (soporta body dict). Si aún
+> corres una versión vieja de las lambdas, **redespliégalas** antes de usar este template.
 >
 > `role` habilita el acceso; `user`/`userId` identifican al **actor en la auditoría**;
 > `customerId`/`customer` sirven al multi-tenant de las read-lambdas.
@@ -59,6 +58,10 @@ usa este **body mapping template**:
 > **No pasar estas rutas a proxy:** las lambdas devuelven el envelope
 > `{status, statusCode, description, data}` en el cuerpo (estilo no-proxy). En proxy
 > API Gateway esperaría `{statusCode, headers, body}` y daría 502. Quédate en **no-proxy**.
+>
+> _Nota: la versión anterior de este doc usaba `escapeJavaScript(...).replaceAll(...)`
+> para pasar el body como string; era frágil (400 por VTL). Con `_get_payload` aceptando
+> objeto, esta forma cruda es la recomendada._
 
 - [ ] `[J]` Aplicar el template en: `/Pricing/List`, `/Pricing/Update`, `/Customer/List`,
   `/Customer/Update`, `/Customer/Detail`, `/User/SetRole`, `/Billing/Summary`,

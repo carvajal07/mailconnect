@@ -70,6 +70,10 @@ def _platform_cfg(key):
 
 def _get_payload(event):
     """Soporta integración directa (event = body) y Lambda-proxy (event['body'] string)."""
+    # API Gateway (mapping template) puede inyectar el body como OBJETO JSON
+    # (integración no-proxy) o como STRING (proxy). Se aceptan ambos.
+    if isinstance(event, dict) and isinstance(event.get('body'), dict):
+        return event['body']
     if isinstance(event, dict) and isinstance(event.get('body'), str):
         try:
             return json.loads(event['body'])
