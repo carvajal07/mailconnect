@@ -67,6 +67,23 @@ usa este **body mapping template**:
   `/Customer/Update`, `/Customer/Detail`, `/User/SetRole`, `/Billing/Summary`,
   `/Admin/Dashboard`, `/Admin/Jobs`, `/Admin/Audit`, `/Config/Get`, `/Config/Set`.
 
+### ¿Hay que ponerlo a mano en cada ruta? No — 3 formas de evitarlo
+
+1. **Script (recomendado ahora):** `scripts/apply-admin-mapping.sh` aplica el template a
+   TODAS las rutas admin y despliega, en un comando:
+   ```bash
+   API_ID=<tu-rest-api-id> STAGE=V1 ./scripts/apply-admin-mapping.sh
+   ```
+   (ajusta `PREFIX` si tus recursos son `/V1/Customer/List` en vez de `/Customer/List`).
+   No cambia código; solo evita el clic-por-clic.
+2. **Proxy (evita el template del todo):** con integración **Lambda Proxy**, el context del
+   Authorizer y el body llegan **automáticamente** (sin template) y la lambda puede emitir el
+   header CORS ella misma. **Costo:** hay que envolver las respuestas en el formato
+   `{statusCode, headers, body}` (hoy devuelven el envelope directo). Es un cambio de código
+   en todas las lambdas; si te interesa, se hace con un wrapper común.
+3. **IaC (largo plazo):** definir rutas + template + CORS en SAM/CloudFormation/Terraform o
+   importar un OpenAPI; el despliegue queda versionado y reproducible (no más consola).
+
 ---
 
 ## 2. Tablas DynamoDB nuevas
