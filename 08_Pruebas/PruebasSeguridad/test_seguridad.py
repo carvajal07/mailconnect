@@ -381,6 +381,27 @@ def test_authorizer_token_en_header_request(ctx):
     assert policy['policyDocument']['Statement'][0]['Effect'] == 'Allow'
 
 
+def test_authorizer_token_en_header_token(ctx):
+    # Authorizer REQUEST cuya identity source es el header 'token' (no 'Authorization').
+    token = _make_jwt('req2@test.com')
+    policy = ctx.handler('authorizer')(
+        {'headers': {'token': token}, 'methodArn': 'arn:aws:execute-api:xx'}, None)
+    assert policy['policyDocument']['Statement'][0]['Effect'] == 'Allow'
+
+
+def test_login_token_expira_en_un_dia(ctx):
+    # El JWT del login debe venir con exp ~1 día en el futuro (no expirado al instante).
+    import time as _t
+    email = ctx.make_active_user(ctx.unique_email('exp'))
+    login = ctx.handler('login')({'user': email, 'password': 'Password123'}, None)
+    token = login['data']['token']
+    payload = jwt.decode(token, options={'verify_signature': False})
+    ahora = int(_t.time())
+    # exp entre ~23h y ~25h por delante (tolerancia amplia para el reloj del runner).
+    assert payload['exp'] - ahora > 23 * 3600
+    assert payload['exp'] - ahora < 25 * 3600
+
+
 def test_authorizer_sin_token_deniega(ctx):
     with pytest.raises(Exception, match='Unauthorized'):
         ctx.handler('authorizer')({'methodArn': 'arn:aws:execute-api:xx'}, None)

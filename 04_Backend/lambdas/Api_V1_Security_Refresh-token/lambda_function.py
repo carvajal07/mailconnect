@@ -15,7 +15,7 @@ Env: SECRET_KEY (la misma de Login/Authorizers).
 '''
 import os
 import json
-from datetime import datetime, timedelta
+import time
 
 import jwt
 
@@ -70,13 +70,16 @@ def lambda_handler(event, context):
         return {'status': False, 'statusCode': 401, 'description': 'Token inválido.'}
 
     # Reemitir con los mismos claims (incluido el rol) y un exp fresco.
+    # exp/iat como timestamp entero (robusto entre versiones de PyJWT).
+    now_ts = int(time.time())
     new_payload = {
         'user': decoded.get('user', ''),
         'customerId': decoded.get('customerId', ''),
         'customer': decoded.get('customer', ''),
         'userId': decoded.get('userId', ''),
         'role': decoded.get('role', 'client'),
-        'exp': datetime.utcnow() + timedelta(days=TOKEN_TTL_DAYS),
+        'iat': now_ts,
+        'exp': now_ts + TOKEN_TTL_DAYS * 24 * 60 * 60,
     }
     new_token = jwt.encode(new_payload, SECRET_KEY, algorithm='HS256')
     if not isinstance(new_token, str):

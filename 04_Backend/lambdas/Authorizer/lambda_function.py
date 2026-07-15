@@ -18,11 +18,14 @@ def _extract_token(event):
     """Obtiene el token del evento, soportando autorizadores TOKEN y REQUEST."""
     raw = ''
     if isinstance(event, dict):
+        # TOKEN authorizer: el valor llega en authorizationToken.
         raw = event.get('authorizationToken') or ''
         if not raw:
+            # REQUEST authorizer: el valor llega en un header. Se acepta 'Authorization'
+            # o 'token' (esta API usa identity source = header 'token').
             headers = event.get('headers') or {}
             for key, value in headers.items():
-                if str(key).lower() == 'authorization':
+                if str(key).lower() in ('authorization', 'token'):
                     raw = value or ''
                     break
     raw = (raw or '').strip()
