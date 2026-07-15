@@ -1,5 +1,6 @@
 import { AUTH_API_BASE, AUTH_ENDPOINTS } from '../config/api';
 import { MOCK_ENABLED, mockLogin } from './mockAuth';
+import { clearPortalCache } from './portalCache';
 
 /**
  * Servicio de autenticación de MailConnect.
@@ -203,6 +204,7 @@ export function getUser(): SessionUser | null {
 export function clearSession(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  clearPortalCache(); // limpia la caché precargada del portal (no mezclar cuentas)
 }
 
 export function isAuthenticated(): boolean {
