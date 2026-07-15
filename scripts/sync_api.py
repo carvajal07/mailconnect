@@ -36,7 +36,12 @@ CORS_ORIGIN = os.environ.get('CORS_ORIGIN', '*')
 PLAN = '--plan' in sys.argv or os.environ.get('DRY_RUN') == '1'
 
 # Mapping template no-proxy: body como objeto JSON crudo + context del Authorizer.
-ADMIN_TEMPLATE = (
+# Se aplica a TODA ruta no-proxy autenticada (no solo admin): así las lambdas de
+# cliente reciben customerId/customer del token (aislamiento multi-tenant), y las
+# admin además el role. Las lambdas ya leen event['body'] (objeto) y
+# event.requestContext.authorizer.*; con STRICT_TENANT=false siguen aceptando el
+# body legacy si el context no llega.
+CONTEXT_TEMPLATE = (
     '{\n'
     '  "body": $input.json(\'$\'),\n'
     '  "requestContext": {\n'
@@ -90,7 +95,7 @@ def print_plan(prefix, routes):
     print(f"Rutas en el catálogo: {len(routes)}\n")
     for r in routes:
         fp = full_path(prefix, r['path'])
-        kind = 'AWS_PROXY' if r['proxy'] else ('no-proxy + template(admin)' if r['admin'] else 'no-proxy')
+        kind = 'AWS_PROXY' if r['proxy'] else ('no-proxy + template(context)' if r['auth'] else 'no-proxy (público)')
         auth = f"authorizer" if r['auth'] else "público (NONE)"
         cors = " +OPTIONS" if r['cors'] else ""
         print(f"  {r['method']:5} {fp}")
@@ -182,8 +187,10 @@ def apply(prefix, routes):
         itype = 'AWS_PROXY' if r['proxy'] else 'AWS'
         kwargs = {'restApiId': api_id, 'resourceId': res_id, 'httpMethod': r['method'],
                   'type': itype, 'integrationHttpMethod': 'POST', 'uri': uri}
-        if (not r['proxy']) and r['admin']:
-            kwargs['requestTemplates'] = {'application/json': ADMIN_TEMPLATE}
+        # Inyectar el context del Authorizer en TODA ruta no-proxy autenticada
+        # (antes solo admin). Sin auth (rutas públicas) se deja passthrough.
+        if (not r['proxy']) and r['auth']:
+            kwargs['requestTemplates'] = {'application/json': CONTEXT_TEMPLATE}
             kwargs['passthroughBehavior'] = 'WHEN_NO_TEMPLATES'
         gw.put_integration(**kwargs)
         if not r['proxy']:

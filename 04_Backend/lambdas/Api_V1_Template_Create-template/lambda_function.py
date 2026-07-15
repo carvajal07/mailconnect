@@ -119,6 +119,16 @@ def insert_audit(userId,templateName,action):
     )
 
 def lambda_handler(event, context):
+
+    # Compat mapping template no-proxy: si el payload llega como
+    # {body:{...}, requestContext:{...}}, se aplana el body al nivel de event
+    # (preservando requestContext para el context del Authorizer). Si ya viene
+    # plano (passthrough legacy), no hace nada.
+    if isinstance(event, dict) and isinstance(event.get("body"), dict):
+        _rc = event.get("requestContext")
+        event = dict(event["body"])
+        if _rc:
+            event["requestContext"] = _rc
     status = True
     description = "Plantilla creada correctamente"
     statusCode = 201

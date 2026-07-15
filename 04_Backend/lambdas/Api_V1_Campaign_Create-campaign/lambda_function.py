@@ -150,6 +150,16 @@ def insert_attachment(campaignId,attachment_type,documentPath,variableDocument,d
     table_document.put_item(Item=item)
 
 def lambda_handler(event, context):
+
+    # Compat mapping template no-proxy: si el payload llega como
+    # {body:{...}, requestContext:{...}}, se aplana el body al nivel de event
+    # (preservando requestContext para el context del Authorizer). Si ya viene
+    # plano (passthrough legacy), no hace nada.
+    if isinstance(event, dict) and isinstance(event.get("body"), dict):
+        _rc = event.get("requestContext")
+        event = dict(event["body"])
+        if _rc:
+            event["requestContext"] = _rc
     status = True
     description = "Campaña creada correctamente"
     statusCode = 201
