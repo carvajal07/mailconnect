@@ -127,11 +127,15 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Config/Get` | `{}` (**admin**) | 200 `data:{settings:[{key, label, group, type, default, value, isOverridden, consumers[]}]}` |
 | `Config/Set` | `{ key, value }` (**admin**) | 200 ok · 400 key/valor inválido. Crea `platformConfig` si no existe |
 | `Admin/Audit` | `{ month?, action?, actor? }` (**admin**) | 200 `data:{entries:[{date, actor, action, target, detail}], count, actions[], truncated}` (bitácora, solo lectura) |
-| `Balance/Get` | `{ limit? }` (tenant del token) | 200 `data:{customerId, balance, currency, transactions:[{txId, type, amount, balanceAfter, status, reference, detail, date}], count}` (saldo + movimientos del cliente) |
-| `Balance/Topup-manual` | `{ customerId, amount (COP>0), note? }` (**admin**) | 200 `data:{balance, txId}` · 400 · 403. Acredita saldo (crédito atómico) + ledger |
-| `Admin/Balances` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, balance, updatedAt}], totals:{balance}, count}` (saldo de todos, menor primero) |
+| `Balance/Get` | `{ limit? }` (tenant del token) | 200 `data:{customerId, balance, currency, transactions:[{txId, type, amount, balanceAfter, status, reference, bank, detail, rejectReason, createdAt}], count}` (saldo + movimientos; lee por GSI `customerId-createdAt-index` con fallback a Scan) |
+| `Balance/Topup-manual-request` | `{ amount (COP>0), proofS3Path, bank?, reference?, note? }` (tenant del token) | 201 `data:{txId, status:'pending'}` · 400 · 403. Crea la solicitud manual `pending` (no toca el saldo); el comprobante ya se subió a S3 (get-urlS3, documentType=document) |
+| `Balance/Topup-manual` | `{ customerId, amount (COP>0), note? }` (**admin**) | 200 `data:{balance, txId}` · 400 · 403. **Ajuste directo** (crédito) del admin — tipo `adjustment` (correcciones/cortesías); distinto de la solicitud del cliente |
+| `Admin/Topups` | `{ status? (pending\|approved\|declined\|all), month? }` (**admin**) | 200 `data:{topups:[{txId, customerId, company, amount, bank, reference, status, rejectReason, proofUrl, createdAt}], count}` (bandeja + URL prefirmada del comprobante) |
+| `Admin/Topup-approve` | `{ txId }` (**admin**) | 200 ok (idempotente si ya aprobada) · 404 · 409. `pending→approved` + acredita saldo en un `TransactWriteItems` atómico. Audita `balance.topup.approve` |
+| `Admin/Topup-reject` | `{ txId, reason }` (**admin**) | 200 ok · 400 · 404 · 409. `pending→declined` + motivo; no toca el saldo. Audita `balance.topup.reject` |
+| `Admin/Balances` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, balance, updatedAt}], totals:{balance}, recentTransactions[], count}` (saldo de todos, menor primero + ledger global) |
 | `Balance/Topup-init` | `{ amount (COP≥20000) }` (tenant del token) | 200 `data:{reference, amountInCents, currency, publicKey, signatureIntegrity, redirectUrl?}` · 400. Firma de integridad Wompi; crea el intento `pending` en el ledger |
-| `Wallet/Wompi-webhook` | **público/proxy sin authorizer** (evento Wompi firmado) | 200 ack. Verifica la firma del evento y acredita **idempotente** por `reference` (pending→approved); nunca acredita desde el redirect del navegador |
+| `Wallet/Wompi-webhook` | **público/proxy sin authorizer** (evento Wompi firmado) | 200 ack. Verifica la firma del evento y acredita **idempotente** por `reference` (pending→approved, `TransactWriteItems`); nunca acredita desde el redirect del navegador |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -376,9 +380,12 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
 ### Cobro PREPAGO / monedero (jul 2026)
 - **Modelo:** saldo por cliente en **COP** en la tabla `customerBalance` (PK `customerId`).
   **Todo** movimiento de dinero deja un registro en el **ledger auditable** `walletTransaction`
-  (PK `txId`; `type` ∈ `topup_manual|topup_wompi|debit|refund`, `amount` firmado, `balanceAfter`,
-  `reference`, `status`, `actor`, `detail`, `date`). Las operaciones de saldo son **atómicas y
-  condicionales** (UpdateItem con ADD / ConditionExpression), nunca leer-modificar-escribir.
+  (PK `txId` + GSI `customerId-createdAt-index` para el historial; `type` ∈
+  `topup_manual|topup_wompi|debit_send|refund_send|adjustment`, `amount` firmado, `balanceAfter`,
+  `status` (`pending|approved|declined`), `reference`, `bank`, `proofS3Path`, `rejectReason`,
+  `reviewedBy`, `processId/campaignId`, `actor`, `detail`, `createdAt`). Las operaciones de saldo
+  son **atómicas y condicionales** (UpdateItem con ADD / ConditionExpression / TransactWriteItems),
+  nunca leer-modificar-escribir.
 - **Débito en el envío real** (`Prepare-batch`, rama `preparar_split`): orden **gate manual
   (realSendEnabled) → lock (`try_start_real_send`) → reserva de saldo → troceo**. La reserva
   (`reserve_balance`) debita con `ConditionExpression balance >= costo` (**bloqueo DURO**, sin
@@ -388,19 +395,28 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   - **Base de cobro:** reserva sobre el **tamaño de la base** (`count_base_rows`, filas del CSV).
     La conciliación fina de fallidos/filtrados queda para una fase posterior.
   - **Costo:** misma fórmula/tarifas que `Api_V1_Cost_Estimate` (helper `_campaign_cost`
-    replicado como en `Billing_Summary`). ⚠️ **Sincronía:** si cambian `DEFAULT_RATES`/fórmula en
+    replicado como en `Billing_Summary`). El débito es `debit_send`; el reembolso `refund_send`; el
+    proceso guarda `chargedAmount`. ⚠️ **Sincronía:** si cambian `DEFAULT_RATES`/fórmula en
     Cost_Estimate, replicar en Prepare-batch/Billing/Pricing. No incluye recargo por MB de adjunto
     (igual que Billing) → el estimador del front es ≥ al débito (el gate de saldo nunca queda corto).
   - **Idempotencia:** el débito va **después** del lock; un reintento que choca con `AlreadySending`
     nunca vuelve a cobrar. **Fail-open de rollout:** si `customerBalance` aún no existe, no cobra
     (los envíos siguen); una vez creada la tabla, el bloqueo es duro.
-- **Recarga MANUAL (admin):** `Api_V1_Balance_Topup-manual` (crédito atómico + ledger; valida rol).
-- **Consultas:** `Api_V1_Balance_Get` (cliente: saldo + historial, tenant del token) y
-  `Api_V1_Admin_Balances` (admin: saldos de todos, menor primero). El saldo se precarga junto al
-  resto del portal (`PortalDataProvider`).
-- **Front:** portal → sección **Saldo/Recargas** (saldo + historial + Recargar) y aviso de **saldo
-  insuficiente** junto al `CostEstimate` (deshabilita "Enviar campaña real" si saldo < costo). Admin
-  → sección **Saldos** (ver saldos + recargar manual + movimientos).
+- **Recarga MANUAL (comprobante + aprobación):** el cliente sube el comprobante a S3 (get-urlS3,
+  documentType=document) y crea la solicitud con `Api_V1_Balance_Topup-manual-request` → queda
+  `pending` (NO toca el saldo). El admin la revisa en `Api_V1_Admin_Topups` (con URL prefirmada del
+  comprobante) y decide: `Api_V1_Admin_Topup-approve` (`pending→approved` + acredita en un
+  `TransactWriteItems` atómico e idempotente) o `Api_V1_Admin_Topup-reject` (`pending→declined` +
+  motivo, sin tocar el saldo). Auditado (`balance.topup.approve/reject`).
+- **Ajuste directo (admin):** `Api_V1_Balance_Topup-manual` acredita saldo **directo** (tipo
+  `adjustment`) para correcciones/cortesías, sin pasar por la bandeja de aprobación.
+- **Consultas:** `Api_V1_Balance_Get` (cliente: saldo + historial por GSI, tenant del token) y
+  `Api_V1_Admin_Balances` (admin: saldos de todos, menor primero + ledger global). El saldo se
+  precarga junto al resto del portal (`PortalDataProvider`).
+- **Front:** portal → sección **Saldo/Recargas** (saldo + historial + **Recargar con Wompi** +
+  **Registrar transferencia** con comprobante) y aviso de **saldo insuficiente** junto al
+  `CostEstimate` (deshabilita "Enviar campaña real" si saldo < costo). Admin → sección **Saldos**
+  (**bandeja de solicitudes** con ver-comprobante/Aprobar/Rechazar + saldos + ajuste directo + ledger).
 - **Recarga WOMPI (Fase 2):** `Api_V1_Balance_Topup-init` firma la integridad y crea el intento
   `pending`; `Api_V1_Wallet_Wompi-webhook` (público/proxy, sin authorizer) verifica la firma del
   evento y acredita **idempotente** por `reference` (condición `pending→approved`, con

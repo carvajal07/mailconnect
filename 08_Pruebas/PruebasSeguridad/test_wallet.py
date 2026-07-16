@@ -81,6 +81,10 @@ def _wallet_rows(customer_id=None):
     return rows
 
 
+def _tx(tx_id):
+    return _res().Table('walletTransaction').get_item(Key={'txId': tx_id}).get('Item')
+
+
 # --------------------------------------------------------------------------- #
 # Fixture de entorno completo (envío real con monedero)                        #
 # --------------------------------------------------------------------------- #
@@ -169,7 +173,7 @@ def test_debito_suficiente_cobra_y_procede(env):
     assert _get_balance('CU1') == 100000 - EXPECTED_COST
 
     # Ledger: 1 movimiento de débito, negativo, con reference = processId.
-    debits = [r for r in _wallet_rows('CU1') if r.get('type') == 'debit']
+    debits = [r for r in _wallet_rows('CU1') if r.get('type') == 'debit_send']
     assert len(debits) == 1
     assert int(debits[0]['amount']) == -EXPECTED_COST
     assert int(debits[0]['balanceAfter']) == 100000 - EXPECTED_COST
@@ -190,7 +194,7 @@ def test_debito_insuficiente_bloquea_402(env):
     assert _drain(boto3.client('sqs', region_name='us-east-1'), part_url) == []
     # El saldo quedó INTACTO (no hubo débito parcial) y no hay movimientos.
     assert _get_balance('CU1') == 1000
-    assert [r for r in _wallet_rows('CU1') if r.get('type') == 'debit'] == []
+    assert [r for r in _wallet_rows('CU1') if r.get('type') == 'debit_send'] == []
 
 
 def test_reserve_balance_atomico_no_sobregira(env):
@@ -208,7 +212,7 @@ def test_reserve_balance_atomico_no_sobregira(env):
         pb.reserve_balance(st, 6000, 'Promo')
     # Solo se debitó una vez.
     assert _get_balance('CU1') == 4000
-    debits = [r for r in _wallet_rows('CU1') if r.get('type') == 'debit']
+    debits = [r for r in _wallet_rows('CU1') if r.get('type') == 'debit_send']
     assert len(debits) == 1
 
 
@@ -242,7 +246,7 @@ def test_compensacion_reembolsa_si_troceo_falla(env, monkeypatch):
     # El saldo se reembolsó por completo (débito + reembolso = neto 0).
     assert _get_balance('CU1') == 100000
     tipos = sorted(r.get('type') for r in _wallet_rows('CU1'))
-    assert tipos == ['debit', 'refund']
+    assert tipos == ['debit_send', 'refund_send']
 
 
 def test_muestras_no_cobran(env):
@@ -267,13 +271,34 @@ def test_muestras_no_cobran(env):
 # --------------------------------------------------------------------------- #
 # Recarga manual (admin) + consultas de saldo                                  #
 # --------------------------------------------------------------------------- #
+def _mk_wallet_with_gsi(ddb):
+    """walletTransaction con el GSI customerId-createdAt-index (que usa Balance_Get)."""
+    ddb.create_table(
+        TableName='walletTransaction',
+        KeySchema=[{'AttributeName': 'txId', 'KeyType': 'HASH'}],
+        AttributeDefinitions=[
+            {'AttributeName': 'txId', 'AttributeType': 'S'},
+            {'AttributeName': 'customerId', 'AttributeType': 'S'},
+            {'AttributeName': 'createdAt', 'AttributeType': 'S'},
+        ],
+        GlobalSecondaryIndexes=[{
+            'IndexName': 'customerId-createdAt-index',
+            'KeySchema': [
+                {'AttributeName': 'customerId', 'KeyType': 'HASH'},
+                {'AttributeName': 'createdAt', 'KeyType': 'RANGE'},
+            ],
+            'Projection': {'ProjectionType': 'ALL'},
+        }],
+        BillingMode='PAY_PER_REQUEST')
+
+
 @pytest.fixture
 def wallet_env():
     with mock_aws():
         ddb = boto3.client('dynamodb', region_name='us-east-1')
         res = _res()
         _mk_table(ddb, 'customerBalance', [('customerId', 'HASH')])
-        _mk_table(ddb, 'walletTransaction', [('txId', 'HASH')])
+        _mk_wallet_with_gsi(ddb)
         _mk_table(ddb, 'customer', [('customerId', 'HASH')])
         _mk_table(ddb, 'adminAudit', [('auditId', 'HASH')])
         res.Table('customer').put_item(Item={'customerId': 'CU1', 'company': 'empresa', 'companyTin': '900123'})
@@ -282,6 +307,10 @@ def wallet_env():
             'topup': _load('bal_topup_mod', 'Api_V1_Balance_Topup-manual'),
             'get': _load('bal_get_mod', 'Api_V1_Balance_Get'),
             'admin': _load('bal_admin_mod', 'Api_V1_Admin_Balances'),
+            'request': _load('bal_req_mod', 'Api_V1_Balance_Topup-manual-request'),
+            'topups': _load('bal_topups_mod', 'Api_V1_Admin_Topups'),
+            'approve': _load('bal_approve_mod', 'Api_V1_Admin_Topup-approve'),
+            'reject': _load('bal_reject_mod', 'Api_V1_Admin_Topup-reject'),
         }
 
 
@@ -300,7 +329,7 @@ def test_topup_manual_acredita_y_registra(wallet_env):
     assert _get_balance('CU1') == 50000
     rows = _wallet_rows('CU1')
     assert len(rows) == 1
-    assert rows[0]['type'] == 'topup_manual' and int(rows[0]['amount']) == 50000
+    assert rows[0]['type'] == 'adjustment' and int(rows[0]['amount']) == 50000
     assert int(rows[0]['balanceAfter']) == 50000
 
     # Segunda recarga: suma sobre el saldo existente (crédito atómico).
@@ -353,7 +382,84 @@ def test_admin_balances_lista_todos(wallet_env):
     recent = resp['data']['recentTransactions']
     assert len(recent) == 1
     assert recent[0]['customerId'] == 'CU1' and recent[0]['company'] == 'empresa'
-    assert recent[0]['type'] == 'topup_manual' and recent[0]['amount'] == 30000
+    assert recent[0]['type'] == 'adjustment' and recent[0]['amount'] == 30000
     # No admin → 403.
     no_admin = {'body': {}, 'requestContext': {'authorizer': {'role': 'client'}}}
     assert admin.lambda_handler(no_admin, None)['statusCode'] == 403
+
+
+# --------------------------------------------------------------------------- #
+# Recarga manual con comprobante + revisión/aprobación                         #
+# --------------------------------------------------------------------------- #
+def _request_event(body, customer_id='CU1', user='cliente@empresa.com'):
+    return {'body': body, 'requestContext': {'authorizer': {'customerId': customer_id, 'user': user}}}
+
+
+def test_topup_request_crea_pending_sin_tocar_saldo(wallet_env):
+    req = wallet_env['request']
+    resp = req.lambda_handler(_request_event(
+        {'amount': 80000, 'proofS3Path': '2026-07-16/comprobante.png', 'bank': 'Bancolombia', 'reference': 'TRX-1'}), None)
+    assert resp['statusCode'] == 201 and resp['data']['status'] == 'pending'
+    tx = _tx(resp['data']['txId'])
+    assert tx['type'] == 'topup_manual' and tx['status'] == 'pending'
+    assert int(tx['amount']) == 80000 and tx['proofS3Path'] == '2026-07-16/comprobante.png'
+    assert tx['proofBucket'] == 'mailconnect-900123-document'   # derivado del NIT del cliente
+    assert _get_balance('CU1') is None                          # el saldo NO cambió
+
+
+def test_topup_request_valida_comprobante_monto_sesion(wallet_env):
+    req = wallet_env['request']
+    # Sin comprobante → 400.
+    assert req.lambda_handler(_request_event({'amount': 50000}), None)['statusCode'] == 400
+    # Monto 0/negativo → 400.
+    assert req.lambda_handler(_request_event({'amount': 0, 'proofS3Path': 'x.png'}), None)['statusCode'] == 400
+    # Sin sesión → 403.
+    assert req.lambda_handler({'body': {'amount': 50000, 'proofS3Path': 'x.png'}, 'requestContext': {'authorizer': {}}}, None)['statusCode'] == 403
+
+
+def test_admin_topups_lista_pendientes_con_comprobante(wallet_env):
+    req, topups = wallet_env['request'], wallet_env['topups']
+    req.lambda_handler(_request_event({'amount': 80000, 'proofS3Path': '2026-07-16/comp.png'}), None)
+    resp = topups.lambda_handler(_admin_event({'status': 'pending'}), None)
+    assert resp['statusCode'] == 200 and resp['data']['count'] == 1
+    row = resp['data']['topups'][0]
+    assert row['company'] == 'empresa' and row['amount'] == 80000 and row['status'] == 'pending'
+    assert row['proofUrl'].startswith('https://')   # URL prefirmada de lectura
+    # No admin → 403.
+    assert topups.lambda_handler(_request_event({}), None)['statusCode'] == 403
+
+
+def test_topup_approve_acredita_e_idempotente(wallet_env):
+    req, approve = wallet_env['request'], wallet_env['approve']
+    tx_id = req.lambda_handler(_request_event({'amount': 80000, 'proofS3Path': 'c.png'}), None)['data']['txId']
+
+    r1 = approve.lambda_handler(_admin_event({'txId': tx_id}), None)
+    assert r1['statusCode'] == 200 and r1['data']['balance'] == 80000
+    assert _get_balance('CU1') == 80000
+    tx = _tx(tx_id)
+    assert tx['status'] == 'approved' and int(tx['balanceAfter']) == 80000 and tx['reviewedBy'] == 'boss'
+
+    # Idempotencia: aprobar de nuevo NO vuelve a acreditar.
+    r2 = approve.lambda_handler(_admin_event({'txId': tx_id}), None)
+    assert r2['statusCode'] == 200 and r2['data'].get('alreadyApproved') is True
+    assert _get_balance('CU1') == 80000
+    # No admin → 403.
+    assert approve.lambda_handler(_request_event({'txId': tx_id}), None)['statusCode'] == 403
+
+
+def test_topup_reject_no_acredita(wallet_env):
+    req, reject, approve = wallet_env['request'], wallet_env['reject'], wallet_env['approve']
+    tx_id = req.lambda_handler(_request_event({'amount': 80000, 'proofS3Path': 'c.png'}), None)['data']['txId']
+
+    # Rechazar requiere motivo.
+    assert reject.lambda_handler(_admin_event({'txId': tx_id}), None)['statusCode'] == 400
+    resp = reject.lambda_handler(_admin_event({'txId': tx_id, 'reason': 'Comprobante ilegible'}), None)
+    assert resp['statusCode'] == 200
+    tx = _tx(tx_id)
+    assert tx['status'] == 'declined' and tx['rejectReason'] == 'Comprobante ilegible'
+    assert _get_balance('CU1') is None   # el saldo NO cambió
+
+    # Ya rechazada: no se puede aprobar (409).
+    assert approve.lambda_handler(_admin_event({'txId': tx_id}), None)['statusCode'] == 409
+    # No admin → 403.
+    assert reject.lambda_handler(_request_event({'txId': tx_id, 'reason': 'x'}), None)['statusCode'] == 403

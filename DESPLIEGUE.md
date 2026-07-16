@@ -377,37 +377,56 @@ Lo que queda por hacer en el repo (no es despliegue):
 
 ### 10.1 Tablas DynamoDB nuevas (On-Demand)
 - [ ] `[J]` `customerBalance` (PK `customerId` S) — saldo actual en COP.
-- [ ] `[J]` `walletTransaction` (PK `txId` S) — ledger de movimientos (recargas/débitos/
-  reembolsos). En Wompi, `txId` de la recarga **= la `reference`** (idempotencia del webhook).
-  - _A futuro:_ GSI `customerId`+`date` para el historial O(log n) (hoy `Balance_Get` usa
-    Scan+Filter; el ledger es chico al inicio).
+- [ ] `[J]` `walletTransaction` (PK `txId` S) **+ GSI `customerId-createdAt-index`** (PK
+  `customerId` S + SK `createdAt` S, Projection ALL) — ledger de movimientos (recargas manuales/
+  Wompi, débitos/reembolsos de envío, ajustes). En Wompi/manual, `txId` de la recarga **= la
+  `reference`** (idempotencia del webhook/aprobación). El GSI sirve el historial del cliente
+  (`Balance_Get` hace Query por el índice; si falta, cae a Scan+Filter → se puede desplegar el
+  código antes que el índice). Ya declarado en `infra/terraform/dynamodb.tf`.
 
-### 10.2 Lambdas nuevas + rutas + permisos (Fase 1)
+### 10.2 Lambdas nuevas + rutas + permisos
 Crear la **función vacía** (mismo nombre de carpeta) antes del primer push (la actualiza el CD).
 
-| Lambda | Ruta | Admin | Permisos IAM (DynamoDB) |
-|--------|------|-------|-------------------------|
-| `Api_V1_Balance_Get` | `/Balance/Get` | no (cliente) | `GetItem` sobre `customerBalance`; `Scan` sobre `walletTransaction` |
-| `Api_V1_Balance_Topup-manual` | `/Balance/Topup-manual` | **sí** | `UpdateItem` sobre `customerBalance`; `PutItem` sobre `walletTransaction`; `PutItem` sobre `adminAudit` |
-| `Api_V1_Admin_Balances` | `/Admin/Balances` | **sí** | `Scan` sobre `customer` y `customerBalance` |
+| Lambda | Ruta | Admin | Permisos IAM |
+|--------|------|-------|--------------|
+| `Api_V1_Balance_Get` | `/Balance/Get` | no (cliente) | `GetItem` sobre `customerBalance`; `Query`(GSI)/`Scan` sobre `walletTransaction` |
+| `Api_V1_Balance_Topup-manual-request` | `/Balance/Topup-manual-request` | no (cliente) | `GetItem` sobre `customer`; `PutItem` sobre `walletTransaction`. El comprobante se sube con `get-urlS3` (documentType=document) al bucket `{prefix}-{nit}-document` |
+| `Api_V1_Balance_Topup-manual` | `/Balance/Topup-manual` | **sí** | `UpdateItem` sobre `customerBalance`; `PutItem` sobre `walletTransaction`/`adminAudit` (**ajuste directo**, tipo `adjustment`) |
+| `Api_V1_Admin_Topups` | `/Admin/Topups` | **sí** | `Scan` sobre `walletTransaction`/`customer`; **`s3:GetObject`** (URL prefirmada del comprobante) |
+| `Api_V1_Admin_Topup-approve` | `/Admin/Topup-approve` | **sí** | `GetItem`/`UpdateItem` sobre `walletTransaction`; `UpdateItem` sobre `customerBalance`; **`dynamodb:TransactWriteItems`**; `PutItem` sobre `adminAudit` |
+| `Api_V1_Admin_Topup-reject` | `/Admin/Topup-reject` | **sí** | `GetItem`/`UpdateItem` sobre `walletTransaction`; `PutItem` sobre `adminAudit` |
+| `Api_V1_Admin_Balances` | `/Admin/Balances` | **sí** | `Scan` sobre `customer`/`customerBalance`/`walletTransaction` |
 
-- [ ] `[J]` Crear las 3 funciones vacías + sus rutas (ya están en `infra/api/routes.json`,
-  el workflow `deploy-api.yml` las crea) + permisos. `/Balance/Get` es **de cliente** (tenant
-  del token); `/Balance/Topup-manual` y `/Admin/Balances` son **admin** (mapping template de `role`).
-- [ ] `[J]` Confirmar el **Authorizer** en las 3 rutas.
+- [ ] `[J]` Crear las 7 funciones vacías + sus rutas (ya están en `infra/api/routes.json`,
+  el workflow `deploy-api.yml` las crea) + permisos. `/Balance/Get` y `/Balance/Topup-manual-request`
+  son **de cliente** (tenant del token); el resto son **admin** (mapping template de `role`).
+- [ ] `[J]` Confirmar el **Authorizer** en las 7 rutas.
+- [ ] `[J]` `s3:GetObject` para `Admin_Topups` (ver comprobante) y `dynamodb:TransactWriteItems`
+  para `Admin_Topup-approve` (ya cubiertos por la política amplia de `infra/terraform/iam.tf`).
+
+> **Recarga manual = comprobante + aprobación:** el cliente sube el comprobante y crea la
+> solicitud (`Topup-manual-request`, `status='pending'`, NO toca el saldo); el admin la revisa
+> (`Admin_Topups`) y **aprueba** (`Admin_Topup-approve`: `pending→approved` + acredita en un
+> `TransactWriteItems`) o **rechaza** (`Admin_Topup-reject`: `pending→declined` + motivo). El
+> `Topup-manual` queda como **ajuste directo** del admin (correcciones/cortesías).
 
 ### 10.3 Lambda EXISTENTE modificada (débito) — redesplegar
 - [ ] `[J]` `Api_V1_Email_Prepare-batch-template`: en el **envío real** debita el saldo
   (orden gate manual → lock → **reserva de saldo** → troceo; 402 si no alcanza; reembolso si
-  el troceo falla). Permisos extra: `UpdateItem` sobre `customerBalance`, `PutItem` sobre
+  el troceo falla). El débito es `debit_send`, el reembolso `refund_send`, y el proceso guarda
+  `chargedAmount`. Permisos extra: `UpdateItem` sobre `customerBalance`, `PutItem` sobre
   `walletTransaction`, `GetItem` sobre `pricingRate`. **Fail-open de rollout:** si la tabla
   `customerBalance` **aún no existe**, NO cobra (los envíos siguen); una vez creada, el
   bloqueo por saldo es **DURO**. Por eso: **crear `customerBalance` ANTES** de considerar el
   cobro activo.
 
-### 10.4 Verificación post-deploy (Fase 1)
-- [ ] `[J]` Admin recarga a un cliente (`/Balance/Topup-manual`) → `/Admin/Balances` refleja el saldo.
-- [ ] `[J]` Cliente ve su saldo/movimientos en el portal (`/Balance/Get`).
+### 10.4 Verificación post-deploy
+- [ ] `[J]` Cliente registra una recarga por transferencia (sube comprobante) → aparece en
+  `/Admin/Topups` como **pendiente** (saldo sin cambios).
+- [ ] `[J]` Admin **aprueba** → el saldo sube y la tx queda `approved`; **rechaza** → `declined`
+  con motivo, saldo sin cambios. Aprobar/rechazar dos veces es idempotente.
+- [ ] `[J]` Admin hace un **ajuste directo** (`/Balance/Topup-manual`) → crédito inmediato (`adjustment`).
+- [ ] `[J]` Cliente ve su saldo/movimientos y el estado de sus solicitudes en el portal (`/Balance/Get`).
 - [ ] `[J]` Envío real con saldo suficiente → descuenta el costo y aparece en el ledger.
 - [ ] `[J]` Envío real con saldo insuficiente → **402** y la campaña sigue en `Pendiente`.
 

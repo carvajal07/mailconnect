@@ -147,7 +147,7 @@ def test_webhook_aprobado_acredita(wompi):
     assert _balance('CU1') == 50000
     tx = _tx('mc-ref-1')
     assert tx['status'] == 'approved' and int(tx['balanceAfter']) == 50000
-    assert tx['wompiId'] == 'wompi-1'
+    assert tx['wompiTransactionId'] == 'wompi-1'
 
 
 def test_webhook_firma_invalida_no_acredita(wompi):

@@ -13,24 +13,27 @@ import {
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import AddCardIcon from '@mui/icons-material/AddCard';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import { usePortalData } from '../../context/PortalDataContext';
 import { formatCOP } from '../../services/costService';
 import { useFeedback } from '../../hooks/useFeedback';
 import { WalletTxTable } from './WalletTxTable';
 import { RechargeDialog } from './RechargeDialog';
+import { ManualRechargeDialog } from './ManualRechargeDialog';
 
 /**
  * Sección SALDO / RECARGAS del portal del cliente (cobro PREPAGO). Muestra el saldo del
  * monedero y el historial de movimientos (recargas / envíos / reembolsos). El saldo se
  * precarga en el login (PortalDataProvider) y se puede refrescar.
  *
- * La recarga en línea con Wompi (botón "Recargar") se habilita en la Fase 2; por ahora
- * las recargas las hace el administrador (Api_V1_Balance_Topup-manual).
+ * Dos formas de recargar: en línea con Wompi (tarjeta/PSE/Nequi) o por transferencia
+ * (sube el comprobante → queda pendiente de aprobación del admin).
  */
 export const SaldoSection = () => {
   const { balance, refreshBalance } = usePortalData();
   const { notify, FeedbackSnackbar } = useFeedback();
   const [rechargeOpen, setRechargeOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
 
   return (
     <Box>
@@ -77,11 +80,17 @@ export const SaldoSection = () => {
         <Divider sx={{ my: 2 }} />
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }} justifyContent="space-between">
           <Typography variant="body2" color="text.secondary">
-            Recarga en línea con Wompi (pago seguro con tarjeta, PSE, Nequi y más).
+            Recarga <strong>en línea con Wompi</strong> (tarjeta/PSE/Nequi) o <strong>por transferencia</strong>
+            &nbsp;(sube el comprobante y un administrador la aprueba).
           </Typography>
-          <Button variant="contained" startIcon={<AddCardIcon />} onClick={() => setRechargeOpen(true)}>
-            Recargar saldo
-          </Button>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+            <Button variant="contained" startIcon={<AddCardIcon />} onClick={() => setRechargeOpen(true)}>
+              Recargar con Wompi
+            </Button>
+            <Button variant="outlined" startIcon={<ReceiptLongIcon />} onClick={() => setManualOpen(true)}>
+              Registrar transferencia
+            </Button>
+          </Stack>
         </Stack>
       </Paper>
 
@@ -91,6 +100,12 @@ export const SaldoSection = () => {
       <RechargeDialog
         open={rechargeOpen}
         onClose={() => setRechargeOpen(false)}
+        onDone={refreshBalance}
+        notify={notify}
+      />
+      <ManualRechargeDialog
+        open={manualOpen}
+        onClose={() => setManualOpen(false)}
         onDone={refreshBalance}
         notify={notify}
       />

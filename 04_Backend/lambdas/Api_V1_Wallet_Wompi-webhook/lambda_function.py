@@ -145,7 +145,7 @@ def _credit_approved(reference, wompi_id, amount_cents):
             {'Update': {
                 'TableName': 'walletTransaction',
                 'Key': {'txId': {'S': reference}},
-                'UpdateExpression': 'SET #s = :approved, wompiId = :wid, approvedAt = :now',
+                'UpdateExpression': 'SET #s = :approved, wompiTransactionId = :wid, approvedAt = :now',
                 'ConditionExpression': '#s = :pending',
                 'ExpressionAttributeNames': {'#s': 'status'},
                 'ExpressionAttributeValues': {

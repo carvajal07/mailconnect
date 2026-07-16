@@ -15,6 +15,9 @@
     { "path": "/Admin/Requeue",            "lambda": "Api_V1_Admin_Requeue",            "admin": true },
     { "path": "/Admin/Audit",              "lambda": "Api_V1_Admin_Audit",              "admin": true },
     { "path": "/Admin/Balances",           "lambda": "Api_V1_Admin_Balances",           "admin": true },
+    { "path": "/Admin/Topups",             "lambda": "Api_V1_Admin_Topups",             "admin": true },
+    { "path": "/Admin/Topup-approve",      "lambda": "Api_V1_Admin_Topup-approve",      "admin": true },
+    { "path": "/Admin/Topup-reject",       "lambda": "Api_V1_Admin_Topup-reject",       "admin": true },
     { "path": "/Config/Get",               "lambda": "Api_V1_Config_Get",               "admin": true },
     { "path": "/Config/Set",               "lambda": "Api_V1_Config_Set",               "admin": true },
     { "path": "/Balance/Topup-manual",     "lambda": "Api_V1_Balance_Topup-manual",     "admin": true },
@@ -40,6 +43,7 @@
     { "path": "/Cost/Estimate",            "lambda": "Api_V1_Cost_Estimate" },
     { "path": "/Balance/Get",              "lambda": "Api_V1_Balance_Get" },
     { "path": "/Balance/Topup-init",       "lambda": "Api_V1_Balance_Topup-init" },
+    { "path": "/Balance/Topup-manual-request", "lambda": "Api_V1_Balance_Topup-manual-request" },
     { "path": "/Portal/Bootstrap",         "lambda": "Api_V1_Portal_Bootstrap" },
 
     { "path": "/Wallet/Wompi-webhook",     "lambda": "Api_V1_Wallet_Wompi-webhook", "auth": false, "proxy": true, "cors": false }
