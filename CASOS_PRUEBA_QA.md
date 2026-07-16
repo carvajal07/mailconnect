@@ -184,12 +184,16 @@
 | CP-PAY-02 | 🟡 | Saldo precargado | Login → entrar al portal | El saldo ya está disponible (precarga/bootstrap), sin espera |
 | CP-PAY-03 | 🟡 | Historial (ledger) | Ver movimientos | Cada cambio de saldo tiene su `walletTransaction` (recarga/débito/reembolso) con saldo resultante |
 
-### 10.2 Recarga manual (admin)
+### 10.2 Recarga manual (comprobante + revisión/aprobación)
 | ID | Prioridad | Caso | Pasos | Resultado esperado |
 |----|-----------|------|-------|--------------------|
-| CP-PAY-04 | 🔴 | Recarga manual | Admin acredita $X a un cliente | Saldo sube $X; se crea `topup_manual` (approved); se audita `balance.topup` |
-| CP-PAY-05 | 🟡 | Solo admin | Cliente intenta la recarga manual | 403 |
-| CP-PAY-06 | 🟢 | Monto inválido | Recargar 0 / negativo | 400 |
+| CP-PAY-04 | 🔴 | Cliente registra solicitud | Cliente: "Registrar recarga" → monto + banco/referencia + **subir comprobante** | Se crea solicitud `topup_manual` **pending** con `proofS3Path`; el saldo **no** cambia aún |
+| CP-PAY-05 | 🔴 | Admin aprueba | Admin abre la bandeja, ve el comprobante, **Aprobar** | Saldo sube $X; tx `approved`; se audita `balance.topup.approve` |
+| CP-PAY-06 | 🔴 | Admin rechaza | Admin **Rechazar** con motivo | Saldo **no** cambia; tx `declined` con motivo; se audita `balance.topup.reject` |
+| CP-PAY-07b | 🔴 | Idempotencia aprobar | Aprobar la misma solicitud dos veces (doble clic) | Acredita **una sola vez** (condición `status='pending'`) |
+| CP-PAY-08b | 🟡 | Cliente ve el estado | Cliente revisa su historial tras aprobación/rechazo | Ve pendiente → aprobada / rechazada (con motivo) |
+| CP-PAY-09b | 🟡 | Solo admin aprueba | Cliente intenta aprobar/rechazar | 403 |
+| CP-PAY-10b | 🟢 | Comprobante obligatorio / monto inválido | Solicitud sin comprobante o monto 0/negativo | 400 |
 
 ### 10.3 Recarga Wompi
 | ID | Prioridad | Caso | Pasos | Resultado esperado |

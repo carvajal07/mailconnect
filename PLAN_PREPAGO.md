@@ -64,12 +64,19 @@
 | `amount` | N | + para recargas/reembolsos, − para débitos (COP). |
 | `balanceAfter` | N | Saldo tras el movimiento (trazabilidad/conciliación). |
 | `status` | S | `pending` · `approved` · `declined` · `void`. |
-| `reference` | S | Referencia única (para Wompi = idempotencia del webhook). |
+| `reference` | S | Referencia única (para Wompi = idempotencia del webhook; en manual, la referencia bancaria). |
 | `wompiTransactionId` | S | Id de la transacción en Wompi (si aplica). |
+| `proofS3Path` | S | Ruta del **comprobante** en S3 (recarga manual). |
+| `bank` | S | Banco/medio de la transferencia (recarga manual, opcional). |
+| `rejectReason` | S | Motivo del rechazo (recarga manual rechazada). |
+| `reviewedBy` | S | Admin que aprobó/rechazó la solicitud manual. |
 | `processId` / `campaignId` | S | Para débitos/reembolsos de envío (traza al proceso). |
 | `actor` | S | Quién (email/admin) originó el movimiento. |
 | `detail` | S | Descripción legible. |
 | `createdAt` | S | ISO. |
+
+> **Recarga manual:** la solicitud nace con `status='pending'` (sin tocar el saldo) y solo al
+> **aprobarse** pasa a `approved` + suma al `balance`. Si se rechaza, `declined` (nunca toca el saldo).
 
 > **Regla de oro:** cada cambio de `balance` escribe **siempre** un `walletTransaction`. El saldo
 > es un cache del acumulado del ledger; ante dudas, el ledger manda (auditable, conciliable).
@@ -134,15 +141,42 @@ responde **402 Payment Required** con mensaje claro ("Saldo insuficiente: necesi
 
 ---
 
-## 5. Recarga MANUAL (admin) — MVP sin pasarela
+## 5. Recarga MANUAL (comprobante + revisión/aprobación) — MVP sin pasarela
 
-Flujo: el cliente consigna/transfiere → el admin acredita desde el panel.
+> El cliente consigna/transfiere por fuera del sistema, **sube el comprobante** desde el
+> portal y crea una **solicitud pendiente**; el admin la **revisa contra el extracto** y
+> **aprueba o rechaza**. Recién al **aprobar** se acredita el saldo. Autoservicio (el cliente
+> hace la captura) + control anti-fraude (el admin verifica antes de acreditar) + trazabilidad
+> (el comprobante queda adjunto en S3). **No** requiere tabla nueva: se reusa el `status`
+> (`pending`→`approved`/`declined`) de `walletTransaction`.
 
-- **Lambda `Api_V1_Balance_Topup-manual`** (admin): `{ customerId, amount, reference?, note? }`
-  - `ADD balance :amount` (atómico) + `walletTransaction(type='topup_manual', status='approved')`.
-  - Audita en `adminAudit` (`balance.topup`, actor = admin, detalle = monto + referencia).
-- Ruta `/Balance/Topup-manual` (admin-only, authorizer + CORS).
-- **Sirve desde el día 1** para operar sin depender de Wompi (elimina el riesgo de cartera ya).
+### 5.1 Cliente crea la solicitud
+- **`Api_V1_Balance_Topup-manual-request`** (cliente): `{ amount, bank?, reference?, note? }`.
+  - Sube el **comprobante** a S3 (imagen/PDF) reusando el `get-urlS3` que ya usan bases/adjuntos
+    (`documentType=document`); guarda su ruta en `proofS3Path`.
+  - Crea `walletTransaction(type='topup_manual', status='pending', amount, proofS3Path, actor=cliente)`.
+  - **NO** toca el saldo todavía. El tenant sale del token (Authorizer).
+- Ruta `/Balance/Topup-manual-request` (cliente, authorizer + CORS).
+
+### 5.2 Admin revisa y decide
+- **`Api_V1_Admin_Topups`** (admin): lista las solicitudes **pendientes** (y por estado/mes) con
+  el enlace al comprobante (URL prefirmada de lectura), empresa, monto, banco/referencia y fecha.
+- **`Api_V1_Admin_Topup-approve`** (admin): `{ txId }`
+  - Condicional `status='pending' → 'approved'` (idempotente: si ya no está pendiente, no repite);
+    **solo si esa transición pasó**, `ADD balance :amount` (atómico) y setea `balanceAfter`.
+  - Audita `balance.topup.approve` (actor = admin, empresa, monto).
+- **`Api_V1_Admin_Topup-reject`** (admin): `{ txId, reason }`
+  - Condicional `status='pending' → 'declined'` con el motivo. **No** toca el saldo. Audita
+    `balance.topup.reject`.
+- Rutas `/Admin/Topups`, `/Admin/Topup-approve`, `/Admin/Topup-reject` (admin-only, authorizer + CORS).
+
+### 5.3 Notas
+- **Idempotencia:** aprobar/rechazar usa `ConditionExpression status = 'pending'`, así un doble
+  clic o reintento no acredita/rechaza dos veces.
+- **Sirve desde el día 1** sin depender de Wompi (elimina el riesgo de cartera ya), y deja el
+  comprobante guardado para soporte/contabilidad.
+- (Opcional) el cliente ve el **estado de su solicitud** (pendiente/aprobada/rechazada + motivo)
+  en su historial de movimientos.
 
 ---
 
@@ -198,10 +232,13 @@ Flujo: el cliente consigna/transfiere → el admin acredita desde el panel.
 
 | Ruta | Lambda | Rol | Notas |
 |------|--------|-----|-------|
-| `/Balance/Get` | `Api_V1_Balance_Get` | cliente | Saldo + últimos movimientos (tenant del token). |
+| `/Balance/Get` | `Api_V1_Balance_Get` | cliente | Saldo + últimos movimientos/solicitudes (tenant del token). |
 | `/Balance/Topup-init` | `Api_V1_Balance_Topup-init` | cliente | Crea tx pending + firma para el Widget Wompi. |
+| `/Balance/Topup-manual-request` | `Api_V1_Balance_Topup-manual-request` | cliente | Sube comprobante a S3 + crea solicitud manual **pendiente**. |
 | `/Wallet/Wompi-webhook` | `Api_V1_Wallet_Wompi-webhook` | **público (proxy, sin authorizer)** | Verifica firma → acredita. |
-| `/Balance/Topup-manual` | `Api_V1_Balance_Topup-manual` | **admin** | Recarga manual (consignación). |
+| `/Admin/Topups` | `Api_V1_Admin_Topups` | **admin** | Bandeja de solicitudes manuales (pendientes/por estado) + enlace al comprobante. |
+| `/Admin/Topup-approve` | `Api_V1_Admin_Topup-approve` | **admin** | Aprueba una solicitud manual → acredita saldo. |
+| `/Admin/Topup-reject` | `Api_V1_Admin_Topup-reject` | **admin** | Rechaza una solicitud manual (con motivo). |
 | `/Admin/Balances` | `Api_V1_Admin_Balances` | **admin** | Lista saldos + movimientos por cliente. |
 
 > El **débito** vive dentro de `Prepare-batch` (no es una ruta).
@@ -211,8 +248,13 @@ Flujo: el cliente consigna/transfiere → el admin acredita desde el panel.
 ## 8. Frontend
 
 **Portal (cliente)**
-- Sección **"Saldo / Recargas"**: saldo actual (chip), botón **Recargar** (abre Widget Wompi),
-  historial de movimientos (de `Balance/Get`).
+- Sección **"Saldo / Recargas"**: saldo actual (chip), historial de movimientos (de `Balance/Get`),
+  y **dos formas de recargar**:
+  - **Con tarjeta/PSE (Wompi):** botón que abre el Widget.
+  - **Por transferencia (manual):** formulario "Registrar recarga" con monto + banco/referencia +
+    **subir comprobante** (imagen/PDF) → crea la solicitud **pendiente** (`Topup-manual-request`).
+- El historial muestra el **estado de cada solicitud manual**: pendiente / aprobada / rechazada
+  (con motivo).
 - Precargar el saldo en `PortalDataProvider` (o incluirlo en `/Portal/Bootstrap`) para tenerlo
   al instante tras el login.
 - En **Muestras/Envío real**: junto al `Cost_Estimate` ya existente, mostrar
@@ -220,8 +262,11 @@ Flujo: el cliente consigna/transfiere → el admin acredita desde el panel.
   aviso y enlace a Recargar. El backend igual bloquea (defensa doble).
 
 **Admin**
-- Sección **"Saldos"**: tabla de clientes con su saldo, botón **Recargar manual**, ver movimientos.
-- Reusa el patrón de `ClientesSection`/auditoría.
+- Sección **"Saldos y recargas"**:
+  - **Bandeja de solicitudes manuales pendientes** (`Admin/Topups`): empresa, monto, banco/referencia,
+    fecha y **ver comprobante** (URL prefirmada); botones **Aprobar** / **Rechazar** (con motivo).
+  - Tabla de **saldos por cliente** (`Admin/Balances`) + ver movimientos.
+- Reusa el patrón de `ClientesSection`/auditoría y del visor de adjuntos.
 
 ---
 
@@ -243,10 +288,12 @@ Flujo: el cliente consigna/transfiere → el admin acredita desde el panel.
 
 ## 10. Fases de implementación (orden sugerido)
 
-1. **Fase 1 — Monedero + manual + débito (núcleo, sin pasarela):**
-   Tablas `customerBalance` + `walletTransaction`; `Balance/Get`, `Balance/Topup-manual`,
-   `Admin/Balances`; débito atómico + `InsufficientBalance` en `Prepare-batch`; UI portal (saldo,
-   aviso) + admin (recargas manuales). **Ya elimina el riesgo de cartera.**
+1. **Fase 1 — Monedero + recarga manual (comprobante+revisión) + débito (núcleo, sin pasarela):**
+   Tablas `customerBalance` + `walletTransaction`; `Balance/Get`, `Balance/Topup-manual-request`
+   (cliente sube comprobante), `Admin/Topups` + `Admin/Topup-approve` + `Admin/Topup-reject`
+   (bandeja de revisión), `Admin/Balances`; débito atómico + `InsufficientBalance` en
+   `Prepare-batch`; UI portal (saldo, registrar recarga con comprobante, aviso) + admin (bandeja
+   de solicitudes + saldos). **Ya elimina el riesgo de cartera.**
 2. **Fase 2 — Wompi:** `Balance/Topup-init` + `Wallet/Wompi-webhook` (firma + idempotencia) +
    Widget en el portal.
 3. **Fase 3 — Conciliación:** reembolso automático de filtrados/fallidos sobre el envío real
@@ -262,7 +309,10 @@ Flujo: el cliente consigna/transfiere → el admin acredita desde el panel.
   (402), **no** se trocea y el lock se libera; concurrencia (dos débitos) nunca deja saldo negativo.
 - **Idempotencia:** reintento del mismo envío (AlreadySending) **no** doble-cobra.
 - **Compensación:** fallo del troceo tras debitar → reembolso + campaña en Error.
-- **Recarga manual:** acredita + escribe `walletTransaction` + audita.
+- **Recarga manual (comprobante + revisión):** el cliente crea la solicitud `pending` (con
+  comprobante) y el saldo **no** cambia; al **aprobar** el admin, acredita + `walletTransaction`
+  `approved` + audita; al **rechazar**, `declined` sin tocar el saldo; aprobar/rechazar dos veces
+  es idempotente (condición `status='pending'`); solo admin aprueba/rechaza.
 - **Wompi webhook:** firma válida + status APPROVED → acredita una sola vez; webhook repetido →
   idempotente (no doble crédito); firma inválida → 401, no acredita; status DECLINED → no acredita.
 
@@ -273,11 +323,15 @@ Flujo: el cliente consigna/transfiere → el admin acredita desde el panel.
 - Crear tablas **`customerBalance`** (PK `customerId`) y **`walletTransaction`** (PK `txId`
   + GSI `customerId-createdAt-index` para el historial). On-Demand.
 - Crear las lambdas vacías: `Api_V1_Balance_Get`, `Api_V1_Balance_Topup-init`,
-  `Api_V1_Balance_Topup-manual`, `Api_V1_Wallet_Wompi-webhook`, `Api_V1_Admin_Balances`.
+  `Api_V1_Balance_Topup-manual-request`, `Api_V1_Wallet_Wompi-webhook`, `Api_V1_Admin_Topups`,
+  `Api_V1_Admin_Topup-approve`, `Api_V1_Admin_Topup-reject`, `Api_V1_Admin_Balances`.
 - Rutas en `infra/api/routes.json` (el webhook = **proxy, sin authorizer**; el resto no-proxy
   con su rol). Permisos IAM:
   - `Prepare-batch`: `UpdateItem` sobre `customerBalance`; `PutItem` sobre `walletTransaction`.
-  - `Balance_*`/`Admin_Balances`: `GetItem`/`UpdateItem`/`Query` según corresponda.
+  - `Balance_*`/`Admin_*`: `GetItem`/`PutItem`/`UpdateItem`/`Query` según corresponda.
+  - `Topup-manual-request`: además, permiso de **subir el comprobante a S3** (reusa el bucket de
+    documentos `{prefix}-{nit}-document` vía `get-urlS3`); `Admin_Topups` necesita **URL prefirmada
+    de lectura** del comprobante.
   - `Wompi-webhook`: `UpdateItem` sobre `customerBalance`/`walletTransaction`.
 - Secrets Wompi (`WOMPI_*`) en las lambdas de recarga; registrar la **URL del webhook** en el
   panel de Wompi (eventos).
