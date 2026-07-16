@@ -4,6 +4,7 @@
  * (el proyecto usa ';' como delimitador por defecto).
  */
 import { isValidPhoneNumber } from 'libphonenumber-js';
+import readXlsxFile from 'read-excel-file/browser';
 
 // País por defecto para números sin indicativo (Colombia). Un número con '+xx' se valida
 // contra SU país; uno sin '+' se interpreta como colombiano.
@@ -260,3 +261,48 @@ export const DELIMITER_LABELS: Record<Delimiter, string> = {
   '\t': 'Tabulación',
   '|': 'Barra ( | )',
 };
+
+// ─────────────────────────── Soporte de Excel (.xlsx) ───────────────────────────
+// El Excel se convierte a CSV EN EL NAVEGADOR y se sube a S3 como CSV, así el backend
+// (Prepare-batch lee CSV con csv.reader) y el registro de la base quedan intactos: el
+// .xlsx es solo una comodidad de entrada, no un formato nuevo que el backend deba entender.
+
+/** ¿El archivo es una hoja de cálculo (Excel), por extensión o tipo MIME? */
+export const isSpreadsheetFile = (file: File): boolean =>
+  /\.(xlsx|xlsm|xlsb|xls)$/i.test(file.name) || /spreadsheet|ms-excel/i.test(file.type);
+
+/** Convierte una celda de Excel a texto. OJO: Excel guarda números/fechas tipados; las
+ *  identificaciones y celulares conviene tenerlos como TEXTO en Excel para no perder ceros
+ *  a la izquierda ni el '+' (si no, la validación de la vista previa lo marca inválido). */
+function cellToString(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) {
+    const iso = v.toISOString();
+    return iso.endsWith('T00:00:00.000Z') ? iso.slice(0, 10) : iso; // fecha sola → YYYY-MM-DD
+  }
+  if (typeof v === 'number') {
+    // Enteros sin notación científica (ids/celulares); decimales tal cual.
+    return Number.isInteger(v) ? v.toLocaleString('en-US', { useGrouping: false }) : String(v);
+  }
+  if (typeof v === 'boolean') return v ? 'true' : 'false';
+  return String(v);
+}
+
+/** Lee la PRIMERA hoja de un Excel y devuelve las filas como string[][]. */
+export async function readSpreadsheet(file: File): Promise<string[][]> {
+  // La lib devuelve filas de celdas tipadas (string/number/Date/boolean/null) para la 1ª hoja.
+  const rows = (await readXlsxFile(file)) as unknown as unknown[][];
+  return rows.map((r) => (Array.isArray(r) ? r.map(cellToString) : []));
+}
+
+/** Serializa filas a texto CSV (comillas donde el valor contenga el delimitador, comillas o
+ *  saltos de línea) — mismo criterio que parseCsv, para poder re-analizarlo y subirlo. */
+export function rowsToCsv(rows: string[][], delimiter: Delimiter = ';'): string {
+  const esc = (cell: string) => {
+    const s = cell ?? '';
+    return s.includes(delimiter) || s.includes('"') || /[\r\n]/.test(s)
+      ? '"' + s.replace(/"/g, '""') + '"'
+      : s;
+  };
+  return rows.map((r) => r.map(esc).join(delimiter)).join('\n');
+}

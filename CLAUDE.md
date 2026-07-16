@@ -520,7 +520,11 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             la comparación de identificación era `int(line[0]) == identificación(str)` y nunca hacía
             match; ahora compara como texto normalizado. **Fix front:** `apiClient` normaliza también
             el envelope con `status_code` (snake_case) que devuelve esta Lambda (proxy).
-      - [x] **Bases de datos** (`BasesDatosSection` + `csv.ts`): carga de CSV con
+      - [x] **Bases de datos** (`BasesDatosSection` + `csv.ts`): carga de **CSV o Excel .xlsx**
+            (el Excel se lee en el navegador con `read-excel-file`, se convierte a **CSV** y se
+            sube ese CSV a S3 → el backend sigue leyendo CSV, sin cambios; el `.xlsx` es solo
+            comodidad de entrada. Aviso: formatear celular/identificación como **Texto** en Excel
+            para no perder el `+`/ceros) con
             **validación/preview local** (parser propio: detecta delimitador, columnas, total
             de registros, columna de email, y cuenta válidos/inválidos/duplicados) y subida real
             a S3 vía `get-urlS3` (`documentType=database`), devolviendo la ruta para usarla como
