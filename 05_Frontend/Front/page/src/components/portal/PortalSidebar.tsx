@@ -32,17 +32,20 @@ export interface PortalTab {
   id: string;
   label: string;
   icon: ReactNode;
+  /** Dibuja un separador DESPUÉS de este tab (agrupación visual). */
+  dividerAfter?: boolean;
 }
 
+// Orden: Bases de datos primero · separador · Plantillas · separador · el resto.
 export const PORTAL_TABS: PortalTab[] = [
+  { id: 'basesdatos', label: 'Bases de datos', icon: <StorageIcon />, dividerAfter: true },
   { id: 'html', label: 'Plantillas HTML', icon: <CodeIcon /> },
   { id: 'docx', label: 'Plantillas DOCX', icon: <DescriptionIcon /> },
   { id: 'sms', label: 'Plantillas SMS', icon: <SmsIcon /> },
-  { id: 'whatsapp', label: 'Plantillas WhatsApp', icon: <WhatsAppIcon /> },
+  { id: 'whatsapp', label: 'Plantillas WhatsApp', icon: <WhatsAppIcon />, dividerAfter: true },
   { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },
   { id: 'muestras', label: 'Muestras', icon: <RateReviewIcon /> },
   { id: 'aprobaciones', label: 'Aprobaciones', icon: <HowToRegIcon /> },
-  { id: 'basesdatos', label: 'Bases de datos', icon: <StorageIcon /> },
   { id: 'listanegra', label: 'Lista negra', icon: <BlockIcon /> },
   { id: 'reportes', label: 'Reportes', icon: <AssessmentIcon /> },
   { id: 'estadisticas', label: 'Estadísticas', icon: <BarChartIcon /> },
@@ -89,26 +92,30 @@ export const PortalSidebar = ({ activeSection, onSectionChange, collapsed }: Por
       </Toolbar>
       <Divider />
       <List sx={{ px: collapsed ? 0.5 : 0 }}>
-        {tabs.map((tab) => (
-          <ListItem key={tab.id} disablePadding sx={{ display: 'block' }}>
-            <Tooltip title={collapsed ? tab.label : ''} placement="right" arrow>
-              <ListItemButton
-                selected={activeSection === tab.id}
-                onClick={() => onSectionChange(tab.id)}
-                sx={{
-                  minHeight: 48,
-                  justifyContent: collapsed ? 'center' : 'flex-start',
-                  px: 2.5,
-                  borderRadius: collapsed ? 2 : 0,
-                }}
-              >
-                <ListItemIcon sx={{ minWidth: 0, mr: collapsed ? 0 : 3, justifyContent: 'center' }}>
-                  {tab.icon}
-                </ListItemIcon>
-                {!collapsed && <ListItemText primary={tab.label} />}
-              </ListItemButton>
-            </Tooltip>
-          </ListItem>
+        {tabs.map((tab, i) => (
+          <Box key={tab.id}>
+            <ListItem disablePadding sx={{ display: 'block' }}>
+              <Tooltip title={collapsed ? tab.label : ''} placement="right" arrow>
+                <ListItemButton
+                  selected={activeSection === tab.id}
+                  onClick={() => onSectionChange(tab.id)}
+                  sx={{
+                    minHeight: 48,
+                    justifyContent: collapsed ? 'center' : 'flex-start',
+                    px: 2.5,
+                    borderRadius: collapsed ? 2 : 0,
+                  }}
+                >
+                  <ListItemIcon sx={{ minWidth: 0, mr: collapsed ? 0 : 3, justifyContent: 'center' }}>
+                    {tab.icon}
+                  </ListItemIcon>
+                  {!collapsed && <ListItemText primary={tab.label} />}
+                </ListItemButton>
+              </Tooltip>
+            </ListItem>
+            {/* Separador de grupo (no tras el último visible). */}
+            {tab.dividerAfter && i < tabs.length - 1 && <Divider sx={{ my: 0.5 }} />}
+          </Box>
         ))}
       </List>
     </Drawer>

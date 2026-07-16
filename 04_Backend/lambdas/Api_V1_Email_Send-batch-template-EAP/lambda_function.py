@@ -276,6 +276,7 @@ def lambda_handler(event, context):
         print("Customer" + customer_name)
         process_id = json_body["processId"]
         campaign_id = json_body["campaignId"]
+        is_samples = bool(json_body.get("samples", False))  # muestras → contar si sale bien
         from_email = json_body["fromEmail"]
         headers = json_body["headers"]
         template_name = json_body["templateName"]
@@ -592,6 +593,16 @@ def lambda_handler(event, context):
                 
 
         
+
+        # Envío de MUESTRAS terminado sin error → contar 1 en la campaña (no cuenta si falló).
+        if status and is_samples and campaign_id:
+            try:
+                table_campaign.update_item(
+                    Key={'campaignId': campaign_id},
+                    UpdateExpression='SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one',
+                    ExpressionAttributeValues={':one': 1, ':z': 0})
+            except Exception as e:
+                print('No se pudo contar el envío de muestra EAP: {}'.format(e))
 
     finally:
         # Respuesta

@@ -122,6 +122,8 @@ def lambda_handler(event, context):
         customer_name = body.get('customerName', '')
         tenant = tenant_key(body.get('nit', ''))   # llave de {tenant}_sendStatus
         process_id = body.get('processId', '')
+        campaign_id = body.get('campaignId', '')
+        is_samples = bool(body.get('samples', False))  # muestras → contar si sale bien
         # El nombre de la plantilla HSM viaja en wspTemplate (campo template de la campaña).
         template_name = body.get('wspTemplate') or body.get('templateName', '')
         data = body.get('data', [])
@@ -178,5 +180,15 @@ def lambda_handler(event, context):
             except Exception as e:
                 print('No se pudieron registrar los estados WhatsApp: {}'.format(e))
             _index_messages(tenant, customer_name, process_id, index_rows)
+
+        # Muestras: si al menos un mensaje del lote se envió OK, contar 1 en la campaña.
+        if is_samples and campaign_id and any(r.get('state') == STATE_SENT for r in status_rows):
+            try:
+                dynamodb.Table('campaign').update_item(
+                    Key={'campaignId': campaign_id},
+                    UpdateExpression='SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one',
+                    ExpressionAttributeValues={':one': 1, ':z': 0})
+            except Exception as e:
+                print('No se pudo contar el envío de muestra WhatsApp: {}'.format(e))
 
     return {'statusCode': 200, 'body': json.dumps('WhatsApp batch procesado')}

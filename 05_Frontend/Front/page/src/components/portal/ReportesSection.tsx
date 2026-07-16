@@ -38,6 +38,7 @@ import { usePortalData } from '../../context/PortalDataContext';
 import { reportsService, downloadBase64Csv, downloadCsv, toCsv } from '../../services/reportsService';
 import { statsService } from '../../services/statsService';
 import { formatDateTime } from '../../utils/datetime';
+import { CampaignOption, campaignOptionText } from './campaignOption';
 import { ESTADO_LABEL, rate } from './campaignData';
 
 /**
@@ -248,6 +249,7 @@ export const ReportesSection = () => {
               onChange={(e) => { setCampaignName(e.target.value); setOverrideId(''); }}
               fullWidth
               size="small"
+              SelectProps={{ renderValue: (v) => campaignOptionText(campaigns.items.find((c) => c.campaignName === v)) || String(v) }}
               helperText={
                 campaigns.loading ? 'Cargando campañas…'
                   : campaigns.items.length === 0 ? 'No hay campañas; crea una en la pestaña Campañas.'
@@ -258,7 +260,7 @@ export const ReportesSection = () => {
               {campaigns.items.length === 0 && <MenuItem value="" disabled>Sin campañas</MenuItem>}
               {campaigns.items.map((c) => (
                 <MenuItem key={c.campaignId} value={c.campaignName}>
-                  {c.campaignName} — {c.channel} · {c.campaignState}
+                  <CampaignOption c={c} />
                 </MenuItem>
               ))}
             </TextField>

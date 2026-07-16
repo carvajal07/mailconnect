@@ -114,6 +114,22 @@ def insert_process_detail(registers:int,part:int,date:str,state:str)->None:
         }
     )
 
+def count_sample_send(campaign_id:str)->None:
+    """Cuenta 1 envío de MUESTRA (atómico) en la campaña, SOLO cuando el envío salió bien.
+    Se llama desde el worker tras un envío exitoso (no en Prepare-batch), para que una
+    muestra que se prepara pero NO se entrega no consuma el cupo (MAX_SAMPLE_SENDS).
+    Idempotente en la práctica: el worker deduplica por parte (validate_process_detail),
+    así que una redelivery de SQS no vuelve a contar."""
+    try:
+        table_campaign.update_item(
+            Key={'campaignId': campaign_id},
+            UpdateExpression='SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one',
+            ExpressionAttributeValues={':one': 1, ':z': 0})
+        print('Envío de muestra contado en la campaña {}'.format(campaign_id))
+    except Exception as e:
+        print('No se pudo contar el envío de muestra: {}'.format(e))
+
+
 def insert_send_detail(data:dict)->None:
     """
     Función encargada de insertar los detalles de cada envio a la base de datos.
@@ -314,6 +330,9 @@ def lambda_handler(event:dict, context:dict):
         print("Customer: " + customer_name)
         process_id = json_body["processId"]
         campaign_id = json_body["campaignId"]
+        # ¿Es un envío de MUESTRAS? (lo marca Prepare-batch en el ctx). Si sí, al terminar
+        # OK se cuenta 1 en campaign.samplesSentCount (no se cuenta si el envío falla).
+        is_samples = bool(json_body.get("samples", False))
         from_email = json_body["fromEmail"]
         headers = json_body["headers"]
         template_name = json_body["templateName"]
@@ -366,3 +385,6 @@ def lambda_handler(event:dict, context:dict):
 
         print("Proceso de envios finalizado")
         insert_process_detail(registers,part,formatted_date,"Terminado")
+        # Envío de MUESTRAS terminado OK → contar 1 en la campaña (no cuenta si falla antes).
+        if is_samples and campaign_id:
+            count_sample_send(campaign_id)

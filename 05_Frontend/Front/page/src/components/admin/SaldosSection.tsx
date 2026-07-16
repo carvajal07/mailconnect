@@ -23,6 +23,7 @@ import {
   Divider,
   Link,
   Tooltip,
+  IconButton,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -73,6 +74,8 @@ export const SaldosSection = () => {
 
   // Rechazo de una solicitud (con motivo).
   const [rejectTarget, setRejectTarget] = useState<ManualTopupRow | null>(null);
+  // Comprobante a visualizar en un modal (sin salir de la pestaña).
+  const [proofView, setProofView] = useState<ManualTopupRow | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
   const load = useCallback(async () => {
@@ -211,9 +214,11 @@ export const SaldosSection = () => {
                   <TableCell align="right" sx={{ whiteSpace: 'nowrap', fontWeight: 700 }}>{formatCOP(t.amount)}</TableCell>
                   <TableCell align="center">
                     {t.proofUrl ? (
-                      <Link href={t.proofUrl} target="_blank" rel="noopener">
-                        <Tooltip title="Ver comprobante"><VisibilityIcon fontSize="small" /></Tooltip>
-                      </Link>
+                      <Tooltip title="Ver comprobante">
+                        <IconButton size="small" color="info" onClick={() => setProofView(t)}>
+                          <VisibilityIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
                     ) : '—'}
                   </TableCell>
                   <TableCell align="right">
@@ -404,6 +409,31 @@ export const SaldosSection = () => {
           >
             Rechazar
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Modal: visualización del comprobante (imagen o PDF) sin salir de la pestaña */}
+      <Dialog open={!!proofView} onClose={() => setProofView(null)} maxWidth="md" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+          <span>Comprobante — {proofView?.company || proofView?.customerId}</span>
+          {proofView?.proofUrl && (
+            <Link href={proofView.proofUrl} target="_blank" rel="noopener" variant="body2">
+              Abrir en pestaña nueva
+            </Link>
+          )}
+        </DialogTitle>
+        <DialogContent dividers sx={{ p: 0 }}>
+          {proofView?.proofUrl && (
+            <Box
+              component="iframe"
+              src={proofView.proofUrl}
+              title="Comprobante"
+              sx={{ width: '100%', height: '70vh', border: 0, display: 'block' }}
+            />
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setProofView(null)}>Cerrar</Button>
         </DialogActions>
       </Dialog>
 

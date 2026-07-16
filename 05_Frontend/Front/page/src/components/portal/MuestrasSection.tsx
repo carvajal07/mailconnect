@@ -48,6 +48,7 @@ import { usePortalData } from '../../context/PortalDataContext';
 import { costService, formatCOP, type EstimateResult, type Channel, type EmailMode } from '../../services/costService';
 import { isValidPhone } from './csv';
 import { formatDateTime } from '../../utils/datetime';
+import { CampaignOption, campaignOptionText } from './campaignOption';
 
 type TipoMuestra = 'aleatorias' | 'selectivas';
 
@@ -394,6 +395,7 @@ export const MuestrasSection = () => {
               onChange={(e) => selectCampaign(e.target.value)}
               fullWidth
               size="small"
+              SelectProps={{ renderValue: (v) => campaignOptionText(campaignOptions.find((c) => c.campaignName === v)) || String(v) }}
               helperText={
                 loadingLists
                   ? 'Cargando campañas…'
@@ -409,7 +411,7 @@ export const MuestrasSection = () => {
               )}
               {campaignOptions.map((c) => (
                 <MenuItem key={c.campaignId} value={c.campaignName} disabled={!isSendable(c)}>
-                  {c.campaignName} — {c.channel} · {c.campaignState}
+                  <CampaignOption c={c} />
                 </MenuItem>
               ))}
             </TextField>

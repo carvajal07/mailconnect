@@ -512,6 +512,7 @@ def lambda_handler(event, context):
         tenant = tenant_key(nit)    # llave de las tablas por cliente ({tenant}_sendDetail, etc.)
         process_id = json_body["processId"]
         campaign_id = json_body["campaignId"]
+        is_samples = bool(json_body.get("samples", False))  # muestras → contar al terminar OK
         attachment = json_body["attachment"]
         from_email = json_body["fromEmail"]
         headers = json_body["headers"]
@@ -654,6 +655,23 @@ def lambda_handler(event, context):
     
         print("Proceso de envios finalizado")
         #insert_process_detail(registers,part,formatted_date,"Terminado")
+        # Envío de MUESTRAS terminado OK → contar 1 en la campaña (no cuenta si falla antes).
+        if is_samples and campaign_id:
+            count_sample_send(campaign_id)
+
+
+def count_sample_send(campaign_id:str)->None:
+    """Cuenta 1 envío de MUESTRA (atómico) en la campaña, SOLO cuando el envío salió bien.
+    Ver Api_V1_Email_Send-batch-template-EM (mismo patrón)."""
+    try:
+        table_campaign.update_item(
+            Key={'campaignId': campaign_id},
+            UpdateExpression='SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one',
+            ExpressionAttributeValues={':one': 1, ':z': 0})
+        print('Envío de muestra contado en la campaña {}'.format(campaign_id))
+    except Exception as e:
+        print('No se pudo contar el envío de muestra: {}'.format(e))
+
 
 def get_template(template:str)->dict:
     # Recuperar la plantilla de correo electrónico

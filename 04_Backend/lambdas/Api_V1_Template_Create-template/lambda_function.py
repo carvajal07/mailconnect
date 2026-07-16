@@ -199,8 +199,11 @@ def lambda_handler(event, context):
                 description = "Error consultando el nombre de canal en la tabla channel"
             
             #Realizar la creacion del template en AWS SES
-            try:                    
-                templateName = f'{customerName}_{consecutive}_{channelName}_{templateName}'
+            try:
+                # El nombre de la plantilla SES NO lleva el canal: una misma plantilla HTML
+                # puede usarse en varios canales de email (EM/EAU/EAP). Convención:
+                # {customer}_{consecutivo}_{nombre} (debe coincidir con el lookup de Prepare-batch).
+                templateName = f'{customerName}_{consecutive}_{templateName}'
                 response = create_template(templateName,subject,htmlBody,textBody)
             except:
                 status = False
