@@ -45,7 +45,8 @@ usa este **body mapping template**:
       "user": "$context.authorizer.user",
       "userId": "$context.authorizer.userId",
       "customerId": "$context.authorizer.customerId",
-      "customer": "$context.authorizer.customer"
+      "customer": "$context.authorizer.customer",
+      "nit": "$context.authorizer.nit"
     }
   }
 }
@@ -58,7 +59,11 @@ usa este **body mapping template**:
 > corres una versión vieja de las lambdas, **redespliégalas** antes de usar este template.
 >
 > `role` habilita el acceso; `user`/`userId` identifican al **actor en la auditoría**;
-> `customerId`/`customer` sirven al multi-tenant de las read-lambdas.
+> `customerId`/`customer` sirven al multi-tenant de las read-lambdas; **`nit`** (companyTin) es
+> la **llave de las tablas por cliente** (`{tenant_key(nit)}_sendStatus`, …, ver §11). Si el
+> `nit` no llega, las read-lambdas de cliente (Statistics/Bootstrap/Blacklist/state-report) no
+> encuentran las tablas del tenant. **`deploy-api.yml`/`sync_api.py` ya lo inyectan** — si el
+> template está a mano, agrégale la línea `nit`.
 >
 > **No pasar estas rutas a proxy:** las lambdas devuelven el envelope
 > `{status, statusCode, description, data}` en el cuerpo (estilo no-proxy). En proxy
@@ -493,3 +498,35 @@ en el webhook firmado por Wompi**, nunca desde el redirect del navegador.
 - [ ] `[J]` Recarga de prueba en sandbox: `Topup-init` → widget → pago aprobado → el webhook
   acredita y el saldo sube. Reintento del webhook (mismo evento) → **no doble-acredita**.
 - [ ] `[J]` Firma inválida al webhook → **401**, sin acreditar. Pago declinado → sin acreditar.
+
+---
+
+## 11. Estandarización del naming por cliente: NIT (`tenant_key`) (jul 2026)
+
+> **Qué cambió:** las **tablas por cliente** pasan de nombre de empresa a **NIT saneado**
+> (`tenant_key(companyTin)`), igual que ya hacían los **buckets** S3. Una sola llave para
+> tablas y buckets. Detalle y flujo completo en `CLAUDE.md` §3 ("Estandarización del naming").
+
+Tablas afectadas (prefijo `{nombreEmpresa}_` → `{tenant_key(nit)}_`):
+`_sendStatus`, `_sendDetail`, `_sendSummary`, `_sendState`, `_blackList`, `_unsubscribe`,
+`_processDetail`. (El nombre de la **plantilla SES** NO cambia — otro namespace.)
+
+- [x] `[C]` Código: `tenant_key(nit)` en todas las lambdas que nombran tablas por cliente;
+  `nit` en el JWT (`Login`) + context (`Authorizer`/`Authorizer2`) + mapping template
+  (`sync_api.py`/`routes.json`) + `Refresh-token`; `nit` propagado por SES tag / EUM Context /
+  `messageIndex` / token de desuscripción; `process.companyTin` guardado por Prepare-batch.
+  244 pruebas en verde.
+- [ ] `[J]` **Redesplegar el mapping template** (`deploy-api.yml`) para que inyecte
+  `$context.authorizer.nit` en las rutas no-proxy (ya está en `sync_api.py`). Sin esto, las
+  read-lambdas de cliente no encuentran las tablas del tenant tras el cambio.
+- [ ] `[J]` **Redesplegar TODAS las lambdas** del pipeline (Prepare-batch, Send-EM/EAU/EAP/
+  SMS/WSP/Voz, ReceptionStatus Email/Messaging/Wsp, Unsubscribe, Combination, y las read/admin
+  Statistics/Bootstrap/Blacklist/Dashboard/Jobs/Billing/state-report/Agent_Reports) + Login/
+  Authorizers/Refresh-token. Deben ir **juntas** (writers y readers usan la misma llave).
+- [ ] `[J]` **Migración de datos** (dev/no productivo → basta recrear): las tablas viejas
+  `{nombreEmpresa}_*` quedan huérfanas. Opciones: (a) en dev, volver a enviar (Prepare-batch
+  crea las tablas nuevas); (b) en un entorno con datos, copiar los ítems de `{nombre}_X` a
+  `{tenant_key(nit)}_X` por cliente antes del corte. **Permiso IAM:** `CreateTable`/`DescribeTable`
+  sobre `*_sendStatus`/`_sendDetail`/… ya existía (mismo patrón, solo cambia el prefijo).
+- [ ] `[J]` Requisito: **todos los clientes deben tener `companyTin`** (Prepare-batch ahora
+  falla `require_tenant` si falta, para no colisionar tenants). Verificar la tabla `customer`.
