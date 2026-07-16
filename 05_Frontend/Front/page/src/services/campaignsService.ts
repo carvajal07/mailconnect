@@ -137,20 +137,30 @@ export interface CampaignPayload {
   documentFormat?: EapDocumentFormat;
 }
 
+/**
+ * Tipo de documento = PREFIJO de la key dentro del bucket único del cliente:
+ *  - database:   bases (CSV) de los envíos.            [privado]
+ *  - document:   archivos del cliente (comprobantes).  [privado]
+ *  - resources:  imágenes de las plantillas.           [público]
+ *  - attachment: plantillas docx/pdf y combinados.     [público]
+ */
+export type DocumentType = 'database' | 'document' | 'resources' | 'attachment';
+
 export interface PresignPayload {
   customer: string;
-  /** NIT del cliente (companyTin): define el bucket {prefix}-{nit}-{tipo}. */
+  /** NIT del cliente (companyTin): define el bucket único {prefix}-{nit}. */
   nit?: string;
   documentName: string;
-  documentType: 'database' | 'document';
+  documentType: DocumentType;
 }
 
 /** Prefijo de los buckets por cliente (debe coincidir con el backend BUCKET_PREFIX). */
 export const BUCKET_PREFIX = 'mailconnect';
 
-/** Bucket S3 del cliente por NIT: {prefix}-{nit}-{database|document} (DNS-safe). */
-export const tenantBucket = (nit: string, documentType: 'database' | 'document'): string =>
-  `${BUCKET_PREFIX}-${(nit || '').toLowerCase().replace(/[^a-z0-9]/g, '')}-${documentType}`;
+/** Bucket ÚNICO del cliente por NIT: {prefix}-{nit} (DNS-safe). El tipo va como prefijo
+ *  de la key (database/document/resources/attachment), no como bucket separado. */
+export const tenantBucket = (nit: string): string =>
+  `${BUCKET_PREFIX}-${(nit || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`;
 
 export const campaignsService = {
   create: (payload: CampaignPayload): Promise<ApiResponse<{ campaignId?: string }>> =>
@@ -208,9 +218,9 @@ export const campaignsService = {
 
   /**
    * URL pública (lectura) de un objeto ya subido a S3, para el src de las imágenes del
-   * correo. Usa el bucket del cliente por NIT ({prefix}-{nit}-{tipo}). El objeto/bucket
-   * debe permitir lectura pública para que la imagen se vea en los clientes de correo.
+   * correo o el enlace de descarga de un adjunto. `path` ya incluye el prefijo del tipo
+   * (resources/… o attachment/…), que son los prefijos PÚBLICOS del bucket del cliente.
    */
-  publicUrl: (nit: string, documentType: 'database' | 'document', path: string): string =>
-    `https://s3.us-east-1.amazonaws.com/${tenantBucket(nit, documentType)}/${path}`,
+  publicUrl: (nit: string, path: string): string =>
+    `https://s3.us-east-1.amazonaws.com/${tenantBucket(nit)}/${path}`,
 };

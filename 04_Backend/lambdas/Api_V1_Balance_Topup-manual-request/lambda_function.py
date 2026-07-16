@@ -29,7 +29,7 @@ CURRENCY = 'COP'
 
 def tenant_bucket(nit, doc_type):
     clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
-    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+    return '{}-{}'.format(BUCKET_PREFIX, clean)
 
 
 def _get_payload(event):

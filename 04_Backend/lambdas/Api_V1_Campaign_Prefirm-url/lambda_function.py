@@ -14,18 +14,23 @@ from botocore.client import Config
 #pylint: disable=C0301
 REGION = 'us-east-1'
 
-# Bucket por cliente por NIT: {prefix}-{nit}-{database|document} (DNS-safe). Se usa el NIT
-# en vez del nombre de empresa (evita nombres inválidos/colisiones).
+# Bucket ÚNICO por cliente por NIT: {prefix}-{nit} (DNS-safe). Los tipos de documento son
+# PREFIJOS de la key (database/, document/, resources/, attachment/), no buckets separados.
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
-# Tipos de documento permitidos (evita apuntar a buckets arbitrarios por doc_type).
-ALLOWED_DOC_TYPES = {'database', 'document'}
+# Tipos de documento permitidos = prefijos válidos de la key (evita keys arbitrarias):
+#  - database:   bases (CSV) de los envíos.            [privado]
+#  - document:   archivos del cliente (comprobantes).  [privado]
+#  - resources:  imágenes de las plantillas.           [público]
+#  - attachment: plantillas docx/pdf y combinados.     [público]
+ALLOWED_DOC_TYPES = {'database', 'document', 'resources', 'attachment'}
 # Duración corta para el PUT prefirmado (antes 1 h).
 PRESIGN_EXPIRES = int(os.environ.get('PRESIGN_EXPIRES', '600'))
 
 
-def tenant_bucket(nit, doc_type):
+def tenant_bucket(nit, doc_type=None):
+    """Bucket ÚNICO del cliente por NIT: {prefix}-{nit} (doc_type es un prefijo de la key)."""
     clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
-    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+    return '{}-{}'.format(BUCKET_PREFIX, clean)
 
 
 def _authorizer(event):
@@ -108,8 +113,9 @@ def lambda_handler(event, context):
     #s3_client = boto3.client('s3',aws_access_key_id=access_key,aws_secret_access_key=secret_key,config=Config(signature_version='s3v4'))
     s3_client = boto3.client('s3',config=Config(signature_version='s3v4'))
 
-    # Bucket del cliente por NIT (fallback al esquema viejo por nombre si no llega el NIT).
-    bucket_name = tenant_bucket(nit, document_type) if nit else f'{customer.lower()}.{document_type}'
+    # Bucket ÚNICO del cliente por NIT (mailconnect-{nit}); el documentType es el PREFIJO
+    # de la key. Fallback al esquema viejo por nombre solo si no llega el NIT.
+    bucket_name = tenant_bucket(nit) if nit else f'{customer.lower()}.bucket'
     # Red de seguridad: asegurar que el bucket exista antes de prefirmar la subida.
     ensure_bucket(s3_client, bucket_name)
 
@@ -117,7 +123,9 @@ def lambda_handler(event, context):
     now = datetime.utcnow()
     # Formatear la fecha y hora según un formato específico
     formatted_date = now.strftime("%Y-%m-%d")
-    path = f'{formatted_date}/{document_name}'
+    # La key lleva el PREFIJO del tipo: {tipo}/{fecha}/{nombre}. Así un solo bucket separa
+    # database/document/resources/attachment. Se devuelve esta key como `path` (s3Path).
+    path = f'{document_type}/{formatted_date}/{document_name}'
 
     # Generar la URL prefirmada
     try:

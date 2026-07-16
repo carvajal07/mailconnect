@@ -486,6 +486,36 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   (agregan el campo a la lista de parámetros/campos de combinación).
 - Bases cargadas **antes** de esta función no tienen `columns` → el picker avisa "vuelve a subirla".
 
+### Bucket ÚNICO por cliente con prefijos (jul 2026)
+> **Antes:** un bucket S3 por cliente **y por tipo** (`mailconnect-{nit}-database`,
+> `mailconnect-{nit}-document`). **Ahora:** UN SOLO bucket por cliente `mailconnect-{tenant_key(nit)}`
+> con los **tipos como PREFIJOS de la key** (no buckets separados):
+> - `database/` — bases (CSV) de los envíos. **Privado.**
+> - `document/` — archivos del cliente (comprobantes de transferencia). **Privado** (se ve con
+>   URL prefirmada; p. ej. la bandeja admin de recargas `Admin/Topups`).
+> - `resources/` — imágenes de las plantillas. **Público.**
+> - `attachment/` — plantillas docx/pdf, docx combinados y adjuntos. **Público.**
+- **`tenant_bucket(nit, doc_type=None)`** ahora devuelve `{prefix}-{tenant_key(nit)}` en las 8
+  lambdas (el `doc_type` se conserva por compat de firma y **se ignora**). La **key** lleva el
+  prefijo del tipo: `Api_V1_Campaign_Prefirm-url` genera `Key = {tipo}/{fecha}/{nombre}` y lo
+  devuelve como `path` (`s3Path`). Tipos válidos: `database|document|resources|attachment`.
+- **Provisión en `Register`:** al registrar la empresa se crea el bucket único + **CORS**
+  (GET/PUT/HEAD) + **política de lectura pública** SOLO para `attachment/*` y `resources/*`
+  (con `put_public_access_block` que permite la política pero bloquea ACLs). `database/` y
+  `document/` quedan privados.
+- **Internos:** el docx **combinado** (Combination→Send-EAP) va bajo `attachment/{campaignId}/…`;
+  los **part-files** del troceo siguen en `_parts/{processId}/N.json` (privados, raíz del bucket).
+  Los lectores que sacan el basename del `documentPath` usan `split('/')[-1]` (la key tiene 3
+  segmentos ahora). Los readers construyen `tenant_bucket(nit)` (único) + la key **almacenada**
+  (que ya trae el prefijo) → no cambian su lógica.
+- **Front:** `campaignsService.tenantBucket(nit)` (único) y `publicUrl(nit, path)` (la `path` ya
+  trae el prefijo). Cada carga usa su `documentType`: imágenes→`resources`, adjuntos de campaña
+  y plantillas DOCX→`attachment`, comprobante→`document`, CSV→`database`.
+- **⚠️ Migración (`[J]`):** este cambio **renombra** los buckets y **reubica** las keys. Los datos
+  bajo `mailconnect-{nit}-{tipo}` quedan huérfanos → recrear/mover al bucket único con prefijos.
+  En dev basta con volver a registrar (crea el bucket) y volver a subir. Aplicar CORS/política a
+  los buckets ya existentes si no se recrean.
+
 ### Estandarización del naming por cliente: NIT (`tenant_key`) (jul 2026)
 > **Antes:** los **buckets** S3 se nombraban por **NIT** (`tenant_bucket`) pero las **tablas**
 > por cliente por **nombre de empresa** (`{customer}_sendStatus`, `_sendDetail`, `_blackList`,
@@ -493,7 +523,8 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
 > nombre de empresa puede cambiar/colisionar y no siempre es DynamoDB-safe).
 > **Ahora:** TODO recurso por cliente (tablas **y** buckets) usa la **misma llave**: el **NIT
 > saneado** `tenant_key(nit) = re.sub(r'[^a-z0-9]', '', str(nit).lower())` (companyTin). El NIT
-> es inmutable y único. `tenant_bucket(nit, tipo)` = `{prefix}-{tenant_key(nit)}-{tipo}`.
+> es inmutable y único. `tenant_bucket(nit)` = `{prefix}-{tenant_key(nit)}` (bucket ÚNICO con
+> prefijos por tipo — ver "Bucket ÚNICO por cliente con prefijos" arriba).
 - **`tenant_key` es idempotente** (`tenant_key(tenant_key(x)) == tenant_key(x)`), así que aplicarlo
   a un valor ya saneado es inocuo. Está copiado en cada lambda que nombra tablas por cliente
   (mismo patrón que `tenant_bucket`; no hay import compartido entre lambdas).

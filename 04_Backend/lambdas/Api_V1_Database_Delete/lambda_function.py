@@ -25,7 +25,7 @@ BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 
 def tenant_bucket(nit, doc_type):
     clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
-    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+    return '{}-{}'.format(BUCKET_PREFIX, clean)
 
 
 def _customer_nit(customer_id):

@@ -29,7 +29,7 @@ def tenant_key(nit):
 
 
 def tenant_bucket(nit, doc_type):
-    return '{}-{}-{}'.format(BUCKET_PREFIX, tenant_key(nit), doc_type)
+    return '{}-{}'.format(BUCKET_PREFIX, tenant_key(nit))
 
 
 # Desuscripción: igual que EM/EAU. El builder SIEMPRE inserta {{unsubscribeUrl}} en el
@@ -451,7 +451,7 @@ def lambda_handler(event, context):
                 #Productivo
                 #doc_name = register[2] + ".docx"
                 print(f"Email: {email} - Pdf: {doc_name}")
-                attachmentPath = f'{campaign_id}/{doc_name}'
+                attachmentPath = f'attachment/{campaign_id}/{doc_name}'
                 s3_object = s3.get_object(Bucket=bucket_name, Key=attachmentPath)
                 file_content = s3_object['Body'].read()
                 #file_object = file_content.decode('ISO-8859-1')
@@ -526,7 +526,7 @@ def lambda_handler(event, context):
                 unique_id = register[0]
                 email = register[1]
                 doc_name = register[2] + ".docx"
-                attachmentPath = f'{campaign_id}/{doc_name}'
+                attachmentPath = f'attachment/{campaign_id}/{doc_name}'
                 s3_object = s3.get_object(Bucket=bucket_name, Key=attachmentPath)
                 print("consulta adjunto ejecutada correctamente")
                 file_content = s3_object['Body'].read()

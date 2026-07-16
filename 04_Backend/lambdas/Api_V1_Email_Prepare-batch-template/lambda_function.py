@@ -83,7 +83,7 @@ def tenant_key(nit):
 
 
 def tenant_bucket(nit, doc_type):
-    return '{}-{}-{}'.format(BUCKET_PREFIX, tenant_key(nit), doc_type)
+    return '{}-{}'.format(BUCKET_PREFIX, tenant_key(nit))
 
 
 def require_tenant(nit):
