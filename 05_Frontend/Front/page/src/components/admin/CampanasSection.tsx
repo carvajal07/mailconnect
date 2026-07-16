@@ -39,6 +39,7 @@ import { campaignsService } from '../../services/campaignsService';
 import type { CampaignSummary } from '../../services/campaignsService';
 import { templatesService } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
+import { domainsService } from '../../services/domainsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
@@ -58,9 +59,14 @@ interface CampaignForm {
   documentFormat: EapDocFormat;
 }
 
-/** Remitente por defecto de las campañas. A futuro el cliente podrá configurar su propio
- *  dominio verificado y elegirlo del desplegable (por ahora solo esta opción). */
-export const DEFAULT_FROM = 'notificaciones@mailconnect.com.co';
+/** Dominio de la plataforma (remitente por defecto, siempre disponible). */
+export const PLATFORM_DOMAIN = 'mailconnect.com.co';
+/** Nombre de correo por defecto del remitente. */
+export const DEFAULT_MAILBOX = 'notificaciones';
+/** Remitente por defecto de las campañas ({mailbox}@{dominio}). El nombre y el dominio se
+ *  eligen por separado en el formulario; el dominio puede ser uno propio del cliente
+ *  (verificado en la pestaña Dominios) o el de la plataforma. */
+export const DEFAULT_FROM = `${DEFAULT_MAILBOX}@${PLATFORM_DOMAIN}`;
 
 const emptyForm = (from = DEFAULT_FROM): CampaignForm => ({
   campaignName: '',
@@ -106,6 +112,10 @@ export const CampanasSection = () => {
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   // Evita re-pedir las plantillas SES cada vez que se abre el diálogo (se cargan una vez).
   const templatesLoadedRef = useRef(false);
+  // Dominios de envío VERIFICADOS del cliente (para el selector de dominio del remitente).
+  // El dominio de la plataforma va siempre; los propios del cliente se cargan al abrir.
+  const [senderDomains, setSenderDomains] = useState<string[]>([]);
+  const domainsLoadedRef = useRef(false);
 
   // Documento adjunto (solo EAU/EAP): se sube a S3 y se pasa su ruta a la campaña.
   const [attachmentPath, setAttachmentPath] = useState('');
@@ -127,6 +137,17 @@ export const CampanasSection = () => {
     if (isOk(res) && res.data?.templates) setTemplates(res.data.templates);
   }, [customer, customerId]);
 
+  // Dominios de envío del cliente: solo los VERIFICADOS se pueden elegir como remitente.
+  // Se cargan una vez al abrir el diálogo (como las plantillas).
+  const loadDomains = useCallback(async () => {
+    if (domainsLoadedRef.current) return;
+    domainsLoadedRef.current = true;
+    const res = await domainsService.list();
+    if (isOk(res) && res.data?.domains) {
+      setSenderDomains(res.data.domains.filter((d) => d.status === 'verified').map((d) => d.domain));
+    }
+  }, []);
+
   const resetAttachment = () => {
     setAttachmentPath('');
     setAttachmentName('');
@@ -138,6 +159,7 @@ export const CampanasSection = () => {
     resetAttachment();
     setOpenDialog(true);
     loadTemplates();
+    loadDomains();
   };
 
   /** Abre el diálogo precargado con los datos de una campaña para editarla. */
@@ -155,6 +177,7 @@ export const CampanasSection = () => {
     resetAttachment();
     setOpenDialog(true);
     loadTemplates();
+    loadDomains();
   };
 
   const handleCloseDialog = () => {
@@ -622,25 +645,50 @@ export const CampanasSection = () => {
                       ))}
                     </Select>
                   </FormControl>
+                  {/* Remitente = nombre del correo + dominio. El dominio puede ser el de la
+                      plataforma o uno propio del cliente (verificado en la pestaña Dominios). */}
+                  <TextField
+                    fullWidth
+                    label="Nombre del correo"
+                    value={formData.from.split('@')[0] || ''}
+                    onChange={(e) => {
+                      const mailbox = e.target.value.replace(/[^a-zA-Z0-9._-]/g, '').toLowerCase();
+                      const domain = formData.from.split('@')[1] || PLATFORM_DOMAIN;
+                      handleInputChange('from', `${mailbox}@${domain}`);
+                    }}
+                    placeholder="comunicaciones"
+                    helperText="Ej.: comunicaciones, avisos, notificaciones"
+                  />
                   <FormControl fullWidth>
-                    <InputLabel>De (From)</InputLabel>
+                    <InputLabel>Dominio</InputLabel>
                     <Select
-                      value={formData.from}
-                      label="De (From)"
-                      onChange={(e) => handleInputChange('from', e.target.value)}
+                      value={formData.from.split('@')[1] || PLATFORM_DOMAIN}
+                      label="Dominio"
+                      onChange={(e) => {
+                        const mailbox = formData.from.split('@')[0] || DEFAULT_MAILBOX;
+                        handleInputChange('from', `${mailbox}@${e.target.value}`);
+                      }}
                     >
-                      {/* Remitente por defecto. A futuro: dominios verificados del cliente. */}
-                      <MenuItem value={DEFAULT_FROM}>{DEFAULT_FROM}</MenuItem>
-                      {/* Conserva un remitente previo distinto al default (al editar). */}
-                      {formData.from && formData.from !== DEFAULT_FROM && (
-                        <MenuItem value={formData.from}>{formData.from}</MenuItem>
-                      )}
-                      <MenuItem value="" disabled>
-                        Tu dominio propio (próximamente)
-                      </MenuItem>
+                      <MenuItem value={PLATFORM_DOMAIN}>{PLATFORM_DOMAIN} (MailConnect)</MenuItem>
+                      {senderDomains.map((d) => (
+                        <MenuItem key={d} value={d}>{d}</MenuItem>
+                      ))}
+                      {/* Conserva un dominio previo (al editar) que ya no esté en la lista. */}
+                      {(() => {
+                        const cur = formData.from.split('@')[1] || '';
+                        return cur && cur !== PLATFORM_DOMAIN && !senderDomains.includes(cur) ? (
+                          <MenuItem value={cur}>{cur} (actual)</MenuItem>
+                        ) : null;
+                      })()}
                     </Select>
                   </FormControl>
                 </Stack>
+              )}
+              {formData.channelName !== 'SMS' && formData.channelName !== 'WSP' && formData.channelName !== 'VOZ' && senderDomains.length === 0 && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
+                  ¿Quieres enviar desde tu propio dominio? Configúralo en la pestaña <strong>Dominios</strong>;
+                  cuando quede verificado aparecerá aquí.
+                </Typography>
               )}
               <FormControl fullWidth>
                 <InputLabel>Base de datos</InputLabel>
