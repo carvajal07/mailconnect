@@ -8,7 +8,7 @@ Ruta: POST /Database/Register-file  (integración no-proxy, envelope estándar)
 Request:
     {
       customerId, customer, fileName, s3Path,
-      totalRecords?, validEmails?, invalidEmails?, duplicates?,
+      totalRecords?, validEmails?, invalidEmails?, duplicates?, allowDuplicates?,
       delimiter?, channel?, columns?, uploadedBy?
     }
 `columns` es la lista de encabezados del CSV (los campos usables como variables
@@ -112,6 +112,9 @@ def lambda_handler(event, context):
                 'validEmails': _to_int(payload.get('validEmails')),
                 'invalidEmails': _to_int(payload.get('invalidEmails')),
                 'duplicates': _to_int(payload.get('duplicates')),
+                # Si el cliente marcó "permitir duplicados", el envío real NO filtra
+                # contactos repetidos (Prepare-batch lo respeta; por defecto deduplica).
+                'allowDuplicates': bool(payload.get('allowDuplicates', False)),
                 'delimiter': payload.get('delimiter', ';'),
                 # Canal para el que se validó la base (EMAIL/SMS/WHATSAPP/VOICE).
                 # Define qué es la columna 2 (correo o celular).

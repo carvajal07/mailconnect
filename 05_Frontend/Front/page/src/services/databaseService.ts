@@ -28,6 +28,8 @@ export interface RegisterFilePayload {
   validEmails?: number;
   invalidEmails?: number;
   duplicates?: number;
+  /** Si es true, el envío real NO filtra contactos duplicados (se envía el total de la base). */
+  allowDuplicates?: boolean;
   delimiter?: string;
   /** Canal para el que se validó la base: EMAIL | SMS | WHATSAPP | VOICE. */
   channel?: string;
@@ -46,6 +48,8 @@ export interface DatabaseFile {
   validEmails: number;
   invalidEmails: number;
   duplicates: number;
+  /** Si es true, el envío real NO filtra contactos duplicados (se envía el total de la base). */
+  allowDuplicates?: boolean;
   delimiter: string;
   channel?: string;
   /** Encabezados del CSV (campos usables como {{variables}} en las plantillas). */

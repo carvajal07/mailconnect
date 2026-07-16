@@ -38,6 +38,7 @@ import { balanceService } from '../../services/balanceService';
 import type { AdminBalanceRow, AdminWalletTransaction, ManualTopupRow } from '../../services/balanceService';
 import { formatCOP } from '../../services/costService';
 import { isOk } from '../../services/apiClient';
+import { formatDateTime } from '../../utils/datetime';
 import { useFeedback } from '../../hooks/useFeedback';
 import { WalletTxTable } from '../portal/WalletTxTable';
 
@@ -201,7 +202,7 @@ export const SaldosSection = () => {
               )}
               {topups.map((t) => (
                 <TableRow key={t.txId} hover>
-                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{t.createdAt || '—'}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDateTime(t.createdAt)}</TableCell>
                   <TableCell>{t.company || t.customerId}</TableCell>
                   <TableCell>
                     <Typography variant="body2">{t.bank || '—'}</Typography>

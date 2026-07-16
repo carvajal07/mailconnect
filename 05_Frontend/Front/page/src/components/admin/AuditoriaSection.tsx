@@ -36,6 +36,7 @@ import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead';
 import { auditService } from '../../services/auditService';
 import type { AuditData } from '../../services/auditService';
 import { isOk } from '../../services/apiClient';
+import { formatDateTime } from '../../utils/datetime';
 
 type ChipColor = 'primary' | 'success' | 'warning' | 'info' | 'default' | 'error' | 'secondary';
 
@@ -61,12 +62,12 @@ const ACTION_META: Record<string, { label: string; color: ChipColor; icon: React
 
 const actionLabel = (a: string) => ACTION_META[a]?.label ?? a;
 
-// La fecha se guarda en UTC sin zona ('YYYY-MM-DD HH:MM:SS'); se muestra en hora local.
+// La fecha se guarda en UTC sin zona ('YYYY-MM-DD HH:MM:SS'); se normaliza a UTC (Z) y se
+// muestra en hora local con el formato unificado DD-MM-YYYY HH:MM:SS.
 const fmtDate = (raw: string) => {
   if (!raw) return '—';
   const iso = /[zZ]|[+-]\d{2}:?\d{2}$/.test(raw) ? raw : raw.replace(' ', 'T') + 'Z';
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? raw : d.toLocaleString();
+  return formatDateTime(iso);
 };
 
 /**
