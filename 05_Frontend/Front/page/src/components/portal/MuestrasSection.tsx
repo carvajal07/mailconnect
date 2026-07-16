@@ -24,6 +24,7 @@ import GroupIcon from '@mui/icons-material/Group';
 import CasinoIcon from '@mui/icons-material/Casino';
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck';
 import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
+import SmartphoneIcon from '@mui/icons-material/Smartphone';
 import BadgeIcon from '@mui/icons-material/Badge';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -38,6 +39,7 @@ import { useFeedback } from '../../hooks/useFeedback';
 import { CostEstimate } from './CostEstimate';
 import { usePortalData } from '../../context/PortalDataContext';
 import { formatCOP, type EstimateResult } from '../../services/costService';
+import { isValidPhone } from './csv';
 
 type TipoMuestra = 'aleatorias' | 'selectivas';
 type EstadoLote = 'enviada' | 'aprobada' | 'rechazada' | 'enviada_real';
@@ -133,6 +135,13 @@ export const MuestrasSection = () => {
     selectedChannel === 'SMS' ? 'SMS' : selectedChannel === 'WSP' ? 'WHATSAPP' : selectedChannel === 'VOZ' ? 'VOICE' : 'EMAIL';
   const estimatorMode = (['EM', 'EAU', 'EAP'].includes(selectedChannel) ? selectedChannel : 'EM') as 'EM' | 'EAU' | 'EAP';
 
+  // Tipo de contacto de la muestra según el canal de la campaña: SMS/WhatsApp/Voz reciben
+  // CELULAR (E.164), el resto (correo). Define el label, ícono y la validación del input.
+  const sampleContact: 'email' | 'phone' =
+    selectedChannel === 'SMS' || selectedChannel === 'WSP' || selectedChannel === 'VOZ' ? 'phone' : 'email';
+  const contactLabel = sampleContact === 'phone' ? 'Celular' : 'Correo';
+  const contactValid = (v: string) => (sampleContact === 'phone' ? isValidPhone(v) : EMAIL_RE.test(v));
+
   const [tipo, setTipo] = useState<TipoMuestra>('aleatorias');
   const [quantity, setQuantity] = useState(1);
   const [recipients, setRecipients] = useState<Recipient[]>(emptyRecipients(1));
@@ -168,7 +177,14 @@ export const MuestrasSection = () => {
     }
     for (let i = 0; i < recipients.length; i++) {
       const r = recipients[i];
-      if (!EMAIL_RE.test(r.email.trim())) return notify(`El correo de la muestra ${i + 1} no es válido.`, 'warning');
+      if (!contactValid(r.email.trim())) {
+        return notify(
+          sampleContact === 'phone'
+            ? `El celular de la muestra ${i + 1} no es válido (usa formato E.164, ej. +57…).`
+            : `El correo de la muestra ${i + 1} no es válido.`,
+          'warning',
+        );
+      }
       if (selective && !r.identificacion.trim()) return notify(`Falta la identificación de la muestra ${i + 1}.`, 'warning');
     }
 
@@ -357,7 +373,11 @@ export const MuestrasSection = () => {
         <SectionTitle
           icon={<GroupIcon color="primary" />}
           title={`Destinatarios de la muestra (${quantity})`}
-          subtitle={selective ? 'Correo que recibe la prueba + identificación del registro de la base.' : 'Correos que recibirán la muestra para aprobación.'}
+          subtitle={
+            selective
+              ? `${contactLabel} que recibe la prueba + identificación del registro de la base.`
+              : `${sampleContact === 'phone' ? 'Celulares' : 'Correos'} que recibirán la muestra para aprobación.`
+          }
         />
         <Stack spacing={1.5} sx={{ mt: 2 }}>
           {recipients.map((r, i) => (
@@ -366,13 +386,20 @@ export const MuestrasSection = () => {
                 {i + 1}
               </Avatar>
               <TextField
-                label={`Correo de la muestra ${i + 1}`}
+                label={`${contactLabel} de la muestra ${i + 1}`}
                 value={r.email}
                 onChange={(e) => updateRecipient(i, 'email', e.target.value)}
                 fullWidth
                 size="small"
-                type="email"
-                InputProps={{ startAdornment: (<InputAdornment position="start"><AlternateEmailIcon fontSize="small" /></InputAdornment>) }}
+                type={sampleContact === 'phone' ? 'tel' : 'email'}
+                placeholder={sampleContact === 'phone' ? '+573001234567' : ''}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      {sampleContact === 'phone' ? <SmartphoneIcon fontSize="small" /> : <AlternateEmailIcon fontSize="small" />}
+                    </InputAdornment>
+                  ),
+                }}
               />
               {selective && (
                 <TextField
