@@ -128,9 +128,15 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 | `Api_V1_Config_Set` | `/Config/Set` | `PutItem`/`CreateTable`/`DescribeTable` sobre `platformConfig`; `PutItem` sobre `adminAudit` |
 | `Api_V1_Admin_Audit` | `/Admin/Audit` | `Scan` sobre `adminAudit` |
 | `Api_V1_Admin_Campaigns` | `/Admin/Campaigns` | `Scan` sobre `campaign`/`customer` |
+| `Api_V1_Admin_Requeue` | `/Admin/Requeue` | `GetItem` sobre `process`; **`sqs:SendMessage`** sobre `Email_Prepare-batch-part`; `PutItem` sobre `adminAudit` |
 
-- [ ] `[J]` Crear las 11 funciones vacías + sus rutas + permisos de la tabla.
-- [ ] `[J]` Confirmar que el **Authorizer** está asignado a las 11 rutas.
+- [ ] `[J]` Crear las 12 funciones vacías + sus rutas + permisos de la tabla.
+- [ ] `[J]` Confirmar que el **Authorizer** está asignado a las 12 rutas.
+- [ ] `[J]` `Api_V1_Admin_Requeue` reencola las partes pendientes de un envío atascado
+  (botón "Reintentar" en Trabajos). Necesita `sqs:SendMessage` sobre la cola
+  `Email_Prepare-batch-part` y la env `URL_SQS_PREPARE_PART` (misma URL que usa Prepare-batch).
+  Solo funciona con procesos creados **después** de desplegar el Prepare-batch que guarda
+  `resumeCtx` (los anteriores devuelven 409 "sin contexto de reanudación").
 - [ ] `[J]` `Api_V1_Admin_Campaigns` es la vista **admin** de campañas de todos los clientes
   (columna de empresa + filtros en el panel). La ruta `/Admin/Campaigns` ya está en
   `infra/api/routes.json`, así que el workflow `deploy-api.yml` la crea sola.
@@ -161,7 +167,10 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 | `Api_V1_Campaign_Create-campaign` | Auditoría `campaign.create` | `PutItem` sobre `adminAudit` |
 | `Api_V1_Template_Create-template` | Auditoría `template.create` (además del `templateAudit` existente) | `PutItem` sobre `adminAudit` |
 | `Api_V1_MessageTemplate_Create` | Auditoría `messageTemplate.create`/`.update` | `PutItem` sobre `adminAudit` |
-| `Api_V1_Email_Prepare-batch-template` | Auditoría `send.samples` / `send.real` (quién envió) | `PutItem` sobre `adminAudit` |
+| `Api_V1_Email_Prepare-batch-template` | Auditoría `send.samples`/`send.real`; guarda `resumeCtx` para reintentar; scans de `customer` por PK → GetItem | `PutItem` sobre `adminAudit`; `UpdateItem` sobre `process` (resumeCtx) |
+| `Api_V1_Email_Send-batch-template-EAP` | Rellena `{{unsubscribeUrl}}` + headers List-Unsubscribe | env **`SECRET_KEY`** y `UNSUBSCRIBE_URL` |
+| `Api_V1_Security_Login` | `select_client`/`select_name`/email → GetItem/Query (GSI opcional) | env opcional **`USER_EMAIL_GSI`** (+ crear el GSI `email` en `user`) |
+| `Api_V1_Cost_Estimate` | Toma el `customerId` del Authorizer, no del body | — (sin permisos nuevos) |
 | `Api_V1_Billing_Summary` | **3 scans totales** (no 1+2·C) + `sendSummary` O(1) opcional | `GetItem` sobre `*_sendSummary` (si `SEND_SUMMARY_READ`) |
 
 > `Api_V1_User_SetRole`, `Api_V1_Pricing_Update` y `Api_V1_Config_Set` también escriben
@@ -183,7 +192,7 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 - Proxy: si alguna ruta se pasa a proxy, la **lambda debe emitir** el header
   `Access-Control-Allow-Origin` en su respuesta (el "Enable CORS" solo añade el OPTIONS).
 
-- [ ] `[J]` Habilitar CORS en las 11 rutas nuevas.
+- [ ] `[J]` Habilitar CORS en las 12 rutas nuevas.
 
 ---
 
@@ -294,21 +303,23 @@ Lo que queda por hacer en el repo (no es despliegue):
 - [ ] **WhatsApp — ReceptionStatus:** los recibos de entrega/lectura vienen de **Meta**
   (formato distinto, vía la SNS de `socialmessaging`). Falta el parser (mismo patrón que
   `Api_V1_Messaging_ReceptionStatus` de SMS/Voz, otro formato de evento).
-- [ ] **EAP — variable de desuscripción:** el envío EAP aún no reemplaza `{{unsubscribeUrl}}`
-  por destinatario (EM y EAU sí). Mismo patrón que EAU (token HMAC + relleno por destinatario).
-- [ ] **Trabajos — reencolar:** hoy el monitor es solo lectura. Falta la acción de
-  reencolar/reintentar un proceso atascado (requiere permisos SQS + las URLs de las colas).
 - [ ] **`verify-code`:** sigue como **stub** (el flujo real de OTP usa create/validate-otp).
-- [ ] **Fase 5 (Prepare-batch):** pasar los `scan` a `query`/índices y garantizar la
-  **unicidad de campaña** (índice) — última fase del refactor de Prepare-batch.
+- [~] **Fase 5 (Prepare-batch / scans→queries):** hecho lo de mayor impacto sin índices nuevos
+  (scans de `customer` por PK → GetItem en Login/Prepare-batch/Create-campaign/Template;
+  `Create-otp` por userId; login por email GSI-ready + scan paginado). **Falta:** el GSI
+  `email` en `user` (para que las otras lambdas de auth queden O(1)) y el índice de
+  **unicidad de campaña** (consecutivo) — requieren crear los índices (`[J]`).
 - [ ] **CI — build del frontend:** agregar `npm ci && npm run build` al workflow para
   atrapar regresiones de TypeScript en cada PR.
-- [ ] **`Cost_Estimate` — tenant del token:** hoy toma el `customerId` del **body**, no del
-  Authorizer; un cliente podría enviar el `customerId` de otro y ver su tarifa. Preferir
-  `event.requestContext.authorizer.customerId` (como las demás read-lambdas).
-- [x] **Auditoría ampliada (hecho jul 2026):** además de realSend/rol/tarifas/config, ahora
-  audita seguridad (login/token), creación de campañas y plantillas, y envíos (muestras/real).
-  Objetivos legibles (nombre de empresa/correo, no ids) y tarifas con solo el campo cambiado.
+- [x] **EAP — desuscripción (hecho jul 2026):** `Send-batch-template-EAP` ya rellena
+  `{{unsubscribeUrl}}` por destinatario (token HMAC) + headers List-Unsubscribe.
+- [x] **Trabajos — reencolar (hecho jul 2026):** `Api_V1_Admin_Requeue` reencola las partes
+  pendientes de un proceso atascado (idempotente); botón "Reintentar" en el tab Trabajos.
+- [x] **`Cost_Estimate` — tenant del token (hecho jul 2026):** toma el `customerId` del
+  Authorizer, no del body.
+- [x] **Auditoría ampliada (hecho jul 2026):** seguridad (login/token), creación de campañas y
+  plantillas, envíos (muestras/real); objetivos legibles (nombre/correo, no ids); tarifas con
+  solo el campo cambiado.
 - [x] **Timeouts admin (hecho jul 2026):** `Billing_Summary` (3 scans, no 1+2·C) y `Admin_Jobs`
   (conteo O(1) por `sendSummary`); + `ErrorBoundary` global y render defensivo en el panel.
 

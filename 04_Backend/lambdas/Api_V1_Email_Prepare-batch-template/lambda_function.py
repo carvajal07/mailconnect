@@ -869,6 +869,29 @@ def enqueue_part_job(st, part:int, part_key:str, bucket_name:str, channel_queue:
     send_sqs(URL_SQS_PREPARE_PART, json.dumps(job))
 
 
+def store_resume_ctx(st, bucket_name, channel_queue, registers_for_message,
+                     unsubscribe_existed, blacklist_existed)->None:
+    """Persiste en la fila del proceso el contexto necesario para RE-ENCOLAR (reintentar)
+    las partes que no se completen. Los part-files ya viven en S3 (_parts/{processId}/N.json);
+    con este contexto, la lambda Admin_Requeue reconstruye el trabajo de cada parte faltante
+    (las que no están en processedParts) sin la base original. Best-effort: si falla, el
+    reintento simplemente no estará disponible para ese proceso."""
+    try:
+        table_process.update_item(
+            Key={'processId': st.process_id},
+            UpdateExpression='SET resumeCtx = :c',
+            ExpressionAttributeValues={':c': {
+                'ctx': build_ctx(st),
+                'bucket': bucket_name,
+                'channelQueue': channel_queue,
+                'registersForMessage': registers_for_message,
+                'unsubscribeExisted': unsubscribe_existed,
+                'blacklistExisted': blacklist_existed,
+            }})
+    except Exception as e:
+        print('No se pudo guardar resumeCtx (reintento no disponible): {}'.format(e))
+
+
 def preparar_split(st, data, response_campaign, user_id, template_version, temp_file,
                    delimiter, url_sqs, channel_name, unsubscribe_existed,
                    blacklist_existed):
@@ -939,6 +962,9 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
         # workers de cada parte (ADD atómico). Estado inicial "Procesando".
         insert_process(st, data["campaignName"], user_id, registers_on_spool, 0, 0, 0, 0,
                        part, template_version, "Procesando")
+        # Guarda el contexto para poder RE-ENCOLAR las partes que no terminen (reintento admin).
+        store_resume_ctx(st, bucket_name, url_sqs, registers_for_message,
+                         unsubscribe_existed, blacklist_existed)
 
     return status, status_code, description
 
