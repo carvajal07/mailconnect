@@ -14,15 +14,15 @@ import {
 import { Sidebar } from '../../components/admin/Sidebar';
 import { DashboardSection } from '../../components/admin/DashboardSection';
 import { ClientesSection } from '../../components/admin/ClientesSection';
-import { EnviosClientesSection } from '../../components/admin/EnviosClientesSection';
 import { TarifasSection } from '../../components/admin/TarifasSection';
 import { FacturacionSection } from '../../components/admin/FacturacionSection';
 import { JobsSection } from '../../components/admin/JobsSection';
 import { ConfiguracionSection } from '../../components/admin/ConfiguracionSection';
 import { AuditoriaSection } from '../../components/admin/AuditoriaSection';
 import { PlantillasSection } from '../../components/admin/PlantillasSection';
-import { CampanasSection } from '../../components/admin/CampanasSection';
+import { AdminCampanasSection } from '../../components/admin/AdminCampanasSection';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
+import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
 import { useNavigate } from 'react-router-dom';
@@ -61,8 +61,6 @@ export const AdminPage = () => {
         return <DashboardSection />;
       case 'clientes':
         return <ClientesSection />;
-      case 'envios-clientes':
-        return <EnviosClientesSection />;
       case 'tarifas':
         return <TarifasSection />;
       case 'facturacion':
@@ -78,7 +76,7 @@ export const AdminPage = () => {
       case 'auditoria':
         return <AuditoriaSection />;
       case 'campanas':
-        return <CampanasSection />;
+        return <AdminCampanasSection />;
       default:
         return <DashboardSection />;
     }
@@ -146,7 +144,11 @@ export const AdminPage = () => {
       >
         <Toolbar />
         <Container maxWidth="xl" sx={{ mt: 4 }}>
-          {renderSection()}
+          {/* Aísla el fallo de una sección: si una lanza al renderizar, se muestra un aviso
+              acotado en vez de dejar TODO el panel en blanco. Se resetea al cambiar de tab. */}
+          <ErrorBoundary label="esta sección" resetKey={activeSection}>
+            {renderSection()}
+          </ErrorBoundary>
         </Container>
       </Box>
     </Box>

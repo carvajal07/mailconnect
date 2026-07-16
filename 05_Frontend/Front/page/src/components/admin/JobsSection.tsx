@@ -117,7 +117,7 @@ export const JobsSection = () => {
           </TextField>
           {data && (
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-              {Object.entries(data.counts).map(([s, n]) => (
+              {Object.entries(data.counts ?? {}).map(([s, n]) => (
                 <Chip key={s} size="small" color={stateColor(s)} variant="outlined" label={`${s}: ${n}`} />
               ))}
             </Stack>
@@ -142,11 +142,12 @@ export const JobsSection = () => {
             {loading && !data && (
               <TableRow><TableCell colSpan={7} align="center" sx={{ py: 4 }}><CircularProgress size={26} /></TableCell></TableRow>
             )}
-            {!loading && data && data.jobs.length === 0 && (
+            {!loading && data && (data.jobs?.length ?? 0) === 0 && (
               <TableRow><TableCell colSpan={7} align="center" sx={{ py: 4, color: 'text.secondary' }}>No hay trabajos en el periodo/estado seleccionado.</TableCell></TableRow>
             )}
-            {data?.jobs.map((j) => {
-              const blockedTotal = j.blocked.blacklist + j.blocked.unsubscribe + j.blocked.invalid;
+            {(data?.jobs ?? []).map((j) => {
+              const b = j.blocked ?? { blacklist: 0, unsubscribe: 0, invalid: 0 };
+              const blockedTotal = (b.blacklist || 0) + (b.unsubscribe || 0) + (b.invalid || 0);
               return (
                 <TableRow key={j.processId} hover>
                   <TableCell><Typography fontWeight={600}>{j.campaignName || '—'}</Typography></TableCell>
@@ -163,7 +164,7 @@ export const JobsSection = () => {
                   <TableCell><JobProgress job={j} /></TableCell>
                   <TableCell align="center">
                     {blockedTotal > 0 ? (
-                      <Tooltip title={`Lista negra: ${j.blocked.blacklist} · Desuscritos: ${j.blocked.unsubscribe} · Inválidos: ${j.blocked.invalid}`}>
+                      <Tooltip title={`Lista negra: ${b.blacklist} · Desuscritos: ${b.unsubscribe} · Inválidos: ${b.invalid}`}>
                         <Chip size="small" icon={<BlockIcon />} variant="outlined" color="default" label={num(blockedTotal)} />
                       </Tooltip>
                     ) : '—'}
