@@ -4,21 +4,23 @@ Lambda CLIENTE: consulta el SALDO (monedero PREPAGO) y el historial de movimient
 Ruta: POST /Balance/Get  (integración no-proxy, envelope estándar)
 Request:  { limit? }   (el tenant SIEMPRE sale del context del Authorizer, no del body)
 Respuesta: 200 { data: { customerId, balance, currency, transactions:[{txId, type,
-                          amount, balanceAfter, status, reference, detail, date}], count } }
+                          amount, balanceAfter, status, reference, bank, detail,
+                          rejectReason, createdAt}], count } }
 
 Multi-tenant OBLIGATORIO: el customerId sale del context del Authorizer; sin él → 403.
-Un cliente solo ve SU saldo y SUS movimientos.
+Un cliente solo ve SU saldo y SUS movimientos (incluye sus solicitudes de recarga manual
+pendientes/aprobadas/rechazadas).
 
 Tablas:
   - customerBalance   (PK customerId): saldo actual en COP (0 si nunca recargó).
-  - walletTransaction (PK txId)       : ledger de movimientos. Se filtra por customerId.
-    ⚠️ Hoy con Scan+FilterExpression (el ledger es chico al inicio). A futuro conviene
-    un GSI por customerId+date para O(log n); documentado en DESPLIEGUE.md.
+  - walletTransaction (PK txId)       : ledger de movimientos. Se lee por el GSI
+    `customerId-createdAt-index` (Query, orden por fecha desc). Si el índice aún no existe
+    (rollout), cae a Scan+FilterExpression (correcto, solo más costoso).
 '''
 import json
 import boto3
 from decimal import Decimal
-from boto3.dynamodb.conditions import Attr
+from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource('dynamodb')
@@ -28,6 +30,7 @@ table_wallet = dynamodb.Table('walletTransaction')
 CURRENCY = 'COP'
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
+GSI_NAME = 'customerId-createdAt-index'
 
 
 def _get_payload(event):
@@ -57,7 +60,8 @@ def _to_int(value, default=0):
 
 
 def _clean_tx(item):
-    """Movimiento normalizado para el JSON del front (Decimal → int)."""
+    """Movimiento normalizado para el JSON del front (Decimal → int). Incluye el estado
+    (pending/approved/declined) y el motivo de rechazo de las solicitudes manuales."""
     return {
         'txId': item.get('txId', ''),
         'type': item.get('type', ''),
@@ -66,8 +70,10 @@ def _clean_tx(item):
         'currency': item.get('currency', CURRENCY),
         'status': item.get('status', ''),
         'reference': item.get('reference', ''),
+        'bank': item.get('bank', ''),
         'detail': item.get('detail', ''),
-        'date': item.get('date', ''),
+        'rejectReason': item.get('rejectReason', ''),
+        'createdAt': item.get('createdAt', ''),
     }
 
 
@@ -82,6 +88,22 @@ def _load_balance(customer_id):
 
 
 def _load_transactions(customer_id, limit):
+    # Preferir el GSI (Query por customerId, orden por createdAt desc). Si el índice aún
+    # no existe (rollout) o la tabla no existe, se cae a Scan+Filter (o vacío).
+    try:
+        resp = table_wallet.query(
+            IndexName=GSI_NAME,
+            KeyConditionExpression=Key('customerId').eq(customer_id),
+            ScanIndexForward=False,   # más reciente primero
+            Limit=limit)
+        return [_clean_tx(i) for i in resp.get('Items', [])]
+    except ClientError as e:
+        code = e.response['Error']['Code']
+        if code == 'ResourceNotFoundException':
+            return []
+        if code != 'ValidationException':   # índice ausente → fallback a Scan
+            raise
+
     items = []
     kwargs = {'FilterExpression': Attr('customerId').eq(customer_id)}
     try:
@@ -96,7 +118,7 @@ def _load_transactions(customer_id, limit):
         if e.response['Error']['Code'] == 'ResourceNotFoundException':
             return []
         raise
-    items.sort(key=lambda x: str(x.get('date', '')), reverse=True)
+    items.sort(key=lambda x: str(x.get('createdAt', '')), reverse=True)
     return [_clean_tx(i) for i in items[:limit]]
 
 

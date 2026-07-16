@@ -106,7 +106,7 @@ def lambda_handler(event, context):
                 'actor': customer_id,
                 'reference': reference,
                 'detail': 'Recarga Wompi iniciada por ${:,} COP'.format(amount).replace(',', '.'),
-                'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+                'createdAt': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
             },
             ConditionExpression='attribute_not_exists(txId)',
         )

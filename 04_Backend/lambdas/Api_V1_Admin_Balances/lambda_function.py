@@ -99,7 +99,7 @@ def lambda_handler(event, context):
         # Movimientos recientes del ledger global (enriquecidos con la empresa).
         company_by_id = {c.get('customerId'): c.get('company', '') for c in customers}
         wallet = _scan_all(table_wallet)
-        wallet.sort(key=lambda x: str(x.get('date', '')), reverse=True)
+        wallet.sort(key=lambda x: str(x.get('createdAt', '')), reverse=True)
         recent = [{
             'txId': t.get('txId', ''),
             'customerId': t.get('customerId', ''),
@@ -107,9 +107,10 @@ def lambda_handler(event, context):
             'type': t.get('type', ''),
             'amount': _to_int(t.get('amount'), 0),
             'balanceAfter': _to_int(t.get('balanceAfter'), 0),
+            'status': t.get('status', ''),
             'reference': t.get('reference', ''),
             'detail': t.get('detail', ''),
-            'date': t.get('date', ''),
+            'createdAt': t.get('createdAt', ''),
         } for t in wallet[:MAX_RECENT_TX]]
 
         return {'status': True, 'statusCode': 200,

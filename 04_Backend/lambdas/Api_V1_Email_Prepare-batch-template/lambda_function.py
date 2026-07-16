@@ -269,22 +269,25 @@ class InsufficientBalance(Exception):
     DURO: sin cupo negativo). El handler responde 402."""
 
 
-def _wallet_ledger(st, tx_type, amount, balance_after, reference, detail):
+def _wallet_ledger(st, tx_type, amount, balance_after, detail):
     """Escribe SIEMPRE un movimiento en walletTransaction (ledger auditable). Best-effort:
-    el saldo ya se movió atómicamente; si el ledger falla se loguea, no se revierte."""
+    el saldo ya se movió atómicamente; si el ledger falla se loguea, no se revierte.
+    Para débitos/reembolsos deja la traza al proceso/campaña (processId/campaignId)."""
     try:
         table_wallet.put_item(Item={
             'txId': str(uuid.uuid4()),
             'customerId': st.customer_id,
-            'type': tx_type,               # debit | refund
+            'type': tx_type,               # debit_send | refund_send
             'amount': int(amount),         # negativo=débito, positivo=reembolso
             'balanceAfter': int(balance_after),
             'currency': 'COP',
             'status': 'approved',
             'actor': 'sistema',
-            'reference': str(reference or ''),
+            'reference': str(st.process_id or ''),
+            'processId': str(st.process_id or ''),
+            'campaignId': str(st.campaign_id or ''),
             'detail': str(detail),
-            'date': st.formatted_date,
+            'createdAt': st.formatted_date,
         })
     except Exception as e:
         print('No se pudo registrar walletTransaction: {}'.format(e))
@@ -318,7 +321,7 @@ def reserve_balance(st, cost, campaign_name):
             return None
         raise
     new_balance = int(resp['Attributes']['balance'])
-    _wallet_ledger(st, 'debit', -cost, new_balance, st.process_id,
+    _wallet_ledger(st, 'debit_send', -cost, new_balance,
                    "Débito por envío real de la campaña '{}'".format(campaign_name))
     return new_balance
 
@@ -335,7 +338,7 @@ def refund_balance(st, cost, campaign_name):
             ReturnValues='UPDATED_NEW',
         )
         new_balance = int(resp['Attributes']['balance'])
-        _wallet_ledger(st, 'refund', cost, new_balance, st.process_id,
+        _wallet_ledger(st, 'refund_send', cost, new_balance,
                        "Reembolso por fallo del envío de la campaña '{}'".format(campaign_name))
     except Exception as e:
         print('No se pudo reembolsar el saldo debitado: {}'.format(e))
@@ -366,7 +369,7 @@ def release_real_send_lock(st, previous_state):
 REAL_SEND_ALLOWED_STATES = ('Pendiente', 'Muestras', 'Error')
 
 
-def insert_process(st:'ProcessState',campaign_name:str,user_id:str,registers_on_spool:int,registers_to_send:int,quantity_blacklist:int,quantity_unsubscribe:int,quantity_deletions:int,parts:int,template_version:int,state:str)->None:
+def insert_process(st:'ProcessState',campaign_name:str,user_id:str,registers_on_spool:int,registers_to_send:int,quantity_blacklist:int,quantity_unsubscribe:int,quantity_deletions:int,parts:int,template_version:int,state:str,charged_amount:int=0)->None:
     """
     Esta función inserta los datos del proceso completo, con sus cantidades.
 
@@ -402,7 +405,10 @@ def insert_process(st:'ProcessState',campaign_name:str,user_id:str,registers_on_
             'parts': parts,
             'templateVersion': template_version,
             'date': st.formatted_date,
-            'processState': state
+            'processState': state,
+            # Monto debitado del saldo por este envío (0 en muestras). Sirve para la
+            # conciliación fina (fase posterior) y para el reembolso si aplica.
+            'chargedAmount': charged_amount,
         }
     )
 
@@ -1205,7 +1211,7 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
         # por categoría (a enviar / lista negra / desuscritos / inválidos) los ACUMULAN los
         # workers de cada parte (ADD atómico). Estado inicial "Procesando".
         insert_process(st, data["campaignName"], user_id, registers_on_spool, 0, 0, 0, 0,
-                       part, template_version, "Procesando")
+                       part, template_version, "Procesando", charged_amount=debited)
         # Guarda el contexto para poder RE-ENCOLAR las partes que no terminen (reintento admin).
         store_resume_ctx(st, bucket_name, url_sqs, registers_for_message,
                          unsubscribe_existed, blacklist_existed)

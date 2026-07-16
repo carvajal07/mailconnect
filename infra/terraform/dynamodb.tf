@@ -36,9 +36,13 @@ locals {
     # customerBalance: saldo por cliente (COP). Débito/crédito ATÓMICO (UpdateItem
     # condicional). walletTransaction: ledger AUDITABLE de todo movimiento de dinero
     # (recargas manuales/Wompi, débitos por envío, reembolsos). En Wompi el txId de la
-    # recarga = la `reference` (idempotencia pending→approved del webhook).
+    # recarga = la `reference` (idempotencia pending→approved del webhook). El GSI
+    # customerId-createdAt-index sirve el historial del cliente (Query por fecha desc).
     customerBalance   = { hash = "customerId" }
-    walletTransaction = { hash = "txId" }
+    walletTransaction = {
+      hash = "txId"
+      gsis = [{ name = "customerId-createdAt-index", hash = "customerId", range = "createdAt" }]
+    }
   }
 }
 
@@ -50,16 +54,25 @@ resource "aws_dynamodb_table" "this" {
   hash_key     = each.value.hash
   range_key    = try(each.value.range, null)
 
-  attribute {
-    name = each.value.hash
-    type = "S"
-  }
-
+  # Declara TODOS los atributos que son llave (de la tabla o de algún GSI), sin duplicar.
   dynamic "attribute" {
-    for_each = try(each.value.range, null) == null ? [] : [each.value.range]
+    for_each = toset(compact(concat(
+      [each.value.hash, try(each.value.range, null)],
+      flatten([for g in try(each.value.gsis, []) : [g.hash, try(g.range, null)]])
+    )))
     content {
       name = attribute.value
       type = "S"
+    }
+  }
+
+  dynamic "global_secondary_index" {
+    for_each = try(each.value.gsis, [])
+    content {
+      name            = global_secondary_index.value.name
+      hash_key        = global_secondary_index.value.hash
+      range_key       = try(global_secondary_index.value.range, null)
+      projection_type = "ALL"
     }
   }
 

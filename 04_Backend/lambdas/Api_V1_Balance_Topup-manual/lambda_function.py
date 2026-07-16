@@ -1,13 +1,15 @@
 '''
-Lambda ADMIN: RECARGA MANUAL del saldo (monedero PREPAGO) de un cliente.
+Lambda ADMIN: AJUSTE / crédito DIRECTO de saldo (monedero PREPAGO) de un cliente.
 
 Ruta: POST /Balance/Topup-manual  (integración no-proxy, envelope estándar)
 Request:  { customerId, amount (COP, entero > 0), note? }
 Respuesta: 200 ok · 400 datos inválidos · 403 no admin
 
 Acredita el saldo del cliente de forma ATÓMICA (UpdateItem con ADD, sin leer-modificar-
-escribir) y deja SIEMPRE un movimiento en el ledger `walletTransaction` (auditable). La
-usa el admin para cargar saldo por transferencia/efectivo (fuera de Wompi).
+escribir) y deja SIEMPRE un movimiento en el ledger `walletTransaction` (tipo `adjustment`).
+Es un ajuste DIRECTO del admin (correcciones, cortesías, saldo inicial), DISTINTO de la
+"recarga manual" del cliente (comprobante + aprobación), que usa el flujo Topup-manual-request
+→ Admin_Topup-approve (tipo `topup_manual`). No requiere solicitud previa del cliente.
 
 Tablas:
   - customerBalance  (PK customerId): saldo actual en COP.
@@ -114,28 +116,30 @@ def lambda_handler(event, context):
         )
         new_balance = _to_int(resp['Attributes'].get('balance'), amount)
 
-        # Ledger AUDITABLE: siempre se registra el movimiento (crédito positivo).
+        # Ledger AUDITABLE: siempre se registra el movimiento (crédito positivo). Tipo
+        # 'adjustment' = ajuste/crédito DIRECTO del admin (distinto de la recarga manual
+        # del cliente, que pasa por comprobante + aprobación con tipo 'topup_manual').
         tx_id = str(uuid.uuid4())
         table_wallet.put_item(Item={
             'txId': tx_id,
             'customerId': customer_id,
-            'type': 'topup_manual',
+            'type': 'adjustment',
             'amount': amount,               # positivo = crédito
             'balanceAfter': new_balance,
             'currency': CURRENCY,
             'status': 'approved',
             'actor': actor,
             'reference': '',
-            'detail': note or 'Recarga manual (admin)',
-            'date': _now(),
+            'detail': note or 'Ajuste de saldo (admin)',
+            'createdAt': _now(),
         })
 
-        _audit(event, 'balance.topup_manual', customer_id,
-               'Recarga manual de ${:,} COP al cliente {} (saldo: ${:,})'.format(
+        _audit(event, 'balance.adjustment', customer_id,
+               'Ajuste de saldo de ${:,} COP al cliente {} (saldo: ${:,})'.format(
                    amount, customer_id, new_balance).replace(',', '.'))
 
         return {'status': True, 'statusCode': 200,
-                'description': 'Recarga aplicada.',
+                'description': 'Ajuste de saldo aplicado.',
                 'data': {'customerId': customer_id, 'amount': amount,
                          'balance': new_balance, 'currency': CURRENCY, 'txId': tx_id}}
     except Exception as e:
