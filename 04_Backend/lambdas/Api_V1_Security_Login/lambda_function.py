@@ -46,6 +46,11 @@ def _audit(action, actor, detail, customer='', target=''):
 
 PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '100000'))
 
+# GSI de `user` por email (PK 'email'). Si se define, la búsqueda del login es Query O(1);
+# si no, cae a Scan PAGINADO (correcto, solo más costoso). Permite activar el índice sin
+# redesplegar código (crear el GSI + poner la env).
+USER_EMAIL_GSI = os.environ.get('USER_EMAIL_GSI', '').strip()
+
 
 def _hash_password(password, salt):
     """PBKDF2-HMAC-SHA256 (stdlib, sin dependencias/layer). Formato auto-descriptivo
@@ -97,19 +102,35 @@ def generate_jwt(username, customer_id="", customer="", user_id="", role="client
     return token
 
 def _client_info(event):
-    """Extrae IP y user-agent del evento (soporta proxy y no-proxy)."""
+    """Extrae IP y user-agent del evento (soporta proxy y no-proxy).
+
+    En integración NO-PROXY (como esta lambda), API Gateway NO incluye
+    requestContext.identity.sourceIp a menos que el mapping template lo inyecte. Por eso,
+    además del caso proxy, se busca la IP en:
+      - el body (campo 'ip'/'sourceIp' que el mapping puede rellenar con
+        $context.identity.sourceIp), y
+      - el header 'X-Forwarded-For' (si el mapping reenvía los headers).
+    Si nada de eso llega, queda 'unknown' (ver DESPLIEGUE.md → inyectar la IP en el
+    mapping template del login).
+    """
     ip = "unknown"
     device = "unknown"
     if isinstance(event, dict):
         rc = event.get('requestContext') or {}
         identity = rc.get('identity') or {}
         ip = identity.get('sourceIp') or ip
+        # No-proxy: el mapping template puede inyectar la IP en el body.
+        if ip == "unknown":
+            ip = event.get('ip') or event.get('sourceIp') or ip
         headers = event.get('headers') or {}
-        # Los headers pueden venir con distinta capitalización
+        # Los headers pueden venir con distinta capitalización.
         for k, v in headers.items():
-            if str(k).lower() == 'user-agent' and v:
+            lk = str(k).lower()
+            if lk == 'user-agent' and v:
                 device = v
-                break
+            elif ip == "unknown" and lk == 'x-forwarded-for' and v:
+                # X-Forwarded-For puede traer varias IPs; la primera es el cliente.
+                ip = str(v).split(',')[0].strip()
     return ip, device
 
 
@@ -134,27 +155,51 @@ def create_Session(userId,ipAddress,device,numberAttemps):
     )
     
 def select_client(customerId):
-    # Traemos el nombre de la empresa, el NIT y el estado de envíos reales para la sesión.
-    projectionCustomer_expression = 'company, companyTin, realSendEnabled'  # Lista de campos a consultar
-
-    response = table_customer.scan(
-        FilterExpression="customerId = :value",
-        ExpressionAttributeValues={":value": customerId},
-        ProjectionExpression=projectionCustomer_expression
-    )
-    item = response['Items'][0]
+    # customerId es la PK de `customer` → GetItem O(1). Antes era Scan+FilterExpression,
+    # que lee toda la tabla y, peor, si superaba 1 MB sin paginar podía NO encontrar el
+    # ítem (login fallaba intermitentemente al crecer la tabla).
+    item = table_customer.get_item(
+        Key={'customerId': customerId},
+        ProjectionExpression='company, companyTin, realSendEnabled').get('Item') or {}
     # Si el cliente es antiguo y no tiene el campo, se asume habilitado (fail-open).
     return item.get('company', ''), item.get('companyTin', ''), bool(item.get('realSendEnabled', True))
-    
-def select_name(userDataId):
-    projectionName_expression = 'userName'  # Lista de campos a consultar
 
-    response = table_user_data.scan(
-        FilterExpression="userDataId = :value",
-        ExpressionAttributeValues={":value": userDataId},
-        ProjectionExpression=projectionName_expression
-    )
-    return response['Items'][0]['userName']
+def select_name(userDataId):
+    # userDataId es la PK de `userData` → GetItem O(1) (antes Scan+filter).
+    item = table_user_data.get_item(
+        Key={'userDataId': userDataId},
+        ProjectionExpression='userName').get('Item') or {}
+    return item.get('userName', '')
+
+def _find_user_by_email(email):
+    """Busca el usuario por email. Query O(1) por el GSI `USER_EMAIL_GSI` si está
+    configurado; si no, Scan PAGINADO. (Antes era un scan de UNA sola página que podía NO
+    encontrar al usuario si la tabla `user` superaba 1 MB → login intermitente.)"""
+    proj = 'userId, userHash, userSalt, active, customerId, userDataId, #r'
+    names = {'#r': 'role'}  # 'role' es palabra reservada → alias
+    if USER_EMAIL_GSI:
+        resp = table_user.query(
+            IndexName=USER_EMAIL_GSI,
+            KeyConditionExpression=Key('email').eq(email),
+            ProjectionExpression=proj,
+            ExpressionAttributeNames=names)
+        return resp.get('Items', [])
+    items = []
+    kwargs = {
+        'FilterExpression': 'email = :value',
+        'ExpressionAttributeValues': {':value': email},
+        'ExpressionAttributeNames': names,
+        'ProjectionExpression': proj,
+    }
+    while True:
+        resp = table_user.scan(**kwargs)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            break
+        kwargs['ExclusiveStartKey'] = last
+    return items
+
 
 def lambda_handler(event, context):
     status = True
@@ -189,16 +234,8 @@ def lambda_handler(event, context):
         for item in items:
             print(item)
         '''
-        #consulta por scan
-        #projectionUser_expression = 'userHash, userSalt, isActive, isBlocked, timeBlocked'  # Lista de campos a consultar
-        projectionUser_expression = 'userId, userHash, userSalt, active, customerId, userDataId, #r'  # Lista de campos a consultar
-
-        responseUser = table_user.scan(
-            FilterExpression="email = :value",
-            ExpressionAttributeValues={":value": user},
-            ExpressionAttributeNames={"#r": "role"},  # 'role' via alias por seguridad
-            ProjectionExpression=projectionUser_expression
-        )
+        # Búsqueda por email: Query O(1) por GSI si está configurado; si no, Scan paginado.
+        responseUser = {'Items': _find_user_by_email(user)}
     except KeyError:
         # Falta un campo obligatorio del cliente → 400 (no 500).
         status = False

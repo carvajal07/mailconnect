@@ -78,21 +78,24 @@ def test_customer_update_registra_evento(env):
     entries = audit.lambda_handler(_admin(), None)['data']['entries']
     assert len(entries) == 1
     e = entries[0]
-    assert e['action'] == 'customer.realSend' and e['actor'] == 'ana@acme.co' and e['target'] == 'CU1'
+    # Objetivo legible (nombre de empresa, no el id de cliente).
+    assert e['action'] == 'customer.realSend' and e['actor'] == 'ana@acme.co' and e['target'] == 'Acme'
     assert 'deshabilitados' in e['detail']
 
 
 def test_setrole_registra_evento(env):
     _pk('user', 'userId')
     ddb = boto3.resource('dynamodb', region_name='us-east-1')
-    ddb.Table('user').put_item(Item={'userId': 'U2', 'role': 'client'})
+    ddb.Table('user').put_item(Item={'userId': 'U2', 'role': 'client', 'email': 'beto@acme.co'})
     ddb.Table('user').put_item(Item={'userId': 'U9', 'role': 'admin'})  # otro admin
     setrole = _load('Api_V1_User_SetRole')
     setrole.lambda_handler(_admin({'userId': 'U2', 'role': 'admin'}), None)
 
     audit = _load('Api_V1_Admin_Audit')
     e = audit.lambda_handler(_admin(), None)['data']['entries'][0]
-    assert e['action'] == 'user.role' and e['target'] == 'U2' and 'admin' in e['detail']
+    # Objetivo legible: el correo del usuario, no el id.
+    assert e['action'] == 'user.role' and e['target'] == 'beto@acme.co' and 'U2' not in e['target']
+    assert 'admin' in e['detail']
 
 
 def test_config_set_registra_evento(env):
@@ -152,3 +155,30 @@ def test_pricing_update_detalle_descriptivo(env):
     e = audit.lambda_handler(_admin(), None)['data']['entries'][0]
     assert e['action'] == 'pricing.update'
     assert 'baseEM' in e['detail'] and '8' in e['detail'] and '10' in e['detail'] and '→' in e['detail']
+
+
+def test_pricing_update_solo_campos_cambiados(env):
+    # Aunque el front envíe TODOS los campos, la auditoría lista SOLO los que cambiaron.
+    _pk_sk('pricingRate', 'customerId', 'channel')
+    ddb = boto3.resource('dynamodb', region_name='us-east-1')
+    ddb.Table('pricingRate').put_item(Item={'customerId': '*', 'channel': 'EMAIL', 'baseEM': 8, 'baseEAU': 15})
+    pu = _load('Api_V1_Pricing_Update')
+    # baseEM cambia (8->10); baseEAU se re-envía igual (15->15, sin cambio).
+    pu.lambda_handler(_admin({'channel': 'EMAIL', 'fields': {'baseEM': 10, 'baseEAU': 15}}), None)
+    audit = _load('Api_V1_Admin_Audit')
+    e = audit.lambda_handler(_admin(), None)['data']['entries'][0]
+    assert 'baseEM' in e['detail']
+    assert 'baseEAU' not in e['detail']   # no cambió → no aparece
+
+
+def test_pricing_update_objetivo_es_nombre_empresa(env):
+    # El Objetivo (target) debe ser el nombre de la empresa, no el id de cliente.
+    _pk_sk('pricingRate', 'customerId', 'channel')
+    _pk('customer', 'customerId')
+    ddb = boto3.resource('dynamodb', region_name='us-east-1')
+    ddb.Table('customer').put_item(Item={'customerId': 'CU7', 'company': 'Zeta SAS'})
+    pu = _load('Api_V1_Pricing_Update')
+    pu.lambda_handler(_admin({'customerId': 'CU7', 'channel': 'SMS', 'fields': {'baseSms': 70}}), None)
+    audit = _load('Api_V1_Admin_Audit')
+    e = audit.lambda_handler(_admin(), None)['data']['entries'][0]
+    assert 'Zeta SAS' in e['target'] and 'CU7' not in e['target']

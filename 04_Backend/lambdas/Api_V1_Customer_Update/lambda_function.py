@@ -104,7 +104,8 @@ def lambda_handler(event, context):
         prev = old.get('realSendEnabled')
         prev_lbl = 'habilitados' if prev else ('deshabilitados' if prev is not None else 'sin definir')
         estado = 'habilitados' if real_send_enabled else 'deshabilitados'
-        _audit(event, 'customer.realSend', customer_id,
+        # Objetivo legible (nombre de empresa, no el id).
+        _audit(event, 'customer.realSend', company,
                'Envíos reales del cliente {}: {} → {}'.format(company, prev_lbl, estado))
         return {
             'status': True,

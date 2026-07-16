@@ -41,7 +41,7 @@ import { isOk } from '../../services/apiClient';
 import { usePortalData } from '../../context/PortalDataContext';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
-import { analyzeCsv, DELIMITER_LABELS, requiredColumns, channelContactType, type CsvAnalysis, type ContactType, type Delimiter } from './csv';
+import { analyzeCsv, DELIMITER_LABELS, requiredColumns, channelContactType, isSpreadsheetFile, readSpreadsheet, rowsToCsv, type CsvAnalysis, type ContactType, type Delimiter } from './csv';
 
 interface BaseDatos {
   id: string;
@@ -106,6 +106,9 @@ export const BasesDatosSection = () => {
   const customerId = getUser()?.customerId ?? '';
   const userId = getUser()?.userId ?? '';
   const [file, setFile] = useState<File | null>(null);
+  // Archivo que realmente se sube a S3: para CSV es el mismo; para Excel es el CSV convertido.
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [isSpreadsheet, setIsSpreadsheet] = useState(false);
   const [fileText, setFileText] = useState('');
   const [delimiter, setDelimiter] = useState<Delimiter>(';');
   const [analysis, setAnalysis] = useState<CsvAnalysis | null>(null);
@@ -124,6 +127,8 @@ export const BasesDatosSection = () => {
 
   const resetUpload = () => {
     setFile(null);
+    setUploadFile(null);
+    setIsSpreadsheet(false);
     setFileText('');
     setAnalysis(null);
     setDelimiter(';');
@@ -149,14 +154,37 @@ export const BasesDatosSection = () => {
     }
   };
 
-  const handleFile = (f: File | null) => {
+  const handleFile = async (f: File | null) => {
     setFile(f);
     setAnalysis(null);
+    setIsSpreadsheet(false);
+    setUploadFile(null);
     if (!f) return;
+
+    // Excel: se lee la primera hoja y se CONVIERTE a CSV en el navegador; a S3 sube el CSV
+    // (el backend sigue leyendo CSV). El delimitador queda fijo en ';' para el archivo generado.
+    if (isSpreadsheetFile(f)) {
+      try {
+        const rows = await readSpreadsheet(f);
+        const csv = rowsToCsv(rows, ';');
+        setFileText(csv);
+        setIsSpreadsheet(true);
+        setDelimiter(';');
+        setAnalysis(analyzeCsv(csv, ';', contact));
+        const csvName = f.name.replace(/\.(xlsx|xlsm|xlsb|xls)$/i, '') + '.csv';
+        setUploadFile(new File([csv], csvName, { type: 'text/csv' }));
+      } catch {
+        notify('No se pudo leer el Excel. Verifica que sea un .xlsx válido y con datos en la primera hoja.', 'error');
+      }
+      return;
+    }
+
+    // CSV: se lee como texto (comportamiento de siempre) y se sube el archivo tal cual.
     const reader = new FileReader();
     reader.onload = () => {
       const text = String(reader.result ?? '');
       setFileText(text);
+      setUploadFile(f);
       const a = analyzeCsv(text, undefined, contact);
       setDelimiter(a.delimiter);
       setAnalysis(a);
@@ -180,8 +208,8 @@ export const BasesDatosSection = () => {
       notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
       return;
     }
-    if (!file || !analysis) {
-      notify('Selecciona un archivo CSV.', 'warning');
+    if (!uploadFile || !analysis) {
+      notify('Selecciona un archivo CSV o Excel.', 'warning');
       return;
     }
 
@@ -197,7 +225,7 @@ export const BasesDatosSection = () => {
     const presign = await campaignsService.presignUrl({
       customer: customer.trim(),
       nit: getUser()?.nit ?? '',
-      documentName: file.name,
+      documentName: uploadFile.name,
       documentType: 'database',
     });
     if (!isOk(presign) || !presign.data?.url) {
@@ -208,9 +236,9 @@ export const BasesDatosSection = () => {
     }
     setStepPresign('done');
 
-    // Paso 2: carga a S3.
+    // Paso 2: carga a S3 (el CSV; para Excel, el CSV ya convertido).
     setStepUpload('loading');
-    const ok = await campaignsService.uploadToS3(presign.data.url, file);
+    const ok = await campaignsService.uploadToS3(presign.data.url, uploadFile);
     if (!ok) {
       setStepUpload('error');
       setProgressMsg('El archivo no se pudo subir a S3.');
@@ -227,7 +255,7 @@ export const BasesDatosSection = () => {
     const reg = await databaseService.registerFile({
       customerId,
       customer: customer.trim(),
-      fileName: file.name,
+      fileName: uploadFile.name,
       s3Path: path,
       totalRecords: analysis.totalRows,
       validEmails: analysis.validEmails,
@@ -287,7 +315,8 @@ export const BasesDatosSection = () => {
       </Stack>
 
       <Alert severity="info" sx={{ mb: 2 }}>
-        Sube tus listas de destinatarios (CSV). Antes de subir, validamos el archivo en tu
+        Sube tus listas de destinatarios (<strong>CSV o Excel .xlsx</strong> — el Excel se
+        convierte a CSV automáticamente). Antes de subir, validamos el archivo en tu
         navegador y contamos: <strong>Válidos</strong> (contacto de la columna 2 con formato
         correcto y sin duplicar) e <strong>Inválidos</strong> (contacto vacío o con formato
         inválido para el canal: correo mal escrito, o celular que no es E.164). La subida va a S3
@@ -405,7 +434,8 @@ export const BasesDatosSection = () => {
                 value={delimiter}
                 onChange={(e) => changeDelimiter(e.target.value as Delimiter)}
                 sx={{ minWidth: 200 }}
-                disabled={!fileText}
+                disabled={!fileText || isSpreadsheet}
+                helperText={isSpreadsheet ? 'El Excel se convierte a CSV (;)' : undefined}
               >
                 {(Object.keys(DELIMITER_LABELS) as Delimiter[]).map((d) => (
                   <MenuItem key={d} value={d}>
@@ -416,9 +446,21 @@ export const BasesDatosSection = () => {
             </Stack>
 
             <Button variant="outlined" component="label" startIcon={<CloudUploadIcon />}>
-              {file ? `Archivo: ${file.name} (${formatBytes(file.size)})` : 'Seleccionar archivo CSV'}
-              <input type="file" accept=".csv,text/csv" hidden onChange={(e) => handleFile(e.target.files?.[0] || null)} />
+              {file ? `Archivo: ${file.name} (${formatBytes(file.size)})` : 'Seleccionar archivo CSV o Excel'}
+              <input
+                type="file"
+                accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                hidden
+                onChange={(e) => handleFile(e.target.files?.[0] || null)}
+              />
             </Button>
+            {isSpreadsheet && (
+              <Typography variant="caption" color="text.secondary">
+                Excel detectado: se leyó la <strong>primera hoja</strong> y se convirtió a CSV para subirla.
+                Si un celular o identificación sale como inválido, formatéalo como <strong>Texto</strong> en Excel
+                (para no perder el <code>+</code> ni los ceros a la izquierda).
+              </Typography>
+            )}
 
             {analysis && (
               <>
@@ -455,7 +497,7 @@ export const BasesDatosSection = () => {
           <Button onClick={() => { setUploadOpen(false); resetUpload(); }} disabled={uploading}>
             Cancelar
           </Button>
-          <Button variant="contained" onClick={handleUpload} disabled={uploading || !file || !customer.trim()}>
+          <Button variant="contained" onClick={handleUpload} disabled={uploading || !uploadFile || !customer.trim()}>
             {uploading ? <CircularProgress size={22} /> : 'Subir a S3'}
           </Button>
         </DialogActions>

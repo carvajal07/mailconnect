@@ -87,6 +87,15 @@ def _get_payload(event):
     return event if isinstance(event, dict) else {}
 
 
+def _tenant_customer_id(event, payload):
+    """customerId con el que se resuelve la tarifa. Se PREFIERE el del token (Authorizer)
+    sobre el body: así un cliente no puede estimar con el customerId de OTRO (y ver su
+    tarifa/override). Solo cae al body si el context no llega (compatibilidad durante el
+    rollout del mapping template; sin él, la tarifa efectiva es la global)."""
+    auth = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
+    return auth.get('customerId') or payload.get('customerId', '')
+
+
 def _num(value, default=0.0):
     if isinstance(value, Decimal):
         return float(value)
@@ -183,7 +192,9 @@ ESTIMATORS = {
 def lambda_handler(event, context):
     payload = _get_payload(event)
     channel = str(payload.get('channel', 'EMAIL')).upper()
-    customer_id = payload.get('customerId', '')
+    # El customerId sale del token (Authorizer), no del body: evita que un cliente
+    # estime con el customerId de otro y vea su tarifa.
+    customer_id = _tenant_customer_id(event, payload)
 
     try:
         recipients = int(_num(payload.get('recipients'), 0))

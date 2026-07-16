@@ -75,7 +75,6 @@ Corrige la tabla del README (que marca varias como TODO):
 | `Create-otp` | `POST /api/create-otp` | ✅ Implementado |
 | `Validate-otp` | `POST /api/validate-otp` | ✅ Implementado |
 | `Recovery-password` | `POST /api/forgot-password` | ✅ Implementado (genera y envía OTP; respuesta genérica) |
-| `Verify-code` | `POST /api/verify-code` | ⚠️ **Stub** |
 | `Refresh-token` | `POST /api/token/refresh` | ✅ Implementado (renueva el JWT con los mismos claims) |
 | `Authorizer` / `Authorizer2` | (Lambda Authorizer) | ✅ Valida el JWT (HS256) con `SECRET_KEY`; deniega por defecto |
 
@@ -153,11 +152,13 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 ### Desuscripción (cómo funciona)
 1. El builder agrega SIEMPRE un pie con `{{unsubscribeUrl}}` al HTML generado (no removible).
 2. Send-EM llena esa variable por destinatario (token HMAC `base64url({c,e}).firma`);
-   Send-EAU además agrega headers `List-Unsubscribe` + `List-Unsubscribe-Post` (RFC 8058).
+   Send-EAU **y Send-EAP** además agregan headers `List-Unsubscribe` +
+   `List-Unsubscribe-Post` (RFC 8058).
 3. La lambda `Api_V1_Email_Unsubscribe` (pública) valida la firma e inserta el email en
    `{customer}_unsubscribe` (PK `email`) y muestra una página de confirmación con la marca.
 4. Prepare-batch filtra contra esa tabla en el envío real (chequeo reparado: antes nunca corría).
-   ⚠️ EAP aún no reemplaza la variable (pendiente, mismo patrón que EAU).
+   ✅ EAP ya reemplaza `{{unsubscribeUrl}}` por destinatario (mismo patrón que EAU; jul 2026).
+   Requiere la env `SECRET_KEY` (y `UNSUBSCRIBE_URL`) también en `Send-batch-template-EAP`.
 
 ### Portal: precarga y edición (jul 2026)
 - **Precarga al loguear:** `PortalDataProvider` (`context/PortalDataContext.tsx`) envuelve el
@@ -282,8 +283,14 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Metadata:** los envíos SMS/Voz ahora pasan `Context={customer, processId, uniqueId}` en
   `send_text_message`/`send_voice_message`; EUM lo incluye en el evento y ReceptionStatus lo lee
   para saber a qué cliente/proceso pertenece cada estado.
-- ⚠️ **WhatsApp:** los recibos de entrega/lectura vienen de **Meta** (formato distinto, vía la
-  SNS de `socialmessaging`); su ReceptionStatus queda **pendiente** (mismo patrón, otro parser).
+- ✅ **WhatsApp (jul 2026):** los recibos de entrega/lectura vienen de **Meta** (formato
+  distinto, vía la SNS de `socialmessaging`) y **solo traen el messageId**, sin nuestro
+  context. Por eso `Api_V1_Wsp_Send-batch` guarda un índice global **`messageIndex`** (PK
+  `messageId` → `{customer, processId, uniqueId}`) y la nueva lambda
+  **`Api_V1_Wsp_ReceptionStatus`** (suscrita a la SNS de WhatsApp) lo consulta para ubicar
+  el cliente/proceso y escribir el estado (`sent`→1, `delivered`→2, `read`→4, `failed`→3) en
+  `{customer}_sendStatus` (+ `bump_send_summary`). Estadísticas de WhatsApp ahora reflejan
+  entrega/lectura, no solo envío.
 - ⚠️ `[J]`: crear los **configuration sets** de SMS y Voz con **event destination → SNS**, y
   suscribir `Api_V1_Messaging_ReceptionStatus` a esa SNS. Env `SMS_CONFIGURATION_SET` /
   `VOICE_CONFIGURATION_SET` en los envíos para que emitan eventos.
@@ -554,7 +561,11 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             la comparación de identificación era `int(line[0]) == identificación(str)` y nunca hacía
             match; ahora compara como texto normalizado. **Fix front:** `apiClient` normaliza también
             el envelope con `status_code` (snake_case) que devuelve esta Lambda (proxy).
-      - [x] **Bases de datos** (`BasesDatosSection` + `csv.ts`): carga de CSV con
+      - [x] **Bases de datos** (`BasesDatosSection` + `csv.ts`): carga de **CSV o Excel .xlsx**
+            (el Excel se lee en el navegador con `read-excel-file`, se convierte a **CSV** y se
+            sube ese CSV a S3 → el backend sigue leyendo CSV, sin cambios; el `.xlsx` es solo
+            comodidad de entrada. Aviso: formatear celular/identificación como **Texto** en Excel
+            para no perder el `+`/ceros) con
             **validación/preview local** (parser propio: detecta delimitador, columnas, total
             de registros, columna de email, y cuenta válidos/inválidos/duplicados) y subida real
             a S3 vía `get-urlS3` (`documentType=database`), devolviendo la ruta para usarla como
@@ -599,7 +610,8 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [x] `change-password`, `logout`, `create-otp`, `validate-otp`, `account-activation`.
 - [x] Implementar `/forgot-password` como wrapper que crea y envía el OTP (con respuesta
       genérica anti-enumeración). `change-password` ahora valida la clave antes de consumir el OTP.
-- [ ] Implementar `verify-code` y `token/refresh` (hoy stubs).
+- [x] `token/refresh` implementado. **`verify-code` eliminado** (era un stub sin uso; el flujo
+      de verificación real usa create-otp/validate-otp y la activación por enlace).
 - [x] Endurecer el `Authorizer` (y `Authorizer2`) para que **valide el JWT** (HS256) con
       `SECRET_KEY`, soportando autorizadores TOKEN y REQUEST, y denegando por defecto.
 - [x] `SECRET_KEY` se lee desde variable de entorno (`Login` + lambdas nuevas + Authorizers).

@@ -490,13 +490,13 @@ def is_real_send_enabled(customer_id_value:str)->bool:
     de la tabla customer. Si falta el campo (clientes antiguos) se asume HABILITADO
     (fail-open, para no bloquear a nadie por una migración pendiente)."""
     try:
-        response = table_customer.scan(
-            FilterExpression="customerId = :value",
-            ExpressionAttributeValues={":value": customer_id_value},
-            ProjectionExpression='realSendEnabled'
-        )
-        if response['Items']:
-            return bool(response['Items'][0].get('realSendEnabled', True))
+        # customerId es la PK de `customer` → GetItem O(1) (antes Scan+filter, que además
+        # podía no ver el ítem si la tabla superaba 1 MB sin paginar).
+        item = table_customer.get_item(
+            Key={'customerId': customer_id_value},
+            ProjectionExpression='realSendEnabled').get('Item')
+        if item:
+            return bool(item.get('realSendEnabled', True))
     except Exception as e:
         print("No se pudo verificar realSendEnabled ({}); se asume habilitado".format(e))
     return True
@@ -506,12 +506,12 @@ def get_customer_nit(customer_id_value:str):
     """Devuelve el NIT (companyTin) del cliente para construir el bucket S3 por NIT.
     Si no se encuentra, devuelve None y las lecturas caen al bucket viejo por nombre."""
     try:
-        response = table_customer.scan(
-            FilterExpression="customerId = :value",
-            ExpressionAttributeValues={":value": customer_id_value},
-            ProjectionExpression='companyTin')
-        if response['Items']:
-            return response['Items'][0].get('companyTin')
+        # customerId es la PK de `customer` → GetItem O(1) (antes Scan+filter).
+        item = table_customer.get_item(
+            Key={'customerId': customer_id_value},
+            ProjectionExpression='companyTin').get('Item')
+        if item:
+            return item.get('companyTin')
     except Exception as e:
         print("No se pudo obtener el NIT del cliente ({})".format(e))
     return None
@@ -1074,6 +1074,27 @@ def count_base_rows(temp_file, delimiter):
         for _ in reader:
             total += 1
     return total
+def store_resume_ctx(st, bucket_name, channel_queue, registers_for_message,
+                     unsubscribe_existed, blacklist_existed)->None:
+    """Persiste en la fila del proceso el contexto necesario para RE-ENCOLAR (reintentar)
+    las partes que no se completen. Los part-files ya viven en S3 (_parts/{processId}/N.json);
+    con este contexto, la lambda Admin_Requeue reconstruye el trabajo de cada parte faltante
+    (las que no están en processedParts) sin la base original. Best-effort: si falla, el
+    reintento simplemente no estará disponible para ese proceso."""
+    try:
+        table_process.update_item(
+            Key={'processId': st.process_id},
+            UpdateExpression='SET resumeCtx = :c',
+            ExpressionAttributeValues={':c': {
+                'ctx': build_ctx(st),
+                'bucket': bucket_name,
+                'channelQueue': channel_queue,
+                'registersForMessage': registers_for_message,
+                'unsubscribeExisted': unsubscribe_existed,
+                'blacklistExisted': blacklist_existed,
+            }})
+    except Exception as e:
+        print('No se pudo guardar resumeCtx (reintento no disponible): {}'.format(e))
 
 
 def preparar_split(st, data, response_campaign, user_id, template_version, temp_file,
@@ -1185,6 +1206,9 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
         # workers de cada parte (ADD atómico). Estado inicial "Procesando".
         insert_process(st, data["campaignName"], user_id, registers_on_spool, 0, 0, 0, 0,
                        part, template_version, "Procesando")
+        # Guarda el contexto para poder RE-ENCOLAR las partes que no terminen (reintento admin).
+        store_resume_ctx(st, bucket_name, url_sqs, registers_for_message,
+                         unsubscribe_existed, blacklist_existed)
 
     return status, status_code, description
 
