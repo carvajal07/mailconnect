@@ -135,6 +135,7 @@ class ProcessState:
         self.wsp_template = ''   # nombre HSM (solo canal WSP)
         self.voice_message = ''  # texto TTS (solo canal VOZ)
         self.nit = None          # NIT (companyTin) del cliente → llave de recursos por cliente
+        self.is_samples = False  # True en el flujo de MUESTRAS → el worker cuenta el envío OK
 
     @property
     def tenant(self):
@@ -618,6 +619,7 @@ def build_ctx(st:'ProcessState')->dict:
         "wspTemplate": st.wsp_template,  # nombre HSM (solo canal WSP)
         "voiceMessage": st.voice_message,  # texto TTS (solo canal VOZ)
         "nit": st.nit,                   # NIT → bucket S3 en las lambdas de envío (.document)
+        "samples": bool(st.is_samples),  # True → el worker cuenta el envío de muestra OK (por campaignId)
     }
 
 
@@ -711,6 +713,21 @@ def send_sqs(url_sqs:str,message:list)->None:
     # que el bloque que llama marque la campaña en Error si no se pudo encolar.
     response = sqs.send_message(QueueUrl=url_sqs, MessageBody=message)
     print(response)
+
+def wait_tables_active(table_names)->None:
+    """Espera a que las tablas por cliente estén ACTIVE antes de encolar los mensajes. En
+    el PRIMER envío de un cliente, sus tablas ({tenant}_processDetail, _sendDetail,
+    _sendStatus, …) se acaban de crear y DynamoDB las deja en CREATING unos segundos; si el
+    worker (Send-*) las lee antes, falla con ResourceNotFoundException. El waiter matchea
+    TableStatus == ACTIVE. Best-effort: nunca interrumpe el flujo."""
+    client = dynamodb.meta.client
+    for name in table_names:
+        try:
+            client.get_waiter('table_exists').wait(
+                TableName=name, WaiterConfig={'Delay': 2, 'MaxAttempts': 30})
+        except Exception as e:
+            print('No se pudo esperar a que la tabla {} esté ACTIVE: {}'.format(name, e))
+
 
 def check_and_create_table(table_name:str, id:str)->bool:
     """
@@ -979,6 +996,7 @@ def preparar_muestras(st, data, response_campaign, user_id, template_version,
     count_register = 0
 
     print("Inica proceso de envio de muestras")
+    st.is_samples = True  # el worker (Send-*) contará el envío de muestra SOLO si sale bien
     process = data["campaignName"] + "-Samples"
     quantity_samples = data['quantitySamples']
     print("Cantidad  muestras en el payload: " + str(quantity_samples))
@@ -1138,10 +1156,10 @@ def preparar_muestras(st, data, response_campaign, user_id, template_version,
     print("Finaliza insercion en la tabla de procesos")
     update_campaign_status(st, "Muestras")
     print("Finaliza actualizacion de la tabla de estado de la campaña")
-    # Solo se cuenta la operación de muestras si salió bien.
-    if status:
-        nuevo_conteo = increment_samples_count(st)
-        print(f"Envíos de muestras usados: {nuevo_conteo}/{MAX_SAMPLE_SENDS}")
+    # El contador de muestras (campaign.samplesSentCount) YA NO se incrementa aquí: se
+    # cuenta en la lambda de ENVÍO (Send-batch-*) SOLO cuando el envío sale bien, para que
+    # una muestra que se prepara pero no se entrega no consuma el cupo. El mensaje SQS lleva
+    # `samples: True` (ver build_ctx / st.is_samples) para que el worker sepa contarlo.
 
     return status, status_code, description
 
@@ -1631,10 +1649,19 @@ def lambda_handler(event, context):
                 # Tablas de PRE-AGREGACIÓN (resumen O(1) para reportes). Se crean acá para
                 # que existan antes de que lleguen los eventos de recepción (best-effort).
                 ensure_summary_tables(tenant)
+                # BARRERA: esperar a que las tablas que LEE/ESCRIBE el worker (Send-*) estén
+                # ACTIVE antes de encolar. Evita el ResourceNotFoundException del primer
+                # envío de un cliente (tablas recién creadas en estado CREATING).
+                wait_tables_active([
+                    f'{tenant}_processDetail', f'{tenant}_sendDetail', f'{tenant}_sendStatus',
+                    f'{tenant}_unsubscribe', f'{tenant}_blackList',
+                ])
 
                 # OJO: el nombre de la PLANTILLA SES sigue por nombre de empresa (namespace
                 # SES, lo crea el builder del front con create-template) — NO es tabla/bucket.
-                st.template_name = f'{st.customer_name}_{consecutive}_{channel_name}_{campaign_name}'
+                # NO lleva el canal: una plantilla HTML aplica a varios canales de email
+                # (EM/EAU/EAP). Convención {customer}_{consecutivo}_{nombre} (= Create-template).
+                st.template_name = f'{st.customer_name}_{consecutive}_{campaign_name}'
 
                 print(f"Channel: {channel_name}")
                 #EAU = Email con adjunto unico (El mismo adjunto se envia a todos los destinatarios)

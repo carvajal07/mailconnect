@@ -194,6 +194,30 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   dimensiona sobre contactos **distintos** cuando se deduplica (`count_base_rows` dedup-aware).
   Fail-safe: si no se resuelve la base, se deduplica.
 
+### Ajustes operativos de envío y UX (jul 2026)
+- **Fix `ResourceNotFoundException` en el primer envío:** `Prepare-batch` ahora ESPERA a que
+  las tablas por cliente (`{tenant}_processDetail/_sendDetail/_sendStatus/_unsubscribe/_blackList`)
+  estén **ACTIVE** antes de encolar (`wait_tables_active`, waiter `table_exists`). Sin esto, el
+  worker (`Send-*`) leía una tabla recién creada en estado CREATING y fallaba.
+- **Contador de muestras SOLO si el envío sale bien:** se quitó el `increment_samples_count` de
+  `Prepare-batch/preparar_muestras`; ahora las lambdas de **envío** (`Send-EM/EAU/EAP`, `Sms/Wsp/
+  Voice Send-batch`) cuentan `campaign.samplesSentCount` **al terminar OK**. El mensaje SQS lleva
+  `samples: true` (`build_ctx` + `st.is_samples`) para que el worker sepa contarlo. Idempotente
+  por la deduplicación de parte (una redelivery no recuenta). Una muestra que se prepara pero no
+  se entrega ya no consume cupo.
+- **Nombre de plantilla SES sin canal:** el template SES pasa de
+  `{customer}_{consecutivo}_{canal}_{nombre}` a `{customer}_{consecutivo}_{nombre}` (una plantilla
+  HTML aplica a varios canales de email EM/EAU/EAP). Cambia en `Template_Create-template` (creación)
+  y en `Prepare-batch` (lookup `st.template_name`) de forma consistente.
+- **Desplegables de campaña tipo tabla:** helper `campaignOption.tsx` (`CampaignOption` +
+  `campaignOptionText`) → los selectores de Muestras y Reportes muestran **[Canal] [Estado] Nombre**
+  alineado en columnas.
+- **Comprobante de transferencia en modal:** la bandeja admin de recargas (`SaldosSection`) ve el
+  comprobante en un **modal** (iframe, imagen/PDF) sin salir de la pestaña (+ enlace "abrir en
+  pestaña nueva").
+- **Orden de tabs del portal:** **Bases de datos** primero · separador · **Plantillas** (HTML/DOCX/
+  SMS/WhatsApp) · separador · el resto (`PortalSidebar`, con `dividerAfter`).
+
 ### Portal: precarga y edición (jul 2026)
 - **Precarga al loguear:** `PortalDataProvider` (`context/PortalDataContext.tsx`) envuelve el
   portal y al montar carga en paralelo **campañas, bases de datos y estadísticas**; cuando el

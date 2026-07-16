@@ -193,8 +193,9 @@ def insert_campaign(customerId,campaignName,numeration,channel,dataPath,template
     table_campaign.put_item(Item=item)
     return campaignId
 
-def create_template(customerName,channelName,consecutive,campaignName,subject,template):    
-    templateName = f'{customerName}_{consecutive}_{channelName}_{campaignName}'
+def create_template(customerName,channelName,consecutive,campaignName,subject,template):
+    # El nombre SES NO lleva el canal (una plantilla aplica a varios canales de email).
+    templateName = f'{customerName}_{consecutive}_{campaignName}'
     print("template:" + templateName)
     response = ses_client.create_template(
         Template={

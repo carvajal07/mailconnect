@@ -92,6 +92,8 @@ def lambda_handler(event, context):
         customer_name = body.get('customerName', '')
         tenant = tenant_key(body.get('nit', ''))   # llave de {tenant}_sendStatus
         process_id = body.get('processId', '')
+        campaign_id = body.get('campaignId', '')
+        is_samples = bool(body.get('samples', False))  # muestras → contar si sale bien
         headers = body.get('headers', [])
         voice_message = body.get('voiceMessage', '') or ''
         data = body.get('data', [])
@@ -148,5 +150,15 @@ def lambda_handler(event, context):
                 _record_status(tenant, process_id, status_rows)
             except Exception as e:
                 print('No se pudieron registrar los estados de voz: {}'.format(e))
+
+        # Muestras: si al menos una llamada del lote se realizó OK, contar 1 en la campaña.
+        if is_samples and campaign_id and any(r.get('state') == STATE_SENT for r in status_rows):
+            try:
+                dynamodb.Table('campaign').update_item(
+                    Key={'campaignId': campaign_id},
+                    UpdateExpression='SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one',
+                    ExpressionAttributeValues={':one': 1, ':z': 0})
+            except Exception as e:
+                print('No se pudo contar el envío de muestra de voz: {}'.format(e))
 
     return {'statusCode': 200, 'body': json.dumps('Voice batch procesado')}
