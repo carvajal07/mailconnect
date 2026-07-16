@@ -114,12 +114,15 @@ def lambda_handler(event, context):
                 {'Update': {
                     'TableName': 'walletTransaction',
                     'Key': {'txId': {'S': tx_id}},
-                    'UpdateExpression': 'SET #s = :approved, reviewedBy = :rev, approvedAt = :now',
+                    # También se actualiza `detail` para que la columna "Detalle" del ledger
+                    # deje de mostrar "pendiente de aprobación" tras aprobar.
+                    'UpdateExpression': 'SET #s = :approved, reviewedBy = :rev, approvedAt = :now, #d = :det',
                     'ConditionExpression': '#s = :pending',
-                    'ExpressionAttributeNames': {'#s': 'status'},
+                    'ExpressionAttributeNames': {'#s': 'status', '#d': 'detail'},
                     'ExpressionAttributeValues': {
                         ':approved': {'S': 'approved'}, ':pending': {'S': 'pending'},
-                        ':rev': {'S': reviewer}, ':now': {'S': now}},
+                        ':rev': {'S': reviewer}, ':now': {'S': now},
+                        ':det': {'S': 'Recarga aprobada'}},
                 }},
                 {'Update': {
                     'TableName': 'customerBalance',

@@ -108,7 +108,9 @@ def lambda_handler(event, context):
             'proofS3Path': proof,
             'proofBucket': proof_bucket,
             'actor': actor,
-            'detail': note or 'Recarga manual (transferencia) — pendiente de aprobación',
+            # Detalle NEUTRAL: el estado (pendiente/aprobada/rechazada) lo comunica el chip de
+            # estado y se actualiza al aprobar/rechazar. Evita que quede "pendiente" pegado.
+            'detail': note or 'Recarga por transferencia',
             'createdAt': _now(),
         })
     except Exception as e:

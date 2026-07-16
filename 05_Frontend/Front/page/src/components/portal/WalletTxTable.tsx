@@ -85,7 +85,14 @@ export const WalletTxTable = ({ transactions, emptyText = 'Sin movimientos.', sh
                   </Stack>
                 </TableCell>
                 <TableCell>
-                  <Typography variant="body2" color="text.secondary">{t.detail || '—'}</Typography>
+                  {status === 'declined' && t.rejectReason ? (
+                    // El motivo del rechazo se muestra INLINE y visible (no solo en tooltip).
+                    <Typography variant="body2" color="error.main">
+                      Rechazada: {t.rejectReason}
+                    </Typography>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">{t.detail || '—'}</Typography>
+                  )}
                 </TableCell>
                 <TableCell align="right" sx={{ whiteSpace: 'nowrap', color: credit ? 'success.main' : 'text.primary', fontWeight: 600 }}>
                   {credit ? '+' : '−'}{formatCOP(Math.abs(t.amount))}

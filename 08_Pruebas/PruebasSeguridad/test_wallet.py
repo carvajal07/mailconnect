@@ -438,6 +438,8 @@ def test_topup_approve_acredita_e_idempotente(wallet_env):
     assert _get_balance('CU1') == 80000
     tx = _tx(tx_id)
     assert tx['status'] == 'approved' and int(tx['balanceAfter']) == 80000 and tx['reviewedBy'] == 'boss'
+    # El detalle deja de decir "pendiente de aprobación".
+    assert tx['detail'] == 'Recarga aprobada'
 
     # Idempotencia: aprobar de nuevo NO vuelve a acreditar.
     r2 = approve.lambda_handler(_admin_event({'txId': tx_id}), None)
@@ -457,6 +459,8 @@ def test_topup_reject_no_acredita(wallet_env):
     assert resp['statusCode'] == 200
     tx = _tx(tx_id)
     assert tx['status'] == 'declined' and tx['rejectReason'] == 'Comprobante ilegible'
+    # El detalle refleja el rechazo con su motivo (visible en el ledger del cliente).
+    assert tx['detail'] == 'Rechazada: Comprobante ilegible'
     assert _get_balance('CU1') is None   # el saldo NO cambió
 
     # Ya rechazada: no se puede aprobar (409).

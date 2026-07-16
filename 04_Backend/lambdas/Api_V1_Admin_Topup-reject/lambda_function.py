@@ -89,14 +89,17 @@ def lambda_handler(event, context):
                     'description': 'La solicitud no está pendiente (estado: {}).'.format(status), 'data': {}}
 
         try:
+            # También se actualiza `detail` con el motivo, para que la columna "Detalle" del
+            # ledger muestre el rechazo (y el porqué) al cliente, no "pendiente de aprobación".
+            detail = 'Rechazada: {}'.format(reason)[:280]
             table_wallet.update_item(
                 Key={'txId': tx_id},
-                UpdateExpression='SET #s = :declined, rejectReason = :r, reviewedBy = :rev, reviewedAt = :now',
+                UpdateExpression='SET #s = :declined, rejectReason = :r, reviewedBy = :rev, reviewedAt = :now, #d = :det',
                 ConditionExpression='#s = :pending',
-                ExpressionAttributeNames={'#s': 'status'},
+                ExpressionAttributeNames={'#s': 'status', '#d': 'detail'},
                 ExpressionAttributeValues={
                     ':declined': 'declined', ':pending': 'pending',
-                    ':r': reason, ':rev': reviewer, ':now': _now()})
+                    ':r': reason, ':rev': reviewer, ':now': _now(), ':det': detail})
         except ClientError as e:
             if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
                 # Otra acción cambió el estado en paralelo: idempotente/limpio.
