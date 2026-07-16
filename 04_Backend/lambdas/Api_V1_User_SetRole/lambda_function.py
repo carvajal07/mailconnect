@@ -112,7 +112,8 @@ def lambda_handler(event, context):
             ExpressionAttributeNames={'#r': 'role'},
             ExpressionAttributeValues={':role': role},
         )
-        _audit(event, 'user.role', user_id, f'{current_role} → {role}')
+        who = current.get('email') or current.get('user') or user_id
+        _audit(event, 'user.role', user_id, f'Rol de {who}: {current_role} → {role}')
         return {'status': True, 'statusCode': 200,
                 'description': f'Rol actualizado a {role}.',
                 'data': {'userId': user_id, 'role': role}}

@@ -69,6 +69,8 @@ TABLES = {
     # La tabla real en AWS se llama 'oneTimePassword' (PK 'oneTimePasswordId').
     'oneTimePassword': 'oneTimePasswordId',
     'session': 'sessionId',
+    # Bitácora de seguridad (Login escribe intentos/token best-effort).
+    'adminAudit': 'auditId',
 }
 
 SENDER = os.environ['SENDER_EMAIL']
@@ -253,6 +255,35 @@ def test_login_password_incorrecta_404(ctx):
     email = ctx.make_active_user(ctx.unique_email('badpwd'))
     resp = ctx.handler('login')({'user': email, 'password': 'ClaveErrada9'}, None)
     assert resp['statusCode'] == 404
+
+
+def _audit_for(ctx, actor):
+    """Entradas de la bitácora de seguridad cuyo actor sea `actor`."""
+    return [i for i in ctx.tables['adminAudit'].scan()['Items'] if i.get('actor') == actor]
+
+
+def test_login_audita_ingreso_y_token(ctx):
+    email = ctx.make_active_user(ctx.unique_email('audlogin'))
+    ctx.handler('login')({'user': email, 'password': 'Password123'}, None)
+    acts = {i['action'] for i in _audit_for(ctx, email)}
+    assert 'security.login' in acts        # intento de login registrado
+    assert 'security.token' in acts        # emisión de token registrada
+    login_ev = next(i for i in _audit_for(ctx, email) if i['action'] == 'security.login')
+    assert 'exitoso' in login_ev['detail'].lower()
+
+
+def test_login_audita_password_incorrecta(ctx):
+    email = ctx.make_active_user(ctx.unique_email('audbad'))
+    ctx.handler('login')({'user': email, 'password': 'ClaveErrada9'}, None)
+    evs = [i for i in _audit_for(ctx, email) if i['action'] == 'security.login']
+    assert any('incorrecta' in i['detail'].lower() for i in evs)
+
+
+def test_login_audita_usuario_inexistente(ctx):
+    inexistente = ctx.unique_email('fantasma')
+    ctx.handler('login')({'user': inexistente, 'password': 'X'}, None)
+    evs = [i for i in _audit_for(ctx, inexistente) if i['action'] == 'security.login']
+    assert any('inexistente' in i['detail'].lower() for i in evs)
 
 
 # ============================ OTP ============================

@@ -87,20 +87,25 @@ def lambda_handler(event, context):
         # customerId es la PK: update condicional (atómico, sin Scan previo).
         # attribute_exists evita crear un ítem fantasma si el cliente no existe.
         try:
-            table_customer.update_item(
+            resp = table_customer.update_item(
                 Key={'customerId': customer_id},
                 UpdateExpression='SET realSendEnabled = :v',
                 ConditionExpression='attribute_exists(customerId)',
                 ExpressionAttributeValues={':v': real_send_enabled},
-                ReturnValues='UPDATED_NEW'
+                ReturnValues='ALL_OLD'
             )
         except ClientError as ce:
             if ce.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
                 return {'status': False, 'statusCode': 404, 'description': 'El cliente no existe.'}
             raise
 
+        old = resp.get('Attributes') or {}
+        company = old.get('company') or customer_id
+        prev = old.get('realSendEnabled')
+        prev_lbl = 'habilitados' if prev else ('deshabilitados' if prev is not None else 'sin definir')
         estado = 'habilitados' if real_send_enabled else 'deshabilitados'
-        _audit(event, 'customer.realSend', customer_id, f'Envíos reales {estado}')
+        _audit(event, 'customer.realSend', customer_id,
+               'Envíos reales del cliente {}: {} → {}'.format(company, prev_lbl, estado))
         return {
             'status': True,
             'statusCode': 200,

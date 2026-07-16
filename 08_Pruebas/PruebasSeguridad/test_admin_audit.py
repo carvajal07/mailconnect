@@ -126,3 +126,29 @@ def test_audit_filtra_por_actor(env):
     audit = _load('Api_V1_Admin_Audit')
     solo_ana = audit.lambda_handler(_admin({'actor': 'ana'}), None)['data']['entries']
     assert len(solo_ana) == 1 and solo_ana[0]['actor'] == 'ana@acme.co'
+
+
+def test_config_set_detalle_descriptivo(env):
+    # El detalle debe registrar el cambio ANTERIOR → NUEVO. (La fecha tiene granularidad
+    # de segundo, así que no se asume el orden entre dos escrituras del mismo segundo:
+    # se busca el evento del segundo cambio entre todas las entradas.)
+    setter = _load('Api_V1_Config_Set')
+    setter.lambda_handler(_admin({'key': 'OTP_EXPIRATION_MIN', 'value': 5}), None)
+    setter.lambda_handler(_admin({'key': 'OTP_EXPIRATION_MIN', 'value': 10}), None)
+    audit = _load('Api_V1_Admin_Audit')
+    entries = audit.lambda_handler(_admin(), None)['data']['entries']
+    detalles = [e['detail'] for e in entries if e['action'] == 'config.set']
+    assert any('5' in d and '10' in d and '→' in d for d in detalles)
+
+
+def test_pricing_update_detalle_descriptivo(env):
+    _pk_sk('pricingRate', 'customerId', 'channel')
+    ddb = boto3.resource('dynamodb', region_name='us-east-1')
+    # Valor previo global de baseEM = 8.
+    ddb.Table('pricingRate').put_item(Item={'customerId': '*', 'channel': 'EMAIL', 'baseEM': 8})
+    pu = _load('Api_V1_Pricing_Update')
+    pu.lambda_handler(_admin({'channel': 'EMAIL', 'fields': {'baseEM': 10}}), None)
+    audit = _load('Api_V1_Admin_Audit')
+    e = audit.lambda_handler(_admin(), None)['data']['entries'][0]
+    assert e['action'] == 'pricing.update'
+    assert 'baseEM' in e['detail'] and '8' in e['detail'] and '10' in e['detail'] and '→' in e['detail']

@@ -19,7 +19,30 @@ table_user = dynamodb.Table('user')
 table_customer = dynamodb.Table("customer")
 table_user_data = dynamodb.Table("userData")
 table_session = dynamodb.Table('session')
+_audit_table = dynamodb.Table('adminAudit')
 SECRET_KEY = os.environ['SECRET_KEY']  # Variable de entorno en la consola Lambda
+
+
+def _audit(action, actor, detail, customer='', target=''):
+    """Bitácora de seguridad (adminAudit). Best-effort: nunca rompe el login.
+
+    Aquí el actor NO viene del Authorizer (es pre-autenticación): es el correo con
+    el que se intentó ingresar. Registra intentos de login (éxito/fallo/usuario
+    inexistente/cuenta inactiva) y la emisión de tokens.
+    """
+    try:
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(actor or 'desconocido'),
+            'actorId': '',
+            'customer': str(customer or ''),
+            'target': str(target or actor or ''),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '100000'))
 
@@ -238,14 +261,25 @@ def lambda_handler(event, context):
                         status = True
                         statusCode = 200
                         description = "Usuario correcto"
+                        ip_audit, _ = _client_info(event)
+                        _audit('security.login', user,
+                               'Ingreso exitoso (IP {})'.format(ip_audit), customer)
+                        _audit('security.token', user,
+                               'Token emitido en el login (IP {})'.format(ip_audit), customer, userId)
                     else:
                         status = False
                         statusCode = 404
                         description = 'Usuario o contraseña incorrectos'
+                        ip_audit, _ = _client_info(event)
+                        _audit('security.login', user,
+                               'Contraseña incorrecta (IP {})'.format(ip_audit))
             else:
                 status = False
                 statusCode = 423
                 description = 'Usuario o cuenta inactiva, cuenta sin verificar'
+                ip_audit, _ = _client_info(event)
+                _audit('security.login', user,
+                       'Intento con cuenta inactiva / sin verificar (IP {})'.format(ip_audit))
 
         else:
             # Usuario no existe: se computa un hash "dummy" para igualar el tiempo de
@@ -255,6 +289,9 @@ def lambda_handler(event, context):
             status = False
             statusCode = 404
             description = 'Usuario o contraseña incorrectos'
+            ip_audit, _ = _client_info(event)
+            _audit('security.login', user,
+                   'Intento con usuario inexistente (IP {})'.format(ip_audit))
 
     finally:
         # Respuesta

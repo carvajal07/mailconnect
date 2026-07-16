@@ -22,12 +22,20 @@ Cómo se calcula (por campaña, luego se agrega):
   El IVA se aplica al subtotal del cliente.
 Aproximaciones conocidas: no incluye el recargo por MB del adjunto (no se persiste el
 peso); SMS asume 1 segmento; Voz usa los minutos promedio de la tarifa.
+
+Rendimiento (evita timeouts con muchos clientes):
+  Escanea `customer`, `campaign` y `process` UNA sola vez cada una y agrupa en memoria,
+  en vez de escanear `campaign` y `process` por cada cliente (antes: 1 + 2·C scans, que
+  disparaba timeouts al crecer las tablas). Las tarifas se memoizan por (cliente, canal).
+  Cuando SEND_SUMMARY_READ=true, el nº de enviados sale del resumen pre-agregado
+  ({customer}_sendSummary, GetItem O(1) por proceso) en vez de paginar {customer}_sendStatus.
 '''
+import os
 import json
 import boto3
 from decimal import Decimal
 from collections import defaultdict
-from boto3.dynamodb.conditions import Attr, Key
+from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 REGION = 'us-east-1'
@@ -39,6 +47,9 @@ table_rates = dynamodb.Table('pricingRate')
 
 CURRENCY = 'COP'
 MAX_PROCESSES = 500   # tope global de procesos agregados por llamada (evita barridos enormes)
+
+# Lee el resumen pre-agregado ({customer}_sendSummary) para el conteo de enviados (O(1)).
+SEND_SUMMARY_READ = os.environ.get('SEND_SUMMARY_READ', '').strip().lower() == 'true'
 
 # Debe reflejar DEFAULT_RATES de Api_V1_Cost_Estimate / Api_V1_Pricing_*.
 DEFAULT_RATES = {
@@ -148,9 +159,26 @@ def _campaign_unit(rate, channel_name, document_format):
     return 0.0
 
 
-def _count_sent(status_table, process_id):
-    """Nº de mensajes efectivamente enviados (messageId distinto) en un proceso."""
+def _count_sent(company, process_id):
+    """Nº de mensajes efectivamente enviados (messageId distinto) en un proceso.
+
+    Con SEND_SUMMARY_READ usa el resumen pre-agregado (GetItem O(1)); si no existe,
+    cae a paginar {company}_sendStatus (comportamiento legacy).
+    """
+    if SEND_SUMMARY_READ:
+        try:
+            summ = dynamodb.Table('{}_sendSummary'.format(company)).get_item(
+                Key={'processId': process_id}).get('Item')
+            if summ and 'enviados' in summ:
+                return int(_num(summ['enviados']))
+        except ClientError as e:
+            if e.response['Error']['Code'] != 'ResourceNotFoundException':
+                raise
+        except Exception:
+            pass
+
     seen = set()
+    status_table = dynamodb.Table('{}_sendStatus'.format(company))
     kwargs = {'KeyConditionExpression': Key('processId').eq(process_id),
               'ProjectionExpression': 'messageId'}
     try:
@@ -171,33 +199,32 @@ def _count_sent(status_table, process_id):
     return len(seen)
 
 
-def _bill_customer(cust, month, budget):
-    """Calcula la facturación de UN cliente. budget = [restante de procesos] (mutable)."""
+def _bill_customer(cust, camps_by_customer, procs_by_campaign, rate_cache, budget):
+    """Factura de UN cliente a partir de las campañas/procesos ya agrupados en memoria.
+
+    - camps_by_customer : {customerId: [campaña,...]} (ya filtrado por mes si aplica).
+    - procs_by_campaign : {campaignId: [proceso,...]}.
+    - rate_cache        : memoiza _load_rate por (customerId, canal).
+    - budget            : [restante de procesos] (mutable) — tope global de queries.
+    """
     customer_id = cust.get('customerId')
     company = cust.get('company', '')
-    status_table = dynamodb.Table(f'{company}_sendStatus')
-
-    campaigns = _scan_all(table_campaign, FilterExpression=Attr('customerId').eq(customer_id))
-    if month:
-        campaigns = [c for c in campaigns if str(c.get('date', '')).startswith(month)]
-
-    processes = _scan_all(table_process, FilterExpression=Attr('customerName').eq(company))
-    procs_by_campaign = defaultdict(list)
-    for p in processes:
-        procs_by_campaign[p.get('campaignId')].append(p)
 
     by_channel = defaultdict(lambda: {'sent': 0, 'amount': 0.0})
     subtotal = 0.0
     tax_rate = DEFAULT_RATES['COMMON']['taxRate']
     truncated = False
 
-    for c in campaigns:
+    for c in camps_by_customer.get(customer_id, []):
         channel_name = c.get('channel', '')
         mapped = CHANNEL_MAP.get(channel_name)
         if not mapped:
             continue
         billing_channel, label = mapped
-        rate = _load_rate(customer_id, billing_channel)
+        cache_key = (customer_id, billing_channel)
+        if cache_key not in rate_cache:
+            rate_cache[cache_key] = _load_rate(customer_id, billing_channel)
+        rate = rate_cache[cache_key]
         tax_rate = rate.get('taxRate', tax_rate)
         unit = _campaign_unit(rate, channel_name, c.get('documentFormat'))
 
@@ -210,7 +237,7 @@ def _bill_customer(cust, month, budget):
             if not pid:
                 continue
             budget[0] -= 1
-            sent += _count_sent(status_table, pid)
+            sent += _count_sent(company, pid)
 
         if sent <= 0:
             continue
@@ -260,17 +287,37 @@ def lambda_handler(event, context):
     only_customer = str(payload.get('customerId', '') or '').strip()
 
     try:
+        # 1) UN scan de `customer` (todos), luego se acota en memoria si se pidió uno.
         all_customers = _scan_all(table_customer,
                                   ProjectionExpression='customerId, company, companyTin')
         if only_customer:
             all_customers = [c for c in all_customers if c.get('customerId') == only_customer]
 
+        # 2) UN scan de `campaign` (toda la tabla) agrupado por cliente en memoria.
+        #    (Antes se escaneaba por cada cliente -> 1 + 2·C scans -> timeout.)
+        campaigns = _scan_all(table_campaign,
+                              ProjectionExpression='campaignId, customerId, channel, documentFormat, #d',
+                              ExpressionAttributeNames={'#d': 'date'})
+        if month:
+            campaigns = [c for c in campaigns if str(c.get('date', '')).startswith(month)]
+        camps_by_customer = defaultdict(list)
+        for c in campaigns:
+            camps_by_customer[c.get('customerId')].append(c)
+
+        # 3) UN scan de `process` (toda la tabla) agrupado por campaña en memoria.
+        processes = _scan_all(table_process,
+                              ProjectionExpression='processId, campaignId')
+        procs_by_campaign = defaultdict(list)
+        for p in processes:
+            procs_by_campaign[p.get('campaignId')].append(p)
+
+        rate_cache = {}
         budget = [MAX_PROCESSES]
         truncated = False
         skipped = 0   # clientes no computados por agotarse el tope (no "sin actividad")
         rows = []
         for cust in all_customers:
-            row, tr = _bill_customer(cust, month, budget)
+            row, tr = _bill_customer(cust, camps_by_customer, procs_by_campaign, rate_cache, budget)
             truncated = truncated or tr
             # Solo incluir clientes con algún envío (evita ruido de clientes sin actividad).
             if row['totalSent'] > 0:

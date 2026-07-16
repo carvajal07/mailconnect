@@ -27,10 +27,9 @@ import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowRight';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import { billingService } from '../../services/billingService';
 import type { BillingCustomerRow, BillingSummaryData } from '../../services/billingService';
-import { customerService } from '../../services/customerService';
-import type { CustomerSummary } from '../../services/customerService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { usePortalData } from '../../context/PortalDataContext';
 
 const cop = (n: number) => new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n || 0);
 const num = (n: number) => new Intl.NumberFormat('es-CO').format(n || 0);
@@ -74,7 +73,7 @@ const CustomerRow = ({ row }: { row: BillingCustomerRow }) => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {row.byChannel.map((ch) => (
+                  {(row.byChannel ?? []).map((ch) => (
                     <TableRow key={ch.channel}>
                       <TableCell><Chip size="small" variant="outlined" label={ch.label} /></TableCell>
                       <TableCell align="right">{num(ch.sent)}</TableCell>
@@ -98,18 +97,14 @@ const CustomerRow = ({ row }: { row: BillingCustomerRow }) => {
  */
 export const FacturacionSection = () => {
   const { notify, FeedbackSnackbar } = useFeedback();
-  const [customers, setCustomers] = useState<CustomerSummary[]>([]);
+  // Clientes precargados en el login (contexto admin), no se re-piden al entrar al tab.
+  const { customers: customersCtx } = usePortalData();
+  const customers = customersCtx.items;
   const [month, setMonth] = useState('');           // 'YYYY-MM' o '' (todo)
   const [customerId, setCustomerId] = useState(''); // '' = todos
   const [data, setData] = useState<BillingSummaryData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    customerService.list().then((res) => {
-      if (isOk(res) && res.data?.customers) setCustomers(res.data.customers);
-    });
-  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -125,11 +120,11 @@ export const FacturacionSection = () => {
   }, [load]);
 
   const exportCsv = () => {
-    if (!data || data.customers.length === 0) return notify('No hay datos para exportar.', 'warning');
+    if (!data || (data.customers?.length ?? 0) === 0) return notify('No hay datos para exportar.', 'warning');
     const header = ['Cliente', 'NIT', 'Canal', 'Envios', 'CostoUnitario', 'Subtotal'];
     const lines = [header.join(',')];
-    data.customers.forEach((c) => {
-      c.byChannel.forEach((ch) => {
+    (data.customers ?? []).forEach((c) => {
+      (c.byChannel ?? []).forEach((ch) => {
         lines.push([`"${c.company}"`, c.companyTin ?? '', ch.label, ch.sent, ch.unitCost, ch.amount].join(','));
       });
     });
@@ -150,7 +145,7 @@ export const FacturacionSection = () => {
           <Typography variant="h4">Facturación</Typography>
         </Stack>
         <Stack direction="row" spacing={1}>
-          <Button variant="outlined" startIcon={<DownloadIcon />} onClick={exportCsv} disabled={!data || data.customers.length === 0}>
+          <Button variant="outlined" startIcon={<DownloadIcon />} onClick={exportCsv} disabled={!data || (data.customers?.length ?? 0) === 0}>
             Exportar CSV
           </Button>
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={load} disabled={loading}>
@@ -203,10 +198,10 @@ export const FacturacionSection = () => {
 
       {data && (
         <Stack direction="row" spacing={2} sx={{ mb: 2 }} flexWrap="wrap" useFlexGap>
-          <KpiCard label="Total a facturar" value={cop(data.totals.total)} hint="IVA incluido" />
-          <KpiCard label="Subtotal" value={cop(data.totals.subtotal)} />
-          <KpiCard label="IVA" value={cop(data.totals.tax)} />
-          <KpiCard label="Envíos" value={num(data.totals.totalSent)} hint={`${data.customers.length} cliente(s) con actividad`} />
+          <KpiCard label="Total a facturar" value={cop(data.totals?.total ?? 0)} hint="IVA incluido" />
+          <KpiCard label="Subtotal" value={cop(data.totals?.subtotal ?? 0)} />
+          <KpiCard label="IVA" value={cop(data.totals?.tax ?? 0)} />
+          <KpiCard label="Envíos" value={num(data.totals?.totalSent ?? 0)} hint={`${data.customers?.length ?? 0} cliente(s) con actividad`} />
         </Stack>
       )}
 
@@ -226,14 +221,14 @@ export const FacturacionSection = () => {
             {loading && !data && (
               <TableRow><TableCell colSpan={6} align="center" sx={{ py: 4 }}><CircularProgress size={26} /></TableCell></TableRow>
             )}
-            {!loading && data && data.customers.length === 0 && (
+            {!loading && data && (data.customers?.length ?? 0) === 0 && (
               <TableRow>
                 <TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>
                   No hay envíos en el periodo seleccionado.
                 </TableCell>
               </TableRow>
             )}
-            {data?.customers.map((row) => <CustomerRow key={row.customerId} row={row} />)}
+            {(data?.customers ?? []).map((row) => <CustomerRow key={row.customerId} row={row} />)}
           </TableBody>
         </Table>
       </TableContainer>

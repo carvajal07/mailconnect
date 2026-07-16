@@ -123,16 +123,25 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 | `Api_V1_User_SetRole` | `/User/SetRole` | `GetItem`/`UpdateItem`/`Scan` sobre `user`; `PutItem` sobre `adminAudit` |
 | `Api_V1_Billing_Summary` | `/Billing/Summary` | `Scan` sobre `customer`/`campaign`/`process`; `Query` sobre `*_sendStatus`; `GetItem` sobre `pricingRate` |
 | `Api_V1_Admin_Dashboard` | `/Admin/Dashboard` | `Scan` sobre `customer`/`campaign`/`process`; `Query` sobre `*_sendStatus` |
-| `Api_V1_Admin_Jobs` | `/Admin/Jobs` | `Scan` sobre `process`/`campaign`; `Query` sobre `*_sendStatus` |
+| `Api_V1_Admin_Jobs` | `/Admin/Jobs` | `Scan` sobre `process`/`campaign`; `Query` sobre `*_sendStatus` (+ `GetItem` sobre `*_sendSummary` si `SEND_SUMMARY_READ`) |
 | `Api_V1_Config_Get` | `/Config/Get` | `Scan` sobre `platformConfig` |
 | `Api_V1_Config_Set` | `/Config/Set` | `PutItem`/`CreateTable`/`DescribeTable` sobre `platformConfig`; `PutItem` sobre `adminAudit` |
 | `Api_V1_Admin_Audit` | `/Admin/Audit` | `Scan` sobre `adminAudit` |
+| `Api_V1_Admin_Campaigns` | `/Admin/Campaigns` | `Scan` sobre `campaign`/`customer` |
 
-- [ ] `[J]` Crear las 10 funciones vacías + sus rutas + permisos de la tabla.
-- [ ] `[J]` Confirmar que el **Authorizer** está asignado a las 10 rutas.
+- [ ] `[J]` Crear las 11 funciones vacías + sus rutas + permisos de la tabla.
+- [ ] `[J]` Confirmar que el **Authorizer** está asignado a las 11 rutas.
+- [ ] `[J]` `Api_V1_Admin_Campaigns` es la vista **admin** de campañas de todos los clientes
+  (columna de empresa + filtros en el panel). La ruta `/Admin/Campaigns` ya está en
+  `infra/api/routes.json`, así que el workflow `deploy-api.yml` la crea sola.
 
 > `*_sendStatus` = permiso sobre el patrón `arn:aws:dynamodb:...:table/*_sendStatus`
-> (una tabla por cliente, `{customer}_sendStatus`).
+> (una tabla por cliente, `{customer}_sendStatus`). Igual `*_sendSummary`.
+> **Billing_Summary y Admin_Jobs** ahora usan el resumen pre-agregado `{customer}_sendSummary`
+> (GetItem O(1) por proceso) cuando `SEND_SUMMARY_READ=true`; si no, siguen por `Query`
+> sobre `*_sendStatus` (comportamiento actual). Billing además cambió de **1+2·C** scans
+> completos (uno de `campaign` + uno de `process` **por cliente**) a **3 scans totales**
+> (uno de cada tabla), lo que elimina el timeout con muchos clientes.
 
 ---
 
@@ -144,15 +153,26 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 
 | Lambda | Cambio | Permiso extra |
 |--------|--------|---------------|
-| `Api_V1_Customer_Update` | Escribe auditoría `customer.realSend` | `PutItem` sobre `adminAudit` |
+| `Api_V1_Customer_Update` | Auditoría `customer.realSend` **descriptiva** (empresa + antes→después) | `PutItem` sobre `adminAudit` |
 | `Api_V1_Security_Register` | Lee `SENDER_EMAIL`/`ACTIVATION_URL` de `platformConfig` | `GetItem` sobre `platformConfig` |
 | `Api_V1_Security_Create-otp` | Lee `SENDER_EMAIL`/`OTP_EXPIRATION_MIN` de `platformConfig` | `GetItem` sobre `platformConfig` |
 | `Api_V1_Security_Recovery-password` | Lee `SENDER_EMAIL`/`OTP_EXPIRATION_MIN` de `platformConfig` | `GetItem` sobre `platformConfig` |
+| `Api_V1_Security_Login` | Auditoría de **seguridad** (`security.login` intentos/fallos + `security.token`) | `PutItem` sobre `adminAudit` |
+| `Api_V1_Campaign_Create-campaign` | Auditoría `campaign.create` | `PutItem` sobre `adminAudit` |
+| `Api_V1_Template_Create-template` | Auditoría `template.create` (además del `templateAudit` existente) | `PutItem` sobre `adminAudit` |
+| `Api_V1_MessageTemplate_Create` | Auditoría `messageTemplate.create`/`.update` | `PutItem` sobre `adminAudit` |
+| `Api_V1_Email_Prepare-batch-template` | Auditoría `send.samples` / `send.real` (quién envió) | `PutItem` sobre `adminAudit` |
+| `Api_V1_Billing_Summary` | **3 scans totales** (no 1+2·C) + `sendSummary` O(1) opcional | `GetItem` sobre `*_sendSummary` (si `SEND_SUMMARY_READ`) |
 
 > `Api_V1_User_SetRole`, `Api_V1_Pricing_Update` y `Api_V1_Config_Set` también escriben
-> auditoría, pero ya están en §3 (son nuevas) con su permiso `PutItem` sobre `adminAudit`.
+> auditoría (ahora más **descriptiva**: antes→después), pero ya están en §3 (son nuevas)
+> con su permiso `PutItem` sobre `adminAudit`.
+>
+> Toda la auditoría es **best-effort**: sin el permiso `PutItem` sobre `adminAudit` la
+> operación sigue funcionando, solo no deja rastro. Igual el `GetItem` sobre `*_sendSummary`:
+> sin él (o con `SEND_SUMMARY_READ` apagado) se cae al `Query` de `*_sendStatus`.
 
-- [ ] `[J]` Redesplegar las 4 lambdas y darles el permiso extra.
+- [ ] `[J]` Redesplegar las lambdas modificadas y darles el permiso extra (`adminAudit`/`*_sendSummary`).
 
 ---
 
@@ -163,7 +183,7 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 - Proxy: si alguna ruta se pasa a proxy, la **lambda debe emitir** el header
   `Access-Control-Allow-Origin` en su respuesta (el "Enable CORS" solo añade el OPTIONS).
 
-- [ ] `[J]` Habilitar CORS en las 10 rutas nuevas.
+- [ ] `[J]` Habilitar CORS en las 11 rutas nuevas.
 
 ---
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import {
   Box,
   Button,
@@ -37,6 +37,7 @@ import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
 import { getUser } from '../../services/authService';
+import { usePortalData } from '../../context/PortalDataContext';
 
 /**
  * Sección admin: CLIENTES. Lista los clientes reales (customerService.list) y abre
@@ -48,9 +49,11 @@ export const ClientesSection = () => {
   const { confirm, ConfirmDialog } = useConfirm();
   const me = getUser();
 
-  const [customers, setCustomers] = useState<CustomerSummary[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  // Clientes precargados en el login (contexto admin); no se re-piden al entrar al tab.
+  const { customers: customersCtx, refreshCustomers } = usePortalData();
+  const customers = customersCtx.items;
+  const loading = customersCtx.loading;
+  const error = customersCtx.error;
   const [search, setSearch] = useState('');
 
   const [open, setOpen] = useState(false);
@@ -59,18 +62,7 @@ export const ClientesSection = () => {
   const [savingSend, setSavingSend] = useState(false);
   const [roleBusy, setRoleBusy] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    const res = await customerService.list();
-    setLoading(false);
-    if (isOk(res) && res.data?.customers) setCustomers(res.data.customers);
-    else setError(res.description || 'No se pudieron cargar los clientes.');
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const load = refreshCustomers;
 
   const openFicha = async (c: CustomerSummary) => {
     setOpen(true);
@@ -95,7 +87,8 @@ export const ClientesSection = () => {
     setSavingSend(false);
     if (isOk(res)) {
       setDetail({ ...detail, customer: { ...detail.customer, realSendEnabled: next } });
-      setCustomers((prev) => prev.map((x) => (x.customerId === detail.customer.customerId ? { ...x, realSendEnabled: next } : x)));
+      // Refresca la lista compartida (contexto) para reflejar el nuevo estado en la tabla.
+      refreshCustomers();
       notify(`Envíos reales ${next ? 'habilitados' : 'deshabilitados'}.`, next ? 'success' : 'warning');
     } else {
       notify(res.description || 'No se pudo actualizar.', 'error');

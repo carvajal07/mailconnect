@@ -26,19 +26,48 @@ import PaidIcon from '@mui/icons-material/Paid';
 import SettingsIcon from '@mui/icons-material/Settings';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SendIcon from '@mui/icons-material/Send';
+import LoginIcon from '@mui/icons-material/Login';
+import VpnKeyIcon from '@mui/icons-material/VpnKey';
+import CampaignIcon from '@mui/icons-material/Campaign';
+import DescriptionIcon from '@mui/icons-material/Description';
+import ChatIcon from '@mui/icons-material/Chat';
+import ScienceIcon from '@mui/icons-material/Science';
+import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead';
 import { auditService } from '../../services/auditService';
 import type { AuditData } from '../../services/auditService';
 import { isOk } from '../../services/apiClient';
 
+type ChipColor = 'primary' | 'success' | 'warning' | 'info' | 'default' | 'error' | 'secondary';
+
 // Metadatos por tipo de acción (etiqueta + color + icono).
-const ACTION_META: Record<string, { label: string; color: 'primary' | 'success' | 'warning' | 'info'; icon: ReactElement }> = {
+const ACTION_META: Record<string, { label: string; color: ChipColor; icon: ReactElement }> = {
+  // Administración
   'customer.realSend': { label: 'Envíos por cliente', color: 'warning', icon: <SendIcon fontSize="small" /> },
   'user.role': { label: 'Cambio de rol', color: 'primary', icon: <AdminPanelSettingsIcon fontSize="small" /> },
   'pricing.update': { label: 'Tarifas', color: 'success', icon: <PaidIcon fontSize="small" /> },
   'config.set': { label: 'Configuración', color: 'info', icon: <SettingsIcon fontSize="small" /> },
+  // Seguridad
+  'security.login': { label: 'Ingreso', color: 'secondary', icon: <LoginIcon fontSize="small" /> },
+  'security.token': { label: 'Token', color: 'secondary', icon: <VpnKeyIcon fontSize="small" /> },
+  // Contenido
+  'campaign.create': { label: 'Campaña creada', color: 'info', icon: <CampaignIcon fontSize="small" /> },
+  'template.create': { label: 'Plantilla correo', color: 'info', icon: <DescriptionIcon fontSize="small" /> },
+  'messageTemplate.create': { label: 'Plantilla mensaje', color: 'info', icon: <ChatIcon fontSize="small" /> },
+  'messageTemplate.update': { label: 'Plantilla editada', color: 'info', icon: <ChatIcon fontSize="small" /> },
+  // Envíos
+  'send.samples': { label: 'Muestras', color: 'warning', icon: <ScienceIcon fontSize="small" /> },
+  'send.real': { label: 'Envío real', color: 'success', icon: <MarkEmailReadIcon fontSize="small" /> },
 };
 
 const actionLabel = (a: string) => ACTION_META[a]?.label ?? a;
+
+// La fecha se guarda en UTC sin zona ('YYYY-MM-DD HH:MM:SS'); se muestra en hora local.
+const fmtDate = (raw: string) => {
+  if (!raw) return '—';
+  const iso = /[zZ]|[+-]\d{2}:?\d{2}$/.test(raw) ? raw : raw.replace(' ', 'T') + 'Z';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? raw : d.toLocaleString();
+};
 
 /**
  * Sección admin: AUDITORÍA. Bitácora de acciones administrativas sensibles (quién
@@ -75,8 +104,10 @@ export const AuditoriaSection = () => {
         <Button variant="outlined" startIcon={<RefreshIcon />} onClick={load} disabled={loading}>Refrescar</Button>
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Registro de acciones administrativas sensibles: quién habilitó envíos, cambió un rol,
-        tocó tarifas o configuración, y cuándo.
+        Registro de acciones sensibles: <strong>seguridad</strong> (ingresos, contraseñas
+        incorrectas, usuarios inexistentes, tokens), administración (envíos por cliente, roles,
+        tarifas, configuración), <strong>contenido</strong> (campañas y plantillas creadas) y
+        <strong> envíos</strong> (muestras y envíos reales), con quién y cuándo.
       </Typography>
 
       {error && (
@@ -114,7 +145,7 @@ export const AuditoriaSection = () => {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Fecha (UTC)</TableCell>
+              <TableCell>Fecha</TableCell>
               <TableCell>Actor</TableCell>
               <TableCell>Acción</TableCell>
               <TableCell>Objetivo</TableCell>
@@ -125,14 +156,14 @@ export const AuditoriaSection = () => {
             {loading && !data && (
               <TableRow><TableCell colSpan={5} align="center" sx={{ py: 4 }}><CircularProgress size={26} /></TableCell></TableRow>
             )}
-            {!loading && data && data.entries.length === 0 && (
+            {!loading && data && (data.entries?.length ?? 0) === 0 && (
               <TableRow><TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.secondary' }}>No hay eventos registrados para el filtro.</TableCell></TableRow>
             )}
-            {data?.entries.map((e) => {
+            {(data?.entries ?? []).map((e) => {
               const meta = ACTION_META[e.action];
               return (
                 <TableRow key={e.auditId} hover>
-                  <TableCell><Typography variant="caption">{e.date}</Typography></TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}><Typography variant="caption">{fmtDate(e.date)}</Typography></TableCell>
                   <TableCell>
                     <Typography variant="body2" fontWeight={600}>{e.actor || '—'}</Typography>
                     {e.customer && <Typography variant="caption" color="text.secondary">{e.customer}</Typography>}

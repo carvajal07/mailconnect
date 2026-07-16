@@ -148,13 +148,19 @@ def lambda_handler(event, context):
 
     try:
         _ensure_table()
+        # Valor anterior (para registrar el cambio de X → Y en la auditoría).
+        try:
+            prev = (table.get_item(Key={'configKey': key}).get('Item') or {}).get('value')
+        except Exception:
+            prev = None
         table.put_item(Item={
             'configKey': key,
             'value': value,
             'updatedAt': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
             'updatedBy': _actor(event),
         })
-        _audit(event, 'config.set', key, str(value))
+        prev_lbl = str(prev) if prev is not None else '(sin definir)'
+        _audit(event, 'config.set', key, '{}: {} → {}'.format(key, prev_lbl, value))
         return {'status': True, 'statusCode': 200, 'description': 'Ajuste guardado',
                 'data': {'key': key}}
     except ClientError as e:

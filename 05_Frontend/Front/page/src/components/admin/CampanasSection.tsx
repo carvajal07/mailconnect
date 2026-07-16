@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import {
   Box,
   Button,
@@ -38,8 +38,6 @@ import { campaignsService } from '../../services/campaignsService';
 import type { CampaignSummary } from '../../services/campaignsService';
 import { templatesService } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
-import { messageTemplatesService } from '../../services/messageTemplatesService';
-import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { usePortalData } from '../../context/PortalDataContext';
@@ -89,10 +87,12 @@ export const CampanasSection = () => {
   const customer = getUser()?.customer ?? '';
   const customerId = getUser()?.customerId ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
-  // Campañas y bases precargadas al entrar al portal (contexto compartido).
-  const { campaigns: campaignsCtx, databases, refreshCampaigns, refreshStats } = usePortalData();
+  // Campañas, bases y plantillas de mensaje precargadas al entrar al portal (contexto compartido).
+  const { campaigns: campaignsCtx, databases, messageTemplates: msgTemplatesCtx, refreshCampaigns, refreshStats } = usePortalData();
   const campanas = campaignsCtx.items;
   const loadingList = campaignsCtx.loading;
+  // Plantillas SMS/WSP: se toman del contexto (ya precargadas), no se re-piden al abrir el diálogo.
+  const msgTemplates = msgTemplatesCtx.items;
 
   const [openDialog, setOpenDialog] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null); // null = crear, id = editar
@@ -102,10 +102,8 @@ export const CampanasSection = () => {
   // Plantillas SES del cliente (para el selector del formulario).
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
-
-  // Plantillas de mensaje guardadas (SMS/WSP): en estos canales la plantilla se ELIGE
-  // de las disponibles del canal (no se escribe a mano).
-  const [msgTemplates, setMsgTemplates] = useState<MessageTemplate[]>([]);
+  // Evita re-pedir las plantillas SES cada vez que se abre el diálogo (se cargan una vez).
+  const templatesLoadedRef = useRef(false);
 
   // Documento adjunto (solo EAU/EAP): se sube a S3 y se pasa su ruta a la campaña.
   const [attachmentPath, setAttachmentPath] = useState('');
@@ -114,20 +112,18 @@ export const CampanasSection = () => {
 
   const loadCampaigns = refreshCampaigns;
 
-  const loadTemplates = useCallback(async () => {
+  // Plantillas SES: se cargan UNA vez (la primera vez que se abre el diálogo) y se
+  // cachean en el componente; abrir/cerrar el diálogo no las vuelve a pedir. Pasar
+  // `force` (tras publicar una plantilla nueva) obliga a refrescar.
+  const loadTemplates = useCallback(async (force = false) => {
     if (!customer && !customerId) return;
+    if (templatesLoadedRef.current && !force) return;
+    templatesLoadedRef.current = true;
     setLoadingTemplates(true);
     const res = await templatesService.list(customer, customerId);
     setLoadingTemplates(false);
     if (isOk(res) && res.data?.templates) setTemplates(res.data.templates);
   }, [customer, customerId]);
-
-  // Carga las plantillas SMS + WhatsApp guardadas (para reutilizarlas en la campaña).
-  const loadMsgTemplates = useCallback(async () => {
-    if (!customerId) return;
-    const res = await messageTemplatesService.list(customerId);
-    if (isOk(res) && res.data?.templates) setMsgTemplates(res.data.templates);
-  }, [customerId]);
 
   const resetAttachment = () => {
     setAttachmentPath('');
@@ -140,7 +136,6 @@ export const CampanasSection = () => {
     resetAttachment();
     setOpenDialog(true);
     loadTemplates();
-    loadMsgTemplates();
   };
 
   /** Abre el diálogo precargado con los datos de una campaña para editarla. */
@@ -158,7 +153,6 @@ export const CampanasSection = () => {
     resetAttachment();
     setOpenDialog(true);
     loadTemplates();
-    loadMsgTemplates();
   };
 
   const handleCloseDialog = () => {

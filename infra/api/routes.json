@@ -11,6 +11,7 @@
     { "path": "/Billing/Summary",          "lambda": "Api_V1_Billing_Summary",          "admin": true },
     { "path": "/Admin/Dashboard",          "lambda": "Api_V1_Admin_Dashboard",          "admin": true },
     { "path": "/Admin/Jobs",               "lambda": "Api_V1_Admin_Jobs",               "admin": true },
+    { "path": "/Admin/Campaigns",          "lambda": "Api_V1_Admin_Campaigns",          "admin": true },
     { "path": "/Admin/Audit",              "lambda": "Api_V1_Admin_Audit",              "admin": true },
     { "path": "/Config/Get",               "lambda": "Api_V1_Config_Get",               "admin": true },
     { "path": "/Config/Set",               "lambda": "Api_V1_Config_Set",               "admin": true },

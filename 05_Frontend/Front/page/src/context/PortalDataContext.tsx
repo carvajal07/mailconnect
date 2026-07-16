@@ -1,12 +1,13 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { getUser } from '../services/authService';
+import { getUser, isAdmin } from '../services/authService';
 import { isOk } from '../services/apiClient';
 import { campaignsService, type CampaignSummary } from '../services/campaignsService';
 import { databaseService, type DatabaseFile } from '../services/databaseService';
 import { statsService } from '../services/statsService';
 import { blacklistService, type BlacklistItem } from '../services/blacklistService';
 import { messageTemplatesService, type MessageTemplate } from '../services/messageTemplatesService';
+import { customerService, type CustomerSummary } from '../services/customerService';
 import type { CampaignStat } from '../components/portal/campaignData';
 import { readCache, writeCache } from '../services/portalCache';
 import { bootstrapService } from '../services/bootstrapService';
@@ -36,11 +37,15 @@ interface PortalData {
   stats: Dataset<CampaignStat>;
   blacklist: Dataset<BlacklistItem>;
   messageTemplates: Dataset<MessageTemplate>;
+  // Solo ADMIN: lista de clientes (para tabs Clientes/Facturación/Tarifas). En un
+  // portal de cliente queda vacío (no se llama al endpoint admin).
+  customers: Dataset<CustomerSummary>;
   refreshCampaigns: () => Promise<void>;
   refreshDatabases: () => Promise<void>;
   refreshStats: () => Promise<void>;
   refreshBlacklist: () => Promise<void>;
   refreshMessageTemplates: () => Promise<void>;
+  refreshCustomers: () => Promise<void>;
 }
 
 const emptyDataset = <T,>(): Dataset<T> => ({ items: [], loading: false, loaded: false, error: '' });
@@ -52,6 +57,7 @@ const CK = {
   stats: 'stats',
   blacklist: 'blacklist',
   messageTemplates: 'messageTemplates',
+  customers: 'customers',
 } as const;
 
 /** Estado inicial de un dataset: hidratado desde la caché si existe. */
@@ -73,6 +79,8 @@ export const PortalDataProvider = ({ children }: { children: ReactNode }) => {
   const [stats, setStats] = useState<Dataset<CampaignStat>>(() => initDataset(customerId, CK.stats));
   const [blacklist, setBlacklist] = useState<Dataset<BlacklistItem>>(() => initDataset(customerId, CK.blacklist));
   const [messageTemplates, setMessageTemplates] = useState<Dataset<MessageTemplate>>(() => initDataset(customerId, CK.messageTemplates));
+  const [customers, setCustomers] = useState<Dataset<CustomerSummary>>(() => initDataset(customerId, CK.customers));
+  const admin = isAdmin(getUser());
 
   const refreshCampaigns = useCallback(async () => {
     if (!customerId) return;
@@ -145,6 +153,22 @@ export const PortalDataProvider = ({ children }: { children: ReactNode }) => {
     });
   }, [customerId]);
 
+  // Solo ADMIN: lista de clientes (endpoint /Customer/List). Un cliente normal no la
+  // pide (evita 403 innecesarios). Se precarga tras el login como el resto.
+  const refreshCustomers = useCallback(async () => {
+    if (!admin) return;
+    setCustomers((d) => ({ ...d, loading: d.items.length === 0, error: '' }));
+    const res = await customerService.list();
+    const items = isOk(res) && res.data?.customers ? res.data.customers : [];
+    if (isOk(res)) writeCache(customerId, CK.customers, items);
+    setCustomers({
+      items,
+      loading: false,
+      loaded: true,
+      error: isOk(res) ? '' : res.description || 'No se pudieron cargar los clientes.',
+    });
+  }, [admin, customerId]);
+
   // Capa 2: una sola llamada de arranque (/Portal/Bootstrap) llena los 4 datasets
   // ligeros de golpe. Devuelve false si el endpoint no está desplegado o falla,
   // para caer a los refrescos individuales (degradación elegante durante el rollout).
@@ -198,16 +222,19 @@ export const PortalDataProvider = ({ children }: { children: ReactNode }) => {
         if (stale(CK.stats)) refreshStats();
       });
     }
-  }, [customerId, hydrateFromBootstrap, refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates]);
+    // ADMIN: precargar la lista de clientes tras el login (la usan varios tabs del
+    // panel). El Bootstrap del cliente no la incluye, así que va por su cuenta.
+    if (admin && stale(CK.customers)) refreshCustomers();
+  }, [customerId, admin, hydrateFromBootstrap, refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates, refreshCustomers]);
 
   const value = useMemo<PortalData>(
     () => ({
-      campaigns, databases, stats, blacklist, messageTemplates,
-      refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates,
+      campaigns, databases, stats, blacklist, messageTemplates, customers,
+      refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates, refreshCustomers,
     }),
     [
-      campaigns, databases, stats, blacklist, messageTemplates,
-      refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates,
+      campaigns, databases, stats, blacklist, messageTemplates, customers,
+      refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates, refreshCustomers,
     ],
   );
 

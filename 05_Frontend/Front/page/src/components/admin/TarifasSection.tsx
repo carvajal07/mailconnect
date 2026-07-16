@@ -24,10 +24,9 @@ import type {
   RatesByChannel,
   ChannelRates,
 } from '../../services/pricingService';
-import { customerService } from '../../services/customerService';
-import type { CustomerSummary } from '../../services/customerService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { usePortalData } from '../../context/PortalDataContext';
 
 /**
  * Sección admin: TARIFAS por canal (tabla pricingRate). Permite editar la tarifa
@@ -65,19 +64,14 @@ const GLOBAL = '*';
 export const TarifasSection = () => {
   const { notify, FeedbackSnackbar } = useFeedback();
   const [scope, setScope] = useState<string>(GLOBAL);
-  const [customers, setCustomers] = useState<CustomerSummary[]>([]);
+  // Clientes precargados en el login (contexto admin) para el selector de alcance.
+  const { customers: customersCtx } = usePortalData();
+  const customers = customersCtx.items;
   const [overrides, setOverrides] = useState<RatesByChannel | null>(null);
   const [form, setForm] = useState<RatesByChannel | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [savingChannel, setSavingChannel] = useState<string | null>(null);
-
-  // Cargar la lista de clientes una vez (para el selector de alcance).
-  useEffect(() => {
-    customerService.list().then((res) => {
-      if (isOk(res) && res.data?.customers) setCustomers(res.data.customers);
-    });
-  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);

@@ -26,8 +26,27 @@ from datetime import datetime
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('messageTemplate')
+_audit_table = dynamodb.Table('adminAudit')
 
 VALID_CHANNELS = ('SMS', 'WSP', 'DOCX')
+
+
+def _audit_event(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort. El actor sale del context del Authorizer."""
+    try:
+        auth = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 
 def _get_payload(event):
@@ -142,6 +161,9 @@ def lambda_handler(event, context):
 
     try:
         table.put_item(Item=item)
+        _audit_event(event, 'messageTemplate.update' if is_update else 'messageTemplate.create', name,
+                     "Plantilla {} '{}' {}".format(channel, name,
+                                                    'actualizada' if is_update else 'creada'))
         return {
             'status': True,
             'statusCode': 200 if is_update else 201,
