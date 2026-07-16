@@ -303,8 +303,14 @@ Lo que queda por hacer en el repo (no es despliegue):
   **unicidad de campaña** (índice) — última fase del refactor de Prepare-batch.
 - [ ] **CI — build del frontend:** agregar `npm ci && npm run build` al workflow para
   atrapar regresiones de TypeScript en cada PR.
-- [ ] **(Opcional) Auditoría ampliada:** hoy audita realSend, rol, tarifas y config; se puede
-  extender a más acciones adoptando el helper `_audit`.
+- [ ] **`Cost_Estimate` — tenant del token:** hoy toma el `customerId` del **body**, no del
+  Authorizer; un cliente podría enviar el `customerId` de otro y ver su tarifa. Preferir
+  `event.requestContext.authorizer.customerId` (como las demás read-lambdas).
+- [x] **Auditoría ampliada (hecho jul 2026):** además de realSend/rol/tarifas/config, ahora
+  audita seguridad (login/token), creación de campañas y plantillas, y envíos (muestras/real).
+  Objetivos legibles (nombre de empresa/correo, no ids) y tarifas con solo el campo cambiado.
+- [x] **Timeouts admin (hecho jul 2026):** `Billing_Summary` (3 scans, no 1+2·C) y `Admin_Jobs`
+  (conteo O(1) por `sendSummary`); + `ErrorBoundary` global y render defensivo en el panel.
 
 ## 9. Pendiente de seguridad (compartido) `[J]`/`[C]`
 
