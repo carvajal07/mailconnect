@@ -337,3 +337,38 @@ Crear la **función vacía** (mismo nombre de carpeta) antes del primer push (la
 - [ ] `[J]` Cliente ve su saldo/movimientos en el portal (`/Balance/Get`).
 - [ ] `[J]` Envío real con saldo suficiente → descuenta el costo y aparece en el ledger.
 - [ ] `[J]` Envío real con saldo insuficiente → **402** y la campaña sigue en `Pendiente`.
+
+### 10.5 Recarga WOMPI (Fase 2)
+Recarga en línea autoservicio con el Widget/Checkout de Wompi. **El saldo SOLO se acredita
+en el webhook firmado por Wompi**, nunca desde el redirect del navegador.
+
+**Lambdas + rutas + permisos:**
+
+| Lambda | Ruta | Auth/Proxy | Permisos IAM |
+|--------|------|-----------|--------------|
+| `Api_V1_Balance_Topup-init` | `/Balance/Topup-init` | cliente (authorizer) | `PutItem` sobre `walletTransaction` |
+| `Api_V1_Wallet_Wompi-webhook` | `/Wallet/Wompi-webhook` | **PÚBLICA (proxy, SIN authorizer, sin CORS)** | `GetItem`/`UpdateItem` sobre `walletTransaction`; `UpdateItem` sobre `customerBalance`; `dynamodb:TransactWriteItems` sobre ambas |
+
+- [ ] `[J]` Crear las 2 funciones vacías + rutas (ya en `infra/api/routes.json`; el webhook va
+  `auth:false, proxy:true, cors:false`). **El webhook NO lleva Authorizer** (Wompi no manda JWT;
+  la autenticidad la da la **firma del evento**). Como es **proxy**, la lambda ya devuelve
+  `{statusCode, headers, body}`.
+- [ ] `[J]` **Registrar la URL del webhook en el panel de Wompi** (Eventos): apuntar a
+  `https://api.mailconnect.com.co/V1/Wallet/Wompi-webhook`.
+- [ ] `[J]` Permiso `dynamodb:TransactWriteItems` para el webhook (acreditación atómica
+  transición+saldo). Sin él la acreditación falla (aunque la firma sea válida).
+
+**Env vars (llaves Wompi — pendiente a Secrets Manager):**
+- [ ] `[J]` `WOMPI_PUBLIC_KEY` (Topup-init la devuelve al front para el widget).
+- [ ] `[J]` `WOMPI_INTEGRITY_SECRET` (Topup-init firma la integridad del pago).
+- [ ] `[J]` `WOMPI_EVENTS_SECRET` (webhook verifica la firma del evento).
+- [ ] `[J]` `WOMPI_PRIVATE_KEY` (reservada para llamadas server-to-server; hoy no se usa).
+- [ ] `[J]` `WOMPI_REDIRECT_URL` (opcional; a dónde vuelve el navegador tras pagar).
+- [ ] `[J]` `WOMPI_CURRENCY` (default `COP`), `MIN_TOPUP` (default `20000`).
+  > En Terraform, pásalas por el mapa **`wompi_env`** (`TF_VAR_wompi_env`), que se mergea en el
+  > env común de las lambdas. NO commitear las llaves.
+
+**Verificación (Fase 2):**
+- [ ] `[J]` Recarga de prueba en sandbox: `Topup-init` → widget → pago aprobado → el webhook
+  acredita y el saldo sube. Reintento del webhook (mismo evento) → **no doble-acredita**.
+- [ ] `[J]` Firma inválida al webhook → **401**, sin acreditar. Pago declinado → sin acreditar.

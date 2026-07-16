@@ -38,6 +38,9 @@
     { "path": "/Report/Statistics",        "lambda": "Api_V1_Reports_Statistics" },
     { "path": "/Cost/Estimate",            "lambda": "Api_V1_Cost_Estimate" },
     { "path": "/Balance/Get",              "lambda": "Api_V1_Balance_Get" },
-    { "path": "/Portal/Bootstrap",         "lambda": "Api_V1_Portal_Bootstrap" }
+    { "path": "/Balance/Topup-init",       "lambda": "Api_V1_Balance_Topup-init" },
+    { "path": "/Portal/Bootstrap",         "lambda": "Api_V1_Portal_Bootstrap" },
+
+    { "path": "/Wallet/Wompi-webhook",     "lambda": "Api_V1_Wallet_Wompi-webhook", "auth": false, "proxy": true, "cors": false }
   ]
 }

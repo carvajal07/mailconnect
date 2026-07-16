@@ -141,6 +141,17 @@ variable "channel_env" {
   default     = {}
 }
 
+# Wompi (recarga PREPAGO). Claves de la pasarela. Pásalas por TF_VAR_wompi_env o tfvars;
+# NO las commitees. Claves esperadas: WOMPI_PUBLIC_KEY, WOMPI_PRIVATE_KEY,
+# WOMPI_INTEGRITY_SECRET, WOMPI_EVENTS_SECRET, WOMPI_REDIRECT_URL, WOMPI_CURRENCY, MIN_TOPUP.
+# ⚠️ Pendiente moverlas a AWS Secrets Manager.
+variable "wompi_env" {
+  description = "Env vars de Wompi (llaves de la pasarela + config de recarga)."
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+}
+
 # ---------------------------------------------------------------------------
 # SES / dominio
 # ---------------------------------------------------------------------------

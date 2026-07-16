@@ -40,7 +40,7 @@ locals {
     UNSUBSCRIBE_URL        = var.unsubscribe_url
     OTP_EXPIRATION_MIN     = var.otp_expiration_min
     TOKEN_TTL_DAYS         = var.token_ttl_days
-  }, var.channel_env)
+  }, var.channel_env, var.wompi_env)
 
   # --- Rutas de API (fuente de verdad compartida con el IaC ligero) ----------
   routes_catalog = jsondecode(file(var.routes_file))
