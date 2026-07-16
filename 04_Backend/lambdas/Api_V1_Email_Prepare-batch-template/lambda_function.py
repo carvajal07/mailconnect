@@ -132,6 +132,29 @@ ses = boto3.client('ses', region_name=REGION)
 table_process = dynamodb.Table('process')
 table_campaign = dynamodb.Table('campaign')
 table_customer = dynamodb.Table('customer')
+_audit_table = dynamodb.Table('adminAudit')
+
+
+def _audit_send(event, data, action, detail):
+    """Bitácora (adminAudit) de quién disparó un envío (muestras / real). Best-effort:
+    nunca rompe el envío. Actor del context del Authorizer, con fallback al userId del body."""
+    try:
+        auth = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
+        d = data if isinstance(data, dict) else {}
+        actor = auth.get('user') or auth.get('userId') or d.get('userId') or 'cliente'
+        customer = auth.get('customer') or d.get('customerName') or ''
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(actor),
+            'actorId': str(auth.get('userId') or d.get('userId') or ''),
+            'customer': str(customer),
+            'target': str(d.get('campaignName') or ''),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría de envío: {}'.format(e))
 
 # Máximo de OPERACIONES de envío de muestras permitidas por campaña (acumulado en toda
 # la vida de la campaña). Cada llamada a Send-batch-template-samples cuenta como 1.
@@ -1194,6 +1217,10 @@ def lambda_handler(event, context):
                         status, status_code, description = preparar_muestras(
                             st, data, response_campaign, user_id, template_version,
                             temp_file, delimiter, url_sqs, patron_email)
+                        if status:
+                            _audit_send(event, data, 'send.samples',
+                                        "Envío de {} muestra(s) de la campaña '{}' ({})".format(
+                                            data.get('quantitySamples', ''), campaign_name, channel_name))
                     else:
                         # Envío real → SPLIT: trocea el CSV y encola un trabajo por parte
                         # (cada parte la procesa un worker en su propia invocación, Fase 4).
@@ -1201,6 +1228,10 @@ def lambda_handler(event, context):
                             st, data, response_campaign, user_id, template_version,
                             temp_file, delimiter, url_sqs, channel_name,
                             unsubscribe_existed, blacklist_existed)
+                        if status:
+                            _audit_send(event, data, 'send.real',
+                                        "Envío REAL iniciado de la campaña '{}' ({})".format(
+                                            campaign_name, channel_name))
 
             #Si el estado es "Enviando" o "Terminada" quiere decir que es una campaña que ya no se debe enviar
             else:

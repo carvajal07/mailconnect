@@ -21,11 +21,12 @@ Nota: la profundidad real de las colas SQS no se lee aquí (requiere permisos SQ
 las URLs de las colas); el "progreso" del trabajo es la señal operativa equivalente
 desde la app. Es de solo lectura: el reencolado se hará en una iteración aparte.
 '''
+import os
 import json
 import boto3
 from decimal import Decimal
 from collections import defaultdict
-from boto3.dynamodb.conditions import Attr, Key
+from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 REGION = 'us-east-1'
@@ -34,6 +35,9 @@ table_campaign = dynamodb.Table('campaign')
 table_process = dynamodb.Table('process')
 
 MAX_JOBS = 200  # tope de procesos enriquecidos con conteo de envíos
+
+# Lee el resumen pre-agregado ({customer}_sendSummary) para el conteo de enviados (O(1)).
+SEND_SUMMARY_READ = os.environ.get('SEND_SUMMARY_READ', '').strip().lower() == 'true'
 
 CHANNEL_MAP = {
     'EM': 'Correo', 'EAU': 'Correo', 'EAP': 'Correo',
@@ -90,7 +94,23 @@ def _scan_all(table, **kwargs):
 
 
 def _count_sent(company, process_id):
-    """Mensajes efectivamente enviados (messageId distinto) del proceso."""
+    """Mensajes efectivamente enviados (messageId distinto) del proceso.
+
+    Con SEND_SUMMARY_READ usa el resumen pre-agregado (GetItem O(1) sobre
+    {company}_sendSummary); si no existe, cae a paginar {company}_sendStatus.
+    """
+    if SEND_SUMMARY_READ:
+        try:
+            summ = dynamodb.Table(f'{company}_sendSummary').get_item(
+                Key={'processId': process_id}).get('Item')
+            if summ and 'enviados' in summ:
+                return _to_int(summ['enviados'])
+        except ClientError as e:
+            if e.response['Error']['Code'] != 'ResourceNotFoundException':
+                raise
+        except Exception:
+            pass
+
     seen = set()
     table = dynamodb.Table(f'{company}_sendStatus')
     kwargs = {'KeyConditionExpression': Key('processId').eq(process_id),

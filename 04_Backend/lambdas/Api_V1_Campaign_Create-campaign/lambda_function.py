@@ -17,7 +17,27 @@ tabla_consecutive = dynamodb.Table('campaignControl')
 table_campaign = dynamodb.Table('campaign')
 table_channel = dynamodb.Table('channel')
 table_document = dynamodb.Table('document')
-    
+_audit_table = dynamodb.Table('adminAudit')
+
+
+def _audit_event(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort. El actor sale del context del Authorizer."""
+    try:
+        auth = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
+
 def select_customerName(customerId):
     projectionCustomer_expression = 'company'  # Lista de campos a consultar
 
@@ -297,6 +317,12 @@ def lambda_handler(event, context):
             status = False
             statusCode = 400
             description = 'Error en la data enviada'
+
+        # Auditar la creación (best-effort) solo si terminó bien.
+        if status and campaignId:
+            _audit_event(event, 'campaign.create', campaignName,
+                         "Campaña {} '{}' creada (consecutivo {})".format(
+                             channelName, campaignName, consecutive))
 
     finally:
         # Respuesta

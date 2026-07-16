@@ -46,6 +46,29 @@ def _audit(event, action, target='', detail=''):
     except Exception as e:
         print('No se pudo registrar auditoría: {}'.format(e))
 
+
+def _fmt_num(v):
+    """Formatea un número/Decimal legible (8 en vez de 8.0; conserva 0.19)."""
+    if v is None:
+        return '—'
+    try:
+        d = Decimal(str(v))
+        if d == d.to_integral_value():
+            return str(int(d))
+        return str(d.normalize())
+    except Exception:
+        return str(v)
+
+
+def _describe_changes(old_item, new_fields):
+    """'baseEM: 8 → 10, baseEAU: 15 → 18' comparando la fila anterior con lo escrito."""
+    old_item = old_item or {}
+    parts = []
+    for k, v in new_fields.items():
+        parts.append('{}: {} → {}'.format(k, _fmt_num(old_item.get(k)), _fmt_num(v)))
+    return ', '.join(parts)
+
+
 CHANNELS = ('EMAIL', 'SMS', 'WHATSAPP', 'VOICE')
 
 # Campos numéricos permitidos por canal (evita escribir basura en la tabla).
@@ -130,18 +153,34 @@ def lambda_handler(event, context):
             if not common:
                 return {'status': False, 'statusCode': 400,
                         'description': 'Envía al menos taxRate o minCampaign.'}
+            # Valor anterior de referencia (EMAIL representa los comunes de los 4 canales).
+            try:
+                old_item = table_rates.get_item(
+                    Key={'customerId': customer_id, 'channel': 'EMAIL'}).get('Item')
+            except Exception:
+                old_item = None
             for ch in CHANNELS:
                 _upsert(customer_id, ch, common)
             touched = list(common.keys())
+            change_detail = _describe_changes(old_item, common)
         else:
             fields = _clean_fields(fields_in, ALLOWED_FIELDS[channel])
             if not fields:
                 return {'status': False, 'statusCode': 400,
                         'description': 'Envía al menos un campo válido para el canal.'}
+            # Lee la fila actual ANTES de escribir para registrar los valores anteriores.
+            try:
+                old_item = table_rates.get_item(
+                    Key={'customerId': customer_id, 'channel': channel}).get('Item')
+            except Exception:
+                old_item = None
             _upsert(customer_id, channel, fields)
             touched = list(fields.keys())
+            change_detail = _describe_changes(old_item, fields)
 
-        _audit(event, 'pricing.update', f'{customer_id}/{channel}', ', '.join(touched))
+        scope = 'global' if customer_id == '*' else 'cliente {}'.format(customer_id)
+        _audit(event, 'pricing.update', f'{customer_id}/{channel}',
+               'Tarifa {} ({}) — {}'.format(channel, scope, change_detail))
         return {
             'status': True, 'statusCode': 200,
             'description': 'Tarifa actualizada correctamente',
