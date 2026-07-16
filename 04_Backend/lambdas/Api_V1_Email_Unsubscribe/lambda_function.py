@@ -20,6 +20,7 @@ Env:
   SECRET_KEY  — la misma de Login/Authorizers (firma del token).
 '''
 import os
+import re
 import html
 import json
 import hmac
@@ -33,6 +34,12 @@ from botocore.exceptions import ClientError
 
 REGION = 'us-east-1'
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
+
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para la tabla {tenant}_unsubscribe del cliente. Igual
+    que en Prepare-batch/buckets. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 dynamodb_client = boto3.client('dynamodb', region_name=REGION)
@@ -81,7 +88,9 @@ def _b64url_decode(data):
 
 
 def parse_token(token):
-    """Valida la firma HMAC y devuelve (customer, email) o None si es inválido."""
+    """Valida la firma HMAC y devuelve (tenant, email) o None si es inválido. `tenant` es la
+    llave por NIT (tenant_key) del campo 'n' del token, con la que se nombra la tabla
+    {tenant}_unsubscribe; fallback al 'c' (nombre) saneado para tokens antiguos."""
     try:
         payload_b64, signature = token.split('.', 1)
         expected = hmac.new(SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()[:32]
@@ -90,10 +99,11 @@ def parse_token(token):
             return None
         payload = json.loads(_b64url_decode(payload_b64))
         customer = str(payload.get('c', '')).strip()
+        tenant = tenant_key(payload.get('n', '')) or tenant_key(customer)
         email = str(payload.get('e', '')).strip().lower()
-        if not customer or not email or '@' not in email:
+        if not tenant or not email or '@' not in email:
             return None
-        return customer, email
+        return tenant, email
     except Exception as e:
         print('Token ilegible: {}'.format(e))
         return None
@@ -138,8 +148,8 @@ def lambda_handler(event, context):
                           'Este enlace de cancelación no es válido o está incompleto. '
                           'Usa el enlace tal como llegó en tu correo.', ok=False)
 
-    customer, email = parsed
-    table_name = f'{customer}_unsubscribe'
+    tenant, email = parsed
+    table_name = f'{tenant}_unsubscribe'
 
     try:
         if not ensure_unsubscribe_table(table_name):
@@ -156,7 +166,7 @@ def lambda_handler(event, context):
                 'source': 'link',
             }
         )
-        print(f'{email} desuscrito de {customer}')
+        print(f'{email} desuscrito de {tenant}')
         # Escapar el email antes de interponerlo en el HTML (defensa en profundidad
         # contra XSS reflejado si algún firmante no valida el correo).
         safe_email = html.escape(str(email))

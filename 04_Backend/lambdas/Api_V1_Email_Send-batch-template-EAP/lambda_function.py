@@ -22,9 +22,14 @@ REGION = 'us-east-1'
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 
 
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas por cliente. Igual que en Prepare-batch
+    y en los buckets S3. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+
+
 def tenant_bucket(nit, doc_type):
-    clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
-    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+    return '{}-{}-{}'.format(BUCKET_PREFIX, tenant_key(nit), doc_type)
 
 
 # Desuscripción: igual que EM/EAU. El builder SIEMPRE inserta {{unsubscribeUrl}} en el
@@ -36,15 +41,17 @@ UNSUBSCRIBE_URL = os.environ.get('UNSUBSCRIBE_URL', 'https://api.mailconnect.com
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
 
 
-def build_unsubscribe_url(customer, email):
-    """Token firmado (HMAC-SHA256) que la lambda Unsubscribe valida (mismo formato que EAU)."""
-    payload = json.dumps({'c': customer, 'e': email}, separators=(',', ':'))
+def build_unsubscribe_url(customer, email, tenant=''):
+    """Token firmado (HMAC-SHA256) que la lambda Unsubscribe valida (mismo formato que EAU).
+    `tenant` (llave por NIT) viaja como 'n' → Unsubscribe nombra {tenant}_unsubscribe."""
+    payload = json.dumps({'c': customer, 'e': email, 'n': tenant}, separators=(',', ':'))
     payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode().rstrip('=')
     signature = hmac.new(SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()[:32]
     return "{}?t={}.{}".format(UNSUBSCRIBE_URL, payload_b64, signature)
 
 
 global customer_name
+global tenant
 global process_id
 global custom_fields_pattern
 
@@ -83,8 +90,8 @@ table_document = dynamodb.Table('document')
 table_campaign = dynamodb.Table('campaign')
 
 def insert_processDetail(process_detail_id,customer_name,registers,part,date,state):
-    #debo contar los registros del array data para poner ese valor en el campo total de la tabla {customer}_processDetail
-    table_processDetail = dynamodb.Table(f'{customer_name}_processDetail')
+    #cuenta los registros para el campo total de la tabla {tenant}_processDetail (tenant=tenant_key(NIT))
+    table_processDetail = dynamodb.Table(f'{tenant}_processDetail')
     
     # Insertar datos en la tabla de detalle de procesos
     table_processDetail.put_item(
@@ -109,7 +116,7 @@ def validate_process_detail(part:int)->dict:
         dict: Informacion de la parte
     """
 
-    table_process_detail = dynamodb.Table(f'{customer_name}_processDetail')
+    table_process_detail = dynamodb.Table(f'{tenant}_processDetail')
     projection_campaign_expression = 'stateProcess, processDetailId'  # Lista de campos a consultar
 
     response_process_detail = table_process_detail.scan(
@@ -120,8 +127,8 @@ def validate_process_detail(part:int)->dict:
     return response_process_detail
 
 def insert_sendDetail(processDetailId,customerName,registers,part,date,state):
-    #debo contar los registros del array data para poner ese valor en el campo total de la tabla {customer}_processDetail
-    tableName = f'{customerName}_processDetail'
+    #cuenta los registros para el campo total de la tabla {tenant}_processDetail (tenant=tenant_key(NIT))
+    tableName = f'{tenant}_processDetail'
     
     # Define los datos que deseas insertar
     data_to_insert = [
@@ -221,8 +228,9 @@ def lambda_handler(event, context):
             _results.append(lambda_handler({"Records": [_rec]}, context))
         return _results
     global customer_name
+    global tenant
     global process_id
-    
+
     status = True
     description = "Campaña enviandose correctamente"
     status_code = 200
@@ -264,6 +272,7 @@ def lambda_handler(event, context):
         customer_id = json_body["customerId"]
         customer_name = json_body["customerName"]
         nit = json_body.get("nit")  # NIT → bucket S3 por NIT (fallback al viejo por nombre)
+        tenant = tenant_key(nit)    # llave de las tablas por cliente ({tenant}_sendDetail, etc.)
         print("Customer" + customer_name)
         process_id = json_body["processId"]
         campaign_id = json_body["campaignId"]
@@ -310,7 +319,7 @@ def lambda_handler(event, context):
         print(f"text:{text}")
 
         
-        table_sendDetail = dynamodb.Table(f'{customer_name}_sendDetail')
+        table_sendDetail = dynamodb.Table(f'{tenant}_sendDetail')
 
     except Exception as e:
         print(e)
@@ -329,6 +338,11 @@ def lambda_handler(event, context):
         default_tags = [{
                 "Name":"customer",
                 "Value":customer_name
+            },
+            {
+                # NIT saneado (tenant_key): ReceptionStatus reconstruye {tenant}_sendStatus con él.
+                "Name":"nit",
+                "Value":tenant
             },
             {
                 "Name":"campaingId",
@@ -447,7 +461,7 @@ def lambda_handler(event, context):
                 personalized_body = personalized_data(personalized_body_list,register,html)
                 personalized_text = personalized_data(personalized_text_list,register,text)
                 # Desuscripción por destinatario (token firmado) + header List-Unsubscribe.
-                unsubscribe_url = build_unsubscribe_url(customer_name, email)
+                unsubscribe_url = build_unsubscribe_url(customer_name, email, tenant)
                 personalized_body = (personalized_body or "").replace('{{unsubscribeUrl}}', unsubscribe_url)
                 personalized_text = (personalized_text or "").replace('{{unsubscribeUrl}}', unsubscribe_url)
                 '''
@@ -525,7 +539,7 @@ def lambda_handler(event, context):
                 personalized_text = personalized_data(personalized_text_list,register,text)
                 print(personalized_text)
                 # Desuscripción por destinatario (token firmado) + header List-Unsubscribe.
-                unsubscribe_url = build_unsubscribe_url(customer_name, email)
+                unsubscribe_url = build_unsubscribe_url(customer_name, email, tenant)
                 personalized_body = (personalized_body or "").replace('{{unsubscribeUrl}}', unsubscribe_url)
                 personalized_text = (personalized_text or "").replace('{{unsubscribeUrl}}', unsubscribe_url)
                 '''

@@ -2,6 +2,7 @@
 Lambda para realizar el envio de emails en lotes (Email marketing)
 '''
 import os
+import re
 import json
 import hmac
 import uuid
@@ -26,14 +27,23 @@ UNSUBSCRIBE_URL = os.environ.get('UNSUBSCRIBE_URL', 'https://api.mailconnect.com
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
 
 
-def build_unsubscribe_url(customer, email):
-    """Token firmado (HMAC-SHA256) que la lambda Unsubscribe valida."""
-    payload = json.dumps({'c': customer, 'e': email}, separators=(',', ':'))
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas por cliente ({tenant}_sendDetail,
+    _processDetail). Igual que en Prepare-batch y en los buckets S3. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+
+
+def build_unsubscribe_url(customer, email, tenant=''):
+    """Token firmado (HMAC-SHA256) que la lambda Unsubscribe valida. `tenant` (llave por
+    NIT) viaja como 'n' para que Unsubscribe nombre la tabla {tenant}_unsubscribe (misma
+    llave con la que Prepare-batch creó la tabla)."""
+    payload = json.dumps({'c': customer, 'e': email, 'n': tenant}, separators=(',', ':'))
     payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode().rstrip('=')
     signature = hmac.new(SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()[:32]
     return f"{UNSUBSCRIBE_URL}?t={payload_b64}.{signature}"
 
 global customer_name
+global tenant
 global template_name
 global from_email
 global process_detail_id
@@ -66,7 +76,7 @@ def validate_process_detail(part:int)->dict:
         dict: Informacion de la parte
     """
 
-    table_process_detail = dynamodb.Table(f'{customer_name}_processDetail')
+    table_process_detail = dynamodb.Table(f'{tenant}_processDetail')
     projection_campaign_expression = 'stateProcess, processDetailId'  # Lista de campos a consultar
 
     response_process_detail = table_process_detail.scan(
@@ -90,7 +100,7 @@ def insert_process_detail(registers:int,part:int,date:str,state:str)->None:
         None: No retorna resultados
     """   
 
-    table_process_detail = dynamodb.Table(f'{customer_name}_processDetail')
+    table_process_detail = dynamodb.Table(f'{tenant}_processDetail')
 
     # Insertar datos en la tabla de detalle de procesos
     table_process_detail.put_item(
@@ -116,7 +126,7 @@ def insert_send_detail(data:dict)->None:
     """
 
     # Tabla ÚNICA de detalle del cliente (PK processId + SK sendDetailId).
-    table_name = f'{customer_name}_sendDetail'
+    table_name = f'{tenant}_sendDetail'
     table_send_detail = dynamodb.Table(table_name)
 
 
@@ -181,7 +191,7 @@ def send_bulk(data:list, headers:list, start:int, end:int, default_tags:dict)->N
         #print(email)
         json_dict = dict(zip(headers,register))
         # Enlace de desuscripción por destinatario (variable {{unsubscribeUrl}}).
-        json_dict['unsubscribeUrl'] = build_unsubscribe_url(customer_name, email)
+        json_dict['unsubscribeUrl'] = build_unsubscribe_url(customer_name, email, tenant)
         json_string = json.dumps(json_dict)
         destinations.append({
             "Destination":{"ToAddresses": [email]},
@@ -276,6 +286,7 @@ def lambda_handler(event:dict, context:dict):
             _results.append(lambda_handler({"Records": [_rec]}, context))
         return _results
     global customer_name
+    global tenant
     global template_name
     global from_email
     global process_detail_id
@@ -297,6 +308,9 @@ def lambda_handler(event:dict, context:dict):
         customer_id = json_body["customerId"]
 
         customer_name = json_body["customerName"]
+        # NIT (companyTin) → llave de las tablas por cliente (tenant_key). Viaja en el
+        # mensaje SQS (build_ctx). Las tablas del cliente son {tenant}_sendDetail, etc.
+        tenant = tenant_key(json_body.get("nit"))
         print("Customer: " + customer_name)
         process_id = json_body["processId"]
         campaign_id = json_body["campaignId"]
@@ -326,6 +340,12 @@ def lambda_handler(event:dict, context:dict):
         default_tags = [{
                 "Name":"customer",
                 "Value":customer_name
+            },
+            {
+                # NIT saneado (tenant_key): con esto ReceptionStatus reconstruye la tabla
+                # {tenant}_sendStatus del cliente. Valor alfanumérico → tag SES válido.
+                "Name":"nit",
+                "Value":tenant
             },
             {
                 "Name":"campaingId",

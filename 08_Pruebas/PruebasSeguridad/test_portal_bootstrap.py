@@ -27,8 +27,12 @@ def _load(folder):
     return m
 
 
-def _ctx(cid='CU1', cust='empresa'):
-    return {'requestContext': {'authorizer': {'customerId': cid, 'customer': cust}}}
+# Las tablas por cliente se nombran por NIT saneado (tenant_key('900')='900').
+TENANT = '900'
+
+
+def _ctx(cid='CU1', cust='empresa', nit='900'):
+    return {'requestContext': {'authorizer': {'customerId': cid, 'customer': cust, 'nit': nit}}}
 
 
 @pytest.fixture
@@ -53,13 +57,13 @@ def boot():
                 AttributeDefinitions=attrs,
                 BillingMode='PAY_PER_REQUEST', **kw)
         ddb.create_table(
-            TableName='empresa_blackList',
+            TableName=f'{TENANT}_blackList',
             KeySchema=[{'AttributeName': 'email', 'KeyType': 'HASH'}],
             AttributeDefinitions=[{'AttributeName': 'email', 'AttributeType': 'S'}],
             BillingMode='PAY_PER_REQUEST')
         # Tabla de estados de envío del cliente (PK processId + SK sendStatusId).
         ddb.create_table(
-            TableName='empresa_sendStatus',
+            TableName=f'{TENANT}_sendStatus',
             KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'},
                        {'AttributeName': 'sendStatusId', 'KeyType': 'RANGE'}],
             AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'},
@@ -67,7 +71,7 @@ def boot():
             BillingMode='PAY_PER_REQUEST')
         # Resumen pre-agregado por proceso (para la prueba del read-path O(1)).
         ddb.create_table(
-            TableName='empresa_sendSummary',
+            TableName=f'{TENANT}_sendSummary',
             KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'}],
             AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'}],
             BillingMode='PAY_PER_REQUEST')
@@ -77,10 +81,10 @@ def boot():
         res.Table('campaign').put_item(Item={'campaignId': 'C9', 'customerId': 'CU2', 'campaignName': 'Ajena', 'date': '2026-07-02'})
         res.Table('databaseFile').put_item(Item={'databaseFileId': 'D1', 'customerId': 'CU1', 'customer': 'empresa', 'fileName': 'base.csv', 'uploadDate': '2026-07-01T00:00:00Z'})
         res.Table('messageTemplate').put_item(Item={'messageTemplateId': 'M1', 'customerId': 'CU1', 'channel': 'SMS', 'name': 'Hola', 'created': '2026-07-01'})
-        res.Table('empresa_blackList').put_item(Item={'email': 'malo@x.com', 'rejectionType': 'manual', 'date': '2026-07-01'})
+        res.Table(f'{TENANT}_blackList').put_item(Item={'email': 'malo@x.com', 'rejectionType': 'manual', 'date': '2026-07-01'})
         # Un proceso de la campaña C1 con 3 mensajes: 1 abierto (4), 1 entregado (2), 1 enviado (1).
         res.Table('process').put_item(Item={'processId': 'P1', 'campaignId': 'C1', 'customerName': 'empresa'})
-        st = res.Table('empresa_sendStatus')
+        st = res.Table(f'{TENANT}_sendStatus')
         st.put_item(Item={'processId': 'P1', 'sendStatusId': 's1', 'messageId': 'm1', 'state': 4})
         st.put_item(Item={'processId': 'P1', 'sendStatusId': 's2', 'messageId': 'm2', 'state': 2})
         st.put_item(Item={'processId': 'P1', 'sendStatusId': 's3', 'messageId': 'm3', 'state': 1})
@@ -105,12 +109,12 @@ def test_bootstrap_devuelve_todo_del_tenant(boot):
 
 def test_bootstrap_aislamiento_por_tenant(boot):
     # CU2 (otra) ve SOLO lo suyo (su campaña C9), nunca lo de CU1 (empresa).
-    resp = boot.lambda_handler(_ctx(cid='CU2', cust='otra'), None)
+    resp = boot.lambda_handler(_ctx(cid='CU2', cust='otra', nit='901'), None)
     d = resp['data']
     assert [c['campaignName'] for c in d['campaigns']] == ['Ajena']  # no 'Promo' de CU1
     assert d['databases'] == []          # las bases eran de CU1
     assert d['messageTemplates'] == []   # las plantillas eran de CU1
-    assert d['blacklist'] == []          # 'otra_blackList' no existe -> vacío
+    assert d['blacklist'] == []          # '901_blackList' no existe -> vacío
     assert d['errors'] == {}
 
 
@@ -148,7 +152,7 @@ def test_bootstrap_usa_resumen_pre_agregado(boot):
     # del resumen (O(1)) en vez del scan de estados.
     boot.SEND_SUMMARY_READ = True
     res = boto3.resource('dynamodb', region_name='us-east-1')
-    res.Table('empresa_sendSummary').put_item(Item={
+    res.Table(f'{TENANT}_sendSummary').put_item(Item={
         'processId': 'P1', 'enviados': 99, 'entregados': 40, 'abiertos': 10,
         'clics': 3, 'rebotes': 2, 'quejas': 1})
     d = boot.lambda_handler(_ctx(), None)['data']

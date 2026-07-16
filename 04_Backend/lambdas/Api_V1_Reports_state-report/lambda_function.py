@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import csv
 import io
@@ -11,6 +12,12 @@ from botocore.config import Config
 
 _dynamo = boto3.resource("dynamodb", config=Config(retries={"max_attempts": 10, "mode": "standard"}))
 _s3 = boto3.client("s3", config=Config(retries={"max_attempts": 10, "mode": "standard"}))
+
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas por cliente ({tenant}_sendStatus,
+    _sendDetail). Igual que en Prepare-batch/buckets. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 
 # ---- Mapeo SES: descripción -> número (tu tabla) y su inverso número -> descripción
 STATE_SES_MAPPING = {
@@ -185,12 +192,11 @@ def lambda_handler(event, context):
     try:
         # El cliente (tenant) SIEMPRE sale del Authorizer, NO del body: si no,
         # cualquier usuario descargaría el reporte (con correos/nombres) de otro
-        # cliente. Sin context del token se deniega.
+        # cliente. Sin context del token se deniega. La llave de las tablas por cliente es
+        # el NIT saneado (tenant_key), igual que en el resto de la plataforma.
         auth = (event.get("requestContext") or {}).get("authorizer") or {} if isinstance(event, dict) else {}
-        auth_customer = str(auth.get("customer") or "").strip()
-        if auth_customer:
-            cliente = auth_customer
-        else:
+        cliente = tenant_key(auth.get("nit") or "")
+        if not cliente:
             return {"statusCode": 403, "body": json.dumps({"error": "Sesión sin identidad de cliente."})}
 
         id_proceso = (event.get("idProceso") or os.environ.get("ID_PROCESO") or "").strip()

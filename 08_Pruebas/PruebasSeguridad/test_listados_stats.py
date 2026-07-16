@@ -41,9 +41,13 @@ def _load(name, folder):
     return module
 
 
-def _jwt(user='u@test.com', customer_id='CU1', customer='empresa', user_id='U1', minutes=60):
+# Las tablas de estados por cliente se nombran por NIT saneado (tenant_key('900')='900').
+TENANT = '900'
+
+
+def _jwt(user='u@test.com', customer_id='CU1', customer='empresa', user_id='U1', nit='900', minutes=60):
     payload = {
-        'user': user, 'customerId': customer_id, 'customer': customer, 'userId': user_id,
+        'user': user, 'customerId': customer_id, 'customer': customer, 'nit': nit, 'userId': user_id,
         'exp': datetime.utcnow() + timedelta(minutes=minutes),
     }
     tok = jwt.encode(payload, os.environ['SECRET_KEY'], algorithm='HS256')
@@ -80,16 +84,17 @@ def mods():
         # Campañas
         res.Table('campaign').put_item(Item={'campaignId': 'C1', 'customerId': 'CU1', 'campaignName': 'Promo', 'campaignState': 'Terminada', 'channel': 'EM', 'consecutive': '0001', 'template': 'empresa_0001_EM_Promo', 'date': '2026-07-01'})
         res.Table('campaign').put_item(Item={'campaignId': 'C9', 'customerId': 'CU2', 'campaignName': 'Ajena', 'campaignState': 'Pendiente', 'channel': 'EM', 'date': '2026-07-02'})
-        # Proceso + estados de C1 (tabla única {customer}_sendStatus, PK processId + SK sendStatusId)
+        # Proceso + estados de C1 (tabla única {tenant}_sendStatus, PK processId + SK sendStatusId;
+        # tenant=tenant_key(companyTin)='900'). El filtro de `process` sigue por customerName.
         res.Table('process').put_item(Item={'processId': 'P1', 'campaignId': 'C1', 'customerName': 'empresa', 'registersToSend': 3})
         ddb.create_table(
-            TableName='empresa_sendStatus',
+            TableName=f'{TENANT}_sendStatus',
             KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'},
                        {'AttributeName': 'sendStatusId', 'KeyType': 'RANGE'}],
             AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'},
                                   {'AttributeName': 'sendStatusId', 'AttributeType': 'S'}],
             BillingMode='PAY_PER_REQUEST')
-        st = res.Table('empresa_sendStatus')
+        st = res.Table(f'{TENANT}_sendStatus')
         rows = [('m1', 1), ('m1', 2), ('m1', 4), ('m2', 1), ('m2', 6), ('m3', 1)]
         for i, (mid, state) in enumerate(rows):
             st.put_item(Item={'processId': 'P1', 'sendStatusId': f's{i}', 'messageId': mid, 'state': state})
@@ -104,9 +109,10 @@ def mods():
         yield {name: _load(name, folder) for name, folder in LAMBDA_FILES.items()}
 
 
-def _auth_event(body, customer_id='CU1', customer='empresa'):
-    """Evento con el context del Authorizer (como lo inyecta API Gateway proxy)."""
-    return {**body, 'requestContext': {'authorizer': {'customerId': customer_id, 'customer': customer}}}
+def _auth_event(body, customer_id='CU1', customer='empresa', nit='900'):
+    """Evento con el context del Authorizer (como lo inyecta API Gateway proxy). El `nit`
+    (companyTin) es la llave de las tablas por cliente ({tenant_key(nit)}_sendStatus)."""
+    return {**body, 'requestContext': {'authorizer': {'customerId': customer_id, 'customer': customer, 'nit': nit}}}
 
 
 # ───────────────────────── Authorizer (context multi-tenant) ─────────────────────────
@@ -116,6 +122,8 @@ def test_authorizer_devuelve_customerId_en_context(mods):
     assert resp['policyDocument']['Statement'][0]['Effect'] == 'Allow'
     assert resp['context']['customerId'] == 'CU1'
     assert resp['context']['customer'] == 'empresa'
+    # El NIT (llave de recursos por cliente) también se reenvía en el context.
+    assert resp['context']['nit'] == '900'
 
 
 # ───────────────────────── Refresh token ─────────────────────────
@@ -192,6 +200,6 @@ def test_statistics_agrega_estados(mods):
 
 def test_statistics_aislamiento(mods):
     # Con el context de CU2 no debe ver la campaña de CU1.
-    resp = mods['statistics'].lambda_handler(_auth_event({'customerId': 'CU1', 'customer': 'empresa'}, 'CU2', 'otra'), None)
+    resp = mods['statistics'].lambda_handler(_auth_event({'customerId': 'CU1', 'customer': 'empresa'}, 'CU2', 'otra', '901'), None)
     ids = [c['id'] for c in resp['data']['campaigns']]
     assert 'C1' not in ids

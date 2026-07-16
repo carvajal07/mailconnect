@@ -38,6 +38,12 @@ def _entry(statuses):
     return {'changes': [{'field': 'messages', 'value': {'statuses': statuses}}]}
 
 
+# La tabla de estados se nombra por NIT saneado (tenant_key). El índice messageIndex guarda
+# el `nit` (lo escribe el envío WSP); ReceptionStatus lo lee para ubicar la tabla del cliente.
+NIT = '900123456'
+TENANT = '900123456'   # tenant_key(NIT)
+
+
 @pytest.fixture
 def wr():
     with mock_aws():
@@ -48,7 +54,7 @@ def wr():
             AttributeDefinitions=[{'AttributeName': 'messageId', 'AttributeType': 'S'}],
             BillingMode='PAY_PER_REQUEST')
         ddb.create_table(
-            TableName='empresa_sendStatus',
+            TableName=f'{TENANT}_sendStatus',
             KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'},
                        {'AttributeName': 'sendStatusId', 'KeyType': 'RANGE'}],
             AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'},
@@ -56,13 +62,14 @@ def wr():
             BillingMode='PAY_PER_REQUEST')
         res = boto3.resource('dynamodb', region_name='us-east-1')
         res.Table('messageIndex').put_item(Item={
-            'messageId': 'wamid1', 'customer': 'empresa', 'processId': 'P1', 'uniqueId': 'u1', 'channel': 'WSP'})
+            'messageId': 'wamid1', 'nit': NIT, 'customer': 'empresa',
+            'processId': 'P1', 'uniqueId': 'u1', 'channel': 'WSP'})
         yield _load('Api_V1_Wsp_ReceptionStatus'), res
 
 
 def _statuses_of(res, process_id='P1'):
     from boto3.dynamodb.conditions import Key
-    return res.Table('empresa_sendStatus').query(
+    return res.Table(f'{TENANT}_sendStatus').query(
         KeyConditionExpression=Key('processId').eq(process_id))['Items']
 
 

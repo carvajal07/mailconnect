@@ -30,9 +30,14 @@ def _load():
     return m
 
 
+# Las tablas por cliente se nombran por NIT saneado (tenant_key), igual que los buckets.
+NIT = '900123456'
+TENANT = '900123456'   # tenant_key(NIT)
+
+
 def _event(customer, process_id, template, data):
     return {'Records': [{'body': json.dumps({
-        'customerName': customer, 'processId': process_id,
+        'customerName': customer, 'nit': NIT, 'processId': process_id,
         'headers': ['Identificacion', 'Celular', 'Nombre'],
         'wspTemplate': template, 'data': data,
     })}]}
@@ -42,7 +47,7 @@ def _event(customer, process_id, template, data):
 def wsp():
     with mock_aws():
         boto3.client('dynamodb', region_name='us-east-1').create_table(
-            TableName='empresa_sendStatus',
+            TableName=f'{TENANT}_sendStatus',
             KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'},
                        {'AttributeName': 'sendStatusId', 'KeyType': 'RANGE'}],
             AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'},
@@ -52,7 +57,7 @@ def wsp():
 
 
 def _status_items():
-    return boto3.resource('dynamodb', region_name='us-east-1').Table('empresa_sendStatus').scan()['Items']
+    return boto3.resource('dynamodb', region_name='us-east-1').Table(f'{TENANT}_sendStatus').scan()['Items']
 
 
 def test_wsp_envia_y_registra_estado(wsp, monkeypatch):

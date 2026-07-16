@@ -16,6 +16,12 @@ URL_SQS_EAP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 
 
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para la tabla {tenant}_processDetail del cliente. Igual
+    que en Prepare-batch/buckets. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+
+
 def tenant_bucket(nit, doc_type):
     clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
     return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
@@ -32,6 +38,7 @@ s3 = boto3.client('s3', region_name=REGION)
 global process_detail_id
 global formatted_date
 global customer_name
+global tenant
 global bucket_name
 global process_id
 
@@ -77,7 +84,7 @@ def insert_process_detail(registers:int,part:int,date:str,state:str)->None:
         None: No retorna resultados
     """   
 
-    table_process_detail = dynamodb.Table(f'{customer_name}_processDetail')
+    table_process_detail = dynamodb.Table(f'{tenant}_processDetail')
 
     # Insertar datos en la tabla de detalle de procesos
     table_process_detail.put_item(
@@ -102,7 +109,7 @@ def validate_process_detail(part:int)->dict:
         dict: Informacion de la parte
     """
 
-    table_process_detail = dynamodb.Table(f'{customer_name}_processDetail')
+    table_process_detail = dynamodb.Table(f'{tenant}_processDetail')
     projection_campaign_expression = 'stateProcess, processDetailId'  # Lista de campos a consultar
 
     response_process_detail = table_process_detail.scan(
@@ -164,6 +171,7 @@ def lambda_handler(event, context):
     global process_detail_id
     global formatted_date
     global customer_name
+    global tenant
     global process_id
     global bucket_name
 
@@ -180,6 +188,7 @@ def lambda_handler(event, context):
         customer_id = json_body["customerId"]
         customer_name = json_body["customerName"]
         nit = json_body.get("nit")  # NIT → bucket S3 por NIT (fallback al viejo por nombre)
+        tenant = tenant_key(nit)    # llave de {tenant}_processDetail
         process_id = json_body["processId"]
         campaign_id = json_body["campaignId"]
         attachment = json_body["attachment"]

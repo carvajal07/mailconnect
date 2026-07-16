@@ -2,6 +2,7 @@
 Lambda para realizar la recepcion de todos los estados de emails enviados
 '''
 import os
+import re
 import json
 import uuid
 from datetime import datetime
@@ -10,6 +11,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 global customer_name
+global tenant
 global process_id
 global message_id
 global timestamp
@@ -19,6 +21,12 @@ global state
 REGION = 'us-east-1'
 #Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
+
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas por cliente ({tenant}_sendStatus,
+    _sendState, _sendSummary, _blackList). Igual que en Prepare-batch/buckets. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 
 # ───────────────────────── Pre-agregación de contadores (opcional) ─────────────────────────
 # Mantiene un RESUMEN por proceso ({customer}_sendSummary, PK processId) con el embudo ya
@@ -52,10 +60,10 @@ def _summary_milestones(state_num):
     return ms
 
 
-def bump_send_summary(customer_name, process_id, message_id, state):
+def bump_send_summary(tenant, process_id, message_id, state):
     '''Actualiza el resumen agregado del proceso ante un nuevo estado de un mensaje.
-    Idempotente y transición-consciente; best-effort (nunca lanza).'''
-    if not (customer_name and process_id and message_id):
+    Idempotente y transición-consciente; best-effort (nunca lanza). tenant=tenant_key(NIT).'''
+    if not (tenant and process_id and message_id):
         return
     try:
         new_state = int(state)
@@ -66,7 +74,7 @@ def bump_send_summary(customer_name, process_id, message_id, state):
     new_prio = _SUMMARY_PRIORITY.get(new_state, 0)
     try:
         # Avanza el estado del mensaje SOLO si el nuevo tiene mayor prioridad (atómico).
-        resp = dynamodb.Table('{}_sendState'.format(customer_name)).update_item(
+        resp = dynamodb.Table('{}_sendState'.format(tenant)).update_item(
             Key={'processId': process_id, 'messageId': message_id},
             UpdateExpression='SET #s = :s, #p = :p',
             ConditionExpression='attribute_not_exists(#p) OR #p < :p',
@@ -92,7 +100,7 @@ def bump_send_summary(customer_name, process_id, message_id, state):
         names['#m{0}'.format(i)] = m
         vals[':v{0}'.format(i)] = 1 if m in gained else -1
     try:
-        dynamodb.Table('{}_sendSummary'.format(customer_name)).update_item(
+        dynamodb.Table('{}_sendSummary'.format(tenant)).update_item(
             Key={'processId': process_id},
             UpdateExpression='ADD ' + ', '.join(parts),
             ExpressionAttributeNames=names,
@@ -193,12 +201,12 @@ state_ses_mapping = {
 #- errorMessage
 
 
-def insert_blacklist(customer_name:str,email:str,rejection_type:str,description:str)->None:
+def insert_blacklist(tenant:str,email:str,rejection_type:str,description:str)->None:
     """
     Esta función realiza el insert de los registros a la tabla de lista negra.
 
     Args:
-        customer_name (str): Nombre del cliente
+        tenant (str): Llave por NIT del cliente (tenant_key) para nombrar {tenant}_blackList
         date (str): Fecha de insercion
         email (str): Email del cliente
         rejection_type (str): Tipo de rechazo
@@ -212,7 +220,7 @@ def insert_blacklist(customer_name:str,email:str,rejection_type:str,description:
     # Formatear la fecha y hora según un formato específico
     formatted_date = now.strftime("%Y-%m-%d %H:%M:%S")
     blacklist_id = str(uuid.uuid4())
-    table_blacklist = dynamodb.Table(f'{customer_name}_blackList')
+    table_blacklist = dynamodb.Table(f'{tenant}_blackList')
 
     # Insertar datos en la tabla de lista negra
     table_blacklist.put_item(
@@ -236,9 +244,9 @@ def insert_status(type1:str,type2:str)->None:
         dict: Nombre de la campaña
     """
     send_status_id = str(uuid.uuid4())
-    # Tabla ÚNICA {customer}_sendStatus (PK processId + SK sendStatusId); antes era una
-    # tabla por proceso ({customer}_sendStatus_{proceso}).
-    table_send_status = dynamodb.Table(f'{customer_name}_sendStatus')
+    # Tabla ÚNICA {tenant}_sendStatus (PK processId + SK sendStatusId); tenant=tenant_key(NIT).
+    # Antes era una tabla por proceso ({tenant}_sendStatus_{proceso}).
+    table_send_status = dynamodb.Table(f'{tenant}_sendStatus')
 
     table_send_status.put_item(
         Item={
@@ -252,7 +260,7 @@ def insert_status(type1:str,type2:str)->None:
         }
     )
     # Pre-agregación: mantiene el resumen por proceso (best-effort, gated).
-    bump_send_summary(customer_name, process_id, message_id, state)
+    bump_send_summary(tenant, process_id, message_id, state)
 
 def lambda_handler(event, context):
     """
@@ -266,10 +274,11 @@ def lambda_handler(event, context):
         None: Personalizado
     """
     global customer_name
+    global tenant
     global process_id
     global message_id
     global timestamp
-    global state    
+    global state
 
     #Obtener el mensaje SNS
     body = event["Records"][0]["body"]
@@ -286,7 +295,10 @@ def lambda_handler(event, context):
     print("Event: " + event_type)
     #Captura de tags
     tags = message_mail['tags']
-    customer_name = tags['customer'][0]    
+    customer_name = tags['customer'][0]
+    # Llave de las tablas por cliente: el tag 'nit' (tenant_key) que ponen las lambdas Send.
+    # Fallback defensivo al nombre saneado para eventos antiguos sin el tag (best-effort).
+    tenant = tenant_key((tags.get('nit') or [''])[0]) or tenant_key(customer_name)
     campaing_id = tags['campaingId'][0]
     process_id = tags['processId'][0]
 
@@ -329,7 +341,7 @@ def lambda_handler(event, context):
         if bounce_type == "Permanent":
             #Enviar a la lista negra
             email = message['bounce']['bouncedRecipients'][0]['emailAddress']
-            insert_blacklist(customer_name,email,bounce_type,bounce_subtype)
+            insert_blacklist(tenant,email,bounce_type,bounce_subtype)
         #Insertar estado
         insert_status(bounce_type,bounce_subtype)
 

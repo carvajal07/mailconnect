@@ -46,6 +46,13 @@ GSI_CUSTOMER_INDEX = os.environ.get('GSI_CUSTOMER_INDEX', 'customerId-index')
 
 _SAFE_CUSTOMER_RE = re.compile(r'^[A-Za-z0-9_]+$')
 
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas por cliente ({tenant}_sendStatus,
+    _sendSummary, _blackList). Igual que en Prepare-batch/buckets. Idempotente. OJO: el
+    filtro del scan de `process` sigue por customerName (nombre), no por esta llave."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+
 # --- Estadísticas: MISMA lógica que Api_V1_Reports_Statistics (mantener en sync) ---
 MAX_PROCESSES = 300
 STATE_PRIORITY = {1: 1, 9: 2, 8: 3, 3: 4, 2: 5, 6: 6, 10: 7, 7: 8, 4: 9, 5: 10}
@@ -191,9 +198,10 @@ def _counts_from_states(states):
             'clics': clics, 'rebotes': rebotes, 'quejas': quejas}
 
 
-def _load_stats(customer_id, customer):
-    '''Estadísticas por campaña (mismo cálculo que Reports_Statistics). Requiere
-    customer (nombre de empresa) para la tabla {customer}_sendStatus.'''
+def _load_stats(customer_id, customer, tenant):
+    '''Estadísticas por campaña (mismo cálculo que Reports_Statistics). El filtro de
+    `process` es por customerName (nombre); las tablas de estados son por NIT
+    ({tenant}_sendStatus / _sendSummary, tenant=tenant_key(NIT)).'''
     if not customer_id or not customer:
         return []
     campaigns = _by_customer(table_campaign, customer_id)
@@ -202,8 +210,8 @@ def _load_stats(customer_id, customer):
     for p in processes:
         procs_by_campaign[p.get('campaignId')].append(p)
 
-    status_table = dynamodb.Table('{}_sendStatus'.format(customer))
-    summary_table = dynamodb.Table('{}_sendSummary'.format(customer))
+    status_table = dynamodb.Table('{}_sendStatus'.format(tenant))
+    summary_table = dynamodb.Table('{}_sendSummary'.format(tenant))
 
     def _counts_for(process_id):
         # 1) Resumen pre-agregado (O(1)) por defecto.
@@ -241,9 +249,10 @@ def _load_stats(customer_id, customer):
     return result
 
 
-def _load_blacklist(customer):
-    '''Lista negra del cliente ({customer}_blackList). Si no existe la tabla, vacío.'''
-    safe = (customer or '').strip()
+def _load_blacklist(tenant):
+    '''Lista negra del cliente ({tenant}_blackList, tenant=tenant_key(NIT)). Si no existe la
+    tabla, vacío.'''
+    safe = (tenant or '').strip()
     if not _SAFE_CUSTOMER_RE.match(safe):
         return []
     table = dynamodb.Table('{}_blackList'.format(safe))
@@ -262,6 +271,7 @@ def lambda_handler(event, context):
     auth = _authorizer(event)
     customer_id = auth.get('customerId')
     customer = (auth.get('customer') or '').strip()
+    tenant = tenant_key(auth.get('nit'))   # llave de {tenant}_sendStatus / _sendSummary / _blackList
 
     # Multi-tenant OBLIGATORIO: sin identidad del token, se deniega.
     empty = {'campaigns': [], 'databases': [], 'blacklist': [], 'messageTemplates': [], 'stats': [], 'errors': {}}
@@ -277,8 +287,8 @@ def lambda_handler(event, context):
         ('campaigns', lambda: _load_campaigns(customer_id)),
         ('databases', lambda: _load_databases(customer_id, customer)),
         ('messageTemplates', lambda: _load_message_templates(customer_id)),
-        ('blacklist', lambda: _load_blacklist(customer)),
-        ('stats', lambda: _load_stats(customer_id, customer)),
+        ('blacklist', lambda: _load_blacklist(tenant)),
+        ('stats', lambda: _load_stats(customer_id, customer, tenant)),
     ):
         try:
             data[name] = loader()

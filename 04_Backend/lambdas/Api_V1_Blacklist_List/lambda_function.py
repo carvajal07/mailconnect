@@ -40,17 +40,24 @@ def _tenant_from_authorizer(event):
     return auth if isinstance(auth, dict) else {}
 
 
-def _customer_name(payload):
-    """Nombre de empresa: del body directo o resuelto desde customerId."""
-    customer = payload.get('customer')
-    if customer:
-        return str(customer).strip()
-    customer_id = payload.get('customerId')
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para la tabla {tenant}_blackList del cliente. Igual
+    que en Prepare-batch/buckets. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+
+
+def _resolve_nit(auth):
+    """NIT (companyTin) del cliente: del context del Authorizer (claim `nit`) o resuelto
+    desde customerId. Es la llave de la tabla {tenant}_blackList (via tenant_key)."""
+    nit = auth.get('nit')
+    if nit:
+        return str(nit)
+    customer_id = auth.get('customerId')
     if not customer_id:
         return None
     item = table_customer.get_item(Key={'customerId': customer_id},
-                                   ProjectionExpression='company').get('Item')
-    return item['company'] if item else None
+                                   ProjectionExpression='companyTin').get('Item')
+    return str(item['companyTin']) if item and item.get('companyTin') else None
 
 
 
@@ -78,20 +85,19 @@ def _safe_table_customer(customer):
 
 
 def lambda_handler(event, context):
-    payload = _get_payload(event)
+    _get_payload(event)  # (el tenant sale del token, no del body)
     auth = _tenant_from_authorizer(event)
-    if auth.get('customer') or auth.get('customerId'):
-        payload = {'customer': auth.get('customer'), 'customerId': auth.get('customerId')}
-    else:
+    if not (auth.get('nit') or auth.get('customerId')):
         return {'status': False, 'statusCode': 403,
                 'description': 'Sesión sin identidad de cliente.', 'data': {'items': [], 'count': 0}}
 
-    customer = _safe_table_customer(_customer_name(payload))
-    if not customer:
+    # La tabla se nombra por NIT saneado (tenant_key), igual que buckets y el resto de tablas.
+    tenant = _safe_table_customer(tenant_key(_resolve_nit(auth) or ''))
+    if not tenant:
         return {'status': False, 'statusCode': 400,
                 'description': 'Indica customer o customerId válido.', 'data': {'items': [], 'count': 0}}
 
-    table = dynamodb.Table(f'{customer}_blackList')
+    table = dynamodb.Table(f'{tenant}_blackList')
     try:
         items = []
         kwargs = {}

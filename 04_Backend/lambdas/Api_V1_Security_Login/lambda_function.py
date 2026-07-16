@@ -78,10 +78,12 @@ def _is_legacy_hash(stored_hash):
     return not str(stored_hash or '').startswith('pbkdf2$')
 
 
-def generate_jwt(username, customer_id="", customer="", user_id="", role="client"):
+def generate_jwt(username, customer_id="", customer="", user_id="", role="client", nit=""):
     # Información de la carga útil. Se embeben la identidad del tenant (customerId,
-    # customer), el userId y el rol como claims: el Authorizer los reenvía en el
+    # customer, nit), el userId y el rol como claims: el Authorizer los reenvía en el
     # context y las lambdas pueden confiar en ellos (multi-tenant + roles) en vez del body.
+    # El `nit` (companyTin) es la LLAVE de los recursos por cliente (tablas/buckets):
+    # las lambdas construyen p. ej. {tenant_key(nit)}_sendStatus con él (ver tenant_key).
     # exp/iat como TIMESTAMP ENTERO (UTC), no como objeto datetime: es robusto entre
     # versiones de PyJWT (algunas serializan mal el datetime) y evita ambigüedad de zona.
     now_ts = int(time.time())
@@ -89,6 +91,7 @@ def generate_jwt(username, customer_id="", customer="", user_id="", role="client
         'user': username,
         'customerId': customer_id,
         'customer': customer,
+        'nit': str(nit or ''),
         'userId': user_id,
         'role': role,
         'iat': now_ts,
@@ -271,7 +274,8 @@ def lambda_handler(event, context):
                         userDataId = responseUser['Items'][0]['userDataId']
                         name = select_name(userDataId)
                         # Token con los claims del tenant + rol (multi-tenant + roles vía Authorizer).
-                        token = generate_jwt(user, customerId, customer, userId, role)
+                        # companyTin (NIT) va como claim `nit`: es la llave de los recursos por cliente.
+                        token = generate_jwt(user, customerId, customer, userId, role, companyTin)
                         # Registrar la sesión. No debe romper el login si falla
                         # (p. ej. permisos de la tabla), por eso va en su propio try.
                         try:

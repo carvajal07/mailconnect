@@ -17,6 +17,7 @@ Mapeo de estado de Meta → nuestros códigos:
   sent → 1 (enviado) · delivered → 2 (entregado) · read → 4 (abierto/leído) · failed → 3 (rechazado)
 '''
 import os
+import re
 import json
 import uuid
 import boto3
@@ -24,6 +25,12 @@ from botocore.exceptions import ClientError
 
 REGION = 'us-east-1'
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
+
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas por cliente ({tenant}_sendStatus,
+    _sendState, _sendSummary). Igual que en Prepare-batch/buckets. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 
 MESSAGE_INDEX_TABLE = os.environ.get('WSP_MESSAGE_INDEX', 'messageIndex')
 table_index = dynamodb.Table(MESSAGE_INDEX_TABLE)
@@ -110,7 +117,9 @@ def _iter_statuses(msg):
 
 
 def _lookup(message_id):
-    """(customer, processId, uniqueId) del índice para un messageId; None si no está."""
+    """(tenant, processId, uniqueId) del índice para un messageId; None si no está. `tenant`
+    es la llave por NIT (tenant_key) con la que se nombra {tenant}_sendStatus; fallback al
+    'customer' (nombre) para filas antiguas del índice."""
     try:
         item = table_index.get_item(Key={'messageId': message_id}).get('Item')
     except ClientError as e:
@@ -119,12 +128,13 @@ def _lookup(message_id):
         raise
     if not item:
         return None
-    return item.get('customer', ''), item.get('processId', ''), item.get('uniqueId', '')
+    tenant = tenant_key(item.get('nit', '')) or tenant_key(item.get('customer', ''))
+    return tenant, item.get('processId', ''), item.get('uniqueId', '')
 
 
-def _record_status(customer_name, process_id, item):
+def _record_status(tenant, process_id, item):
     item['processId'] = process_id
-    dynamodb.Table('{}_sendStatus'.format(customer_name)).put_item(Item=item)
+    dynamodb.Table('{}_sendStatus'.format(tenant)).put_item(Item=item)
 
 
 # ── Pre-agregación de contadores (idéntica a Messaging_ReceptionStatus; best-effort) ──
@@ -150,8 +160,8 @@ def _summary_milestones(state_num):
     return ms
 
 
-def bump_send_summary(customer_name, process_id, message_id, state):
-    if not (customer_name and process_id and message_id):
+def bump_send_summary(tenant, process_id, message_id, state):
+    if not (tenant and process_id and message_id):
         return
     try:
         new_state = int(state)
@@ -161,7 +171,7 @@ def bump_send_summary(customer_name, process_id, message_id, state):
         return
     new_prio = _SUMMARY_PRIORITY.get(new_state, 0)
     try:
-        resp = dynamodb.Table('{}_sendState'.format(customer_name)).update_item(
+        resp = dynamodb.Table('{}_sendState'.format(tenant)).update_item(
             Key={'processId': process_id, 'messageId': message_id},
             UpdateExpression='SET #s = :s, #p = :p',
             ConditionExpression='attribute_not_exists(#p) OR #p < :p',
@@ -187,7 +197,7 @@ def bump_send_summary(customer_name, process_id, message_id, state):
         names['#m{0}'.format(i)] = m
         vals[':v{0}'.format(i)] = 1 if m in gained else -1
     try:
-        dynamodb.Table('{}_sendSummary'.format(customer_name)).update_item(
+        dynamodb.Table('{}_sendSummary'.format(tenant)).update_item(
             Key={'processId': process_id},
             UpdateExpression='ADD ' + ', '.join(parts),
             ExpressionAttributeNames=names,
@@ -214,8 +224,8 @@ def lambda_handler(event, context):
                 # esta función, o índice no provisionado). No se puede ubicar el proceso.
                 sin_indice += 1
                 continue
-            customer_name, process_id, unique_id = found
-            if not customer_name or not process_id:
+            tenant, process_id, unique_id = found
+            if not tenant or not process_id:
                 sin_indice += 1
                 continue
 
@@ -232,8 +242,8 @@ def lambda_handler(event, context):
                 'type2': status_raw,
             }
             try:
-                _record_status(customer_name, process_id, item)
-                bump_send_summary(customer_name, process_id, message_id, state)
+                _record_status(tenant, process_id, item)
+                bump_send_summary(tenant, process_id, message_id, state)
                 procesados += 1
             except Exception as e:
                 print('No se pudo registrar el recibo WhatsApp ({}): {}'.format(status_raw, e))

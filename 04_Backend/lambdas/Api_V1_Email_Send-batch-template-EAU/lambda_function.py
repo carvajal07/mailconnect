@@ -31,9 +31,14 @@ QUANTITY_BATCH = 25
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 
 
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas por cliente. Igual que en Prepare-batch
+    y en los buckets S3. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+
+
 def tenant_bucket(nit, doc_type):
-    clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
-    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+    return '{}-{}-{}'.format(BUCKET_PREFIX, tenant_key(nit), doc_type)
 
 # Desuscripción: URL de la lambda Unsubscribe y clave para firmar el token.
 # En EAU el correo es MIME crudo, así que además del enlace en el HTML
@@ -42,9 +47,10 @@ UNSUBSCRIBE_URL = os.environ.get('UNSUBSCRIBE_URL', 'https://api.mailconnect.com
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
 
 
-def build_unsubscribe_url(customer, email):
-    """Token firmado (HMAC-SHA256) que la lambda Unsubscribe valida."""
-    payload = json.dumps({'c': customer, 'e': email}, separators=(',', ':'))
+def build_unsubscribe_url(customer, email, tenant=''):
+    """Token firmado (HMAC-SHA256) que la lambda Unsubscribe valida. `tenant` (llave por
+    NIT) viaja como 'n' para que Unsubscribe nombre la tabla {tenant}_unsubscribe."""
+    payload = json.dumps({'c': customer, 'e': email, 'n': tenant}, separators=(',', ':'))
     payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode().rstrip('=')
     signature = hmac.new(SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()[:32]
     return f"{UNSUBSCRIBE_URL}?t={payload_b64}.{signature}"
@@ -59,6 +65,7 @@ ses = boto3.client('ses', region_name=REGION)
 s3 = boto3.client('s3', region_name=REGION)
 
 global customer_name
+global tenant
 global campaign_id
 global from_email
 global subject
@@ -113,9 +120,9 @@ table_document = dynamodb.Table('document')
 table_campaign = dynamodb.Table('campaign')
 dynamo = boto3.client('dynamodb')
 
-def insert_processDetail(processDetailId,customerName,processId,registers,part,date,state):
-    #debo contar los registros del array data para poner ese valor en el campo total de la tabla {customer}_processDetail
-    table_processDetail = dynamodb.Table(f'{customerName}_processDetail')
+def insert_processDetail(processDetailId,tenant,processId,registers,part,date,state):
+    #cuenta los registros para el campo total de la tabla {tenant}_processDetail (tenant=tenant_key(NIT))
+    table_processDetail = dynamodb.Table(f'{tenant}_processDetail')
     
     # Insertar datos en la tabla de detalle de procesos
     table_processDetail.put_item(
@@ -140,8 +147,8 @@ def insert_send_detail(data:dict)->None:
         None: No retorna resultados
     """
 
-    # Tabla ÚNICA de detalle del cliente (PK processId + SK sendDetailId).
-    table_name = f'{customer_name}_sendDetail'
+    # Tabla ÚNICA de detalle del cliente (PK processId + SK sendDetailId). tenant=tenant_key(NIT).
+    table_name = f'{tenant}_sendDetail'
     table_send_detail = dynamodb.Table(table_name)
 
 
@@ -320,7 +327,7 @@ def send_bulk(data:list, headers:list, start:int, end:int, tags:dict)->None:
         msg['To'] = email
 
         # Desuscripción por destinatario: header estándar + variable del HTML.
-        unsubscribe_url = build_unsubscribe_url(customer_name, email)
+        unsubscribe_url = build_unsubscribe_url(customer_name, email, tenant)
         del msg['List-Unsubscribe']
         del msg['List-Unsubscribe-Post']
         msg['List-Unsubscribe'] = f'<{unsubscribe_url}>'
@@ -470,6 +477,7 @@ def lambda_handler(event, context):
         return _results
 
     global customer_name
+    global tenant
     global campaign_id
     global from_email
     global subject
@@ -500,6 +508,7 @@ def lambda_handler(event, context):
         customer_id = json_body["customerId"]
         customer_name = json_body["customerName"]
         nit = json_body.get("nit")  # NIT → bucket S3 por NIT (fallback al viejo por nombre)
+        tenant = tenant_key(nit)    # llave de las tablas por cliente ({tenant}_sendDetail, etc.)
         process_id = json_body["processId"]
         campaign_id = json_body["campaignId"]
         attachment = json_body["attachment"]
@@ -536,6 +545,11 @@ def lambda_handler(event, context):
         tags = [{
                 "Name":"customer",
                 "Value":customer_name
+            },
+            {
+                # NIT saneado (tenant_key): ReceptionStatus reconstruye {tenant}_sendStatus con él.
+                "Name":"nit",
+                "Value":tenant
             },
             {
                 "Name":"campaingId",
@@ -632,8 +646,8 @@ def lambda_handler(event, context):
         #Consultar informacon de los adjuntos
         
 
-        insert_processDetail(process_detail_id,customer_name,"asd",999,1,formattedDate,"Estado")
-        table_sendDetail = dynamodb.Table(f'{customer_name}_sendDetail')
+        insert_processDetail(process_detail_id,tenant,"asd",999,1,formattedDate,"Estado")
+        table_sendDetail = dynamodb.Table(f'{tenant}_sendDetail')
         
         
     
