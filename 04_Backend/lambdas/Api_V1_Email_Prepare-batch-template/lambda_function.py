@@ -8,6 +8,7 @@ import sys
 import json
 import uuid
 import time
+from decimal import Decimal
 from datetime import datetime
 
 import boto3
@@ -134,6 +135,100 @@ table_campaign = dynamodb.Table('campaign')
 table_customer = dynamodb.Table('customer')
 _audit_table = dynamodb.Table('adminAudit')
 
+# --- Cobro PREPAGO (monedero) -------------------------------------------------
+# El envío REAL debita el saldo del cliente ANTES de trocear (bloqueo DURO por saldo).
+# El costo se calcula con la MISMA lógica/tarifas del estimador (Api_V1_Cost_Estimate),
+# replicada aquí como hace Api_V1_Billing_Summary.
+# ⚠️ SINCRONÍA: si cambian DEFAULT_RATES o la fórmula en Cost_Estimate, hay que
+# replicarlo aquí (y en Billing_Summary / Pricing_*). No hay una fuente única todavía.
+table_balance = dynamodb.Table('customerBalance')
+table_wallet = dynamodb.Table('walletTransaction')
+table_rates = dynamodb.Table('pricingRate')
+
+DEFAULT_TAX_RATE = 0.19          # IVA Colombia
+DEFAULT_MIN_CAMPAIGN = 5000      # mínimo por campaña (COP)
+DEFAULT_RATES = {
+    'EMAIL': {'baseEM': 8, 'baseEAU': 15, 'baseEAP': 40, 'attachmentPerMB': 5, 'personalizedPdf': 25, 'personalizedDocx': 35},
+    'SMS': {'baseSms': 60},
+    'WHATSAPP': {'baseMarketing': 90},
+    'VOICE': {'basePerMinute': 120, 'avgMinutes': 0.5},
+    'COMMON': {'taxRate': DEFAULT_TAX_RATE, 'minCampaign': DEFAULT_MIN_CAMPAIGN},
+}
+# channel de la campaña (EM/EAU/EAP/SMS/WSP/VOZ) -> canal de tarifa del estimador.
+CHANNEL_MAP = {
+    'EM': 'EMAIL', 'EAU': 'EMAIL', 'EAP': 'EMAIL',
+    'SMS': 'SMS', 'WSP': 'WHATSAPP', 'VOZ': 'VOICE',
+}
+
+
+def _num(value, default=0.0):
+    if isinstance(value, Decimal):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _load_rate(customer_id, channel):
+    """Tarifa efectiva: DEFAULT_RATES[channel]+COMMON, sobreescrito por pricingRate
+    (primero la global '*', luego la del cliente). Nunca falla: sin tabla, usa defaults.
+    Réplica de Api_V1_Cost_Estimate._load_rate (mantener en sync)."""
+    rate = dict(DEFAULT_RATES.get(channel, {}))
+    rate.update(DEFAULT_RATES['COMMON'])
+    for cid in ('*', customer_id):
+        if not cid:
+            continue
+        try:
+            item = table_rates.get_item(Key={'customerId': cid, 'channel': channel}).get('Item')
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ResourceNotFoundException':
+                break
+            raise
+        except Exception:
+            continue
+        if item:
+            for k, v in item.items():
+                if k not in ('customerId', 'channel'):
+                    rate[k] = _num(v, rate.get(k, 0))
+    return rate
+
+
+def _campaign_unit(rate, channel_name, document_format):
+    """Tarifa unitaria por destinatario según el canal de la campaña (misma lógica que
+    Billing_Summary/Cost_Estimate). NO incluye el recargo por MB del adjunto (EAU/EAP):
+    misma aproximación que Billing_Summary; la conciliación fina queda para otra fase.
+    Como el estimador del front SÍ suma el adjunto, su total es >= al débito → el gate de
+    saldo del front nunca queda por debajo del cobro real (dirección segura)."""
+    if channel_name == 'EM':
+        return rate['baseEM']
+    if channel_name == 'EAU':
+        return rate['baseEAU']
+    if channel_name == 'EAP':
+        pers = rate['personalizedPdf'] if str(document_format).upper() == 'PDF' else rate['personalizedDocx']
+        return rate['baseEAP'] + pers
+    if channel_name == 'SMS':
+        return rate['baseSms']
+    if channel_name == 'WSP':
+        return rate['baseMarketing']
+    if channel_name == 'VOZ':
+        return rate['basePerMinute'] * rate.get('avgMinutes', 0.5)
+    return 0.0
+
+
+def _campaign_cost(customer_id, channel_name, recipients, document_format=None):
+    """Costo TOTAL (COP entero, con IVA y mínimo por campaña) de enviar `recipients`
+    mensajes del canal dado. Misma fórmula que Api_V1_Cost_Estimate para UNA campaña:
+    subtotal = max(unit × recipients, minCampaign); total = subtotal + IVA."""
+    channel = CHANNEL_MAP.get(channel_name)
+    if not channel or recipients <= 0:
+        return 0
+    rate = _load_rate(customer_id, channel)
+    unit = _campaign_unit(rate, channel_name, document_format)
+    subtotal = max(unit * recipients, rate.get('minCampaign', DEFAULT_MIN_CAMPAIGN))
+    total = subtotal * (1 + rate.get('taxRate', DEFAULT_TAX_RATE))
+    return int(round(total))
+
 
 def _audit_send(event, data, action, detail):
     """Bitácora (adminAudit) de quién disparó un envío (muestras / real). Best-effort:
@@ -167,6 +262,104 @@ class RealSendDisabled(Exception):
 
 class AlreadySending(Exception):
     """La campaña ya tomó el lock de envío real (otro proceso / reintento). Idempotencia."""
+
+
+class InsufficientBalance(Exception):
+    """El cliente no tiene saldo suficiente para el envío real (cobro PREPAGO, bloqueo
+    DURO: sin cupo negativo). El handler responde 402."""
+
+
+def _wallet_ledger(st, tx_type, amount, balance_after, reference, detail):
+    """Escribe SIEMPRE un movimiento en walletTransaction (ledger auditable). Best-effort:
+    el saldo ya se movió atómicamente; si el ledger falla se loguea, no se revierte."""
+    try:
+        table_wallet.put_item(Item={
+            'txId': str(uuid.uuid4()),
+            'customerId': st.customer_id,
+            'type': tx_type,               # debit | refund
+            'amount': int(amount),         # negativo=débito, positivo=reembolso
+            'balanceAfter': int(balance_after),
+            'currency': 'COP',
+            'status': 'approved',
+            'actor': 'sistema',
+            'reference': str(reference or ''),
+            'detail': str(detail),
+            'date': st.formatted_date,
+        })
+    except Exception as e:
+        print('No se pudo registrar walletTransaction: {}'.format(e))
+
+
+def reserve_balance(st, cost, campaign_name):
+    """Reserva ATÓMICA de `cost` COP del saldo del cliente (débito condicionado a
+    balance >= cost, sin leer-modificar-escribir). Bloqueo DURO: sin saldo suficiente
+    lanza InsufficientBalance (no hay cupo negativo). La condición también falla si el
+    cliente no tiene ítem de saldo (nunca recargó). Devuelve el saldo resultante y deja
+    el movimiento en el ledger.
+
+    Devuelve None (sin cobrar) SOLO si la tabla customerBalance aún no existe: fail-open
+    durante el rollout del monedero (deploy del código antes de crear la tabla), para no
+    bloquear todos los envíos. Una vez creada la tabla, el bloqueo por saldo es DURO."""
+    try:
+        resp = table_balance.update_item(
+            Key={'customerId': st.customer_id},
+            UpdateExpression='SET balance = balance - :c, updatedAt = :now',
+            ConditionExpression='balance >= :c',
+            ExpressionAttributeValues={':c': cost, ':now': st.formatted_date},
+            ReturnValues='UPDATED_NEW',
+        )
+    except ClientError as e:
+        code = e.response['Error']['Code']
+        if code == 'ConditionalCheckFailedException':
+            raise InsufficientBalance(
+                'Saldo insuficiente para el envío real. Recarga tu monedero e intenta de nuevo.')
+        if code == 'ResourceNotFoundException':
+            print('customerBalance no existe todavía; se omite el cobro (rollout del monedero).')
+            return None
+        raise
+    new_balance = int(resp['Attributes']['balance'])
+    _wallet_ledger(st, 'debit', -cost, new_balance, st.process_id,
+                   "Débito por envío real de la campaña '{}'".format(campaign_name))
+    return new_balance
+
+
+def refund_balance(st, cost, campaign_name):
+    """COMPENSACIÓN: reembolsa `cost` COP (crédito atómico) cuando el envío real falla
+    DESPUÉS de haber debitado. Best-effort: si el reembolso falla se loguea (soporte lo
+    corrige con el ledger)."""
+    try:
+        resp = table_balance.update_item(
+            Key={'customerId': st.customer_id},
+            UpdateExpression='SET balance = if_not_exists(balance, :z) + :c, updatedAt = :now',
+            ExpressionAttributeValues={':c': cost, ':z': 0, ':now': st.formatted_date},
+            ReturnValues='UPDATED_NEW',
+        )
+        new_balance = int(resp['Attributes']['balance'])
+        _wallet_ledger(st, 'refund', cost, new_balance, st.process_id,
+                       "Reembolso por fallo del envío de la campaña '{}'".format(campaign_name))
+    except Exception as e:
+        print('No se pudo reembolsar el saldo debitado: {}'.format(e))
+
+
+def release_real_send_lock(st, previous_state):
+    """Revierte la campaña de 'Enviando' a su estado previo (libera el lock que tomó
+    try_start_real_send). Se usa cuando, tras tomar el lock, el envío NO procede (p. ej.
+    saldo insuficiente), para que la campaña vuelva a ser enviable. Condicional a que
+    todavía seamos los dueños del lock (no pisar un envío concurrente). El sendProcessId
+    queda apuntando a un proceso que no se creó; se sobreescribe en el próximo intento."""
+    try:
+        table_campaign.update_item(
+            Key={'campaignId': st.campaign_id},
+            UpdateExpression='SET campaignState = :prev',
+            ConditionExpression='campaignState = :sending AND sendProcessId = :pid',
+            ExpressionAttributeValues={
+                ':prev': previous_state, ':sending': 'Enviando', ':pid': st.process_id},
+        )
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
+            raise
+    except Exception as e:
+        print('No se pudo liberar el lock de envío: {}'.format(e))
 
 
 # Estados desde los que se PUEDE iniciar un envío real (compare-and-set atómico).
@@ -869,16 +1062,35 @@ def enqueue_part_job(st, part:int, part_key:str, bucket_name:str, channel_queue:
     send_sqs(URL_SQS_PREPARE_PART, json.dumps(job))
 
 
+def count_base_rows(temp_file, delimiter):
+    """Cuenta las filas de DATOS del CSV (sin el encabezado). Dimensiona el cobro
+    PREPAGO: la reserva se hace sobre el TAMAÑO de la base (no sobre el envío efectivo;
+    la conciliación fina de fallidos/filtrados queda para una fase posterior). Lee en
+    streaming (no carga toda la base en memoria)."""
+    total = 0
+    with open(temp_file, 'r', encoding=ENCODING) as f:
+        reader = csv.reader(f, delimiter=delimiter)
+        next(reader, None)  # descarta el encabezado
+        for _ in reader:
+            total += 1
+    return total
+
+
 def preparar_split(st, data, response_campaign, user_id, template_version, temp_file,
                    delimiter, url_sqs, channel_name, unsubscribe_existed,
                    blacklist_existed):
     """SPLITTER del ENVÍO REAL (Fase 4). Aplica el bloqueo por cliente + la idempotencia de
-    campaña, TROCEA el CSV en part-files de PART_SIZE filas subidos a S3 y encola UN trabajo
-    por parte en URL_SQS_PREPARE_PART. NO valida/filtra/encola al canal (eso lo hace cada
-    worker en su propia invocación) → una base de 100k+ ya no se procesa en una sola llamada.
+    campaña + el COBRO PREPAGO (reserva de saldo), TROCEA el CSV en part-files de PART_SIZE
+    filas subidos a S3 y encola UN trabajo por parte en URL_SQS_PREPARE_PART. NO valida/
+    filtra/encola al canal (eso lo hace cada worker en su propia invocación) → una base de
+    100k+ ya no se procesa en una sola llamada.
 
-    Devuelve (status, status_code, description). Puede lanzar RealSendDisabled/AlreadySending,
-    que el handler atrapa."""
+    Orden del envío real: gate manual (realSendEnabled) → lock (try_start_real_send) →
+    reserva de saldo (débito atómico) → troceo. Si el saldo no alcanza se libera el lock
+    y se lanza InsufficientBalance (402). Si el troceo falla tras debitar, se reembolsa.
+
+    Devuelve (status, status_code, description). Puede lanzar RealSendDisabled/
+    AlreadySending/InsufficientBalance, que el handler atrapa."""
     status = True
     status_code = 200
     description = "Campaña enviandose correctamente"
@@ -893,9 +1105,39 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
             'Contacta al administrador de MailConnect.')
     # IDEMPOTENCIA: transición atómica a 'Enviando'. Si otra invocación (reintento de
     # Lambda/API Gateway, doble clic, envío concurrente) ya tomó el lock, NO se re-trocea
-    # (se lanza AlreadySending → 200 limpio).
+    # (se lanza AlreadySending → 200 limpio). Como el débito va DESPUÉS del lock, un
+    # reintento que choca con AlreadySending NUNCA vuelve a cobrar.
     if not try_start_real_send(st, st.process_id):
         raise AlreadySending('La campaña ya está en proceso de envío; no se re-encola.')
+
+    # --- Cobro PREPAGO: reserva de saldo ANTES de trocear (débito atómico) ---
+    # Se dimensiona por el TAMAÑO de la base y se debita con bloqueo DURO. Si no alcanza,
+    # se libera el lock (la campaña vuelve a su estado previo) y se lanza 402. El monto
+    # debitado se guarda para reembolsar si el troceo falla después (compensación).
+    previous_state = response_campaign['Items'][0].get('campaignState', 'Pendiente')
+    document_format = response_campaign['Items'][0].get('documentFormat')
+    debited = 0
+    try:
+        recipients_count = count_base_rows(temp_file, delimiter)
+        cost = _campaign_cost(st.customer_id, channel_name, recipients_count, document_format)
+        if cost > 0:
+            new_balance = reserve_balance(st, cost, data["campaignName"])
+            if new_balance is not None:  # None = tabla de saldos no desplegada (rollout)
+                debited = cost
+                print("Saldo reservado: ${} por {} destinatarios (saldo: ${})".format(
+                    cost, recipients_count, new_balance))
+    except InsufficientBalance:
+        # Saldo insuficiente: se libera el lock (campaña vuelve a ser enviable) y se
+        # propaga → el handler responde 402. NO se marca la campaña en Error.
+        release_real_send_lock(st, previous_state)
+        raise
+    except Exception:
+        # Error inesperado calculando/reservando el saldo: liberar el lock para no dejar
+        # la campaña atascada en 'Enviando' y propagar (handler → 500). El débito es
+        # atómico, así que o se aplicó (debited>0) o no; aquí debited=0 (falló antes/en
+        # la reserva), no hay nada que reembolsar.
+        release_real_send_lock(st, previous_state)
+        raise
 
     registers_for_message = registers_for_channel(channel_name)
     # Bucket del cliente por NIT (los part-files se suben aquí y el worker los lee de aquí).
@@ -930,6 +1172,10 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
         update_campaign_status(st, "Error")
         print(e)
         print('Error al trocear/encolar el envio real')
+        # COMPENSACIÓN: el débito ya se aplicó (débito antes del troceo). Si el troceo
+        # falla, se reembolsa el saldo para no cobrarle al cliente un envío que no salió.
+        if debited > 0:
+            refund_balance(st, debited, data["campaignName"])
         status = False
         description = 'Error al trocear/encolar el envio real'
         status_code = 400
@@ -1257,6 +1503,13 @@ def lambda_handler(event, context):
         description = str(e)
         status = False
         status_code = 403
+        print(description)
+    except InsufficientBalance as e:
+        # Saldo insuficiente (cobro PREPAGO, bloqueo duro): 402, sin marcar Error. El
+        # lock ya se liberó en preparar_split, así que la campaña sigue enviable.
+        description = str(e)
+        status = False
+        status_code = 402
         print(description)
     except Exception as e:
         description = "Error no controlado en el servicio"

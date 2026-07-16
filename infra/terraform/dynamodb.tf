@@ -31,6 +31,14 @@ locals {
     platformConfig = { hash = "configKey" }
     adminAudit     = { hash = "auditId" }
     pricingRate    = { hash = "customerId", range = "channel" }
+
+    # cobro PREPAGO / monedero (jul 2026)
+    # customerBalance: saldo por cliente (COP). Débito/crédito ATÓMICO (UpdateItem
+    # condicional). walletTransaction: ledger AUDITABLE de todo movimiento de dinero
+    # (recargas manuales/Wompi, débitos por envío, reembolsos). En Wompi el txId de la
+    # recarga = la `reference` (idempotencia pending→approved del webhook).
+    customerBalance   = { hash = "customerId" }
+    walletTransaction = { hash = "txId" }
   }
 }
 

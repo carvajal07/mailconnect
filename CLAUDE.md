@@ -128,6 +128,11 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Config/Get` | `{}` (**admin**) | 200 `data:{settings:[{key, label, group, type, default, value, isOverridden, consumers[]}]}` |
 | `Config/Set` | `{ key, value }` (**admin**) | 200 ok · 400 key/valor inválido. Crea `platformConfig` si no existe |
 | `Admin/Audit` | `{ month?, action?, actor? }` (**admin**) | 200 `data:{entries:[{date, actor, action, target, detail}], count, actions[], truncated}` (bitácora, solo lectura) |
+| `Balance/Get` | `{ limit? }` (tenant del token) | 200 `data:{customerId, balance, currency, transactions:[{txId, type, amount, balanceAfter, status, reference, detail, date}], count}` (saldo + movimientos del cliente) |
+| `Balance/Topup-manual` | `{ customerId, amount (COP>0), note? }` (**admin**) | 200 `data:{balance, txId}` · 400 · 403. Acredita saldo (crédito atómico) + ledger |
+| `Admin/Balances` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, balance, updatedAt}], totals:{balance}, count}` (saldo de todos, menor primero) |
+| `Balance/Topup-init` | `{ amount (COP≥20000) }` (tenant del token) | 200 `data:{reference, amountInCents, currency, publicKey, signatureIntegrity, redirectUrl?}` · 400. Firma de integridad Wompi; crea el intento `pending` en el ledger |
+| `Wallet/Wompi-webhook` | **público/proxy sin authorizer** (evento Wompi firmado) | 200 ack. Verifica la firma del evento y acredita **idempotente** por `reference` (pending→approved); nunca acredita desde el redirect del navegador |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -360,6 +365,42 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   - `config.set` → `Config_Set` (key + valor).
   Filtros por mes, acción y actor (substring); orden reciente primero; tope con aviso. El
   lector devuelve vacío si la tabla no existe (no es error).
+
+### Cobro PREPAGO / monedero (jul 2026)
+- **Modelo:** saldo por cliente en **COP** en la tabla `customerBalance` (PK `customerId`).
+  **Todo** movimiento de dinero deja un registro en el **ledger auditable** `walletTransaction`
+  (PK `txId`; `type` ∈ `topup_manual|topup_wompi|debit|refund`, `amount` firmado, `balanceAfter`,
+  `reference`, `status`, `actor`, `detail`, `date`). Las operaciones de saldo son **atómicas y
+  condicionales** (UpdateItem con ADD / ConditionExpression), nunca leer-modificar-escribir.
+- **Débito en el envío real** (`Prepare-batch`, rama `preparar_split`): orden **gate manual
+  (realSendEnabled) → lock (`try_start_real_send`) → reserva de saldo → troceo**. La reserva
+  (`reserve_balance`) debita con `ConditionExpression balance >= costo` (**bloqueo DURO**, sin
+  cupo negativo); si no alcanza, **libera el lock** (la campaña vuelve a su estado previo) y
+  lanza `InsufficientBalance` → el handler responde **402**. Si el troceo falla **tras** debitar,
+  se **reembolsa** (`refund_balance`, compensación). **Las muestras NO cobran.**
+  - **Base de cobro:** reserva sobre el **tamaño de la base** (`count_base_rows`, filas del CSV).
+    La conciliación fina de fallidos/filtrados queda para una fase posterior.
+  - **Costo:** misma fórmula/tarifas que `Api_V1_Cost_Estimate` (helper `_campaign_cost`
+    replicado como en `Billing_Summary`). ⚠️ **Sincronía:** si cambian `DEFAULT_RATES`/fórmula en
+    Cost_Estimate, replicar en Prepare-batch/Billing/Pricing. No incluye recargo por MB de adjunto
+    (igual que Billing) → el estimador del front es ≥ al débito (el gate de saldo nunca queda corto).
+  - **Idempotencia:** el débito va **después** del lock; un reintento que choca con `AlreadySending`
+    nunca vuelve a cobrar. **Fail-open de rollout:** si `customerBalance` aún no existe, no cobra
+    (los envíos siguen); una vez creada la tabla, el bloqueo es duro.
+- **Recarga MANUAL (admin):** `Api_V1_Balance_Topup-manual` (crédito atómico + ledger; valida rol).
+- **Consultas:** `Api_V1_Balance_Get` (cliente: saldo + historial, tenant del token) y
+  `Api_V1_Admin_Balances` (admin: saldos de todos, menor primero). El saldo se precarga junto al
+  resto del portal (`PortalDataProvider`).
+- **Front:** portal → sección **Saldo/Recargas** (saldo + historial + Recargar) y aviso de **saldo
+  insuficiente** junto al `CostEstimate` (deshabilita "Enviar campaña real" si saldo < costo). Admin
+  → sección **Saldos** (ver saldos + recargar manual + movimientos).
+- **Recarga WOMPI (Fase 2):** `Api_V1_Balance_Topup-init` firma la integridad y crea el intento
+  `pending`; `Api_V1_Wallet_Wompi-webhook` (público/proxy, sin authorizer) verifica la firma del
+  evento y acredita **idempotente** por `reference` (condición `pending→approved`, con
+  `TransactWriteItems`: marca la txn + suma el saldo en una sola operación atómica). **Nunca** se
+  acredita desde el redirect del navegador. Llaves Wompi por env var
+  (`WOMPI_PUBLIC_KEY`/`WOMPI_PRIVATE_KEY`/`WOMPI_INTEGRITY_SECRET`/`WOMPI_EVENTS_SECRET`;
+  pendiente moverlas a Secrets Manager). Montos sugeridos 50/100/200 mil, mínimo 20.000 COP.
 
 ### Plantillas multicanal: SMS / DOCX / WhatsApp (jul 2026)
 - Las plantillas de **correo HTML** siguen en **SES** (`Template/Create-template`, `Template/List`).

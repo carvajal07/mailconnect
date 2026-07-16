@@ -13,8 +13,10 @@
     { "path": "/Admin/Jobs",               "lambda": "Api_V1_Admin_Jobs",               "admin": true },
     { "path": "/Admin/Campaigns",          "lambda": "Api_V1_Admin_Campaigns",          "admin": true },
     { "path": "/Admin/Audit",              "lambda": "Api_V1_Admin_Audit",              "admin": true },
+    { "path": "/Admin/Balances",           "lambda": "Api_V1_Admin_Balances",           "admin": true },
     { "path": "/Config/Get",               "lambda": "Api_V1_Config_Get",               "admin": true },
     { "path": "/Config/Set",               "lambda": "Api_V1_Config_Set",               "admin": true },
+    { "path": "/Balance/Topup-manual",     "lambda": "Api_V1_Balance_Topup-manual",     "admin": true },
 
     { "path": "/Campaign/List",            "lambda": "Api_V1_Campaign_List" },
     { "path": "/Campaign/Update",          "lambda": "Api_V1_Campaign_Update" },
@@ -35,6 +37,7 @@
     { "path": "/Blacklist/Delete",         "lambda": "Api_V1_Blacklist_Delete" },
     { "path": "/Report/Statistics",        "lambda": "Api_V1_Reports_Statistics" },
     { "path": "/Cost/Estimate",            "lambda": "Api_V1_Cost_Estimate" },
+    { "path": "/Balance/Get",              "lambda": "Api_V1_Balance_Get" },
     { "path": "/Portal/Bootstrap",         "lambda": "Api_V1_Portal_Bootstrap" }
   ]
 }

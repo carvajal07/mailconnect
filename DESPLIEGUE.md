@@ -292,3 +292,48 @@ Lo que queda por hacer en el repo (no es despliegue):
 - [ ] `[J]` Hacer el repo **privado** (o limpiar el historial con BFG/filter-repo).
 - [ ] `[C]`/`[J]` Mover `SECRET_KEY` a **AWS Secrets Manager** (hoy es env var).
 - [ ] `[J]` Sacar **SES del sandbox** y verificar remitente/dominio.
+
+---
+
+## 10. Cobro PREPAGO / monedero (jul 2026)
+
+> Saldo por cliente en **COP**. El envío REAL **debita el saldo ANTES de trocear** con
+> **bloqueo DURO** (sin cupo negativo). Todo movimiento de dinero deja un registro en el
+> **ledger auditable** `walletTransaction`. Recarga **manual** (admin) y **Wompi** (widget +
+> webhook). El costo del débito usa la **misma fórmula/tarifas** que `Api_V1_Cost_Estimate`.
+
+### 10.1 Tablas DynamoDB nuevas (On-Demand)
+- [ ] `[J]` `customerBalance` (PK `customerId` S) — saldo actual en COP.
+- [ ] `[J]` `walletTransaction` (PK `txId` S) — ledger de movimientos (recargas/débitos/
+  reembolsos). En Wompi, `txId` de la recarga **= la `reference`** (idempotencia del webhook).
+  - _A futuro:_ GSI `customerId`+`date` para el historial O(log n) (hoy `Balance_Get` usa
+    Scan+Filter; el ledger es chico al inicio).
+
+### 10.2 Lambdas nuevas + rutas + permisos (Fase 1)
+Crear la **función vacía** (mismo nombre de carpeta) antes del primer push (la actualiza el CD).
+
+| Lambda | Ruta | Admin | Permisos IAM (DynamoDB) |
+|--------|------|-------|-------------------------|
+| `Api_V1_Balance_Get` | `/Balance/Get` | no (cliente) | `GetItem` sobre `customerBalance`; `Scan` sobre `walletTransaction` |
+| `Api_V1_Balance_Topup-manual` | `/Balance/Topup-manual` | **sí** | `UpdateItem` sobre `customerBalance`; `PutItem` sobre `walletTransaction`; `PutItem` sobre `adminAudit` |
+| `Api_V1_Admin_Balances` | `/Admin/Balances` | **sí** | `Scan` sobre `customer` y `customerBalance` |
+
+- [ ] `[J]` Crear las 3 funciones vacías + sus rutas (ya están en `infra/api/routes.json`,
+  el workflow `deploy-api.yml` las crea) + permisos. `/Balance/Get` es **de cliente** (tenant
+  del token); `/Balance/Topup-manual` y `/Admin/Balances` son **admin** (mapping template de `role`).
+- [ ] `[J]` Confirmar el **Authorizer** en las 3 rutas.
+
+### 10.3 Lambda EXISTENTE modificada (débito) — redesplegar
+- [ ] `[J]` `Api_V1_Email_Prepare-batch-template`: en el **envío real** debita el saldo
+  (orden gate manual → lock → **reserva de saldo** → troceo; 402 si no alcanza; reembolso si
+  el troceo falla). Permisos extra: `UpdateItem` sobre `customerBalance`, `PutItem` sobre
+  `walletTransaction`, `GetItem` sobre `pricingRate`. **Fail-open de rollout:** si la tabla
+  `customerBalance` **aún no existe**, NO cobra (los envíos siguen); una vez creada, el
+  bloqueo por saldo es **DURO**. Por eso: **crear `customerBalance` ANTES** de considerar el
+  cobro activo.
+
+### 10.4 Verificación post-deploy (Fase 1)
+- [ ] `[J]` Admin recarga a un cliente (`/Balance/Topup-manual`) → `/Admin/Balances` refleja el saldo.
+- [ ] `[J]` Cliente ve su saldo/movimientos en el portal (`/Balance/Get`).
+- [ ] `[J]` Envío real con saldo suficiente → descuenta el costo y aparece en el ledger.
+- [ ] `[J]` Envío real con saldo insuficiente → **402** y la campaña sigue en `Pendiente`.
