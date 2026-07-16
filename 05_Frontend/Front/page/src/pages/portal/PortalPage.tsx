@@ -22,6 +22,7 @@ import { ListaNegraSection } from '../../components/portal/ListaNegraSection';
 import { MuestrasSection } from '../../components/portal/MuestrasSection';
 import { EstadisticasSection } from '../../components/portal/EstadisticasSection';
 import { ReportesSection } from '../../components/portal/ReportesSection';
+import { SaldoSection } from '../../components/portal/SaldoSection';
 import { MiCuentaSection } from '../../components/portal/MiCuentaSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
 import { ThemeToggle } from '../../components/ThemeToggle';
@@ -71,6 +72,8 @@ export const PortalPage = () => {
         return <ReportesSection />;
       case 'estadisticas':
         return <EstadisticasSection />;
+      case 'saldo':
+        return <SaldoSection />;
       default:
         return <HtmlBuilderSection />;
     }

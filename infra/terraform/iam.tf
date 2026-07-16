@@ -28,7 +28,9 @@ data "aws_iam_policy_document" "lambda_app" {
     actions = [
       "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem",
       "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem",
-      "dynamodb:CreateTable", "dynamodb:DescribeTable"
+      "dynamodb:CreateTable", "dynamodb:DescribeTable",
+      # TransactWriteItems: acreditación atómica del webhook Wompi (txn + saldo).
+      "dynamodb:TransactWriteItems", "dynamodb:TransactGetItems"
     ]
     resources = [
       "arn:aws:dynamodb:${local.region}:${local.account_id}:table/*"

@@ -36,6 +36,8 @@ import type { CampaignSummary } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { CostEstimate } from './CostEstimate';
+import { usePortalData } from '../../context/PortalDataContext';
+import { formatCOP, type EstimateResult } from '../../services/costService';
 
 type TipoMuestra = 'aleatorias' | 'selectivas';
 type EstadoLote = 'enviada' | 'aprobada' | 'rechazada' | 'enviada_real';
@@ -72,6 +74,12 @@ const estadoChip: Record<EstadoLote, { label: string; color: 'info' | 'success' 
 export const MuestrasSection = () => {
   const user = getUser();
   const { notify, FeedbackSnackbar } = useFeedback();
+  // Saldo del monedero (precargado): gate del "Enviar campaña real" (cobro PREPAGO).
+  const { balance, refreshBalance } = usePortalData();
+  // Último estimado calculado (lo reporta CostEstimate): permite avisar y bloquear el
+  // envío real si el saldo no alcanza (gate del front; el backend igual valida con 402).
+  const [estimate, setEstimate] = useState<EstimateResult | null>(null);
+  const insufficientBalance = estimate != null && balance.value < estimate.estimatedCost;
 
   // El cliente (empresa) se toma de la sesión, no se captura en el formulario.
   const cliente = user?.customer ?? '';
@@ -209,6 +217,9 @@ export const MuestrasSection = () => {
     if (!realSendEnabled) {
       return notify('Los envíos reales están deshabilitados para tu cuenta.', 'warning');
     }
+    if (insufficientBalance) {
+      return notify('Tu saldo no alcanza para este envío. Recarga tu monedero antes de enviar.', 'warning');
+    }
     setSendingRealId(l.id);
     const res = await campaignsService.sendReal({
       customerName: l.cliente,
@@ -222,6 +233,8 @@ export const MuestrasSection = () => {
     if (isOk(res)) {
       setEstado(l.id, 'enviada_real');
       notify(`Campaña "${l.campaign}" enviada. La base completa entró al proceso de envío.`, 'success');
+      // El envío real debitó el saldo: refréscalo para que el gate refleje el saldo nuevo.
+      refreshBalance();
     } else {
       notify(res.description || 'No se pudo iniciar el envío real de la campaña.', 'error');
     }
@@ -406,9 +419,20 @@ export const MuestrasSection = () => {
         )}
       </Paper>
 
-      {/* Estimador de costo (antes de aprobar y enviar la campaña real) */}
+      {/* Estimador de costo + saldo (antes de aprobar y enviar la campaña real) */}
       <Box sx={{ mb: 2 }}>
-        <CostEstimate channel={estimatorChannel} emailMode={estimatorMode} />
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }} flexWrap="wrap" useFlexGap>
+          <Chip
+            size="small"
+            variant="outlined"
+            color={balance.value <= 0 ? 'error' : 'default'}
+            label={`Saldo disponible: ${formatCOP(balance.value)}`}
+          />
+          {insufficientBalance && (
+            <Chip size="small" color="error" label="Saldo insuficiente para el envío estimado" />
+          )}
+        </Stack>
+        <CostEstimate channel={estimatorChannel} emailMode={estimatorMode} balance={balance.value} onResult={setEstimate} />
       </Box>
 
       {/* Aprobación */}
@@ -441,14 +465,14 @@ export const MuestrasSection = () => {
                         </Button>
                       </>
                     ) : l.estado === 'aprobada' ? (
-                      <Tooltip title={realSendEnabled ? 'Envía la campaña a TODA la base de datos (envío real).' : 'Envíos reales deshabilitados para tu cuenta.'}>
+                      <Tooltip title={!realSendEnabled ? 'Envíos reales deshabilitados para tu cuenta.' : insufficientBalance ? 'Saldo insuficiente: recarga tu monedero para enviar.' : 'Envía la campaña a TODA la base de datos (envío real).'}>
                         <span>
                           <Button
                             size="small"
                             variant="contained"
                             color="success"
                             startIcon={sendingRealId === l.id ? <CircularProgress size={16} color="inherit" /> : <RocketLaunchIcon />}
-                            disabled={sendingRealId !== null || !realSendEnabled}
+                            disabled={sendingRealId !== null || !realSendEnabled || insufficientBalance}
                             onClick={() => handleSendReal(l)}
                           >
                             {sendingRealId === l.id ? 'Enviando…' : 'Enviar campaña real'}

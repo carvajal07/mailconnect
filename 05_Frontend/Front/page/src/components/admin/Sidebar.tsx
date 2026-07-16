@@ -20,6 +20,7 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import WorkHistoryIcon from '@mui/icons-material/WorkHistory';
 import SettingsIcon from '@mui/icons-material/Settings';
 import HistoryIcon from '@mui/icons-material/History';
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 
 interface SidebarProps {
   activeSection: string;
@@ -33,6 +34,7 @@ export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
     { id: 'dashboard', label: 'Panel de control', icon: <DashboardIcon /> },
     { id: 'clientes', label: 'Clientes', icon: <PeopleIcon /> },
     { id: 'tarifas', label: 'Tarifas', icon: <PaidIcon /> },
+    { id: 'saldos', label: 'Saldos', icon: <AccountBalanceWalletIcon /> },
     { id: 'facturacion', label: 'Facturación', icon: <ReceiptLongIcon /> },
     { id: 'trabajos', label: 'Trabajos', icon: <WorkHistoryIcon /> },
     { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },

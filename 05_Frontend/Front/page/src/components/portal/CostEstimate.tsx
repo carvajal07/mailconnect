@@ -16,6 +16,7 @@ import {
   TextField,
   MenuItem,
   InputAdornment,
+  Alert,
 } from '@mui/material';
 import PaidIcon from '@mui/icons-material/Paid';
 import CalculateIcon from '@mui/icons-material/Calculate';
@@ -39,13 +40,17 @@ interface Props {
   emailMode?: EmailMode;
   recipients?: number;
   lockChannel?: boolean;
+  /** Saldo disponible del cliente (COP). Si se pasa, se muestra si alcanza para el envío. */
+  balance?: number;
+  /** Reporta el resultado del estimado (o null al limpiar) para gates externos. */
+  onResult?: (result: EstimateResult | null) => void;
 }
 
 const CHANNEL_LABEL: Record<Channel, string> = {
   EMAIL: 'Correo', SMS: 'SMS', WHATSAPP: 'WhatsApp', VOICE: 'Voz',
 };
 
-export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMode = 'EM', recipients: initRecipients, lockChannel = false }: Props) => {
+export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMode = 'EM', recipients: initRecipients, lockChannel = false, balance, onResult }: Props) => {
   const customerId = getUser()?.customerId ?? '';
 
   const [channel, setChannel] = useState<Channel>(initChannel);
@@ -82,9 +87,12 @@ export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMo
       voiceMinutes: channel === 'VOICE' ? parseFloat(voiceMinutes) || 0.5 : undefined,
     });
     setLoading(false);
-    if (isOk(res) && res.data) setResult(res.data);
-    else { setError(res.description || 'No se pudo calcular el estimado.'); setResult(null); }
+    if (isOk(res) && res.data) { setResult(res.data); onResult?.(res.data); }
+    else { setError(res.description || 'No se pudo calcular el estimado.'); setResult(null); onResult?.(null); }
   };
+
+  // ¿Alcanza el saldo para el estimado? (solo si el padre pasó el saldo).
+  const insufficient = result != null && balance != null && balance < result.estimatedCost;
 
   return (
     <Paper variant="outlined" sx={{ p: 2.5, bgcolor: 'action.hover' }}>
@@ -179,6 +187,17 @@ export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMo
                 </TableRow>
               </TableBody>
             </Table>
+
+            {balance != null && (
+              <Alert severity={insufficient ? 'error' : 'success'} sx={{ mt: 1.5 }}>
+                {insufficient ? (
+                  <>Tu saldo (<strong>{formatCOP(balance)}</strong>) no alcanza para este envío.
+                    Te faltan <strong>{formatCOP(result.estimatedCost - balance)}</strong> — recarga antes de enviar.</>
+                ) : (
+                  <>Tu saldo (<strong>{formatCOP(balance)}</strong>) alcanza para este envío.</>
+                )}
+              </Alert>
+            )}
 
             <Divider sx={{ my: 1 }} />
             <Typography variant="caption" color="text.secondary">{result.note}</Typography>

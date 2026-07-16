@@ -8,6 +8,7 @@ import { statsService } from '../services/statsService';
 import { blacklistService, type BlacklistItem } from '../services/blacklistService';
 import { messageTemplatesService, type MessageTemplate } from '../services/messageTemplatesService';
 import { customerService, type CustomerSummary } from '../services/customerService';
+import { balanceService, type WalletTransaction } from '../services/balanceService';
 import type { CampaignStat } from '../components/portal/campaignData';
 import { readCache, writeCache } from '../services/portalCache';
 import { bootstrapService } from '../services/bootstrapService';
@@ -31,6 +32,16 @@ interface Dataset<T> {
   error: string;
 }
 
+/** Saldo del monedero (cobro PREPAGO): un valor + el historial de movimientos. */
+interface BalanceState {
+  value: number;
+  currency: string;
+  transactions: WalletTransaction[];
+  loading: boolean;
+  loaded: boolean;
+  error: string;
+}
+
 interface PortalData {
   campaigns: Dataset<CampaignSummary>;
   databases: Dataset<DatabaseFile>;
@@ -40,15 +51,21 @@ interface PortalData {
   // Solo ADMIN: lista de clientes (para tabs Clientes/Facturación/Tarifas). En un
   // portal de cliente queda vacío (no se llama al endpoint admin).
   customers: Dataset<CustomerSummary>;
+  // Saldo del monedero (se precarga tras el login; lo usan la sección Saldo y el gate
+  // de "Enviar campaña real" en Muestras). No se cachea en sessionStorage: el saldo
+  // debe leerse fresco (una lectura vieja "suficiente" podría engañar al gate).
+  balance: BalanceState;
   refreshCampaigns: () => Promise<void>;
   refreshDatabases: () => Promise<void>;
   refreshStats: () => Promise<void>;
   refreshBlacklist: () => Promise<void>;
   refreshMessageTemplates: () => Promise<void>;
   refreshCustomers: () => Promise<void>;
+  refreshBalance: () => Promise<void>;
 }
 
 const emptyDataset = <T,>(): Dataset<T> => ({ items: [], loading: false, loaded: false, error: '' });
+const emptyBalance = (): BalanceState => ({ value: 0, currency: 'COP', transactions: [], loading: false, loaded: false, error: '' });
 
 // Nombres de caché por dataset (la clave real incluye el customerId).
 const CK = {
@@ -80,6 +97,7 @@ export const PortalDataProvider = ({ children }: { children: ReactNode }) => {
   const [blacklist, setBlacklist] = useState<Dataset<BlacklistItem>>(() => initDataset(customerId, CK.blacklist));
   const [messageTemplates, setMessageTemplates] = useState<Dataset<MessageTemplate>>(() => initDataset(customerId, CK.messageTemplates));
   const [customers, setCustomers] = useState<Dataset<CustomerSummary>>(() => initDataset(customerId, CK.customers));
+  const [balance, setBalance] = useState<BalanceState>(emptyBalance);
   const admin = isAdmin(getUser());
 
   const refreshCampaigns = useCallback(async () => {
@@ -150,6 +168,23 @@ export const PortalDataProvider = ({ children }: { children: ReactNode }) => {
       loading: false,
       loaded: true,
       error: isOk(res) ? '' : res.description || 'No se pudieron cargar las plantillas de mensaje.',
+    });
+  }, [customerId]);
+
+  // Saldo del monedero (endpoint /Balance/Get). Se lee fresco (sin caché) para que el
+  // gate de "Enviar campaña real" no use un saldo viejo.
+  const refreshBalance = useCallback(async () => {
+    if (!customerId) return;
+    setBalance((d) => ({ ...d, loading: !d.loaded, error: '' }));
+    const res = await balanceService.get();
+    const ok = isOk(res) && !!res.data;
+    setBalance({
+      value: ok ? res.data!.balance : 0,
+      currency: ok ? res.data!.currency : 'COP',
+      transactions: ok ? res.data!.transactions ?? [] : [],
+      loading: false,
+      loaded: true,
+      error: isOk(res) ? '' : res.description || 'No se pudo cargar el saldo.',
     });
   }, [customerId]);
 
@@ -225,16 +260,18 @@ export const PortalDataProvider = ({ children }: { children: ReactNode }) => {
     // ADMIN: precargar la lista de clientes tras el login (la usan varios tabs del
     // panel). El Bootstrap del cliente no la incluye, así que va por su cuenta.
     if (admin && stale(CK.customers)) refreshCustomers();
-  }, [customerId, admin, hydrateFromBootstrap, refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates, refreshCustomers]);
+    // Saldo del monedero: se precarga siempre (todos los usuarios tienen customerId).
+    if (customerId) refreshBalance();
+  }, [customerId, admin, hydrateFromBootstrap, refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates, refreshCustomers, refreshBalance]);
 
   const value = useMemo<PortalData>(
     () => ({
-      campaigns, databases, stats, blacklist, messageTemplates, customers,
-      refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates, refreshCustomers,
+      campaigns, databases, stats, blacklist, messageTemplates, customers, balance,
+      refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates, refreshCustomers, refreshBalance,
     }),
     [
-      campaigns, databases, stats, blacklist, messageTemplates, customers,
-      refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates, refreshCustomers,
+      campaigns, databases, stats, blacklist, messageTemplates, customers, balance,
+      refreshCampaigns, refreshDatabases, refreshStats, refreshBlacklist, refreshMessageTemplates, refreshCustomers, refreshBalance,
     ],
   );
 
