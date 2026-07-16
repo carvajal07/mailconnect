@@ -104,9 +104,10 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `logout` | `{ user (email) }` | 200 (idempotente) |
 | `Campaign/List` | `{ customerId }` | 200 `data:{campaigns[], count}` (orden desc por fecha; incluye `campaignState`) |
 | `Campaign/Update` | `{ campaignId, campaignName?, channelName?, attachmentType?, dataPath?, template?, from? }` | 200 ok · 409 no-Pendiente · 403 otro cliente · 404 no existe. Solo edita campañas en estado `Pendiente`; toma el cliente del context del Authorizer |
+| `Campaign/Delete` | `{ campaignId }` | 200 ok · 400 falta id · 403 otro cliente · 404 no existe. Borra el registro de `campaign` (+ sus `document` best-effort); no borra el CSV ni el historial de procesos. Audita `campaign.delete` |
 | `Template/List` | `{ customer }` o `{ customerId }` | 200 `data:{templates:[{name, created}], count}` (SES filtrado por prefijo `{customer}_`) |
 | `Email/Unsubscribe` | **GET/POST público (proxy, sin authorizer)** `?t=<token HMAC>` | 200 página HTML (confirmación / enlace inválido). El token lo firman las lambdas Send con `SECRET_KEY`; inserta en `{customer}_unsubscribe` (PK `email`) |
-| `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`) |
+| `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, duplicates?, allowDuplicates?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`). `allowDuplicates` = si el envío real NO filtra contactos repetidos |
 | `Database/List` | `{ customerId }` | 200 `data:{files[], count}` (incluye `columns`, `validEmails`, `invalidEmails`) |
 | `Database/Delete` | `{ databaseFileId }` | 200 ok · 403 otro cliente · 404 no existe. Borra el registro (no el CSV en S3) |
 | `Customer/List` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, realSendEnabled}], count}` |
@@ -163,6 +164,32 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 4. Prepare-batch filtra contra esa tabla en el envío real (chequeo reparado: antes nunca corría).
    ✅ EAP ya reemplaza `{{unsubscribeUrl}}` por destinatario (mismo patrón que EAU; jul 2026).
    Requiere la env `SECRET_KEY` (y `UNSUBSCRIBE_URL`) también en `Send-batch-template-EAP`.
+
+### Ajustes de campañas, fechas y duplicados (jul 2026)
+- **Lista de campañas tipo tabla:** `CampanasSection` reordena columnas a
+  **Canal · Estado · Campaña · Consecutivo · Plantilla · Fecha · Acciones** (chip de canal
+  outlined, estado con color, nombre en negrita).
+- **Eliminar campaña:** botón papelera en la tabla + lambda `Api_V1_Campaign_Delete`
+  (ruta `/Campaign/Delete`, verifica tenant, borra `campaign` + `document` best-effort, audita
+  `campaign.delete`). Servicio `campaignsService.delete`.
+- **Modal de confirmación del envío real** (`MuestrasSection`): al pulsar "Enviar campaña real"
+  se abre un diálogo con **nº de envíos** (filas de la base asociada, por `dataPath`), **costo
+  estimado exacto** (recalcula `Cost/Estimate` sobre ese nº), saldo antes/después y una
+  **casilla de responsabilidad obligatoria**. Solo se llega desde un lote **aprobado** (que
+  exige haber enviado muestras). Se quitó la nota técnica de endpoints del tab de muestras.
+- **Formato de fecha unificado** `DD-MM-YYYY HH:MM:SS` (24h, día/mes con 2 dígitos): helper
+  `src/utils/datetime.ts` (`formatDateTime`), aplicado en TODAS las tablas (campañas admin/
+  portal, bases, auditoría, trabajos, saldos/ledger, clientes, lista negra, reportes). Las
+  fechas de auditoría se normalizan a UTC (Z) antes de formatear (hora local).
+- **Duplicados en bases:** nueva columna **Duplicados** en `BasesDatosSection` con tooltip que
+  indica si el duplicado se detectó sobre el **correo** o el **celular** (según el `channel` de
+  la base). `Database/List`/`Register-file` ya devolvían/guardaban `duplicates` y `channel`.
+- **Permitir duplicados (checkbox):** al cargar una base, casilla **"Permitir duplicados"** que
+  se guarda en `databaseFile.allowDuplicates` (`Register-file`). En el **envío real**,
+  `Prepare-batch` deduplica por contacto (columna 2, `_contact_key`) **por defecto**; si la base
+  tiene `allowDuplicates=true`, envía el total (mismo destinatario repetido). El cobro se
+  dimensiona sobre contactos **distintos** cuando se deduplica (`count_base_rows` dedup-aware).
+  Fail-safe: si no se resuelve la base, se deduplica.
 
 ### Portal: precarga y edición (jul 2026)
 - **Precarga al loguear:** `PortalDataProvider` (`context/PortalDataContext.tsx`) envuelve el

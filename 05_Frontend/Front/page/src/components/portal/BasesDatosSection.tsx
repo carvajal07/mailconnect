@@ -23,6 +23,8 @@ import {
   Divider,
   Tooltip,
   CircularProgress,
+  Checkbox,
+  FormControlLabel,
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -42,6 +44,7 @@ import { usePortalData } from '../../context/PortalDataContext';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
 import { analyzeCsv, DELIMITER_LABELS, requiredColumns, channelContactType, isSpreadsheetFile, readSpreadsheet, rowsToCsv, type CsvAnalysis, type ContactType, type Delimiter } from './csv';
+import { formatDateTime } from '../../utils/datetime';
 
 interface BaseDatos {
   id: string;
@@ -51,6 +54,8 @@ interface BaseDatos {
   totalRecords: number;
   validEmails: number;
   invalidEmails: number;
+  duplicates: number;
+  channel: string;
   uploadDate: string;
   delimiter: string;
   // Solo presente para las bases cargadas en esta sesión (para la vista previa).
@@ -66,15 +71,17 @@ const fromApi = (f: DatabaseFile): BaseDatos => ({
   totalRecords: f.totalRecords ?? 0,
   validEmails: f.validEmails ?? 0,
   invalidEmails: f.invalidEmails ?? 0,
+  duplicates: f.duplicates ?? 0,
+  channel: f.channel ?? 'EMAIL',
   uploadDate: f.uploadDate ?? '',
   delimiter: f.delimiter ?? ';',
 });
 
-const fmtDate = (iso: string) => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : d.toLocaleString();
-};
+/** Texto del tooltip de duplicados según el canal de la base (correo o celular). */
+const duplicatesTooltip = (channel: string): string =>
+  channelContactType(channel) === 'phone'
+    ? 'Registros con el mismo celular repetido en la base.'
+    : 'Registros con el mismo correo repetido en la base.';
 
 const formatBytes = (n: number) => {
   if (n < 1024) return `${n} B`;
@@ -116,6 +123,10 @@ export const BasesDatosSection = () => {
   // Canal para el que se valida la base: define si la columna 2 es correo o celular.
   const [channel, setChannel] = useState('EMAIL');
   const contact = channelContactType(channel);
+  // ¿Permitir duplicados? Si el cliente lo marca, no se filtran contactos repetidos en
+  // el envío real: se envía el total de comunicaciones de la base aunque vayan al mismo
+  // destinatario (lo respeta Prepare-batch, que por defecto deduplica).
+  const [allowDuplicates, setAllowDuplicates] = useState(false);
 
   // Modal de progreso de la subida (2 pasos).
   type StepState = 'pending' | 'loading' | 'done' | 'error';
@@ -133,6 +144,7 @@ export const BasesDatosSection = () => {
     setAnalysis(null);
     setDelimiter(';');
     setChannel('EMAIL');
+    setAllowDuplicates(false);
   };
 
   const handleDelete = async (b: BaseDatos) => {
@@ -261,6 +273,7 @@ export const BasesDatosSection = () => {
       validEmails: analysis.validEmails,
       invalidEmails: analysis.invalidEmails,
       duplicates: analysis.duplicateEmails,
+      allowDuplicates,
       delimiter,
       channel,
       // Encabezados del CSV → campos usables como {{variables}} en las plantillas.
@@ -344,6 +357,13 @@ export const BasesDatosSection = () => {
                   </Box>
                 </Tooltip>
               </TableCell>
+              <TableCell align="right">
+                <Tooltip title="Cantidad de registros con el contacto repetido en la base. Pasa el cursor sobre el valor de cada base para ver si el duplicado se detectó sobre el correo o sobre el celular.">
+                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, cursor: 'help' }}>
+                    Duplicados <InfoOutlinedIcon sx={{ fontSize: 15 }} color="disabled" />
+                  </Box>
+                </Tooltip>
+              </TableCell>
               <TableCell>Cargada</TableCell>
               <TableCell align="right">Acciones</TableCell>
             </TableRow>
@@ -351,7 +371,7 @@ export const BasesDatosSection = () => {
           <TableBody>
             {bases.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                <TableCell colSpan={7} align="center" sx={{ py: 4, color: 'text.secondary' }}>
                   {loadingList ? 'Cargando…' : 'Aún no hay bases de datos registradas para tu empresa.'}
                 </TableCell>
               </TableRow>
@@ -370,7 +390,16 @@ export const BasesDatosSection = () => {
                     0
                   )}
                 </TableCell>
-                <TableCell sx={{ whiteSpace: 'nowrap' }}>{fmtDate(b.uploadDate)}</TableCell>
+                <TableCell align="right">
+                  {b.duplicates > 0 ? (
+                    <Tooltip title={duplicatesTooltip(b.channel)}>
+                      <Chip label={b.duplicates} size="small" color="warning" variant="outlined" sx={{ cursor: 'help' }} />
+                    </Tooltip>
+                  ) : (
+                    0
+                  )}
+                </TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDateTime(b.uploadDate)}</TableCell>
                 <TableCell align="right">
                   <Tooltip title="Ver detalle">
                     <IconButton color="info" onClick={() => setViewBase(b)}>
@@ -445,6 +474,21 @@ export const BasesDatosSection = () => {
               </TextField>
             </Stack>
 
+            {/* Permitir duplicados: si se marca, el envío real NO filtra contactos repetidos. */}
+            <Box>
+              <FormControlLabel
+                control={<Checkbox checked={allowDuplicates} onChange={(e) => setAllowDuplicates(e.target.checked)} />}
+                label={`Permitir duplicados (${contact === 'phone' ? 'celulares' : 'correos'} repetidos)`}
+              />
+              {allowDuplicates && (
+                <Alert severity="warning" sx={{ mt: 0.5 }}>
+                  No se validarán duplicados en el {contact === 'phone' ? 'celular' : 'correo'}: se
+                  enviará el <strong>total de comunicaciones</strong> de la base aunque varias vayan
+                  al <strong>mismo destinatario</strong>. Cada envío repetido se cobra igual.
+                </Alert>
+              )}
+            </Box>
+
             <Button variant="outlined" component="label" startIcon={<CloudUploadIcon />}>
               {file ? `Archivo: ${file.name} (${formatBytes(file.size)})` : 'Seleccionar archivo CSV o Excel'}
               <input
@@ -516,7 +560,12 @@ export const BasesDatosSection = () => {
                 {viewBase.invalidEmails > 0 && (
                   <Chip label={`${viewBase.invalidEmails} inválidos`} color="error" variant="outlined" />
                 )}
-                <Chip label={`Cargada: ${fmtDate(viewBase.uploadDate)}`} variant="outlined" />
+                {viewBase.duplicates > 0 && (
+                  <Tooltip title={duplicatesTooltip(viewBase.channel)}>
+                    <Chip label={`${viewBase.duplicates} duplicados`} color="warning" variant="outlined" sx={{ cursor: 'help' }} />
+                  </Tooltip>
+                )}
+                <Chip label={`Cargada: ${formatDateTime(viewBase.uploadDate)}`} variant="outlined" />
               </Stack>
               <Typography variant="body2">
                 <strong>Ruta S3:</strong> <code>{viewBase.path}</code>

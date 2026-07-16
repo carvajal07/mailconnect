@@ -24,6 +24,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import { adminCampaignsService } from '../../services/adminCampaignsService';
 import type { AdminCampaignRow } from '../../services/adminCampaignsService';
 import { isOk } from '../../services/apiClient';
+import { formatDateTime } from '../../utils/datetime';
 
 /** Etiqueta legible del canal. */
 const CHANNEL_LABEL: Record<string, string> = {
@@ -44,11 +45,6 @@ const ESTADO_COLOR: Record<string, 'default' | 'info' | 'warning' | 'success' | 
 const STATE_OPTIONS = ['', 'Pendiente', 'Muestras', 'Enviando', 'Terminada', 'Error'];
 const CHANNEL_OPTIONS = ['', 'EM', 'EAU', 'EAP', 'SMS', 'WSP', 'VOZ'];
 
-const fmtDate = (iso: string) => {
-  if (!iso) return '—';
-  const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T'));
-  return isNaN(d.getTime()) ? iso : d.toLocaleString();
-};
 
 /**
  * Sección admin: CAMPAÑAS de TODOS los clientes (solo lectura). A diferencia del tab de
@@ -182,7 +178,7 @@ export const AdminCampanasSection = () => {
                 <TableCell>{c.consecutive || '—'}</TableCell>
                 <TableCell><Chip size="small" variant="outlined" label={CHANNEL_LABEL[c.channel] || c.channel || '—'} /></TableCell>
                 <TableCell><Chip size="small" color={ESTADO_COLOR[c.campaignState] || 'default'} label={c.campaignState || '—'} /></TableCell>
-                <TableCell sx={{ whiteSpace: 'nowrap' }}>{fmtDate(c.date)}</TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDateTime(c.date)}</TableCell>
               </TableRow>
             ))}
           </TableBody>

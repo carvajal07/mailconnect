@@ -16,6 +16,12 @@ import {
   Divider,
   Tooltip,
   CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Checkbox,
+  FormControlLabel,
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import CampaignIcon from '@mui/icons-material/Campaign';
@@ -38,7 +44,7 @@ import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { CostEstimate } from './CostEstimate';
 import { usePortalData } from '../../context/PortalDataContext';
-import { formatCOP, type EstimateResult } from '../../services/costService';
+import { costService, formatCOP, type EstimateResult, type Channel, type EmailMode } from '../../services/costService';
 import { isValidPhone } from './csv';
 
 type TipoMuestra = 'aleatorias' | 'selectivas';
@@ -77,7 +83,8 @@ export const MuestrasSection = () => {
   const user = getUser();
   const { notify, FeedbackSnackbar } = useFeedback();
   // Saldo del monedero (precargado): gate del "Enviar campaña real" (cobro PREPAGO).
-  const { balance, refreshBalance } = usePortalData();
+  // `databases` → tamaño de la base (destinatarios reales) para el modal de confirmación.
+  const { balance, refreshBalance, databases } = usePortalData();
   // Último estimado calculado (lo reporta CostEstimate): permite avisar y bloquear el
   // envío real si el saldo no alcanza (gate del front; el backend igual valida con 402).
   const [estimate, setEstimate] = useState<EstimateResult | null>(null);
@@ -149,7 +156,30 @@ export const MuestrasSection = () => {
   const [sendingRealId, setSendingRealId] = useState<string | null>(null);
   const [lotes, setLotes] = useState<Lote[]>([]);
 
+  // Modal de confirmación del envío real: lote a confirmar + estimado exacto sobre el
+  // tamaño de la base + casilla de responsabilidad (obligatoria para poder enviar).
+  const [confirmLote, setConfirmLote] = useState<Lote | null>(null);
+  const [confirmAccepted, setConfirmAccepted] = useState(false);
+  const [confirmEstimate, setConfirmEstimate] = useState<EstimateResult | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
+
   const selective = tipo === 'selectivas';
+
+  /** Nº de destinatarios reales = filas de la base asociada a la campaña (por su dataPath). */
+  const baseRowsForCampaign = (campaignName: string): number | null => {
+    const c = campaignOptions.find((x) => x.campaignName === campaignName);
+    if (!c?.dataPath) return null;
+    const db = databases.items.find((f) => f.s3Path === c.dataPath);
+    return db ? db.totalRecords : null;
+  };
+
+  /** Canal/submodo del estimador para una campaña (por su canal). */
+  const estimatorFor = (campaignName: string): { channel: Channel; emailMode: EmailMode } => {
+    const ch = campaignOptions.find((x) => x.campaignName === campaignName)?.channel ?? 'EM';
+    const channel: Channel = ch === 'SMS' ? 'SMS' : ch === 'WSP' ? 'WHATSAPP' : ch === 'VOZ' ? 'VOICE' : 'EMAIL';
+    const emailMode = (['EM', 'EAU', 'EAP'].includes(ch) ? ch : 'EM') as EmailMode;
+    return { channel, emailMode };
+  };
 
   const changeQuantity = (n: number) => {
     setQuantity(n);
@@ -228,13 +258,46 @@ export const MuestrasSection = () => {
   const setEstado = (id: string, estado: EstadoLote) =>
     setLotes((prev) => prev.map((l) => (l.id === id ? { ...l, estado } : l)));
 
+  /**
+   * Abre el MODAL de confirmación del envío real. Solo se puede llegar aquí desde un lote
+   * APROBADO (que a su vez exige haber enviado muestras antes) → la condición "no permitir
+   * enviar sin haber ejecutado las muestras" queda garantizada por el flujo. El modal
+   * calcula el estimado exacto sobre el tamaño de la base y pide aceptar responsabilidad.
+   */
+  const openRealConfirm = async (l: Lote) => {
+    if (!realSendEnabled) {
+      return notify('Los envíos reales están deshabilitados para tu cuenta.', 'warning');
+    }
+    setConfirmAccepted(false);
+    setConfirmEstimate(null);
+    setConfirmLote(l);
+    // Estimado exacto: recalcula el costo sobre el nº real de destinatarios de la base.
+    const recipients = baseRowsForCampaign(l.campaign);
+    if (recipients && recipients > 0) {
+      setConfirmLoading(true);
+      const { channel, emailMode } = estimatorFor(l.campaign);
+      const res = await costService.estimate({
+        customerId,
+        channel,
+        recipients,
+        emailMode: channel === 'EMAIL' ? emailMode : undefined,
+      });
+      setConfirmLoading(false);
+      if (isOk(res) && res.data) setConfirmEstimate(res.data);
+    }
+  };
+
+  const closeRealConfirm = () => {
+    if (sendingRealId) return; // no cerrar mientras se envía
+    setConfirmLote(null);
+    setConfirmAccepted(false);
+    setConfirmEstimate(null);
+  };
+
   /** Dispara el envío REAL de la campaña aprobada (ruta /Email/Send-batch-template). */
   const handleSendReal = async (l: Lote) => {
     if (!realSendEnabled) {
       return notify('Los envíos reales están deshabilitados para tu cuenta.', 'warning');
-    }
-    if (insufficientBalance) {
-      return notify('Tu saldo no alcanza para este envío. Recarga tu monedero antes de enviar.', 'warning');
     }
     setSendingRealId(l.id);
     const res = await campaignsService.sendReal({
@@ -249,12 +312,18 @@ export const MuestrasSection = () => {
     if (isOk(res)) {
       setEstado(l.id, 'enviada_real');
       notify(`Campaña "${l.campaign}" enviada. La base completa entró al proceso de envío.`, 'success');
+      closeRealConfirm();
       // El envío real debitó el saldo: refréscalo para que el gate refleje el saldo nuevo.
       refreshBalance();
     } else {
       notify(res.description || 'No se pudo iniciar el envío real de la campaña.', 'error');
     }
   };
+
+  // Nº de destinatarios y saldo insuficiente para el lote en confirmación.
+  const confirmRecipients = confirmLote ? baseRowsForCampaign(confirmLote.campaign) : null;
+  const confirmCost = confirmEstimate?.estimatedCost ?? null;
+  const confirmInsufficient = confirmCost != null && balance.value < confirmCost;
 
   return (
     <Box>
@@ -264,10 +333,7 @@ export const MuestrasSection = () => {
       </Typography>
 
       <Alert severity="info" sx={{ mb: 3 }}>
-        Flujo: <strong>configurar → enviar muestras → revisar → aprobar → envío real</strong>. Las
-        muestras usan <code>/Email/Send-batch-template-samples</code> (reemplaza el correo real por
-        el de prueba) y, al aprobar, el envío real usa <code>/Email/Send-batch-template</code> sobre
-        toda la base. La campaña debe estar en estado <em>Pendiente</em> o <em>Muestras</em>.
+        Flujo: <strong>configurar → enviar muestras → revisar → aprobar → envío real</strong>.
       </Alert>
 
       {!realSendEnabled && (
@@ -498,11 +564,11 @@ export const MuestrasSection = () => {
                             size="small"
                             variant="contained"
                             color="success"
-                            startIcon={sendingRealId === l.id ? <CircularProgress size={16} color="inherit" /> : <RocketLaunchIcon />}
+                            startIcon={<RocketLaunchIcon />}
                             disabled={sendingRealId !== null || !realSendEnabled || insufficientBalance}
-                            onClick={() => handleSendReal(l)}
+                            onClick={() => openRealConfirm(l)}
                           >
-                            {sendingRealId === l.id ? 'Enviando…' : 'Enviar campaña real'}
+                            Enviar campaña real
                           </Button>
                         </span>
                       </Tooltip>
@@ -521,10 +587,130 @@ export const MuestrasSection = () => {
         </Paper>
       )}
 
+      {/* Modal de confirmación del ENVÍO REAL (cuántos envíos + costo estimado + responsabilidad) */}
+      <Dialog open={!!confirmLote} onClose={closeRealConfirm} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <RocketLaunchIcon color="success" /> Confirmar envío real
+        </DialogTitle>
+        <DialogContent dividers>
+          {confirmLote && (
+            <Stack spacing={2}>
+              <Typography variant="body2">
+                Vas a enviar la campaña <strong>{confirmLote.campaign}</strong> a <strong>toda la
+                base de datos</strong>. Esta acción es <strong>irreversible</strong> y debita tu
+                saldo.
+              </Typography>
+
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: 1.5,
+                  p: 2,
+                  borderRadius: 1,
+                  bgcolor: 'action.hover',
+                }}
+              >
+                <StatLine
+                  label="Envíos a realizar"
+                  value={
+                    confirmRecipients != null
+                      ? confirmRecipients.toLocaleString('es-CO')
+                      : 'No disponible'
+                  }
+                />
+                <StatLine
+                  label="Costo estimado"
+                  value={
+                    confirmLoading
+                      ? '…'
+                      : confirmCost != null
+                        ? formatCOP(confirmCost)
+                        : 'No disponible'
+                  }
+                />
+                <StatLine label="Saldo disponible" value={formatCOP(balance.value)} />
+                <StatLine
+                  label="Saldo tras el envío"
+                  value={confirmCost != null ? formatCOP(balance.value - confirmCost) : '—'}
+                />
+              </Box>
+
+              {confirmRecipients == null && (
+                <Alert severity="warning">
+                  No se pudo determinar el tamaño de la base asociada a esta campaña (puede que la
+                  base no esté registrada). El backend validará el saldo al enviar.
+                </Alert>
+              )}
+              {confirmInsufficient && (
+                <Alert severity="error">
+                  Tu <strong>saldo no alcanza</strong> para este envío. Recarga tu monedero antes de
+                  continuar.
+                </Alert>
+              )}
+              {confirmEstimate?.isEstimate && (
+                <Typography variant="caption" color="text.secondary">
+                  El valor es un <strong>estimado</strong>; el cobro definitivo lo calcula el sistema
+                  al procesar el envío.
+                </Typography>
+              )}
+
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={confirmAccepted}
+                    onChange={(e) => setConfirmAccepted(e.target.checked)}
+                    color="success"
+                  />
+                }
+                label={
+                  <Typography variant="body2">
+                    Confirmo que revisé las muestras y <strong>autorizo el envío real</strong> a toda
+                    la base, asumiendo la responsabilidad y el cobro correspondiente.
+                  </Typography>
+                }
+              />
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeRealConfirm} disabled={sendingRealId !== null}>
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            color="success"
+            startIcon={sendingRealId ? <CircularProgress size={16} color="inherit" /> : <RocketLaunchIcon />}
+            disabled={
+              !confirmLote ||
+              !confirmAccepted ||
+              sendingRealId !== null ||
+              confirmLoading ||
+              confirmInsufficient
+            }
+            onClick={() => confirmLote && handleSendReal(confirmLote)}
+          >
+            {sendingRealId ? 'Enviando…' : 'Enviar campaña real'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {FeedbackSnackbar}
     </Box>
   );
 };
+
+/** Par etiqueta/valor para el resumen del modal de confirmación. */
+const StatLine = ({ label, value }: { label: string; value: string }) => (
+  <Box>
+    <Typography variant="caption" color="text.secondary" display="block">
+      {label}
+    </Typography>
+    <Typography variant="subtitle2" fontWeight={700}>
+      {value}
+    </Typography>
+  </Box>
+);
 
 /** Muestra la empresa activa de la sesión (el "customer" ya no se captura a mano). */
 const ClienteSesion = ({ cliente }: { cliente: string }) => (

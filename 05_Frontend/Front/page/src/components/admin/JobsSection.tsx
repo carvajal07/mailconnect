@@ -26,6 +26,7 @@ import ReplayIcon from '@mui/icons-material/Replay';
 import { jobsService } from '../../services/jobsService';
 import type { JobRow, JobsData } from '../../services/jobsService';
 import { isOk } from '../../services/apiClient';
+import { formatDateTime } from '../../utils/datetime';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
 
@@ -203,7 +204,7 @@ export const JobsSection = () => {
                       </Tooltip>
                     ) : '—'}
                   </TableCell>
-                  <TableCell><Typography variant="caption">{j.date || '—'}</Typography></TableCell>
+                  <TableCell><Typography variant="caption">{formatDateTime(j.date)}</Typography></TableCell>
                   <TableCell align="right">
                     {canRetry(j) ? (
                       <Tooltip title="Reencolar las partes pendientes de este envío">

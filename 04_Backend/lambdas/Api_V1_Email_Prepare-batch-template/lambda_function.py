@@ -133,6 +133,7 @@ ses = boto3.client('ses', region_name=REGION)
 table_process = dynamodb.Table('process')
 table_campaign = dynamodb.Table('campaign')
 table_customer = dynamodb.Table('customer')
+table_database = dynamodb.Table('databaseFile')
 _audit_table = dynamodb.Table('adminAudit')
 
 # --- Cobro PREPAGO (monedero) -------------------------------------------------
@@ -1120,16 +1121,54 @@ def enqueue_part_job(st, part:int, part_key:str, bucket_name:str, channel_queue:
     send_sqs(URL_SQS_PREPARE_PART, json.dumps(job))
 
 
-def count_base_rows(temp_file, delimiter):
-    """Cuenta las filas de DATOS del CSV (sin el encabezado). Dimensiona el cobro
-    PREPAGO: la reserva se hace sobre el TAMAÑO de la base (no sobre el envío efectivo;
-    la conciliación fina de fallidos/filtrados queda para una fase posterior). Lee en
-    streaming (no carga toda la base en memoria)."""
+# Columna del CONTACTO en el CSV (por posición): line[1] = correo (EMAIL) o celular
+# (SMS/WhatsApp/Voz). Es la clave para deduplicar contactos repetidos.
+CONTACT_COL = 1
+
+
+def _contact_key(line):
+    """Clave normalizada del contacto (columna 2) para deduplicar. '' si no hay contacto."""
+    if not line or len(line) <= CONTACT_COL:
+        return ''
+    return str(line[CONTACT_COL] or '').strip().lower()
+
+
+def base_allows_duplicates(customer_id, data_path):
+    """¿La base asociada a la campaña permite duplicados? Busca el registro en
+    `databaseFile` por (customerId, s3Path). Default False (deduplicar) — best-effort:
+    si la tabla/registro no está o falla la consulta, se devuelve False (se deduplica)."""
+    if not data_path:
+        return False
+    try:
+        resp = table_database.scan(
+            FilterExpression='s3Path = :p AND customerId = :c',
+            ExpressionAttributeValues={':p': data_path, ':c': customer_id},
+            ProjectionExpression='allowDuplicates')
+        items = resp.get('Items', [])
+        if items:
+            return bool(items[0].get('allowDuplicates', False))
+    except Exception as e:
+        print('No se pudo resolver allowDuplicates de la base ({}); se deduplica por defecto'.format(e))
+    return False
+
+
+def count_base_rows(temp_file, delimiter, allow_duplicates=True):
+    """Cuenta las filas de DATOS del CSV (sin el encabezado) que se van a ENVIAR.
+    Dimensiona el cobro PREPAGO. Si `allow_duplicates` es False, cuenta contactos
+    DISTINTOS (columna 2) — así el cobro no incluye los duplicados que se filtran en el
+    envío real. Si es True, cuenta todas las filas. Lee en streaming."""
     total = 0
+    seen = set()
     with open(temp_file, 'r', encoding=ENCODING) as f:
         reader = csv.reader(f, delimiter=delimiter)
         next(reader, None)  # descarta el encabezado
-        for _ in reader:
+        for line in reader:
+            if not allow_duplicates:
+                key = _contact_key(line)
+                if key:
+                    if key in seen:
+                        continue  # contacto repetido → no se envía → no se cobra
+                    seen.add(key)
             total += 1
     return total
 def store_resume_ctx(st, bucket_name, channel_queue, registers_for_message,
@@ -1195,9 +1234,14 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
     # debitado se guarda para reembolsar si el troceo falla después (compensación).
     previous_state = response_campaign['Items'][0].get('campaignState', 'Pendiente')
     document_format = response_campaign['Items'][0].get('documentFormat')
+    data_path = response_campaign['Items'][0].get('dataPath')
+    # ¿La base permite duplicados? Si NO (default), se filtran los contactos repetidos en
+    # el envío real (y el cobro se dimensiona sobre contactos distintos).
+    allow_duplicates = base_allows_duplicates(st.customer_id, data_path)
+    print("Permitir duplicados: {}".format(allow_duplicates))
     debited = 0
     try:
-        recipients_count = count_base_rows(temp_file, delimiter)
+        recipients_count = count_base_rows(temp_file, delimiter, allow_duplicates)
         cost = _campaign_cost(st.customer_id, channel_name, recipients_count, document_format)
         if cost > 0:
             new_balance = reserve_balance(st, cost, data["campaignName"])
@@ -1231,7 +1275,19 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
             st.headers = next(reader)  # primer linea = encabezado (va en el ctx)
             print("Headers: " + str(st.headers))
             buffer = []
+            # Dedup de contactos: si la base NO permite duplicados (default), se descarta
+            # la fila cuyo contacto (columna 2) ya salió antes → el mismo destinatario no
+            # recibe la comunicación más de una vez. Los duplicados NO se trocean/encolan.
+            seen_contacts = set()
+            duplicates_skipped = 0
             for line in reader:
+                if not allow_duplicates:
+                    key = _contact_key(line)
+                    if key:
+                        if key in seen_contacts:
+                            duplicates_skipped += 1
+                            continue
+                        seen_contacts.add(key)
                 buffer.append(line)
                 registers_on_spool += 1
                 if len(buffer) == PART_SIZE:
@@ -1246,7 +1302,8 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
                 enqueue_part_job(st, part, key, bucket_name, url_sqs,
                                  registers_for_message, unsubscribe_existed, blacklist_existed)
         os.remove(temp_file)
-        print(f"SPLIT: {registers_on_spool} registros en {part} parte(s)")
+        print(f"SPLIT: {registers_on_spool} registros en {part} parte(s); "
+              f"{duplicates_skipped} duplicado(s) omitido(s)")
     except Exception as e:
         update_campaign_status(st, "Error")
         print(e)

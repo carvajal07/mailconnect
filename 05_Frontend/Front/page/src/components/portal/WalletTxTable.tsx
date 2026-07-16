@@ -13,6 +13,7 @@ import {
 } from '@mui/material';
 import { formatCOP } from '../../services/costService';
 import { TX_LABEL, type WalletTransaction, type WalletTxStatus } from '../../services/balanceService';
+import { formatDateTime } from '../../utils/datetime';
 
 /**
  * Tabla reutilizable de MOVIMIENTOS del monedero (ledger). La usan la sección Saldo del
@@ -70,7 +71,7 @@ export const WalletTxTable = ({ transactions, emptyText = 'Sin movimientos.', sh
             const statusMeta = STATUS_META[status];
             return (
               <TableRow key={t.txId} hover>
-                <TableCell sx={{ whiteSpace: 'nowrap' }}>{t.createdAt || '—'}</TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDateTime(t.createdAt)}</TableCell>
                 {showCompany && (
                   <TableCell>{(t as { company?: string }).company || '—'}</TableCell>
                 )}

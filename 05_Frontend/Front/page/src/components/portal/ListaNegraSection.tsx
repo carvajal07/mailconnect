@@ -27,6 +27,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import { getUser } from '../../services/authService';
 import { blacklistService } from '../../services/blacklistService';
 import { isOk } from '../../services/apiClient';
+import { formatDateTime } from '../../utils/datetime';
 import { usePortalData } from '../../context/PortalDataContext';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
@@ -208,7 +209,7 @@ export const ListaNegraSection = () => {
                     color={i.rejectionType === 'manual' ? 'default' : 'warning'}
                   />
                 </TableCell>
-                <TableCell sx={{ whiteSpace: 'nowrap' }}>{i.date || '—'}</TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDateTime(i.date)}</TableCell>
                 <TableCell align="right">
                   <Tooltip title="Quitar de la lista negra">
                     <span>

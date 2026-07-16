@@ -30,6 +30,7 @@ import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
 import StorageIcon from '@mui/icons-material/Storage';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
@@ -40,7 +41,9 @@ import { templatesService } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { useConfirm } from '../../hooks/useConfirm';
 import { usePortalData } from '../../context/PortalDataContext';
+import { formatDateTime } from '../../utils/datetime';
 
 type EapDocFormat = 'DOCX' | 'PDF';
 
@@ -75,18 +78,14 @@ const ESTADO_COLOR: Record<string, 'default' | 'info' | 'warning' | 'success' | 
   Error: 'error',
 };
 
-const fmtDate = (iso: string) => {
-  if (!iso) return '—';
-  const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T'));
-  return isNaN(d.getTime()) ? iso : d.toLocaleString();
-};
-
 export const CampanasSection = () => {
   const sessionEmail = getUser()?.email ?? '';
   // El cliente (empresa) se toma de la sesión, no se captura en formularios.
   const customer = getUser()?.customer ?? '';
   const customerId = getUser()?.customerId ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
+  const { confirm, ConfirmDialog } = useConfirm();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   // Campañas, bases y plantillas de mensaje precargadas al entrar al portal (contexto compartido).
   const { campaigns: campaignsCtx, databases, messageTemplates: msgTemplatesCtx, refreshCampaigns, refreshStats } = usePortalData();
   const campanas = campaignsCtx.items;
@@ -158,6 +157,27 @@ export const CampanasSection = () => {
   const handleCloseDialog = () => {
     setOpenDialog(false);
     setEditingId(null);
+  };
+
+  /** Elimina una campaña (con confirmación). Verifica el tenant en el backend. */
+  const handleDelete = async (c: CampaignSummary) => {
+    const ok = await confirm({
+      title: 'Eliminar campaña',
+      message: `¿Eliminar la campaña "${c.campaignName}"? Se quita del listado. No borra el CSV de la base ni el historial de envíos. Esta acción no se puede deshacer.`,
+      confirmText: 'Eliminar',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
+    setDeletingId(c.campaignId);
+    const res = await campaignsService.delete(c.campaignId);
+    setDeletingId(null);
+    if (isOk(res)) {
+      notify('Campaña eliminada.', 'success');
+      refreshCampaigns();
+      refreshStats();
+    } else {
+      notify(res.description || 'No se pudo eliminar la campaña.', 'error');
+    }
   };
 
   const isSms = formData.channelName === 'SMS';
@@ -318,10 +338,10 @@ export const CampanasSection = () => {
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell>Campaña</TableCell>
-              <TableCell>Consecutivo</TableCell>
               <TableCell>Canal</TableCell>
               <TableCell>Estado</TableCell>
+              <TableCell>Campaña</TableCell>
+              <TableCell>Consecutivo</TableCell>
               <TableCell>Plantilla</TableCell>
               <TableCell>Fecha</TableCell>
               <TableCell align="right">Acciones</TableCell>
@@ -336,24 +356,23 @@ export const CampanasSection = () => {
               </TableRow>
             )}
             {campanas.map((campana) => (
-              <TableRow key={campana.campaignId}>
-                <TableCell>{campana.campaignName}</TableCell>
-                <TableCell>{campana.consecutive ?? '—'}</TableCell>
+              <TableRow key={campana.campaignId} hover>
                 <TableCell>
-                  <Chip label={campana.channel} size="small" />
+                  <Chip label={campana.channel} size="small" color="primary" variant="outlined" sx={{ fontWeight: 600 }} />
                 </TableCell>
                 <TableCell>
                   <Chip
                     label={campana.campaignState || '—'}
                     size="small"
                     color={ESTADO_COLOR[campana.campaignState] ?? 'default'}
-                    variant="outlined"
                   />
                 </TableCell>
+                <TableCell><Typography fontWeight={600}>{campana.campaignName}</Typography></TableCell>
+                <TableCell>{campana.consecutive ?? '—'}</TableCell>
                 <TableCell sx={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {campana.template || '—'}
                 </TableCell>
-                <TableCell sx={{ whiteSpace: 'nowrap' }}>{fmtDate(campana.date)}</TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDateTime(campana.date)}</TableCell>
                 <TableCell align="right">
                   <Tooltip title={campana.campaignState === 'Pendiente' ? 'Editar campaña' : 'Solo se pueden editar campañas en estado Pendiente'}>
                     <span>
@@ -364,6 +383,18 @@ export const CampanasSection = () => {
                         disabled={campana.campaignState !== 'Pendiente'}
                       >
                         <EditIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title="Eliminar campaña">
+                    <span>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => handleDelete(campana)}
+                        disabled={deletingId === campana.campaignId}
+                      >
+                        {deletingId === campana.campaignId ? <CircularProgress size={18} /> : <DeleteIcon fontSize="small" />}
                       </IconButton>
                     </span>
                   </Tooltip>
@@ -633,6 +664,7 @@ export const CampanasSection = () => {
       </Dialog>
 
       {FeedbackSnackbar}
+      {ConfirmDialog}
     </Box>
   );
 };

@@ -20,6 +20,7 @@ export const CAMPAIGN_ENDPOINTS = {
   CREATE: '/Campaign/Create-campaign',
   LIST: '/Campaign/List',
   UPDATE: '/Campaign/Update',
+  DELETE: '/Campaign/Delete',
   PRESIGN_URL: '/Campaign/Prefirm-url',
   SEND_SAMPLES: '/Email/Send-batch-template-samples',
   SEND_REAL: '/Email/Send-batch-template',
@@ -134,6 +135,10 @@ export const campaignsService = {
   /** Edita una campaña en estado Pendiente (ruta /Campaign/Update). */
   update: (payload: CampaignUpdatePayload): Promise<ApiResponse<{ campaignId?: string }>> =>
     apiPost(CAMPAIGN_ENDPOINTS.UPDATE, payload),
+
+  /** Elimina una campaña (ruta /Campaign/Delete). Verifica el tenant en el backend. */
+  delete: (campaignId: string): Promise<ApiResponse> =>
+    apiPost(CAMPAIGN_ENDPOINTS.DELETE, { campaignId }),
 
   /** Solicita una URL prefirmada de S3 para subir el archivo (CSV/documento). */
   presignUrl: (payload: PresignPayload): Promise<ApiResponse<{ url?: string; path?: string }>> =>

@@ -34,6 +34,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import { customerService } from '../../services/customerService';
 import type { CustomerSummary, CustomerDetail, CustomerUser, UserRole } from '../../services/customerService';
 import { isOk } from '../../services/apiClient';
+import { formatDateTime } from '../../utils/datetime';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
 import { getUser } from '../../services/authService';
@@ -217,7 +218,7 @@ export const ClientesSection = () => {
                 </Box>
                 <Box>
                   <Typography variant="caption" color="text.secondary">Registrado</Typography>
-                  <Typography fontWeight={600}>{detail.customer.date || '—'}</Typography>
+                  <Typography fontWeight={600}>{formatDateTime(detail.customer.date)}</Typography>
                 </Box>
                 <Box>
                   <Typography variant="caption" color="text.secondary">Usuarios</Typography>

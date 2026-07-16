@@ -37,6 +37,7 @@ import { useFeedback } from '../../hooks/useFeedback';
 import { usePortalData } from '../../context/PortalDataContext';
 import { reportsService, downloadBase64Csv, downloadCsv, toCsv } from '../../services/reportsService';
 import { statsService } from '../../services/statsService';
+import { formatDateTime } from '../../utils/datetime';
 import { ESTADO_LABEL, rate } from './campaignData';
 
 /**
@@ -313,7 +314,7 @@ export const ReportesSection = () => {
                     <TableCell>{r.uniqueId || '—'}</TableCell>
                     <TableCell>{r.email || '—'}</TableCell>
                     <TableCell>{r.nombre || '—'}</TableCell>
-                    <TableCell sx={{ whiteSpace: 'nowrap' }}>{r.date || '—'}</TableCell>
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDateTime(r.date)}</TableCell>
                     <TableCell>
                       <Chip size="small" variant="outlined" color={estadoInfo(r.state).sev} label={estadoInfo(r.state).label} />
                     </TableCell>
