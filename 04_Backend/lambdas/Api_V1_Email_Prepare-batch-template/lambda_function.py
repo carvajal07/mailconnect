@@ -295,6 +295,13 @@ class InsufficientBalance(Exception):
     DURO: sin cupo negativo). El handler responde 402."""
 
 
+class RealSendNotApproved(Exception):
+    """La campaña está en el flujo de aprobación pero NO aprobada (pending/rejected): no
+    se permite el envío real hasta aprobarla. Ver PLAN_APROBACIONES.md. El handler → 409.
+    Fail-open de rollout: si approvalStatus es 'none'/ausente (campaña que nunca usó el
+    flujo), NO se bloquea (compatibilidad con el envío directo previo)."""
+
+
 def _wallet_ledger(st, tx_type, amount, balance_after, detail):
     """Escribe SIEMPRE un movimiento en walletTransaction (ledger auditable). Best-effort:
     el saldo ya se movió atómicamente; si el ledger falla se loguea, no se revierte.
@@ -498,7 +505,7 @@ def select_campaign(campaign_name:str)->dict:
     Returns:
         dict: Nombre de la campaña
     """
-    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, samplesSentCount, documentFormat'  # Lista de campos a consultar
+    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, samplesSentCount, documentFormat, approvalStatus'  # Lista de campos a consultar
 
     response_campaign = table_campaign.scan(
         FilterExpression="campaignName = :value",
@@ -518,6 +525,30 @@ def increment_samples_count(st:'ProcessState')->int:
         ReturnValues='UPDATED_NEW'
     )
     return int(response['Attributes'].get('samplesSentCount', 0))
+
+
+def record_sample_batch(st:'ProcessState', data:dict, event)->None:
+    """Registra en la campaña el envío de muestras (historial para el aprobador; ver
+    PLAN_APROBACIONES.md). Best-effort: nunca rompe el envío de muestras. Guarda quién
+    envió, a quién y de qué tipo, en la lista `sampleBatches`."""
+    try:
+        auth = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
+        recipients = [str(r) for r in (data.get('recipients') or [])]
+        batch = {
+            'batchId': str(uuid.uuid4()),
+            'tipo': 'selectivas' if data.get('selectiveSamples') else 'aleatorias',
+            'recipients': recipients,
+            'quantity': len(recipients),
+            'sentBy': str(auth.get('userId') or data.get('userId') or ''),
+            'sentByName': str(auth.get('user') or ''),
+            'sentAt': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        table_campaign.update_item(
+            Key={'campaignId': st.campaign_id},
+            UpdateExpression='SET sampleBatches = list_append(if_not_exists(sampleBatches, :empty), :b)',
+            ExpressionAttributeValues={':empty': [], ':b': [batch]})
+    except Exception as e:
+        print('No se pudo registrar el lote de muestras (se continúa): {}'.format(e))
 
 
 def is_real_send_enabled(customer_id_value:str)->bool:
@@ -1250,6 +1281,14 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
         raise RealSendDisabled(
             'Los envíos reales están deshabilitados para este cliente. '
             'Contacta al administrador de MailConnect.')
+    # Gate de APROBACIÓN (maker-checker): si la campaña entró al flujo de aprobación y NO
+    # está aprobada (pending/rejected), se bloquea el envío real. Fail-open de rollout:
+    # approvalStatus 'none'/ausente (campaña que nunca usó el flujo) NO bloquea.
+    approval_status = str(response_campaign['Items'][0].get('approvalStatus', 'none') or 'none')
+    if approval_status in ('pending', 'rejected'):
+        raise RealSendNotApproved(
+            'La campaña requiere aprobación antes del envío real '
+            '(estado de aprobación: {}).'.format(approval_status))
     # IDEMPOTENCIA: transición atómica a 'Enviando'. Si otra invocación (reintento de
     # Lambda/API Gateway, doble clic, envío concurrente) ya tomó el lock, NO se re-trocea
     # (se lanza AlreadySending → 200 limpio). Como el débito va DESPUÉS del lock, un
@@ -1645,6 +1684,8 @@ def lambda_handler(event, context):
                             st, data, response_campaign, user_id, template_version,
                             temp_file, delimiter, url_sqs, patron_email)
                         if status:
+                            # Historial de muestras para el flujo de aprobación (best-effort).
+                            record_sample_batch(st, data, event)
                             _audit_send(event, data, 'send.samples',
                                         "Envío de {} muestra(s) de la campaña '{}' ({})".format(
                                             data.get('quantitySamples', ''), campaign_name, channel_name))
@@ -1684,6 +1725,13 @@ def lambda_handler(event, context):
         description = str(e)
         status = False
         status_code = 403
+        print(description)
+    except RealSendNotApproved as e:
+        # Campaña en el flujo de aprobación pero no aprobada: 409, sin marcar Error (la
+        # campaña sigue enviable una vez aprobada). El gate va antes de tomar el lock.
+        description = str(e)
+        status = False
+        status_code = 409
         print(description)
     except InsufficientBalance as e:
         # Saldo insuficiente (cobro PREPAGO, bloqueo duro): 402, sin marcar Error. El

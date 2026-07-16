@@ -44,12 +44,18 @@ def _tenant_from_authorizer(event):
     return auth if isinstance(auth, dict) else {}
 
 
-def _clean(item):
-    """DynamoDB devuelve los números como Decimal; se pasan a int para el JSON."""
-    out = {}
-    for key, value in item.items():
-        out[key] = int(value) if isinstance(value, Decimal) else value
-    return out
+def _clean(value):
+    """DynamoDB devuelve los números como Decimal; se pasan a int/float para el JSON.
+    RECURSIVO: maneja dicts y listas anidadas (p. ej. `sampleBatches`) para que el
+    runtime de Lambda pueda serializar la respuesta (Decimal no es JSON-serializable)."""
+    if isinstance(value, Decimal):
+        # Entero si no tiene parte decimal; si no, float.
+        return int(value) if value % 1 == 0 else float(value)
+    if isinstance(value, dict):
+        return {k: _clean(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clean(v) for v in value]
+    return value
 
 
 

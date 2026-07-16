@@ -180,6 +180,9 @@ def insert_campaign(customerId,campaignName,numeration,channel,dataPath,template
         'campaignState': 'Pendiente',
         # Contador de envíos de muestras (máx. MAX_SAMPLE_SENDS en Prepare-batch).
         'samplesSentCount': 0,
+        # Flujo de aprobación (maker-checker): none → pending → approved/rejected.
+        # Ver PLAN_APROBACIONES.md. El envío real exige approvalStatus == 'approved'.
+        'approvalStatus': 'none',
         'date': date
     }
     # Solo EAP: formato del documento (DOCX = combinación Word, PDF = campos personalizados).
