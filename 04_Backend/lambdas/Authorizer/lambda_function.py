@@ -92,5 +92,7 @@ def lambda_handler(event, context):
         'nit': str(decoded.get('nit', '') or ''),
         'userId': str(decoded.get('userId', '') or ''),
         'role': str(decoded.get('role', 'client') or 'client'),
+        # Sub-rol de empresa (RBAC): owner|approver|operator. Default owner.
+        'tenantRole': str(decoded.get('tenantRole', 'owner') or 'owner'),
     }
     return _build_policy(user, 'Allow', resource, context=ctx)

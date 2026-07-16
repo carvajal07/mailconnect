@@ -35,6 +35,8 @@ export interface LoginData {
   realSendEnabled?: boolean;
   /** Rol del usuario: 'admin' (interno MailConnect) o 'client' (default). */
   role?: string;
+  /** Sub-rol dentro de la empresa (RBAC): owner|approver|operator (default owner). */
+  tenantRole?: string;
 }
 
 export interface RegisterPayload {
@@ -62,11 +64,25 @@ export interface SessionUser {
   realSendEnabled?: boolean;
   /** Rol del usuario: 'admin' (interno) o 'client'. Controla el acceso a /admin. */
   role?: string;
+  /** Sub-rol dentro de la empresa (RBAC): owner|approver|operator (default owner). */
+  tenantRole?: string;
   email: string;
 }
 
 /** ¿La sesión corresponde a un administrador? */
 export const isAdmin = (user: SessionUser | null): boolean => (user?.role ?? 'client') === 'admin';
+
+/** Tipos de sub-rol dentro de la empresa (RBAC del portal). */
+export type TenantRole = 'owner' | 'approver' | 'operator';
+
+/** Sub-rol de empresa de la sesión (default 'owner' para cuentas antiguas). */
+export const getTenantRole = (user: SessionUser | null): TenantRole => {
+  const r = (user?.tenantRole ?? 'owner') as TenantRole;
+  return r === 'approver' || r === 'operator' ? r : 'owner';
+};
+
+/** ¿El usuario puede aprobar/rechazar y disparar el envío real? (owner o approver). */
+export const canApprove = (user: SessionUser | null): boolean => getTenantRole(user) !== 'operator';
 
 const TOKEN_KEY = 'mc_token';
 const USER_KEY = 'mc_user';

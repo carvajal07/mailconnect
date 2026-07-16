@@ -20,6 +20,7 @@ import { DocxTemplatesSection } from '../../components/portal/DocxTemplatesSecti
 import { BasesDatosSection } from '../../components/portal/BasesDatosSection';
 import { ListaNegraSection } from '../../components/portal/ListaNegraSection';
 import { MuestrasSection } from '../../components/portal/MuestrasSection';
+import { AprobacionesSection } from '../../components/portal/AprobacionesSection';
 import { EstadisticasSection } from '../../components/portal/EstadisticasSection';
 import { ReportesSection } from '../../components/portal/ReportesSection';
 import { SaldoSection } from '../../components/portal/SaldoSection';
@@ -27,7 +28,8 @@ import { MiCuentaSection } from '../../components/portal/MiCuentaSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
-import { authService, clearSession, getUser } from '../../services/authService';
+import { authService, clearSession, getUser, getTenantRole } from '../../services/authService';
+import { canAccessTab } from '../../config/portalAccess';
 import { PortalDataProvider } from '../../context/PortalDataContext';
 
 export const PortalPage = () => {
@@ -36,6 +38,8 @@ export const PortalPage = () => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
   const user = getUser();
+  // RBAC: sub-rol de empresa (owner|approver|operator) para gatear los módulos/tabs.
+  const role = getTenantRole(user);
 
   const drawerWidth = collapsed ? DRAWER_WIDTH_MINI : DRAWER_WIDTH_FULL;
 
@@ -49,6 +53,8 @@ export const PortalPage = () => {
   };
 
   const renderSection = () => {
+    // Guardia RBAC: si el rol no puede ver el tab activo, cae al tab por defecto.
+    if (!canAccessTab(role, activeSection)) return <HtmlBuilderSection />;
     switch (activeSection) {
       case 'html':
         return <HtmlBuilderSection />;
@@ -62,6 +68,8 @@ export const PortalPage = () => {
         return <CampanasSection />;
       case 'muestras':
         return <MuestrasSection />;
+      case 'aprobaciones':
+        return <AprobacionesSection />;
       case 'cuenta':
         return <MiCuentaSection />;
       case 'basesdatos':

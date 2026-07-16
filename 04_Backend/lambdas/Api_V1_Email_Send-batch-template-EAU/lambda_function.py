@@ -38,7 +38,7 @@ def tenant_key(nit):
 
 
 def tenant_bucket(nit, doc_type):
-    return '{}-{}-{}'.format(BUCKET_PREFIX, tenant_key(nit), doc_type)
+    return '{}-{}'.format(BUCKET_PREFIX, tenant_key(nit))
 
 # Desuscripción: URL de la lambda Unsubscribe y clave para firmar el token.
 # En EAU el correo es MIME crudo, así que además del enlace en el HTML
@@ -250,8 +250,9 @@ def get_attachments_data(customer_name:str,campaign_id:str,nit=None)->str:
 
             if (attachment_type == "ONFILE"):
                 print("El archivo adjunto debe ir directo en el correo")
-                # Descargar el objeto S3 en un objeto BytesIO
-                file_name = attachment_path.split('/')[1]
+                # Descargar el objeto S3 en un objeto BytesIO. `documentPath` incluye el
+                # prefijo del tipo (attachment/{fecha}/{nombre}); el nombre es el basename.
+                file_name = attachment_path.split('/')[-1]
 
                 s3_object = s3.get_object(Bucket=bucket_name, Key=attachment_path)
                 file_content_bytes = s3_object['Body'].read()

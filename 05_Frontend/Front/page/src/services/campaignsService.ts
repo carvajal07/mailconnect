@@ -21,10 +21,27 @@ export const CAMPAIGN_ENDPOINTS = {
   LIST: '/Campaign/List',
   UPDATE: '/Campaign/Update',
   DELETE: '/Campaign/Delete',
+  REQUEST_APPROVAL: '/Campaign/Request-approval',
+  APPROVE: '/Campaign/Approve',
+  REJECT: '/Campaign/Reject',
   PRESIGN_URL: '/Campaign/Prefirm-url',
   SEND_SAMPLES: '/Email/Send-batch-template-samples',
   SEND_REAL: '/Email/Send-batch-template',
 };
+
+/** Estado del flujo de aprobación (maker-checker; ver PLAN_APROBACIONES.md). */
+export type ApprovalStatus = 'none' | 'pending' | 'approved' | 'rejected';
+
+/** Un envío de muestras registrado en la campaña (historial para el aprobador). */
+export interface SampleBatch {
+  batchId: string;
+  tipo: 'aleatorias' | 'selectivas';
+  recipients: string[];
+  quantity: number;
+  sentBy: string;
+  sentByName?: string;
+  sentAt: string;
+}
 
 /** Formato del documento en campañas EAP (adjunto personalizado por destinatario):
  *  - DOCX: combinación de correspondencia (.docx) → lambda de combinación Word.
@@ -62,6 +79,17 @@ export interface CampaignSummary {
   documentFormat?: EapDocumentFormat;
   /** processId del envío real (lo fija Prepare-batch al enviar). Sirve para el reporte de estado. */
   sendProcessId?: string;
+  /** Flujo de aprobación (maker-checker). Ver PLAN_APROBACIONES.md. */
+  approvalStatus?: ApprovalStatus;
+  approvalRequestedBy?: string;
+  approvalRequestedByName?: string;
+  approvalRequestedAt?: string;
+  approvalReviewedBy?: string;
+  approvalReviewedByName?: string;
+  approvalReviewedAt?: string;
+  approvalRejectReason?: string;
+  /** Historial de envíos de muestras (para la bandeja de aprobación). */
+  sampleBatches?: SampleBatch[];
 }
 
 /** Máximo de envíos de muestras por campaña (debe coincidir con MAX_SAMPLE_SENDS del backend). */
@@ -109,20 +137,30 @@ export interface CampaignPayload {
   documentFormat?: EapDocumentFormat;
 }
 
+/**
+ * Tipo de documento = PREFIJO de la key dentro del bucket único del cliente:
+ *  - database:   bases (CSV) de los envíos.            [privado]
+ *  - document:   archivos del cliente (comprobantes).  [privado]
+ *  - resources:  imágenes de las plantillas.           [público]
+ *  - attachment: plantillas docx/pdf y combinados.     [público]
+ */
+export type DocumentType = 'database' | 'document' | 'resources' | 'attachment';
+
 export interface PresignPayload {
   customer: string;
-  /** NIT del cliente (companyTin): define el bucket {prefix}-{nit}-{tipo}. */
+  /** NIT del cliente (companyTin): define el bucket único {prefix}-{nit}. */
   nit?: string;
   documentName: string;
-  documentType: 'database' | 'document';
+  documentType: DocumentType;
 }
 
 /** Prefijo de los buckets por cliente (debe coincidir con el backend BUCKET_PREFIX). */
 export const BUCKET_PREFIX = 'mailconnect';
 
-/** Bucket S3 del cliente por NIT: {prefix}-{nit}-{database|document} (DNS-safe). */
-export const tenantBucket = (nit: string, documentType: 'database' | 'document'): string =>
-  `${BUCKET_PREFIX}-${(nit || '').toLowerCase().replace(/[^a-z0-9]/g, '')}-${documentType}`;
+/** Bucket ÚNICO del cliente por NIT: {prefix}-{nit} (DNS-safe). El tipo va como prefijo
+ *  de la key (database/document/resources/attachment), no como bucket separado. */
+export const tenantBucket = (nit: string): string =>
+  `${BUCKET_PREFIX}-${(nit || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`;
 
 export const campaignsService = {
   create: (payload: CampaignPayload): Promise<ApiResponse<{ campaignId?: string }>> =>
@@ -139,6 +177,18 @@ export const campaignsService = {
   /** Elimina una campaña (ruta /Campaign/Delete). Verifica el tenant en el backend. */
   delete: (campaignId: string): Promise<ApiResponse> =>
     apiPost(CAMPAIGN_ENDPOINTS.DELETE, { campaignId }),
+
+  /** Solicita la aprobación de una campaña (el funcional; requiere haber enviado muestras). */
+  requestApproval: (campaignId: string): Promise<ApiResponse> =>
+    apiPost(CAMPAIGN_ENDPOINTS.REQUEST_APPROVAL, { campaignId }),
+
+  /** Aprueba una campaña pendiente (el aprobador). Habilita el envío real. */
+  approve: (campaignId: string): Promise<ApiResponse> =>
+    apiPost(CAMPAIGN_ENDPOINTS.APPROVE, { campaignId }),
+
+  /** Rechaza una campaña pendiente con un motivo (el aprobador). */
+  reject: (campaignId: string, reason: string): Promise<ApiResponse> =>
+    apiPost(CAMPAIGN_ENDPOINTS.REJECT, { campaignId, reason }),
 
   /** Solicita una URL prefirmada de S3 para subir el archivo (CSV/documento). */
   presignUrl: (payload: PresignPayload): Promise<ApiResponse<{ url?: string; path?: string }>> =>
@@ -168,9 +218,9 @@ export const campaignsService = {
 
   /**
    * URL pública (lectura) de un objeto ya subido a S3, para el src de las imágenes del
-   * correo. Usa el bucket del cliente por NIT ({prefix}-{nit}-{tipo}). El objeto/bucket
-   * debe permitir lectura pública para que la imagen se vea en los clientes de correo.
+   * correo o el enlace de descarga de un adjunto. `path` ya incluye el prefijo del tipo
+   * (resources/… o attachment/…), que son los prefijos PÚBLICOS del bucket del cliente.
    */
-  publicUrl: (nit: string, documentType: 'database' | 'document', path: string): string =>
-    `https://s3.us-east-1.amazonaws.com/${tenantBucket(nit, documentType)}/${path}`,
+  publicUrl: (nit: string, path: string): string =>
+    `https://s3.us-east-1.amazonaws.com/${tenantBucket(nit)}/${path}`,
 };

@@ -438,7 +438,7 @@ export const BasesDatosSection = () => {
               />
               {customer && (
                 <Typography variant="caption" color="text.secondary">
-                  → bucket <code>{customer.toLowerCase()}.database</code>
+                  → prefijo <code>database/</code> del bucket del cliente
                 </Typography>
               )}
             </Box>

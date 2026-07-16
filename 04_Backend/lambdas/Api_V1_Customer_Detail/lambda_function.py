@@ -5,7 +5,7 @@ Ruta: POST /Customer/Detail  (integración no-proxy, envelope estándar)
 Request:  { customerId }
 Respuesta: 200 { data: { customer:{customerId, company, companyTin,
                                    realSendEnabled, date},
-                         users:[{userId, email, name, phone, role, active, date}],
+                         users:[{userId, email, name, phone, role, tenantRole, active, date}],
                          count } }
            · 400 falta customerId · 404 no existe
 
@@ -98,6 +98,8 @@ def lambda_handler(event, context):
                 'name': profile.get('userName', ''),
                 'phone': profile.get('phone', ''),
                 'role': str(u.get('role', 'client')),
+                # Sub-rol de empresa (RBAC): owner|approver|operator (default owner).
+                'tenantRole': str(u.get('tenantRole', 'owner') or 'owner'),
                 'active': bool(u.get('active', False)),
                 'date': _clean(u.get('date', '')),
             })

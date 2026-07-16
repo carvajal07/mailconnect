@@ -240,7 +240,8 @@ export const CampanasSection = () => {
       return;
     }
     setAttachmentUploading(true);
-    const presign = await campaignsService.presignUrl({ customer, nit: getUser()?.nit ?? '', documentName: file.name, documentType: 'document' });
+    // Adjunto de campaña EAU/EAP → prefijo público `attachment/`.
+    const presign = await campaignsService.presignUrl({ customer, nit: getUser()?.nit ?? '', documentName: file.name, documentType: 'attachment' });
     if (!isOk(presign) || !presign.data?.url || !presign.data?.path) {
       setAttachmentUploading(false);
       return notify(presign.description || 'No se pudo crear la URL para el adjunto.', 'error');

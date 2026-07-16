@@ -53,26 +53,88 @@ def _is_legacy_hash(stored_hash):
     return not str(stored_hash or '').startswith('pbkdf2$')
 
 
-def tenant_bucket(nit, doc_type):
-    """Nombre del bucket S3 del cliente por NIT: {prefix}-{nit}-{database|document}."""
+def tenant_bucket(nit, doc_type=None):
+    """Bucket ÚNICO del cliente por NIT: {prefix}-{nit}. Los tipos (database/document/
+    resources/attachment) son PREFIJOS de la key, no buckets separados. doc_type se
+    conserva por compatibilidad de firma y se ignora."""
     clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
-    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+    return '{}-{}'.format(BUCKET_PREFIX, clean)
+
+
+# Prefijos "de carpeta" del bucket del cliente (S3 no tiene carpetas; son prefijos de key).
+BUCKET_PREFIXES = ('database/', 'document/', 'resources/', 'attachment/')
+
+# CORS del bucket del cliente: el front necesita leer/subir objetos (p. ej. el comprobante
+# de transferencia que ve el admin en la bandeja de aprobación, o subir bases/adjuntos).
+_CORS_RULES = {
+    'CORSRules': [{
+        'AllowedHeaders': ['*'],
+        'AllowedMethods': ['GET', 'PUT', 'HEAD'],
+        'AllowedOrigins': ['*'],
+        'ExposeHeaders': ['ETag'],
+        'MaxAgeSeconds': 3000,
+    }]
+}
+
+
+def _public_read_policy(bucket):
+    """Política que hace PÚBLICOS de lectura solo los prefijos attachment/ y resources/
+    (imágenes de plantillas y adjuntos que deben verse en los clientes de correo). Los
+    prefijos database/ y document/ quedan PRIVADOS (se acceden con URL prefirmada)."""
+    return json.dumps({
+        'Version': '2012-10-17',
+        'Statement': [{
+            'Sid': 'PublicReadAttachmentResources',
+            'Effect': 'Allow',
+            'Principal': '*',
+            'Action': 's3:GetObject',
+            'Resource': [
+                'arn:aws:s3:::{}/attachment/*'.format(bucket),
+                'arn:aws:s3:::{}/resources/*'.format(bucket),
+            ],
+        }],
+    })
 
 
 def ensure_bucket(name):
-    """Crea el bucket si no existe (idempotente). No interrumpe el registro si falla."""
+    """Crea el bucket ÚNICO del cliente (idempotente) y le aplica CORS + política de lectura
+    pública para attachment/ y resources/. Best-effort: NUNCA interrumpe el registro."""
+    created = False
     try:
         s3.head_bucket(Bucket=name)
-        return
     except Exception:
-        pass
+        try:
+            s3.create_bucket(Bucket=name)  # us-east-1: sin LocationConstraint
+            created = True
+            print('Bucket creado: {}'.format(name))
+        except s3.exceptions.BucketAlreadyOwnedByYou:
+            pass
+        except Exception as e:
+            print('No se pudo crear el bucket {}: {}'.format(name, e))
+            return
+    # Permitir una política pública en el bucket (S3 bloquea políticas públicas por
+    # defecto). Se bloquean las ACLs públicas pero se permite la POLÍTICA (más segura).
     try:
-        s3.create_bucket(Bucket=name)  # us-east-1: sin LocationConstraint
-        print('Bucket creado: {}'.format(name))
-    except s3.exceptions.BucketAlreadyOwnedByYou:
-        pass
+        s3.put_public_access_block(Bucket=name, PublicAccessBlockConfiguration={
+            'BlockPublicAcls': True, 'IgnorePublicAcls': True,
+            'BlockPublicPolicy': False, 'RestrictPublicBuckets': False})
     except Exception as e:
-        print('No se pudo asegurar el bucket {}: {}'.format(name, e))
+        print('No se pudo ajustar el public access block de {}: {}'.format(name, e))
+    try:
+        s3.put_bucket_cors(Bucket=name, CORSConfiguration=_CORS_RULES)
+    except Exception as e:
+        print('No se pudo configurar CORS de {}: {}'.format(name, e))
+    try:
+        s3.put_bucket_policy(Bucket=name, Policy=_public_read_policy(name))
+    except Exception as e:
+        print('No se pudo aplicar la política pública de {}: {}'.format(name, e))
+    # Marcadores de prefijo (para que se vean las "carpetas" en la consola). Best-effort.
+    if created:
+        for pfx in BUCKET_PREFIXES:
+            try:
+                s3.put_object(Bucket=name, Key=pfx)
+            except Exception:
+                pass
 
 # Configuración por variables de entorno (con valores por defecto)
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'comunicaciones@mailconnect.com.co')
@@ -284,11 +346,12 @@ def lambda_handler(event, context):
                                 'date': formattedDate
                             }
                         )
-                        # Crear los buckets S3 del cliente (por NIT) la PRIMERA vez que
-                        # aparece la empresa: {prefix}-{nit}-database y -document. Antes no
-                        # se creaban → el primer upload del cliente fallaba (NoSuchBucket).
-                        for _bucket_type in ('database', 'document'):
-                            ensure_bucket(tenant_bucket(companyTin, _bucket_type))
+                        # Crear el bucket ÚNICO del cliente (por NIT) la PRIMERA vez que
+                        # aparece la empresa: mailconnect-{nit} con los prefijos database/,
+                        # document/, resources/ y attachment/, su CORS y la política pública
+                        # (attachment/ y resources/). Antes no se creaba → el primer upload
+                        # del cliente fallaba (NoSuchBucket).
+                        ensure_bucket(tenant_bucket(companyTin))
 
                     # Datos del usuario
                     table_userData.put_item(
@@ -313,6 +376,10 @@ def lambda_handler(event, context):
                             'userHash': hashed_password,
                             'userSalt': salt,
                             'role': 'client',
+                            # Sub-rol dentro de la empresa (RBAC; ver PLAN_APROBACIONES.md).
+                            # El que registra la empresa queda como 'owner' (hace todo);
+                            # owner/approver aprueban y envían, operator solo prepara/prueba.
+                            'tenantRole': 'owner',
                             # Evidencia de aceptación de términos (Ley 1581).
                             'termsAccepted': accepted_terms,
                             'termsAcceptedAt': formattedDate if accepted_terms else '',

@@ -294,7 +294,8 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
       customer: sessionCustomer,
       nit: sessionNit,
       documentName: file.name,
-      documentType: 'document',
+      // Imágenes de plantilla → prefijo público `resources/`.
+      documentType: 'resources',
     });
     if (!isOk(presign) || !presign.data?.url) {
       notify(presign.description || 'No se pudo obtener la URL de carga.', 'error');
@@ -306,7 +307,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
       return null;
     }
     notify('Imagen subida a S3.', 'success');
-    return campaignsService.publicUrl(sessionNit, 'document', presign.data.path ?? '');
+    return campaignsService.publicUrl(sessionNit, presign.data.path ?? '');
   };
 
   /* ---------------- Plantillas prediseñadas ---------------- */

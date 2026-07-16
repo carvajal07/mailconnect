@@ -24,7 +24,7 @@ def tenant_key(nit):
 
 def tenant_bucket(nit, doc_type):
     clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
-    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+    return '{}-{}'.format(BUCKET_PREFIX, clean)
 
 #Configurar el cliente de DynamoDB
 dynamodb = boto3.resource('dynamodb')
@@ -135,8 +135,9 @@ def download_attachments_data(campaign_id:str)->str:
         for item in items:
             attachment_path = item["documentPath"]
 
-            # Descargar el objeto S3 en un objeto BytesIO
-            file_name = attachment_path.split('/')[1]
+            # Descargar el objeto S3 en un objeto BytesIO. `documentPath` ahora incluye el
+            # prefijo del tipo (attachment/{fecha}/{nombre}); el nombre es el basename.
+            file_name = attachment_path.split('/')[-1]
 
             #Descargar la plantilla a un directorio temporal
             template_temp_file = f'/tmp/{customer_name}_{formatted_date}_file_name.tmp' 
@@ -273,8 +274,9 @@ def lambda_handler(event, context):
             doc.save(buffer)
             buffer.seek(0)
 
-            s3.upload_fileobj(buffer, Bucket=bucket_name, Key=f'{campaign_id}/{doc_name}')
-            #s3.put_object(Body=file_content, Bucket='my-bucket', Key='myfile.txt')
+            # El docx COMBINADO va bajo el prefijo attachment/ del bucket único del cliente
+            # (lo lee Send-EAP con la misma key). Prefijo público → sirve como adjunto/enlace.
+            s3.upload_fileobj(buffer, Bucket=bucket_name, Key=f'attachment/{campaign_id}/{doc_name}')
 
         body = {
             "customerId":customer_id,

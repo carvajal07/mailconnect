@@ -78,7 +78,7 @@ def _is_legacy_hash(stored_hash):
     return not str(stored_hash or '').startswith('pbkdf2$')
 
 
-def generate_jwt(username, customer_id="", customer="", user_id="", role="client", nit=""):
+def generate_jwt(username, customer_id="", customer="", user_id="", role="client", nit="", tenant_role="owner"):
     # Información de la carga útil. Se embeben la identidad del tenant (customerId,
     # customer, nit), el userId y el rol como claims: el Authorizer los reenvía en el
     # context y las lambdas pueden confiar en ellos (multi-tenant + roles) en vez del body.
@@ -94,6 +94,9 @@ def generate_jwt(username, customer_id="", customer="", user_id="", role="client
         'nit': str(nit or ''),
         'userId': user_id,
         'role': role,
+        # Sub-rol dentro de la empresa (RBAC): owner|approver|operator. Default owner
+        # (compatibilidad con cuentas antiguas). El Authorizer lo reenvía en el context.
+        'tenantRole': tenant_role or 'owner',
         'iat': now_ts,
         'exp': now_ts + JWT_TTL_SECONDS,  # Expira en 1 día
     }
@@ -178,7 +181,7 @@ def select_name(userDataId):
 def _find_user_by_email(email):
     """Busca el usuario por email con Query O(1) al GSI `USER_EMAIL_GSI` (PK 'email').
     Escalable por defecto; si el GSI no existe, propaga el error (no cae a Scan)."""
-    proj = 'userId, userHash, userSalt, active, customerId, userDataId, #r'
+    proj = 'userId, userHash, userSalt, active, customerId, userDataId, #r, tenantRole'
     names = {'#r': 'role'}  # 'role' es palabra reservada → alias
     resp = table_user.query(
         IndexName=USER_EMAIL_GSI,
@@ -200,6 +203,7 @@ def lambda_handler(event, context):
     userId = ""
     realSendEnabled = True
     role = "client"
+    tenantRole = "owner"
     try:
         # Obtener datos del evento (email normalizado a minúsculas, como en Register)
         user = str(event['user']).strip().lower()
@@ -270,12 +274,14 @@ def lambda_handler(event, context):
                         customerId = responseUser['Items'][0]['customerId']
                         # Rol del usuario (default 'client' si el usuario es antiguo/no lo tiene).
                         role = responseUser['Items'][0].get('role', 'client') or 'client'
+                        # Sub-rol de empresa (default 'owner' para cuentas antiguas).
+                        tenantRole = responseUser['Items'][0].get('tenantRole', 'owner') or 'owner'
                         customer, companyTin, realSendEnabled = select_client(customerId)
                         userDataId = responseUser['Items'][0]['userDataId']
                         name = select_name(userDataId)
                         # Token con los claims del tenant + rol (multi-tenant + roles vía Authorizer).
                         # companyTin (NIT) va como claim `nit`: es la llave de los recursos por cliente.
-                        token = generate_jwt(user, customerId, customer, userId, role, companyTin)
+                        token = generate_jwt(user, customerId, customer, userId, role, companyTin, tenantRole)
                         # Registrar la sesión. No debe romper el login si falla
                         # (p. ej. permisos de la tabla), por eso va en su propio try.
                         try:
@@ -332,7 +338,8 @@ def lambda_handler(event, context):
                 'userId': userId,
                 'name': name,
                 'realSendEnabled': realSendEnabled,
-                'role': role
+                'role': role,
+                'tenantRole': tenantRole
             }
         }
 

@@ -115,8 +115,8 @@ def env(monkeypatch):
         _set_balance('CU1', 100000)
 
         s3 = boto3.client('s3', region_name='us-east-1')
-        s3.create_bucket(Bucket='mailconnect-900123-database')
-        s3.put_object(Bucket='mailconnect-900123-database', Key='bases/base.csv',
+        s3.create_bucket(Bucket='mailconnect-900123')
+        s3.put_object(Bucket='mailconnect-900123', Key='bases/base.csv',
                       Body=CSV_CONTENT.encode('utf-8'))
 
         sqs = boto3.client('sqs', region_name='us-east-1')
@@ -403,7 +403,7 @@ def test_topup_request_crea_pending_sin_tocar_saldo(wallet_env):
     tx = _tx(resp['data']['txId'])
     assert tx['type'] == 'topup_manual' and tx['status'] == 'pending'
     assert int(tx['amount']) == 80000 and tx['proofS3Path'] == '2026-07-16/comprobante.png'
-    assert tx['proofBucket'] == 'mailconnect-900123-document'   # derivado del NIT del cliente
+    assert tx['proofBucket'] == 'mailconnect-900123'   # derivado del NIT del cliente
     assert _get_balance('CU1') is None                          # el saldo NO cambió
 
 
