@@ -44,6 +44,12 @@ social = boto3.client('socialmessaging', region_name=REGION)
 STATE_SENT = 1
 STATE_REJECTED = 3
 
+# Índice global messageId -> {customer, processId, uniqueId}. WhatsApp es distinto a SMS/Voz:
+# los recibos de Meta (entregado/leído) solo traen el messageId, SIN nuestro context. Este
+# índice permite que Api_V1_Wsp_ReceptionStatus mapee cada recibo a su cliente/proceso.
+MESSAGE_INDEX_TABLE = os.environ.get('WSP_MESSAGE_INDEX', 'messageIndex')
+table_index = dynamodb.Table(MESSAGE_INDEX_TABLE)
+
 
 def build_whatsapp_message(phone, template_name, params):
     """Arma el JSON de mensaje de plantilla (formato WhatsApp Cloud API)."""
@@ -71,6 +77,26 @@ def _record_status(customer_name, process_id, rows):
             batch.put_item(Item=item)
 
 
+def _index_messages(customer_name, process_id, index_rows):
+    """Guarda messageId -> (customer, processId, uniqueId) para que el ReceptionStatus de
+    WhatsApp pueda mapear los recibos de Meta. Best-effort: si la tabla no existe o falla,
+    no rompe el envío (solo no habrá estados de entrega para esos mensajes)."""
+    if not index_rows:
+        return
+    try:
+        with table_index.batch_writer() as batch:
+            for r in index_rows:
+                batch.put_item(Item={
+                    'messageId': r['messageId'],
+                    'customer': customer_name,
+                    'processId': process_id,
+                    'uniqueId': r.get('uniqueId', ''),
+                    'channel': 'WSP',
+                })
+    except Exception as e:
+        print('No se pudo indexar los messageId de WhatsApp: {}'.format(e))
+
+
 def lambda_handler(event, context):
     now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
@@ -93,6 +119,7 @@ def lambda_handler(event, context):
 
 
         status_rows = []
+        index_rows = []  # messageId -> (customer, proceso) para los recibos de Meta
         for row in data:
             if not isinstance(row, list) or len(row) < 2:
                 continue
@@ -103,6 +130,7 @@ def lambda_handler(event, context):
             state = STATE_SENT
             message_id = str(uuid.uuid4())
             error = ''
+            sent_ok = False
             try:
                 if not template_name:
                     raise RuntimeError('La campaña no tiene plantilla de WhatsApp (HSM)')
@@ -113,6 +141,7 @@ def lambda_handler(event, context):
                     metaApiVersion=META_API_VERSION,
                 )
                 message_id = resp.get('messageId', message_id)
+                sent_ok = True
             except (ClientError, Exception) as e:
                 state = STATE_REJECTED
                 error = str(e)
@@ -128,11 +157,16 @@ def lambda_handler(event, context):
                 'type1': 'WSP',
                 'type2': error[:250] if error else 'WhatsApp enviado',
             })
+            # Solo se indexan los enviados con messageId real de Meta (los que recibirán
+            # recibos de entrega/lectura). Los fallidos no generan eventos.
+            if sent_ok:
+                index_rows.append({'messageId': message_id, 'uniqueId': unique_id})
 
         if status_rows and process_id and customer_name:
             try:
                 _record_status(customer_name, process_id, status_rows)
             except Exception as e:
                 print('No se pudieron registrar los estados WhatsApp: {}'.format(e))
+            _index_messages(customer_name, process_id, index_rows)
 
     return {'statusCode': 200, 'body': json.dumps('WhatsApp batch procesado')}

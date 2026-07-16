@@ -279,8 +279,14 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Metadata:** los envíos SMS/Voz ahora pasan `Context={customer, processId, uniqueId}` en
   `send_text_message`/`send_voice_message`; EUM lo incluye en el evento y ReceptionStatus lo lee
   para saber a qué cliente/proceso pertenece cada estado.
-- ⚠️ **WhatsApp:** los recibos de entrega/lectura vienen de **Meta** (formato distinto, vía la
-  SNS de `socialmessaging`); su ReceptionStatus queda **pendiente** (mismo patrón, otro parser).
+- ✅ **WhatsApp (jul 2026):** los recibos de entrega/lectura vienen de **Meta** (formato
+  distinto, vía la SNS de `socialmessaging`) y **solo traen el messageId**, sin nuestro
+  context. Por eso `Api_V1_Wsp_Send-batch` guarda un índice global **`messageIndex`** (PK
+  `messageId` → `{customer, processId, uniqueId}`) y la nueva lambda
+  **`Api_V1_Wsp_ReceptionStatus`** (suscrita a la SNS de WhatsApp) lo consulta para ubicar
+  el cliente/proceso y escribir el estado (`sent`→1, `delivered`→2, `read`→4, `failed`→3) en
+  `{customer}_sendStatus` (+ `bump_send_summary`). Estadísticas de WhatsApp ahora reflejan
+  entrega/lectura, no solo envío.
 - ⚠️ `[J]`: crear los **configuration sets** de SMS y Voz con **event destination → SNS**, y
   suscribir `Api_V1_Messaging_ReceptionStatus` a esa SNS. Env `SMS_CONFIGURATION_SET` /
   `VOICE_CONFIGURATION_SET` en los envíos para que emitan eventos.

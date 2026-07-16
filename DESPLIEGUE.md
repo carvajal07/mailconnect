@@ -100,10 +100,23 @@ el "cuenta nueva → apply → todo".
 | `pricingRate` | `customerId` (S) | `channel` (S) | `customerId='*'` = tarifa global. La usan estimador, Pricing_* y Billing. |
 | `platformConfig` | `configKey` (S) | — | `Config_Set` la crea sola si falta, pero mejor provisionarla. |
 | `adminAudit` | `auditId` (S) | — | Bitácora de auditoría. Si no existe, el lector devuelve vacío y los escritores no rompen. |
+| `messageIndex` | `messageId` (S) | — | Índice `messageId → {customer, processId, uniqueId}` que escribe `Wsp_Send-batch` y lee `Wsp_ReceptionStatus` (los recibos de Meta solo traen el messageId). |
 
 - [ ] `[J]` Crear `pricingRate` (PK `customerId` + SK `channel`).
 - [ ] `[J]` Crear `platformConfig` (PK `configKey`).
 - [ ] `[J]` Crear `adminAudit` (PK `auditId`).
+- [ ] `[J]` Crear `messageIndex` (PK `messageId`) — para los estados de entrega de WhatsApp.
+
+### GSI `customerId-index` (para pasar scans a queries)
+
+| Tabla | Índice | PK del índice | Lo usa |
+|-------|--------|---------------|--------|
+| `campaign` | `customerId-index` | `customerId` (S) | `Campaign_List` y `Portal_Bootstrap` cuando `USE_GSI=true` |
+
+- [ ] `[J]` Crear el GSI **`customerId-index`** (PK `customerId`) en `campaign` (Projection ALL).
+- [ ] `[J]` Poner `USE_GSI=true` en `Api_V1_Campaign_List` y `Api_V1_Portal_Bootstrap` (y opcional
+  `GSI_CUSTOMER_INDEX` si el índice tiene otro nombre). Sin el índice/env, ambas caen a Scan
+  paginado (correcto, solo más costoso) — así se puede desplegar el código antes que el índice.
 
 > Todas en modo **On-Demand (PAY_PER_REQUEST)** salvo que prefieras capacidad provisionada.
 
@@ -171,7 +184,22 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 | `Api_V1_Email_Send-batch-template-EAP` | Rellena `{{unsubscribeUrl}}` + headers List-Unsubscribe | env **`SECRET_KEY`** y `UNSUBSCRIBE_URL` |
 | `Api_V1_Security_Login` | `select_client`/`select_name`/email → GetItem/Query (GSI opcional) | env opcional **`USER_EMAIL_GSI`** (+ crear el GSI `email` en `user`) |
 | `Api_V1_Cost_Estimate` | Toma el `customerId` del Authorizer, no del body | — (sin permisos nuevos) |
+| `Api_V1_Portal_Bootstrap` | Campañas por GSI `customerId-index` si `USE_GSI` (fallback Scan) | env opcional **`USE_GSI`** (+ GSI en `campaign`) |
+| `Api_V1_Campaign_List` | Campañas por GSI `customerId-index` si `USE_GSI` (ya existía) | env opcional **`USE_GSI`** (+ GSI en `campaign`) |
+| `Api_V1_Wsp_Send-batch` | Indexa `messageId → {customer, proceso}` para los recibos de Meta | `PutItem`/`BatchWriteItem` sobre `messageIndex` |
 | `Api_V1_Billing_Summary` | **3 scans totales** (no 1+2·C) + `sendSummary` O(1) opcional | `GetItem` sobre `*_sendSummary` (si `SEND_SUMMARY_READ`) |
+
+### Lambda nueva disparada por SNS (no es ruta de API Gateway)
+
+- **`Api_V1_Wsp_ReceptionStatus`** (crear la función vacía): procesa los recibos de entrega/
+  lectura de WhatsApp que **Meta** publica en la **SNS de End User Messaging Social**. Como el
+  recibo solo trae el `messageId`, ubica el cliente/proceso en `messageIndex` y escribe el
+  estado en `{customer}_sendStatus`.
+  - [ ] `[J]` Suscribir esta lambda a la **SNS de WhatsApp** (End User Messaging Social → event
+    destination). Permisos: `GetItem` sobre `messageIndex`; `PutItem` sobre `*_sendStatus`;
+    (si `SEND_SUMMARY_ENABLED`) `UpdateItem` sobre `*_sendState`/`*_sendSummary`.
+  - [ ] `[J]` Env `WSP_MESSAGE_INDEX` en `Wsp_Send-batch` y `Wsp_ReceptionStatus` solo si la
+    tabla no se llama `messageIndex`.
 
 > `Api_V1_User_SetRole`, `Api_V1_Pricing_Update` y `Api_V1_Config_Set` también escriben
 > auditoría (ahora más **descriptiva**: antes→después), pero ya están en §3 (son nuevas)
@@ -300,17 +328,17 @@ domain** (`api.mailconnect.com.co/V1`): el CORS va en la API/stage detrás del d
 
 Lo que queda por hacer en el repo (no es despliegue):
 
-- [ ] **WhatsApp — ReceptionStatus:** los recibos de entrega/lectura vienen de **Meta**
-  (formato distinto, vía la SNS de `socialmessaging`). Falta el parser (mismo patrón que
-  `Api_V1_Messaging_ReceptionStatus` de SMS/Voz, otro formato de evento).
 - [ ] **`verify-code`:** sigue como **stub** (el flujo real de OTP usa create/validate-otp).
-- [~] **Fase 5 (Prepare-batch / scans→queries):** hecho lo de mayor impacto sin índices nuevos
-  (scans de `customer` por PK → GetItem en Login/Prepare-batch/Create-campaign/Template;
-  `Create-otp` por userId; login por email GSI-ready + scan paginado). **Falta:** el GSI
-  `email` en `user` (para que las otras lambdas de auth queden O(1)) y el índice de
-  **unicidad de campaña** (consecutivo) — requieren crear los índices (`[J]`).
+- [~] **Fase 5 (Prepare-batch / scans→queries):** hecho lo de mayor impacto (scans de
+  `customer` por PK → GetItem; `Create-otp` por userId; login por email GSI-ready + scan
+  paginado; **campañas por GSI `customerId-index` en Campaign_List y Portal_Bootstrap**,
+  gated por `USE_GSI`). **Falta (código):** el índice de **unicidad de campaña** (consecutivo).
+  **Falta (`[J]`):** crear los GSI (`campaign.customerId-index`, `user.email`) y activar los envs.
 - [ ] **CI — build del frontend:** agregar `npm ci && npm run build` al workflow para
   atrapar regresiones de TypeScript en cada PR.
+- [x] **WhatsApp — ReceptionStatus (hecho jul 2026):** `Api_V1_Wsp_ReceptionStatus` procesa los
+  recibos de Meta (SNS de socialmessaging); `Wsp_Send-batch` indexa `messageId → cliente/proceso`
+  en `messageIndex` para poder ubicarlos. Estados WhatsApp: enviado/entregado/leído/fallido.
 - [x] **EAP — desuscripción (hecho jul 2026):** `Send-batch-template-EAP` ya rellena
   `{{unsubscribeUrl}}` por destinatario (token HMAC) + headers List-Unsubscribe.
 - [x] **Trabajos — reencolar (hecho jul 2026):** `Api_V1_Admin_Requeue` reencola las partes

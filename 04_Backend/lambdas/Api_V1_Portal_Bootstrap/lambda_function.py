@@ -40,6 +40,12 @@ table_database = dynamodb.Table('databaseFile')
 table_message = dynamodb.Table('messageTemplate')
 table_process = dynamodb.Table('process')
 
+# GSI por customerId (mismas envs que Api_V1_Campaign_List: al poner USE_GSI=true, las
+# lecturas por cliente pasan de Scan O(tabla) a Query O(resultado)). Cada tabla debe tener
+# un índice con el nombre GSI_CUSTOMER_INDEX (PK 'customerId'). Sin el índice/env, cae a Scan.
+USE_GSI = os.environ.get('USE_GSI', 'false').strip().lower() == 'true'
+GSI_CUSTOMER_INDEX = os.environ.get('GSI_CUSTOMER_INDEX', 'customerId-index')
+
 _SAFE_CUSTOMER_RE = re.compile(r'^[A-Za-z0-9_]+$')
 
 # --- Estadísticas: MISMA lógica que Api_V1_Reports_Statistics (mantener en sync) ---
@@ -89,8 +95,29 @@ def _scan_all(table, **kwargs):
     return items
 
 
+def _by_customer(table, customer_id):
+    '''Items del cliente: Query por el GSI customerId si USE_GSI, si no Scan+filter.
+    Ambos caminos paginan (LastEvaluatedKey).'''
+    items = []
+    if USE_GSI:
+        kwargs = {'IndexName': GSI_CUSTOMER_INDEX,
+                  'KeyConditionExpression': Key('customerId').eq(customer_id)}
+        op = table.query
+    else:
+        kwargs = {'FilterExpression': Attr('customerId').eq(customer_id)}
+        op = table.scan
+    while True:
+        resp = op(**kwargs)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            break
+        kwargs['ExclusiveStartKey'] = last
+    return items
+
+
 def _load_campaigns(customer_id):
-    items = [_clean(i) for i in _scan_all(table_campaign, FilterExpression=Attr('customerId').eq(customer_id))]
+    items = [_clean(i) for i in _by_customer(table_campaign, customer_id)]
     items.sort(key=lambda x: x.get('date', ''), reverse=True)
     return items
 
@@ -176,7 +203,7 @@ def _load_stats(customer_id, customer):
     customer (nombre de empresa) para la tabla {customer}_sendStatus.'''
     if not customer_id or not customer:
         return []
-    campaigns = _scan_all(table_campaign, FilterExpression=Attr('customerId').eq(customer_id))
+    campaigns = _by_customer(table_campaign, customer_id)
     processes = _scan_all(table_process, FilterExpression=Attr('customerName').eq(customer))
     procs_by_campaign = defaultdict(list)
     for p in processes:
