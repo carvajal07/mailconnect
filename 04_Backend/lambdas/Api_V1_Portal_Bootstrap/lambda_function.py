@@ -28,10 +28,8 @@ from collections import defaultdict
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
-# Lee el RESUMEN pre-agregado por proceso ({customer}_sendSummary) en vez de escanear
-# los estados de cada mensaje. Gated: actívalo SOLO tras habilitar la escritura
-# (SEND_SUMMARY_ENABLED en ReceptionStatus) y hacer backfill de los procesos existentes.
-SEND_SUMMARY_READ = os.environ.get('SEND_SUMMARY_READ', 'false').strip().lower() == 'true'
+# Lee SIEMPRE (por defecto) el RESUMEN pre-agregado por proceso ({customer}_sendSummary);
+# si un proceso no tiene resumen aún, cae al scan de ESE proceso (correcto, acotado).
 _SUMMARY_FIELDS = ('enviados', 'entregados', 'abiertos', 'clics', 'rebotes', 'quejas')
 
 dynamodb = boto3.resource('dynamodb')
@@ -208,15 +206,14 @@ def _load_stats(customer_id, customer):
     summary_table = dynamodb.Table('{}_sendSummary'.format(customer))
 
     def _counts_for(process_id):
-        # 1) Resumen pre-agregado (O(1)) si está activo y existe para este proceso.
-        if SEND_SUMMARY_READ:
-            try:
-                item = summary_table.get_item(Key={'processId': process_id}).get('Item')
-            except Exception:
-                item = None
-            if item:
-                return {k: _to_int(item.get(k, 0)) for k in _SUMMARY_FIELDS}
-        # 2) Fallback: agregación por scan de los estados del proceso.
+        # 1) Resumen pre-agregado (O(1)) por defecto.
+        try:
+            item = summary_table.get_item(Key={'processId': process_id}).get('Item')
+        except Exception:
+            item = None
+        if item:
+            return {k: _to_int(item.get(k, 0)) for k in _SUMMARY_FIELDS}
+        # 2) Fallback: agregación por scan de los estados de ESE proceso.
         return _counts_from_states(_current_state_per_message(_query_process(status_table, process_id)))
 
     result = []

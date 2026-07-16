@@ -128,7 +128,7 @@ def _record_status(customer_name, process_id, item):
 
 
 # ── Pre-agregación de contadores (idéntica a Messaging_ReceptionStatus; best-effort) ──
-SEND_SUMMARY_ENABLED = os.environ.get('SEND_SUMMARY_ENABLED', 'false').strip().lower() == 'true'
+# Se mantiene SIEMPRE (por defecto, sin env); best-effort si faltan las tablas de resumen.
 _SUMMARY_PRIORITY = {1: 1, 9: 2, 8: 3, 3: 4, 2: 5, 6: 6, 10: 7, 7: 8, 4: 9, 5: 10}
 
 
@@ -151,7 +151,7 @@ def _summary_milestones(state_num):
 
 
 def bump_send_summary(customer_name, process_id, message_id, state):
-    if not SEND_SUMMARY_ENABLED or not (customer_name and process_id and message_id):
+    if not (customer_name and process_id and message_id):
         return
     try:
         new_state = int(state)

@@ -33,10 +33,9 @@ dynamodb = boto3.resource('dynamodb', region_name=REGION)
 table_campaign = dynamodb.Table('campaign')
 table_process = dynamodb.Table('process')
 
-# Lee el RESUMEN pre-agregado por proceso ({customer}_sendSummary) en vez de escanear
-# los estados de cada mensaje (O(1)). Gated: actívalo SOLO tras habilitar la escritura
-# (SEND_SUMMARY_ENABLED en ReceptionStatus) y hacer backfill de procesos existentes.
-SEND_SUMMARY_READ = os.environ.get('SEND_SUMMARY_READ', 'false').strip().lower() == 'true'
+# Lee SIEMPRE (por defecto) el RESUMEN pre-agregado por proceso ({customer}_sendSummary)
+# en vez de escanear los estados de cada mensaje (O(1)). Si el proceso aún no tiene resumen
+# (evento no llegó / tabla no provisionada), cae al scan de ESE proceso (correcto, acotado).
 _SUMMARY_FIELDS = ('enviados', 'entregados', 'abiertos', 'clics', 'rebotes', 'quejas')
 
 # Tope de procesos a agregar por llamada (evita barridos enormes; se registra si trunca).
@@ -217,16 +216,15 @@ def lambda_handler(event, context):
                     continue
                 scanned += 1
                 counts = None
-                # 1) Resumen pre-agregado (O(1)) si está activo y existe.
-                if SEND_SUMMARY_READ:
-                    try:
-                        item = dynamodb.Table(f'{customer}_sendSummary').get_item(
-                            Key={'processId': process_id}).get('Item')
-                    except Exception:
-                        item = None
-                    if item:
-                        counts = {k: _to_int(item.get(k, 0)) for k in _SUMMARY_FIELDS}
-                # 2) Fallback: agregación por scan de los estados del proceso.
+                # 1) Resumen pre-agregado (O(1)) — por defecto.
+                try:
+                    item = dynamodb.Table(f'{customer}_sendSummary').get_item(
+                        Key={'processId': process_id}).get('Item')
+                except Exception:
+                    item = None
+                if item:
+                    counts = {k: _to_int(item.get(k, 0)) for k in _SUMMARY_FIELDS}
+                # 2) Fallback: agregación por scan de los estados de ESE proceso.
                 if counts is None:
                     status_table = dynamodb.Table(f'{customer}_sendStatus')
                     counts = _counts_from_states(_current_state_per_message(_query_process(status_table, process_id)))

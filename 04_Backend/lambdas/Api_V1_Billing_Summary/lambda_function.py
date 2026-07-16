@@ -48,8 +48,8 @@ table_rates = dynamodb.Table('pricingRate')
 CURRENCY = 'COP'
 MAX_PROCESSES = 500   # tope global de procesos agregados por llamada (evita barridos enormes)
 
-# Lee el resumen pre-agregado ({customer}_sendSummary) para el conteo de enviados (O(1)).
-SEND_SUMMARY_READ = os.environ.get('SEND_SUMMARY_READ', '').strip().lower() == 'true'
+# Lee SIEMPRE (por defecto) el resumen pre-agregado ({customer}_sendSummary) para el conteo
+# de enviados (O(1)); si un proceso no tiene resumen, cae al conteo por Query de ESE proceso.
 
 # Debe reflejar DEFAULT_RATES de Api_V1_Cost_Estimate / Api_V1_Pricing_*.
 DEFAULT_RATES = {
@@ -165,17 +165,18 @@ def _count_sent(company, process_id):
     Con SEND_SUMMARY_READ usa el resumen pre-agregado (GetItem O(1)); si no existe,
     cae a paginar {company}_sendStatus (comportamiento legacy).
     """
-    if SEND_SUMMARY_READ:
-        try:
-            summ = dynamodb.Table('{}_sendSummary'.format(company)).get_item(
-                Key={'processId': process_id}).get('Item')
-            if summ and 'enviados' in summ:
-                return int(_num(summ['enviados']))
-        except ClientError as e:
-            if e.response['Error']['Code'] != 'ResourceNotFoundException':
-                raise
-        except Exception:
-            pass
+    # 1) Resumen pre-agregado (O(1)) — por defecto.
+    try:
+        summ = dynamodb.Table('{}_sendSummary'.format(company)).get_item(
+            Key={'processId': process_id}).get('Item')
+        if summ and 'enviados' in summ:
+            return int(_num(summ['enviados']))
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ResourceNotFoundException':
+            raise
+    except Exception:
+        pass
+    # 2) Fallback: conteo por Query de los estados de ESE proceso.
 
     seen = set()
     status_table = dynamodb.Table('{}_sendStatus'.format(company))

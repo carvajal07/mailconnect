@@ -721,6 +721,31 @@ def ensure_status_table(customer_name:str)->str:
             print("Error al crear la tabla de estados:", e)
     return table_name
 
+
+def ensure_summary_tables(customer_name:str)->None:
+    """Crea (si no existen) las tablas de PRE-AGREGACIÓN del cliente para que los reportes
+    lean O(1): {customer}_sendSummary (PK processId, contadores del embudo) y
+    {customer}_sendState (PK processId + SK messageId, estado actual por mensaje). Las llena
+    ReceptionStatus (bump_send_summary) al llegar cada evento. Best-effort: si no se pueden
+    crear, la recepción sigue y los reportes caen al scan por proceso."""
+    for name, schema, attrs in (
+        (f'{customer_name}_sendSummary',
+         [{'AttributeName': 'processId', 'KeyType': 'HASH'}],
+         [{'AttributeName': 'processId', 'AttributeType': 'S'}]),
+        (f'{customer_name}_sendState',
+         [{'AttributeName': 'processId', 'KeyType': 'HASH'},
+          {'AttributeName': 'messageId', 'KeyType': 'RANGE'}],
+         [{'AttributeName': 'processId', 'AttributeType': 'S'},
+          {'AttributeName': 'messageId', 'AttributeType': 'S'}]),
+    ):
+        try:
+            dynamodb.create_table(TableName=name, KeySchema=schema,
+                                  AttributeDefinitions=attrs, BillingMode='PAY_PER_REQUEST')
+        except ClientError as e:
+            if e.response['Error']['Code'] != 'ResourceInUseException':
+                print(f"No se pudo crear '{name}':", e)
+
+
 def _batch_get_emails(table_name:str, keys:list)->set:
     """
     Consulta por lotes qué emails de `keys` existen en la tabla `table_name`
@@ -1443,6 +1468,9 @@ def lambda_handler(event, context):
                 # Tabla ÚNICA de estados del cliente (PK processId + SK sendStatusId).
                 # Antes se creaba una tabla por proceso ({customer}_sendStatus_{uuid}).
                 ensure_status_table(st.customer_name)
+                # Tablas de PRE-AGREGACIÓN (resumen O(1) para reportes). Se crean acá para
+                # que existan antes de que lleguen los eventos de recepción (best-effort).
+                ensure_summary_tables(st.customer_name)
 
                 st.template_name = f'{st.customer_name}_{consecutive}_{channel_name}_{campaign_name}'
 

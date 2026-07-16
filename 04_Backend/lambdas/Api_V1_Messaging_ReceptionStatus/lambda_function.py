@@ -98,11 +98,8 @@ def _record_status(customer_name, process_id, item):
 # ganado, resta el perdido) usando su estado actual en {customer}_sendState (PK processId
 # + SK messageId), actualizado con condición atómica (solo avanza en prioridad).
 #
-# Best-effort + gated por SEND_SUMMARY_ENABLED: si está apagado o algo falla (tablas no
-# provisionadas, etc.), NO rompe la recepción; los reportes caen al scan. Activa la
-# escritura, BACKFILL los procesos existentes y recién entonces activa la lectura
-# (SEND_SUMMARY_READ) en los reportes.
-SEND_SUMMARY_ENABLED = os.environ.get('SEND_SUMMARY_ENABLED', 'false').strip().lower() == 'true'
+# Se mantiene SIEMPRE (por defecto, sin env). Best-effort: si las tablas de resumen no
+# existen o algo falla, NO rompe la recepción (los reportes caen al scan por proceso).
 _SUMMARY_PRIORITY = {1: 1, 9: 2, 8: 3, 3: 4, 2: 5, 6: 6, 10: 7, 7: 8, 4: 9, 5: 10}
 
 
@@ -128,7 +125,7 @@ def _summary_milestones(state_num):
 def bump_send_summary(customer_name, process_id, message_id, state):
     '''Actualiza el resumen agregado del proceso ante un nuevo estado de un mensaje.
     Idempotente y transición-consciente; best-effort (nunca lanza).'''
-    if not SEND_SUMMARY_ENABLED or not (customer_name and process_id and message_id):
+    if not (customer_name and process_id and message_id):
         return
     try:
         new_state = int(state)

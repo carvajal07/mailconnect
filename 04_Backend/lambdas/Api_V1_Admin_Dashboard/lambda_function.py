@@ -141,6 +141,26 @@ def _accumulate(states, acc):
             acc['complaints'] += 1
 
 
+# Llaves del dashboard -> campos del resumen pre-agregado ({customer}_sendSummary).
+_SUMMARY_MAP = {'sent': 'enviados', 'delivered': 'entregados', 'opened': 'abiertos',
+                'clicked': 'clics', 'bounces': 'rebotes', 'complaints': 'quejas'}
+
+
+def _counts_for_process(company, process_id):
+    """Contadores del proceso: RESUMEN pre-agregado (O(1)) por defecto; si el proceso no
+    tiene resumen aún, agregación por Query de sus estados (acotada a ESE proceso)."""
+    try:
+        item = dynamodb.Table(f'{company}_sendSummary').get_item(
+            Key={'processId': process_id}).get('Item')
+    except Exception:
+        item = None
+    if item:
+        return {dk: _to_int(item.get(sk, 0)) for dk, sk in _SUMMARY_MAP.items()}
+    acc = {'sent': 0, 'delivered': 0, 'opened': 0, 'clicked': 0, 'bounces': 0, 'complaints': 0}
+    _accumulate(_states_of_process(dynamodb.Table(f'{company}_sendStatus'), process_id), acc)
+    return acc
+
+
 def _health_level(sent, bounces, complaints):
     if sent <= 0:
         return 'ok', 'Sin envíos'
@@ -175,7 +195,6 @@ def lambda_handler(event, context):
         for cust in customers:
             customer_id = cust.get('customerId')
             company = cust.get('company', '')
-            status_table = dynamodb.Table(f'{company}_sendStatus')
 
             campaigns = _scan_all(table_campaign, FilterExpression=Attr('customerId').eq(customer_id))
             if month:
@@ -206,7 +225,9 @@ def lambda_handler(event, context):
                     if not pid:
                         continue
                     budget -= 1
-                    _accumulate(_states_of_process(status_table, pid), camp_acc)
+                    counts = _counts_for_process(company, pid)
+                    for k in camp_acc:
+                        camp_acc[k] += counts[k]
 
                 for k in cust_acc:
                     cust_acc[k] += camp_acc[k]

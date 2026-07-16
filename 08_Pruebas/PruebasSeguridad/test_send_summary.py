@@ -46,8 +46,7 @@ def rs():
             KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'}],
             AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'}],
             BillingMode='PAY_PER_REQUEST')
-        m = _load('Api_V1_Email_ReceptionStatus')
-        m.SEND_SUMMARY_ENABLED = True   # activar la pre-agregación en la prueba
+        m = _load('Api_V1_Email_ReceptionStatus')  # la pre-agregación va SIEMPRE (sin gate)
         yield m
 
 
@@ -88,7 +87,14 @@ def test_evento_repetido_no_duplica(rs):
     assert _summary() == {'enviados': 1, 'entregados': 1, 'abiertos': 0, 'clics': 0, 'rebotes': 0, 'quejas': 0}
 
 
-def test_gated_apagado_no_escribe(rs):
-    rs.SEND_SUMMARY_ENABLED = False
-    rs.bump_send_summary('empresa', 'P1', 'm1', 4)
-    assert _summary() == {'enviados': 0, 'entregados': 0, 'abiertos': 0, 'clics': 0, 'rebotes': 0, 'quejas': 0}
+def test_bump_por_defecto_sin_gate(rs):
+    # La pre-agregación se mantiene SIEMPRE (sin env): un evento actualiza el resumen.
+    rs.bump_send_summary('empresa', 'P1', 'm1', 4)   # Abierto → enviados+entregados+abiertos
+    assert _summary() == {'enviados': 1, 'entregados': 1, 'abiertos': 1, 'clics': 0, 'rebotes': 0, 'quejas': 0}
+
+
+def test_tabla_faltante_no_rompe():
+    # Best-effort: si las tablas de resumen no existen, bump NO lanza (la recepción sigue).
+    with mock_aws():
+        m = _load('Api_V1_Email_ReceptionStatus')
+        m.bump_send_summary('empresa', 'P1', 'm1', 2)   # no debe lanzar (tablas ausentes)

@@ -23,37 +23,33 @@ Por eso un contador ingenuo no sirve.
 Así el resumen es **exactamente igual** a la agregación por scan (probado en
 `test_send_summary.py`, incluido el caso Rebote→Entregado).
 
-**Dónde se escribe:** `Api_V1_Email_ReceptionStatus` y `Api_V1_Messaging_ReceptionStatus`
-llaman `bump_send_summary(...)` tras registrar cada estado. Es **best-effort**: si las
-tablas no existen o algo falla, no rompe la recepción (los reportes caen al scan).
+**Dónde se escribe (SIEMPRE, sin env — jul 2026):** `Api_V1_Email_ReceptionStatus`,
+`Api_V1_Messaging_ReceptionStatus` y `Api_V1_Wsp_ReceptionStatus` llaman `bump_send_summary(...)`
+tras registrar cada estado — **por defecto, sin `SEND_SUMMARY_ENABLED`**. Es **best-effort**: si
+las tablas no existen o algo falla, no rompe la recepción (los reportes caen al scan por proceso).
 
-**Dónde se lee:** `Api_V1_Reports_Statistics` y `Api_V1_Portal_Bootstrap` leen el resumen
-por proceso si `SEND_SUMMARY_READ=true` y existe; si no, agregan por scan (comportamiento
-actual). El resultado es idéntico, solo más rápido.
+**Dónde se lee (SIEMPRE, sin env — jul 2026):** `Api_V1_Reports_Statistics`,
+`Api_V1_Portal_Bootstrap`, `Api_V1_Billing_Summary` y `Api_V1_Admin_Dashboard` leen el resumen
+por proceso **por defecto**; si un proceso **no** tiene resumen aún, caen al scan de **ese**
+proceso (correcto y acotado). Resultado idéntico, solo más rápido.
 
-## Dos interruptores (env), para un rollout seguro
-- **`SEND_SUMMARY_ENABLED`** (write-side, en los ReceptionStatus): empieza a mantener el resumen.
-- **`SEND_SUMMARY_READ`** (read-side, en Statistics/Bootstrap): confía en el resumen.
+## Sin interruptores (por defecto escalable)
+Se quitaron los env `SEND_SUMMARY_ENABLED`/`SEND_SUMMARY_READ`: la pre-agregación se mantiene y
+se lee **siempre**. La seguridad del rollout la da el **fallback por proceso** (un proceso sin
+resumen se agrega por scan) y la escritura **best-effort** (si faltan las tablas, no rompe nada).
 
-Están separados a propósito: si activas la lectura **antes** de escribir + backfillear,
-mostrarías números incompletos.
-
-## Orden de despliegue (IMPORTANTE)
-1. **Provisiona** por cliente las tablas `{customer}_sendState` (PK `processId`+`messageId`)
-   y `{customer}_sendSummary` (PK `processId`), on-demand.
-2. **Permisos IAM:** a los ReceptionStatus, `UpdateItem` sobre `*_sendState` y `*_sendSummary`;
-   a Statistics/Bootstrap, `GetItem` sobre `*_sendSummary`.
-3. Activa **`SEND_SUMMARY_ENABLED=true`** en `Api_V1_Email_ReceptionStatus` y
-   `Api_V1_Messaging_ReceptionStatus`.
-4. Corre el **backfill** por cliente (deja el resumen consistente con lo ya recibido):
-   ```
-   python scripts/backfill_send_summary.py --customer <empresa> --plan   # revisar
-   python scripts/backfill_send_summary.py --customer <empresa>          # aplicar
-   ```
-5. Activa **`SEND_SUMMARY_READ=true`** en `Api_V1_Reports_Statistics` y `Api_V1_Portal_Bootstrap`.
-
-Antes del paso 5 todo funciona por scan (correcto, solo más lento). Después, las
-estadísticas —y por tanto el `Bootstrap`— son O(1) por proceso.
+## Provisión de tablas
+- `Api_V1_Email_Prepare-batch-template` **crea** (best-effort, en el envío real) las tablas
+  `{customer}_sendSummary` (PK `processId`) y `{customer}_sendState` (PK `processId`+`messageId`),
+  igual que ya crea `{customer}_sendStatus`. Así existen antes de que lleguen los eventos.
+- **Permisos IAM** (`[J]`): a los ReceptionStatus, `UpdateItem` sobre `*_sendState`/`*_sendSummary`
+  (+ `CreateTable`/`GetItem` para Prepare-batch); a los reportes, `GetItem` sobre `*_sendSummary`.
+- **Backfill (`[J]`, opcional):** para procesos VIEJOS (anteriores a la pre-agregación) que no
+  tengan resumen, correr el backfill por cliente; mientras tanto esos procesos se leen por scan.
+  ```
+  python scripts/backfill_send_summary.py --customer <empresa> --plan   # revisar
+  python scripts/backfill_send_summary.py --customer <empresa>          # aplicar
+  ```
 
 ## Notas / límites
 - **Consistencia:** si la lambda de recepción se cae justo entre el `update` del estado y el
