@@ -739,7 +739,7 @@ se puede leer del objeto ya subido a S3.)
         escriben best-effort, así que sin permiso/tabla la operación sigue pero no se audita).
         Para que el actor quede identificado, el Authorizer ya reenvía `user`/`userId` en el
         context (en no-proxy, inyectarlos en el mapping template junto con `role`).
-- [ ] Sacar **SES del sandbox** y verificar remitente/dominio.
+- [x] **SES en PRODUCCIÓN** (fuera del sandbox, remitente/dominio verificados).
 - [ ] Configurar las **variables de entorno** de §3 en cada lambda.
 - [ ] Definir `VITE_API_BASE_URL` de producción en el front.
 
@@ -755,9 +755,11 @@ se puede leer del objeto ya subido a S3.)
 
 ### Seguridad (URGENTE)
 - [x] Scripts `prueba genera JWT.py` / `prueba jwt.py` limpios: leen `SECRET_KEY` de env (jul 2026).
-- [ ] **Confirmar que la `SECRET_KEY` en uso sea NUEVA** (32+ bytes): la clave vieja quedó en el
-      **historial git** del repo público; si no se rotó el valor, sigue comprometida.
+- [x] **`SECRET_KEY` ROTADA** (32+ bytes) — la clave vieja del historial git ya no está en uso.
+- [x] **Aislamiento multi-tenant desplegado** — `API_ID`/`AUTHORIZER_ID`/`STAGE`/`PREFIX`
+      configuradas + `deploy-api.yml` corrido (mapping template de context en todas las rutas).
 - [ ] Hacer el repo **privado** (o limpiar el historial con BFG/filter-repo).
+- [ ] Mover `SECRET_KEY` a **AWS Secrets Manager** (ya rotada; hoy es env var).
 - [x] AWS access keys y `DatosTrabajo.txt` gestionados por Jhon (jul 2026).
 
 ---

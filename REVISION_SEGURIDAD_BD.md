@@ -419,15 +419,13 @@ mismo con `sendDetail`** → tabla `{customer}_sendDetail` con PK `processId` + 
 > `deploy-lambdas.yml` auto-despliega en cada push a `main`, primero configura `API_ID`/
 > `AUTHORIZER_ID` y corre `deploy-api.yml`, y solo después mergea/despliega estas lambdas.
 >
-> **Estado de despliegue del aislamiento tenant (jul 2026):** el workflow `deploy-api.yml`
-> corrió una vez (al mergear el PR #26) y **FALLÓ** porque la **variable de repo `API_ID`
-> no está configurada** (Settings → Variables) → `sync_api.py` nunca tocó AWS (por eso "no
-> se ven cambios en API Gateway"). Además el mapping template solo se aplicaba a rutas admin.
-> **Ya corregido en código:** `sync_api.py` aplica el template de context a TODA ruta
-> no-proxy autenticada, y `routes.json` incluye las 19 rutas de cliente (+shim de compat en
-> las lambdas que leían `event[...]` directo). **Falta (infra):** (1) configurar las
-> variables de repo `API_ID`, `AUTHORIZER_ID`, `STAGE`, `PREFIX`; (2) re-lanzar el workflow
-> (`--plan` primero para revisar); (3) verificar 1-2 rutas y luego activar `STRICT_TENANT=true`.
+> **Estado de despliegue del aislamiento tenant (jul 2026): ✅ RESUELTO.** Las variables de
+> repo `API_ID`/`AUTHORIZER_ID`/`STAGE`/`PREFIX` **ya están configuradas** y `deploy-api.yml`
+> corrió aplicando el mapping template de context a **todas** las rutas no-proxy autenticadas
+> (cliente + admin). El aislamiento multi-tenant es OBLIGATORIO en el código (sin `STRICT_TENANT`,
+> sin fallback al body) y ahora **también en infra** → un cliente ya no puede leer/editar datos
+> de otro ni auto-promoverse a admin por el body. `SECRET_KEY` **rotada** (falta moverla a
+> Secrets Manager). SES en **producción**.
 >
 > **Pendiente de Fase 4 (infra):** mover `SECRET_KEY` a **AWS Secrets Manager** y
 > **rotarla** (la clave vieja quedó en el historial git). El endurecimiento de la

@@ -13,11 +13,16 @@
 
 ## 0. TL;DR — el orden correcto
 
+> **Estado (jul 2026):** ✅ Mapping template de context desplegado (`API_ID`/`AUTHORIZER_ID`/
+> `STAGE`/`PREFIX` configuradas + `deploy-api.yml` corrido) → aislamiento multi-tenant activo.
+> ✅ `SECRET_KEY` rotada. ✅ SES en producción. ✅ Despliegue del **monedero PREPAGO** completo.
+> **Falta (`[J]`):** crear los **GSIs + tablas** de DynamoDB pendientes (§2) — el código ya los
+> usa por defecto y **falla si no existen** (ver §8).
+
 1. **Crear las 3 tablas DynamoDB nuevas** (§2).
 2. **Crear las 10 lambdas nuevas vacías** (el CD las actualiza al hacer push) (§3).
 3. **Crear sus rutas** en API Gateway, todas **admin-only** + **CORS** (§3, §5).
-4. **⚠️ Configurar el mapping template de rol** en TODAS las rutas admin no-proxy (§1).
-   Sin esto, cada tab nuevo responde **403 "Acceso restringido"** aunque el usuario sea admin.
+4. ✅ **Mapping template de rol** en TODAS las rutas no-proxy (§1) — **desplegado**.
 5. **Dar los permisos IAM** por lambda (§3, §4).
 6. **Redesplegar las 4 lambdas modificadas** (config + auditoría) (§4).
 7. **Promover a `admin`** al menos un usuario en la tabla `user` (§6).
@@ -63,9 +68,10 @@ usa este **body mapping template**:
 > para pasar el body como string; era frágil (400 por VTL). Con `_get_payload` aceptando
 > objeto, esta forma cruda es la recomendada._
 
-- [ ] `[J]` Aplicar el template en: `/Pricing/List`, `/Pricing/Update`, `/Customer/List`,
-  `/Customer/Update`, `/Customer/Detail`, `/User/SetRole`, `/Billing/Summary`,
-  `/Admin/Dashboard`, `/Admin/Jobs`, `/Admin/Audit`, `/Config/Get`, `/Config/Set`.
+- [x] `[J]` **DESPLEGADO** — las variables `API_ID`/`AUTHORIZER_ID`/`STAGE`/`PREFIX` están
+  configuradas y `deploy-api.yml` corrió y aplicó el mapping template de context (rol/tenant)
+  a TODAS las rutas no-proxy autenticadas (cliente y admin). El aislamiento multi-tenant ya
+  está activo end-to-end.
 
 ### ¿Hay que ponerlo a mano en cada ruta? No — se despliega desde GitHub
 
@@ -360,20 +366,26 @@ Lo que queda por hacer en el repo (no es despliegue):
 
 ## 9. Pendiente de seguridad (compartido) `[J]`/`[C]`
 
-- [ ] `[J]` **Confirmar que `SECRET_KEY` sea NUEVA** (32+ bytes). La vieja quedó en el
-  **historial git** del repo público; si no se rotó el valor, sigue comprometida.
+- [x] `[J]` **`SECRET_KEY` ROTADA** (32+ bytes) — se cambió el valor; la clave vieja del
+  historial git ya no está en uso.
 - [ ] `[J]` Hacer el repo **privado** (o limpiar el historial con BFG/filter-repo).
-- [ ] `[C]`/`[J]` Mover `SECRET_KEY` a **AWS Secrets Manager** (hoy es env var).
-- [ ] `[J]` Sacar **SES del sandbox** y verificar remitente/dominio.
+- [ ] `[C]`/`[J]` Mover `SECRET_KEY` a **AWS Secrets Manager** (hoy es env var; ya rotada).
+- [x] `[J]` **SES en PRODUCCIÓN** — fuera del sandbox, remitente/dominio verificados.
 
 ---
 
-## 10. Cobro PREPAGO / monedero (jul 2026)
+## 10. Cobro PREPAGO / monedero (jul 2026) — ✅ DESPLEGADO
 
+> **Estado:** despliegue **completo** — tablas (`customerBalance`, `walletTransaction` + GSI
+> `customerId-createdAt-index`), las 9 lambdas del monedero + sus rutas, env vars Wompi y el
+> **webhook registrado** en Wompi. Los checklists de abajo quedan como **referencia** de lo
+> aplicado. Pendiente `[J]` de calibración: ajustar las **tarifas** reales (hoy indicativas).
+>
 > Saldo por cliente en **COP**. El envío REAL **debita el saldo ANTES de trocear** con
 > **bloqueo DURO** (sin cupo negativo). Todo movimiento de dinero deja un registro en el
-> **ledger auditable** `walletTransaction`. Recarga **manual** (admin) y **Wompi** (widget +
-> webhook). El costo del débito usa la **misma fórmula/tarifas** que `Api_V1_Cost_Estimate`.
+> **ledger auditable** `walletTransaction`. Recarga **manual** (comprobante + aprobación) y
+> **Wompi** (widget + webhook). El costo del débito usa la **misma fórmula/tarifas** que
+> `Api_V1_Cost_Estimate`.
 
 ### 10.1 Tablas DynamoDB nuevas (On-Demand)
 - [ ] `[J]` `customerBalance` (PK `customerId` S) — saldo actual en COP.
