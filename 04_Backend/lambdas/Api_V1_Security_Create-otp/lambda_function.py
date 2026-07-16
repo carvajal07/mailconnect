@@ -101,13 +101,11 @@ def _resolve_user(payload):
         return user_id, email
 
     if user_id:
-        resp = table_user.scan(
-            FilterExpression="userId = :v",
-            ExpressionAttributeValues={":v": user_id},
-            ProjectionExpression='userId, email'
-        )
-        if resp['Items']:
-            return user_id, resp['Items'][0].get('email')
+        # userId es la PK de `user` → GetItem O(1) (antes Scan+filter).
+        item = table_user.get_item(
+            Key={'userId': user_id}, ProjectionExpression='userId, email').get('Item')
+        if item:
+            return user_id, item.get('email')
         return user_id, None
 
     if email:

@@ -88,6 +88,18 @@ def test_override_por_cliente(cost):
     assert d['subtotal'] == 20000
 
 
+def test_customer_id_sale_del_token_no_del_body(cost):
+    # Seguridad: el customerId del TOKEN (Authorizer) manda sobre el del body. Si un
+    # cliente 'sin tarifa' intenta usar el customerId de CU1 (baseEM=20) en el body,
+    # se ignora y se aplica su propia tarifa (default 8).
+    ev = {
+        'requestContext': {'authorizer': {'customerId': 'OTRO'}},
+        'body': {'channel': 'EMAIL', 'emailMode': 'EM', 'recipients': 1000, 'customerId': 'CU1'},
+    }
+    d = cost.lambda_handler(ev, None)['data']
+    assert d['subtotal'] == 8000   # tarifa de OTRO (default), NO la de CU1 (20)
+
+
 def test_errores(cost):
     assert cost.lambda_handler({'channel': 'EMAIL', 'recipients': 0}, None)['statusCode'] == 400
     assert cost.lambda_handler({'channel': 'FAX', 'recipients': 10}, None)['statusCode'] == 400

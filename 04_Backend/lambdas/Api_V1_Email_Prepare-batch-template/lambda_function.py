@@ -297,13 +297,13 @@ def is_real_send_enabled(customer_id_value:str)->bool:
     de la tabla customer. Si falta el campo (clientes antiguos) se asume HABILITADO
     (fail-open, para no bloquear a nadie por una migración pendiente)."""
     try:
-        response = table_customer.scan(
-            FilterExpression="customerId = :value",
-            ExpressionAttributeValues={":value": customer_id_value},
-            ProjectionExpression='realSendEnabled'
-        )
-        if response['Items']:
-            return bool(response['Items'][0].get('realSendEnabled', True))
+        # customerId es la PK de `customer` → GetItem O(1) (antes Scan+filter, que además
+        # podía no ver el ítem si la tabla superaba 1 MB sin paginar).
+        item = table_customer.get_item(
+            Key={'customerId': customer_id_value},
+            ProjectionExpression='realSendEnabled').get('Item')
+        if item:
+            return bool(item.get('realSendEnabled', True))
     except Exception as e:
         print("No se pudo verificar realSendEnabled ({}); se asume habilitado".format(e))
     return True
@@ -313,12 +313,12 @@ def get_customer_nit(customer_id_value:str):
     """Devuelve el NIT (companyTin) del cliente para construir el bucket S3 por NIT.
     Si no se encuentra, devuelve None y las lecturas caen al bucket viejo por nombre."""
     try:
-        response = table_customer.scan(
-            FilterExpression="customerId = :value",
-            ExpressionAttributeValues={":value": customer_id_value},
-            ProjectionExpression='companyTin')
-        if response['Items']:
-            return response['Items'][0].get('companyTin')
+        # customerId es la PK de `customer` → GetItem O(1) (antes Scan+filter).
+        item = table_customer.get_item(
+            Key={'customerId': customer_id_value},
+            ProjectionExpression='companyTin').get('Item')
+        if item:
+            return item.get('companyTin')
     except Exception as e:
         print("No se pudo obtener el NIT del cliente ({})".format(e))
     return None

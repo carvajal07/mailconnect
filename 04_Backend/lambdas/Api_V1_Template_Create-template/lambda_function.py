@@ -89,14 +89,10 @@ def update_consecutive(customerId,consecutive):
         print(responseUpdateConsecutive['Attributes'])
 
 def select_customerName(customerId):
-    projectionCustomer_expression = 'company'  # Lista de campos a consultar
-
-    response = table_customer.scan(
-        FilterExpression="customerId = :value",
-        ExpressionAttributeValues={":value": customerId},
-        ProjectionExpression=projectionCustomer_expression
-    )
-    return response['Items'][0]['company']
+    # customerId es la PK de `customer` → GetItem O(1) (antes Scan+filter).
+    item = table_customer.get_item(
+        Key={'customerId': customerId}, ProjectionExpression='company').get('Item') or {}
+    return item.get('company', '')
 
 def select_channelName(channelId):
     projectionName_expression = 'channelName'  # Lista de campos a consultar
