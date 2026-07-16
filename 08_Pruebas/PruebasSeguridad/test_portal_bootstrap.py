@@ -35,13 +35,23 @@ def _ctx(cid='CU1', cust='empresa'):
 def boot():
     with mock_aws():
         ddb = boto3.client('dynamodb', region_name='us-east-1')
+        # campaign/databaseFile/messageTemplate llevan el GSI customerId-index que ahora
+        # exige el Bootstrap (Query por defecto); process no lo necesita.
         for table, pk in [('campaign', 'campaignId'), ('databaseFile', 'databaseFileId'),
                           ('messageTemplate', 'messageTemplateId'), ('process', 'processId')]:
+            attrs = [{'AttributeName': pk, 'AttributeType': 'S'}]
+            kw = {}
+            if table != 'process':
+                attrs.append({'AttributeName': 'customerId', 'AttributeType': 'S'})
+                kw['GlobalSecondaryIndexes'] = [{
+                    'IndexName': 'customerId-index',
+                    'KeySchema': [{'AttributeName': 'customerId', 'KeyType': 'HASH'}],
+                    'Projection': {'ProjectionType': 'ALL'}}]
             ddb.create_table(
                 TableName=table,
                 KeySchema=[{'AttributeName': pk, 'KeyType': 'HASH'}],
-                AttributeDefinitions=[{'AttributeName': pk, 'AttributeType': 'S'}],
-                BillingMode='PAY_PER_REQUEST')
+                AttributeDefinitions=attrs,
+                BillingMode='PAY_PER_REQUEST', **kw)
         ddb.create_table(
             TableName='empresa_blackList',
             KeySchema=[{'AttributeName': 'email', 'KeyType': 'HASH'}],

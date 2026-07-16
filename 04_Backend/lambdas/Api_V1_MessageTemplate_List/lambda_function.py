@@ -49,31 +49,22 @@ def _resolve_tenant(event, payload):
 
 
 
-USE_GSI = os.environ.get('USE_GSI', 'false').strip().lower() == 'true'
-# Nombre del GSI por customerId (override por env al desplegarlo). Cuando USE_GSI=true
-# la consulta es Query O(resultado); si no, cae a Scan paginado O(tabla) (correcto,
-# pero costoso). Así el código queda listo para el GSI sin romper hoy.
+# Nombre del GSI por customerId (override por env solo si el índice tiene otro nombre).
+# La consulta es SIEMPRE Query por el índice → escalable por defecto. Si el índice no
+# existe, FALLA (no cae a Scan): la falta del GSI se detecta en el despliegue.
 GSI_CUSTOMER_INDEX = os.environ.get('GSI_CUSTOMER_INDEX', 'customerId-index')
 
 
 def _items_by_customer(_tbl, customer_id, extra_filter=None):
-    """Devuelve todos los ítems del cliente (paginado). Query por GSI si USE_GSI,
-    si no Scan con FilterExpression. En ambos casos pagina con LastEvaluatedKey."""
+    """Todos los ítems del cliente vía Query por el GSI `customerId-index` (paginado).
+    Escalable por defecto; si el GSI no existe, propaga el error."""
     items = []
-    if USE_GSI:
-        kwargs = {'IndexName': GSI_CUSTOMER_INDEX,
-                  'KeyConditionExpression': Key('customerId').eq(customer_id)}
-        if extra_filter is not None:
-            kwargs['FilterExpression'] = extra_filter
-        op = _tbl.query
-    else:
-        expr = Attr('customerId').eq(customer_id)
-        if extra_filter is not None:
-            expr = expr & extra_filter
-        kwargs = {'FilterExpression': expr}
-        op = _tbl.scan
+    kwargs = {'IndexName': GSI_CUSTOMER_INDEX,
+              'KeyConditionExpression': Key('customerId').eq(customer_id)}
+    if extra_filter is not None:
+        kwargs['FilterExpression'] = extra_filter
     while True:
-        resp = op(**kwargs)
+        resp = _tbl.query(**kwargs)
         items.extend(resp.get('Items', []))
         last = resp.get('LastEvaluatedKey')
         if not last:

@@ -155,11 +155,19 @@ def ctx():
     with mock_aws():
         client = boto3.client('dynamodb', region_name='us-east-1')
         for table, pk in TABLES.items():
+            attrs = [{'AttributeName': pk, 'AttributeType': 'S'}]
+            kw = {}
+            if table == 'user':  # Login busca por el GSI email-index (Query por defecto)
+                attrs.append({'AttributeName': 'email', 'AttributeType': 'S'})
+                kw['GlobalSecondaryIndexes'] = [{
+                    'IndexName': 'email-index',
+                    'KeySchema': [{'AttributeName': 'email', 'KeyType': 'HASH'}],
+                    'Projection': {'ProjectionType': 'ALL'}}]
             client.create_table(
                 TableName=table,
                 KeySchema=[{'AttributeName': pk, 'KeyType': 'HASH'}],
-                AttributeDefinitions=[{'AttributeName': pk, 'AttributeType': 'S'}],
-                BillingMode='PAY_PER_REQUEST',
+                AttributeDefinitions=attrs,
+                BillingMode='PAY_PER_REQUEST', **kw,
             )
         boto3.client('ses', region_name='us-east-1').verify_email_identity(EmailAddress=SENDER)
         yield Ctx()

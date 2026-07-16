@@ -20,7 +20,7 @@ Tablas:
 import json
 import boto3
 from decimal import Decimal
-from boto3.dynamodb.conditions import Attr, Key
+from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource('dynamodb')
@@ -88,38 +88,14 @@ def _load_balance(customer_id):
 
 
 def _load_transactions(customer_id, limit):
-    # Preferir el GSI (Query por customerId, orden por createdAt desc). Si el índice aún
-    # no existe (rollout) o la tabla no existe, se cae a Scan+Filter (o vacío).
-    try:
-        resp = table_wallet.query(
-            IndexName=GSI_NAME,
-            KeyConditionExpression=Key('customerId').eq(customer_id),
-            ScanIndexForward=False,   # más reciente primero
-            Limit=limit)
-        return [_clean_tx(i) for i in resp.get('Items', [])]
-    except ClientError as e:
-        code = e.response['Error']['Code']
-        if code == 'ResourceNotFoundException':
-            return []
-        if code != 'ValidationException':   # índice ausente → fallback a Scan
-            raise
-
-    items = []
-    kwargs = {'FilterExpression': Attr('customerId').eq(customer_id)}
-    try:
-        while True:
-            resp = table_wallet.scan(**kwargs)
-            items.extend(resp.get('Items', []))
-            last = resp.get('LastEvaluatedKey')
-            if not last:
-                break
-            kwargs['ExclusiveStartKey'] = last
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'ResourceNotFoundException':
-            return []
-        raise
-    items.sort(key=lambda x: str(x.get('createdAt', '')), reverse=True)
-    return [_clean_tx(i) for i in items[:limit]]
+    """Historial del cliente vía Query O(1) al GSI `customerId-createdAt-index` (orden por
+    fecha desc). Escalable por defecto; si el GSI no existe, propaga el error (no Scan)."""
+    resp = table_wallet.query(
+        IndexName=GSI_NAME,
+        KeyConditionExpression=Key('customerId').eq(customer_id),
+        ScanIndexForward=False,   # más reciente primero
+        Limit=limit)
+    return [_clean_tx(i) for i in resp.get('Items', [])]
 
 
 def lambda_handler(event, context):

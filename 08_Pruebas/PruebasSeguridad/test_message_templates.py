@@ -32,7 +32,12 @@ def mt():
         boto3.client('dynamodb', region_name='us-east-1').create_table(
             TableName='messageTemplate',
             KeySchema=[{'AttributeName': 'messageTemplateId', 'KeyType': 'HASH'}],
-            AttributeDefinitions=[{'AttributeName': 'messageTemplateId', 'AttributeType': 'S'}],
+            AttributeDefinitions=[{'AttributeName': 'messageTemplateId', 'AttributeType': 'S'},
+                                  {'AttributeName': 'customerId', 'AttributeType': 'S'}],
+            GlobalSecondaryIndexes=[{
+                'IndexName': 'customerId-index',
+                'KeySchema': [{'AttributeName': 'customerId', 'KeyType': 'HASH'}],
+                'Projection': {'ProjectionType': 'ALL'}}],
             BillingMode='PAY_PER_REQUEST')
         yield _load('Api_V1_MessageTemplate_Create'), _load('Api_V1_MessageTemplate_List'), _load('Api_V1_MessageTemplate_Delete')
 

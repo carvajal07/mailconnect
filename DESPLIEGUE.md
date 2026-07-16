@@ -116,16 +116,23 @@ el "cuenta nueva → apply → todo".
 - [ ] `[J]` Crear `campaignCounter` (PK `customerId`) — consecutivo atómico. Sin ella,
   `Create-campaign` cae al método legado (con su carrera); con ella, no hay duplicados.
 
-### GSI `customerId-index` (para pasar scans a queries)
+### GSIs OBLIGATORIOS (escalabilidad por defecto — sin `USE_GSI`)
 
-| Tabla | Índice | PK del índice | Lo usa |
-|-------|--------|---------------|--------|
-| `campaign` | `customerId-index` | `customerId` (S) | `Campaign_List` y `Portal_Bootstrap` cuando `USE_GSI=true` |
+> ⚠️ **Cambio (jul 2026):** las list-lambdas **ya no** dependen de `USE_GSI`/`USER_EMAIL_GSI`.
+> Consultan **SIEMPRE por Query** al índice (Projection ALL) y **FALLAN si el índice no existe**
+> (no caen a Scan). Hay que **crear estos GSIs ANTES** de usar esas rutas. Ya declarados en
+> `infra/terraform/dynamodb.tf`.
 
-- [ ] `[J]` Crear el GSI **`customerId-index`** (PK `customerId`) en `campaign` (Projection ALL).
-- [ ] `[J]` Poner `USE_GSI=true` en `Api_V1_Campaign_List` y `Api_V1_Portal_Bootstrap` (y opcional
-  `GSI_CUSTOMER_INDEX` si el índice tiene otro nombre). Sin el índice/env, ambas caen a Scan
-  paginado (correcto, solo más costoso) — así se puede desplegar el código antes que el índice.
+| Tabla | Índice | Llave del índice | Lo usa (por defecto) |
+|-------|--------|------------------|----------------------|
+| `campaign` | `customerId-index` | PK `customerId` (S) | `Campaign_List`, `Portal_Bootstrap` |
+| `databaseFile` | `customerId-index` | PK `customerId` (S) | `Database_List`, `Portal_Bootstrap` |
+| `messageTemplate` | `customerId-index` | PK `customerId` (S) | `MessageTemplate_List`, `Portal_Bootstrap` |
+| `user` | `email-index` | PK `email` (S) | `Login` (`_find_user_by_email`) |
+| `walletTransaction` | `customerId-createdAt-index` | PK `customerId` + SK `createdAt` (S) | `Balance_Get` (historial) |
+
+- [ ] `[J]` Crear los **5 GSIs** de la tabla (Projection ALL, On-Demand). Sin ellos, esas
+  lambdas responden **500** (por diseño: la ausencia del índice se detecta, no se degrada a Scan).
 
 > Todas en modo **On-Demand (PAY_PER_REQUEST)** salvo que prefieras capacidad provisionada.
 
@@ -191,10 +198,10 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 | `Api_V1_MessageTemplate_Create` | Auditoría `messageTemplate.create`/`.update` | `PutItem` sobre `adminAudit` |
 | `Api_V1_Email_Prepare-batch-template` | Auditoría `send.samples`/`send.real`; guarda `resumeCtx` para reintentar; scans de `customer` por PK → GetItem | `PutItem` sobre `adminAudit`; `UpdateItem` sobre `process` (resumeCtx) |
 | `Api_V1_Email_Send-batch-template-EAP` | Rellena `{{unsubscribeUrl}}` + headers List-Unsubscribe | env **`SECRET_KEY`** y `UNSUBSCRIBE_URL` |
-| `Api_V1_Security_Login` | `select_client`/`select_name`/email → GetItem/Query (GSI opcional) | env opcional **`USER_EMAIL_GSI`** (+ crear el GSI `email` en `user`) |
+| `Api_V1_Security_Login` | email → **Query al GSI `email-index`** (por defecto, sin fallback) | **crear el GSI `email-index` en `user`** (obligatorio) |
 | `Api_V1_Cost_Estimate` | Toma el `customerId` del Authorizer, no del body | — (sin permisos nuevos) |
-| `Api_V1_Portal_Bootstrap` | Campañas por GSI `customerId-index` si `USE_GSI` (fallback Scan) | env opcional **`USE_GSI`** (+ GSI en `campaign`) |
-| `Api_V1_Campaign_List` | Campañas por GSI `customerId-index` si `USE_GSI` (ya existía) | env opcional **`USE_GSI`** (+ GSI en `campaign`) |
+| `Api_V1_Portal_Bootstrap` | Campañas/bases/plantillas por **Query al GSI `customerId-index`** (por defecto) | **crear los GSIs `customerId-index`** en `campaign`/`databaseFile`/`messageTemplate` |
+| `Api_V1_Campaign_List` / `Database_List` / `MessageTemplate_List` | Listan por **Query al GSI `customerId-index`** (por defecto, sin fallback a Scan) | **crear el GSI `customerId-index`** en la tabla respectiva |
 | `Api_V1_Wsp_Send-batch` | Indexa `messageId → {customer, proceso}` para los recibos de Meta | `PutItem`/`BatchWriteItem` sobre `messageIndex` |
 | `Api_V1_Billing_Summary` | **3 scans totales** (no 1+2·C) + `sendSummary` O(1) opcional | `GetItem` sobre `*_sendSummary` (si `SEND_SUMMARY_READ`) |
 
@@ -340,13 +347,14 @@ Lo que queda por hacer en el repo (no es despliegue):
 - [x] **`verify-code` eliminado (jul 2026):** era un stub sin uso (el flujo real usa
   create-otp/validate-otp + activación por enlace). Se borró la lambda y sus referencias
   en el front (`authService.verifyCode`, `AUTH_ENDPOINTS.VERIFY_CODE`) y en `deploy-map`.
-- [~] **Fase 5 (Prepare-batch / scans→queries):** hecho lo de mayor impacto (scans de
-  `customer` por PK → GetItem; `Create-otp` por userId; login por email GSI-ready + scan
-  paginado; **campañas por GSI `customerId-index` en Campaign_List y Portal_Bootstrap**,
-  gated por `USE_GSI`; **consecutivo atómico de campañas** con `campaignCounter`).
-  **Falta (`[J]`):** crear los GSI (`campaign.customerId-index`, `user.email`) + tabla
-  `campaignCounter`, y activar los envs. (El consecutivo de PLANTILLAS `Template_Create-template`
-  tiene la misma carrera; se puede migrar igual si hace falta.)
+- [x] **Fase 5 (scans→queries) — GSI POR DEFECTO (jul 2026):** las list-lambdas
+  (`Campaign_List`, `Database_List`, `MessageTemplate_List`, `Portal_Bootstrap`) y `Login`
+  consultan **SIEMPRE por Query** al GSI (`customerId-index` / `email-index`) — se quitó el
+  gate `USE_GSI`/`USER_EMAIL_GSI` y el fallback a Scan. Si el índice no existe, la lambda
+  **falla** (por diseño). Scans de `customer` por PK → GetItem; `Create-otp` por userId;
+  **consecutivo atómico de campañas** con `campaignCounter`.
+  **Falta (`[J]`):** crear los **5 GSIs** (§2) + tabla `campaignCounter`. (El consecutivo de
+  PLANTILLAS `Template_Create-template` tiene la misma carrera; se puede migrar igual si hace falta.)
 - [ ] **CI — build del frontend:** agregar `npm ci && npm run build` al workflow para
   atrapar regresiones de TypeScript en cada PR.
 - [x] **WhatsApp — ReceptionStatus (hecho jul 2026):** `Api_V1_Wsp_ReceptionStatus` procesa los
