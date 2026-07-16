@@ -1657,11 +1657,18 @@ def lambda_handler(event, context):
                     f'{tenant}_unsubscribe', f'{tenant}_blackList',
                 ])
 
-                # OJO: el nombre de la PLANTILLA SES sigue por nombre de empresa (namespace
-                # SES, lo crea el builder del front con create-template) — NO es tabla/bucket.
-                # NO lleva el canal: una plantilla HTML aplica a varios canales de email
-                # (EM/EAU/EAP). Convención {customer}_{consecutivo}_{nombre} (= Create-template).
-                st.template_name = f'{st.customer_name}_{consecutive}_{campaign_name}'
+                # Nombre de la PLANTILLA SES: se USA el que viene en el payload de la campaña
+                # (campaign.template = la plantilla que el cliente eligió al crear la campaña),
+                # NO se reconstruye. Así el envío usa exactamente la plantilla seleccionada y no
+                # depende de que el nombre coincida con {customer}_{consecutivo}_{campaña}.
+                # Solo aplica a los canales de EMAIL (para SMS/WSP/VOZ, `template` guarda el
+                # texto/HSM y no se usa como nombre de plantilla SES). Fallback a la convención
+                # por compatibilidad con campañas viejas sin `template` guardado.
+                campaign_template = response_campaign['Items'][0].get('template') or ''
+                if channel_name in ('EM', 'EAU', 'EAP') and campaign_template:
+                    st.template_name = campaign_template
+                else:
+                    st.template_name = f'{st.customer_name}_{consecutive}_{campaign_name}'
 
                 print(f"Channel: {channel_name}")
                 #EAU = Email con adjunto unico (El mismo adjunto se envia a todos los destinatarios)

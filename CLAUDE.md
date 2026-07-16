@@ -194,6 +194,22 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   dimensiona sobre contactos **distintos** cuando se deduplica (`count_base_rows` dedup-aware).
   Fail-safe: si no se resuelve la base, se deduplica.
 
+### Remitente, plantilla del payload y mínimo de recarga (jul 2026)
+- **Remitente por defecto `notificaciones@mailconnect.com.co`:** el campo "De (From)" de crear
+  campaña pasa de texto libre a **desplegable** (`DEFAULT_FROM` en `CampanasSection`); por ahora
+  solo esa opción (+ ítem deshabilitado "Tu dominio propio (próximamente)"). Al editar conserva
+  el remitente previo si difiere. ⚠️ `[J]`: `notificaciones@mailconnect.com.co` debe estar
+  **verificado en SES** como identidad de envío. Futuro: dominios verificados por cliente.
+- **Plantilla SES del payload (no recalculada):** `Prepare-batch` usa `campaign.template` (la
+  plantilla que el cliente eligió al crear la campaña) como `st.template_name` para los canales
+  de email (EM/EAU/EAP), en vez de reconstruir `{customer}_{consecutivo}_{campaña}`. Fallback a la
+  convención si la campaña no trae `template` (compat). Así el envío usa exactamente la plantilla
+  seleccionada.
+- **Mínimo de recarga Wompi visible:** `RechargeDialog` avisa explícitamente cuando el monto es
+  `>0` y `< MIN_TOPUP` (20.000 COP) con un `Alert` + helperText en error (antes el botón solo se
+  deshabilitaba sin explicar). Sugiere "Registrar transferencia" (manual, sin mínimo) para montos
+  menores. El backend `Topup-init` ya devolvía el 400 con el mensaje del mínimo.
+
 ### Ajustes operativos de envío y UX (jul 2026)
 - **Fix `ResourceNotFoundException` en el primer envío:** `Prepare-batch` ahora ESPERA a que
   las tablas por cliente (`{tenant}_processDetail/_sendDetail/_sendStatus/_unsubscribe/_blackList`)

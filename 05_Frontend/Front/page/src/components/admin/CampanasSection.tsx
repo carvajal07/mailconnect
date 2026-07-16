@@ -58,7 +58,11 @@ interface CampaignForm {
   documentFormat: EapDocFormat;
 }
 
-const emptyForm = (from = ''): CampaignForm => ({
+/** Remitente por defecto de las campañas. A futuro el cliente podrá configurar su propio
+ *  dominio verificado y elegirlo del desplegable (por ahora solo esta opción). */
+export const DEFAULT_FROM = 'notificaciones@mailconnect.com.co';
+
+const emptyForm = (from = DEFAULT_FROM): CampaignForm => ({
   campaignName: '',
   channelName: 'EM',
   attachmentType: 'NONE',
@@ -79,7 +83,6 @@ const ESTADO_COLOR: Record<string, 'default' | 'info' | 'warning' | 'success' | 
 };
 
 export const CampanasSection = () => {
-  const sessionEmail = getUser()?.email ?? '';
   // El cliente (empresa) se toma de la sesión, no se captura en formularios.
   const customer = getUser()?.customer ?? '';
   const customerId = getUser()?.customerId ?? '';
@@ -96,7 +99,7 @@ export const CampanasSection = () => {
   const [openDialog, setOpenDialog] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null); // null = crear, id = editar
   const [submitting, setSubmitting] = useState(false);
-  const [formData, setFormData] = useState<CampaignForm>(emptyForm(sessionEmail));
+  const [formData, setFormData] = useState<CampaignForm>(emptyForm());
 
   // Plantillas SES del cliente (para el selector del formulario).
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
@@ -131,7 +134,7 @@ export const CampanasSection = () => {
 
   const handleOpenDialog = () => {
     setEditingId(null);
-    setFormData(emptyForm(sessionEmail));
+    setFormData(emptyForm());
     resetAttachment();
     setOpenDialog(true);
     loadTemplates();
@@ -145,7 +148,7 @@ export const CampanasSection = () => {
       channelName: c.channel ?? 'EM',
       attachmentType: 'NONE',
       template: c.template ?? '',
-      from: c.originEmail ?? sessionEmail,
+      from: c.originEmail ?? DEFAULT_FROM,
       dataPath: c.dataPath ?? '',
       documentFormat: (c.documentFormat as EapDocFormat) ?? 'DOCX',
     });
@@ -619,12 +622,24 @@ export const CampanasSection = () => {
                       ))}
                     </Select>
                   </FormControl>
-                  <TextField
-                    fullWidth
-                    label="De (From)"
-                    value={formData.from}
-                    onChange={(e) => handleInputChange('from', e.target.value)}
-                  />
+                  <FormControl fullWidth>
+                    <InputLabel>De (From)</InputLabel>
+                    <Select
+                      value={formData.from}
+                      label="De (From)"
+                      onChange={(e) => handleInputChange('from', e.target.value)}
+                    >
+                      {/* Remitente por defecto. A futuro: dominios verificados del cliente. */}
+                      <MenuItem value={DEFAULT_FROM}>{DEFAULT_FROM}</MenuItem>
+                      {/* Conserva un remitente previo distinto al default (al editar). */}
+                      {formData.from && formData.from !== DEFAULT_FROM && (
+                        <MenuItem value={formData.from}>{formData.from}</MenuItem>
+                      )}
+                      <MenuItem value="" disabled>
+                        Tu dominio propio (próximamente)
+                      </MenuItem>
+                    </Select>
+                  </FormControl>
                 </Stack>
               )}
               <FormControl fullWidth>
