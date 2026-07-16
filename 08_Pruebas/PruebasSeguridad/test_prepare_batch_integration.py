@@ -199,6 +199,26 @@ def test_workers_procesan_partes_y_acumulan(env):
     assert sorted(int(r['state']) for r in rows) == [11, 13]
 
 
+def test_sendDetail_es_tabla_unica_con_processId(env):
+    # sendDetail unificado: UNA tabla por cliente ({customer}_sendDetail, PK processId + SK
+    # sendDetailId), no una por proceso. Los filtrados (inválido + lista negra) dejan detalle.
+    pb, channel_url, part_url = env
+    pb.lambda_handler(_api_event(), None)
+    process_id = _campaign()['sendProcessId']
+    sqs = boto3.client('sqs', region_name='us-east-1')
+    for j in _drain(sqs, part_url):
+        pb.lambda_handler({'Records': [{'body': json.dumps(j)}]}, None)
+
+    ddb = boto3.resource('dynamodb', region_name='us-east-1')
+    # La tabla por proceso ya NO se crea.
+    assert f'empresa_sendDetail_{process_id}' not in ddb.meta.client.list_tables()['TableNames']
+    detail = ddb.Table('empresa_sendDetail')
+    rows = detail.query(KeyConditionExpression=Key('processId').eq(process_id))['Items']
+    assert len(rows) == 2                                   # malformado + lista negra
+    assert all(r['processId'] == process_id for r in rows)  # PK del tenant único
+    assert all(r.get('sendDetailId') for r in rows)         # SK presente
+
+
 def test_worker_idempotente_no_duplica(env):
     pb, channel_url, part_url = env
     pb.lambda_handler(_api_event(), None)

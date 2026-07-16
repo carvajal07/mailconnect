@@ -355,6 +355,15 @@ Lo que queda por hacer en el repo (no es despliegue):
   **consecutivo atómico de campañas** con `campaignCounter`.
   **Falta (`[J]`):** crear los **5 GSIs** (§2) + tabla `campaignCounter`. (El consecutivo de
   PLANTILLAS `Template_Create-template` tiene la misma carrera; se puede migrar igual si hace falta.)
+- [x] **Pre-agregación POR DEFECTO (jul 2026):** `Admin_Dashboard`/`Billing_Summary`/
+  `Reports_Statistics`/`Portal_Bootstrap` leen el resumen `{customer}_sendSummary` O(1) por
+  proceso (fallback al scan de ESE proceso); los `ReceptionStatus` (Email/SMS-Voz/WhatsApp) lo
+  mantienen SIEMPRE (sin `SEND_SUMMARY_*`). Prepare-batch crea `{customer}_sendSummary`/`_sendState`.
+  Ver `PLAN_PREAGREGACION.md`. **Falta (`[J]`):** IAM `UpdateItem` sobre `*_sendSummary`/`*_sendState`
+  (cubierto por la política amplia); backfill de procesos VIEJOS (opcional; mientras, se leen por scan).
+- [x] **`sendDetail` unificado (jul 2026):** una tabla por cliente `{customer}_sendDetail`
+  (PK `processId` + SK `sendDetailId`), no una por proceso. Escritores (EM/EAU/Prepare-batch) y
+  lectores (state-report/Agent_Reports por Query) alineados. La crea `ensure_detail_table`.
 - [ ] **CI — build del frontend:** agregar `npm ci && npm run build` al workflow para
   atrapar regresiones de TypeScript en cada PR.
 - [x] **WhatsApp — ReceptionStatus (hecho jul 2026):** `Api_V1_Wsp_ReceptionStatus` procesa los

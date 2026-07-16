@@ -199,6 +199,26 @@ def query_status_by_process(customer_name: str, process_id: str) -> List[Dict]:
     return items
 
 
+def query_detail_by_process(customer_name: str, process_id: str) -> List[Dict]:
+    """Detalle de UN proceso desde la tabla única {customer}_sendDetail (PK processId +
+    SK sendDetailId). Reemplaza el scan de la antigua tabla-por-proceso
+    {customer}_sendDetail_{proceso}. Pagina por LastEvaluatedKey."""
+    table = dynamodb.Table(f'{customer_name}_sendDetail')
+    items: List[Dict] = []
+    kwargs = {'KeyConditionExpression': Key('processId').eq(process_id)}
+    try:
+        while True:
+            resp = table.query(**kwargs)
+            items.extend(resp.get('Items', []))
+            last_key = resp.get('LastEvaluatedKey')
+            if not last_key:
+                break
+            kwargs['ExclusiveStartKey'] = last_key
+    except Exception as exc:
+        print(f"[QUERY_DETAIL] ⚠ {customer_name}_sendDetail proceso {process_id}: {exc}")
+    return items
+
+
 def scan_full_table_with_pagination(table_name: str,
                                      projection: Optional[str] = None) -> List[Dict]:
     """
@@ -612,19 +632,10 @@ def report_full_records(campaign_id: str, customer_name: str, customer_id: str,
             print(f"[REPORT_FULL_RECORDS] Procesando {proc_idx + 1}/{len(processes)}: {process_id}")
 
             try:
-                send_details_table = f'{customer_name}_sendDetail_{process_id}'
-                print(f"[REPORT_FULL_RECORDS] Escaneando detalles: {send_details_table}")
-                
-                try:
-                    # sendDetail es grande, escanear con proyección
-                    send_details = scan_full_table_with_pagination(
-                        send_details_table,
-                        projection='sendDetailId, uniqueId, email'
-                    )
-                    print(f"[REPORT_FULL_RECORDS] {len(send_details)} detalles obtenidos")
-                except Exception as exc:
-                    print(f"[REPORT_FULL_RECORDS] ⚠ Fallo con projection, intentando sin ella: {str(exc)}")
-                    send_details = scan_full_table_with_pagination(send_details_table)
+                # Tabla ÚNICA de detalle: Query por processId (antes: scan de la tabla por proceso).
+                print(f"[REPORT_FULL_RECORDS] Consultando detalle del proceso {process_id}")
+                send_details = query_detail_by_process(customer_name, process_id)
+                print(f"[REPORT_FULL_RECORDS] {len(send_details)} detalles obtenidos")
 
                 # Estados de este proceso desde la tabla única {customer}_sendStatus.
                 try:

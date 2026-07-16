@@ -181,12 +181,13 @@ materializar el dashboard con un job programado.
 **Arreglo:** `for record in event["Records"]:` + `ReportBatchItemFailures` (devolver
 `batchItemFailures`), o fijar `BatchSize=1`. Configurar **DLQ** en todos los event source mappings.
 
-### 1.8 Escalabilidad — Tabla DynamoDB nueva POR PROCESO
-**Dónde:** `Prepare-batch:1142,597` crea `{customer}_sendDetail_{process_id}`; escrita en
-`EM:118`, `EAU:143`. `SQS_DeleteTables`/`Cron_DeleteTables` existen para limpiarlas.
-**Impacto:** límite ~2.500 tablas/región + `CreateTable` throttleado/asíncrono (se escribe
-antes de `ACTIVE` → carreras). `sendStatus` ya se unificó a tabla única; **falta hacer lo
-mismo con `sendDetail`** → tabla `{customer}_sendDetail` con PK `processId` + SK.
+### 1.8 Escalabilidad — Tabla DynamoDB nueva POR PROCESO ✅ RESUELTO (jul 2026)
+`sendStatus` **y ahora `sendDetail`** están unificadas a **una tabla por cliente**:
+`{customer}_sendDetail` con **PK `processId` + SK `sendDetailId`** (la crea `ensure_detail_table`
+en Prepare-batch, igual que `ensure_status_table`). Los escritores (`EM`, `EAU`, el filtrado de
+`Prepare-batch`) incluyen `processId`; los lectores (`state-report`, `Agent_Reports`) hacen
+**Query por processId** (no scan de una tabla por proceso). Elimina el anti-patrón de
+~tabla-por-proceso~ (límite ~2.500 tablas/región + carreras de `CreateTable`).
 
 ### 1.9 Robustez — Código crítico que hoy NO funciona ✔
 - **`EAU` envía HTML hardcodeado de "Mercacaldas".** `Send-batch-template-EAU:477-552` fija
@@ -333,7 +334,7 @@ mismo con `sendDetail`** → tabla `{customer}_sendDetail` con PK `processId` + 
 - **`batch_writer`**, paginación con `LastEvaluatedKey` en varias lambdas, `ProjectionExpression`
   con manejo de palabras reservadas, whitelisting de campos de escritura (`Pricing_Update`,
   `Config_Set`, `User_SetRole`), flags `truncated`, `Query`+GSI en `Agent_Reports`.
-- **Migración en curso a tabla única `sendStatus`** (dirección correcta; falta `sendDetail`).
+- **Tabla única `sendStatus` Y `sendDetail`** por cliente (unificación completada, jul 2026).
 - **`tenant_bucket` sanitiza el NIT** en `Template_Combination` — patrón a generalizar.
 
 ---
@@ -361,15 +362,20 @@ mismo con `sendDetail`** → tabla `{customer}_sendDetail` con PK `processId` + 
 >   y del fallback por nombre en `Database_List`.
 > - **Facturación honesta:** `Billing_Summary` marca cada fila `partial` y reporta
 >   `skippedCustomers` cuando se agota el tope (antes desaparecían/subestimaban en silencio).
-> - **Listo para GSI (gate `USE_GSI`):** `Campaign_List`, `MessageTemplate_List`,
->   `Database_List` usan `_items_by_customer` → Query por GSI si `USE_GSI=true`, si no Scan
->   paginado. Al desplegar el GSI `customerId-index` se activa con `USE_GSI=true`.
+> - **GSI POR DEFECTO (jul 2026):** `Campaign_List`, `MessageTemplate_List`, `Database_List`,
+>   `Portal_Bootstrap` y `Login` (email) consultan **SIEMPRE por Query** al GSI (se quitó el
+>   gate `USE_GSI`/`USER_EMAIL_GSI` y el fallback a Scan). Si el índice no existe, **falla**
+>   (la ausencia del GSI se detecta, no se degrada a Scan). GSIs declarados en terraform.
 >
-> **Pendiente de Fase 2 (arquitectural, requiere verificación del pipeline real):**
-> pre-agregación de contadores por proceso para `Admin_Dashboard`/`Billing_Summary`/
-> `Reports_Statistics` (hoy recuentan mensaje a mensaje sobre `*_sendStatus`), unificación
-> de `sendDetail` a tabla única, y contadores atómicos (consecutivos, último admin) que
-> requieren migrar la PK.
+> **Fase 2 ✅ (jul 2026) — pre-agregación + sendDetail:**
+> - **Pre-agregación POR DEFECTO:** `Admin_Dashboard`/`Billing_Summary`/`Reports_Statistics`/
+>   `Portal_Bootstrap` leen el resumen `{customer}_sendSummary` O(1) por proceso (fallback al
+>   scan de ESE proceso si no hay resumen); los `ReceptionStatus` lo mantienen siempre (sin
+>   `SEND_SUMMARY_*`). Prepare-batch crea `sendSummary`/`sendState`.
+> - **`sendDetail` unificado** a `{customer}_sendDetail` (PK processId + SK sendDetailId).
+>
+> **Pendiente de Fase 2:** contadores atómicos (consecutivos, último admin) que requieren
+> migrar la PK.
 >
 > **Fase 3 ✅ (auth) + parte segura del pipeline:**
 > - **Hashing:** PBKDF2-HMAC-SHA256 (stdlib) con formato `pbkdf2$iter$hex`, verificación
@@ -455,13 +461,14 @@ mismo con `sendDetail`** → tabla `{customer}_sendDetail` con PK `processId` + 
 - [ ] Validar JWT dentro de las lambdas admin (segunda barrera).
 
 ### Fase 2 — Escalabilidad DynamoDB (P0 para crecer)
-- [ ] Crear los **GSIs** de la tabla §1.5 y reemplazar `scan`→`query`/`get_item`.
-- [ ] Convertir scans-sobre-PK en `get_item` (`Campaign_Update`, `Customer_Update/Detail`).
-- [ ] Pre-agregar contadores por proceso (ítem-resumen actualizado con `ADD` en ReceptionStatus)
-      y rehacer Dashboard/Billing/Statistics sobre ese resumen en vez de recontar mensajes.
-- [ ] Paginar todos los scans que aún queden (`LastEvaluatedKey`).
-- [ ] Unificar `sendDetail` a **tabla única** con PK `processId` (eliminar tabla-por-proceso).
-- [ ] Corregir el truncado de Billing (excluir clientes no computados, no mostrarlos en $0).
+- [x] **GSIs por defecto** (jul 2026): list-lambdas + Login por Query al GSI (sin `USE_GSI`,
+      sin fallback a Scan). **Falta `[J]`:** crear los 5 GSIs en AWS (ver DESPLIEGUE §2).
+- [x] Convertir scans-sobre-PK en `get_item` (`Campaign_Update`, `Customer_Update/Detail`).
+- [x] **Pre-agregación por defecto** (jul 2026): Dashboard/Billing/Statistics/Bootstrap leen el
+      resumen `{customer}_sendSummary` O(1); ReceptionStatus lo mantiene siempre.
+- [x] Paginar todos los scans que aún queden (`LastEvaluatedKey`).
+- [x] **`sendDetail` unificado** (jul 2026) a `{customer}_sendDetail` (PK processId + SK).
+- [x] Corregir el truncado de Billing (excluir clientes no computados, no mostrarlos en $0).
 
 ### Fase 3 — Hardening de auth y del pipeline
 - [ ] Migrar hashing a **bcrypt/argon2id** (rehash al login).

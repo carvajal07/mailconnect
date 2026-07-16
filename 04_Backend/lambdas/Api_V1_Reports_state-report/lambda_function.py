@@ -97,8 +97,8 @@ def _parse_iso_dt(s):
         return None
 
 def build_report(cliente: str, id_proceso: str, s3_bucket: str | None, s3_prefix: str | None):
-    table_detail_name = f"{cliente}_sendDetail_{id_proceso}"
-    # Tabla ÚNICA de estados (antes: una por proceso). Se consulta por processId.
+    # Tablas ÚNICAS del cliente (antes: una por proceso). Se consultan por processId.
+    table_detail_name = f"{cliente}_sendDetail"
     table_status_name = f"{cliente}_sendStatus"
     table_detail = _dynamo.Table(table_detail_name)
     table_status = _dynamo.Table(table_status_name)
@@ -132,11 +132,12 @@ def build_report(cliente: str, id_proceso: str, s3_bucket: str | None, s3_prefix
                 "type2": it.get("type2", ""),
             }
 
-    # 2) Leer sendDetail y unir por sendDetailId == messageId (solo si hay status más reciente)
+    # 2) Leer sendDetail del proceso (Query por processId, tabla única) y unir por
+    #    sendDetailId == messageId (solo si hay status más reciente)
     header = ["uniqueId", "email", "nombre", "date", "state", "state_desc", "type1", "type2"]
     rows = []
 
-    for it in _scan_all(table_detail):
+    for it in _query_process(table_detail, id_proceso):
         send_detail_id = it.get("sendDetailId") or it.get("SendDetailId")
         if not send_detail_id:
             continue
