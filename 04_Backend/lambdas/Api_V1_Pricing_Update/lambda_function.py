@@ -26,7 +26,22 @@ from botocore.exceptions import ClientError
 REGION = 'us-east-1'
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 table_rates = dynamodb.Table('pricingRate')
+table_customer = dynamodb.Table('customer')
 _audit_table = dynamodb.Table('adminAudit')
+
+
+def _company_name(customer_id):
+    """Nombre de empresa para el customerId (para la auditoría legible). 'Global' para '*';
+    si no se encuentra, cae al id (mejor mostrar algo que romper)."""
+    if not customer_id or customer_id == '*':
+        return 'Global'
+    try:
+        item = table_customer.get_item(Key={'customerId': customer_id}).get('Item')
+        if item and item.get('company'):
+            return item['company']
+    except Exception:
+        pass
+    return customer_id
 
 
 def _audit(event, action, target='', detail=''):
@@ -61,12 +76,21 @@ def _fmt_num(v):
 
 
 def _describe_changes(old_item, new_fields):
-    """'baseEM: 8 → 10, baseEAU: 15 → 18' comparando la fila anterior con lo escrito."""
+    """'baseEM: 8 → 10' — SOLO los campos que realmente cambiaron de valor (aunque el
+    front envíe todos los campos del canal, aquí se listan únicamente los modificados)."""
     old_item = old_item or {}
     parts = []
     for k, v in new_fields.items():
-        parts.append('{}: {} → {}'.format(k, _fmt_num(old_item.get(k)), _fmt_num(v)))
-    return ', '.join(parts)
+        old = old_item.get(k)
+        if old is not None:
+            try:
+                if Decimal(str(old)) == Decimal(str(v)):
+                    continue  # sin cambio real → no ensuciar la bitácora
+            except Exception:
+                if str(old) == str(v):
+                    continue
+        parts.append('{}: {} → {}'.format(k, _fmt_num(old), _fmt_num(v)))
+    return ', '.join(parts) if parts else 'sin cambios de valor'
 
 
 CHANNELS = ('EMAIL', 'SMS', 'WHATSAPP', 'VOICE')
@@ -178,8 +202,9 @@ def lambda_handler(event, context):
             touched = list(fields.keys())
             change_detail = _describe_changes(old_item, fields)
 
-        scope = 'global' if customer_id == '*' else 'cliente {}'.format(customer_id)
-        _audit(event, 'pricing.update', f'{customer_id}/{channel}',
+        company = _company_name(customer_id)
+        scope = 'global' if customer_id == '*' else 'cliente {}'.format(company)
+        _audit(event, 'pricing.update', '{} · {}'.format(company, channel),
                'Tarifa {} ({}) — {}'.format(channel, scope, change_detail))
         return {
             'status': True, 'statusCode': 200,

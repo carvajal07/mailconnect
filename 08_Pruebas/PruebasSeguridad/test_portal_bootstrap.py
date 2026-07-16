@@ -109,6 +109,30 @@ def test_bootstrap_sin_token_403(boot):
     assert resp['statusCode'] == 403
 
 
+def test_bootstrap_usa_gsi_de_campanas():
+    # Con USE_GSI=true y un GSI customerId-index en `campaign`, la carga usa Query (no Scan)
+    # y devuelve solo las campañas del cliente.
+    with mock_aws():
+        ddb = boto3.client('dynamodb', region_name='us-east-1')
+        ddb.create_table(
+            TableName='campaign',
+            KeySchema=[{'AttributeName': 'campaignId', 'KeyType': 'HASH'}],
+            AttributeDefinitions=[{'AttributeName': 'campaignId', 'AttributeType': 'S'},
+                                  {'AttributeName': 'customerId', 'AttributeType': 'S'}],
+            GlobalSecondaryIndexes=[{
+                'IndexName': 'customerId-index',
+                'KeySchema': [{'AttributeName': 'customerId', 'KeyType': 'HASH'}],
+                'Projection': {'ProjectionType': 'ALL'}}],
+            BillingMode='PAY_PER_REQUEST')
+        res = boto3.resource('dynamodb', region_name='us-east-1')
+        res.Table('campaign').put_item(Item={'campaignId': 'C1', 'customerId': 'CU1', 'campaignName': 'Mia', 'date': '2026-07-02'})
+        res.Table('campaign').put_item(Item={'campaignId': 'C2', 'customerId': 'CU2', 'campaignName': 'Ajena', 'date': '2026-07-01'})
+        mod = _load('Api_V1_Portal_Bootstrap')
+        mod.USE_GSI = True
+        items = mod._load_campaigns('CU1')
+        assert [c['campaignName'] for c in items] == ['Mia']   # solo CU1, vía Query al GSI
+
+
 def test_bootstrap_usa_resumen_pre_agregado(boot):
     # Con SEND_SUMMARY_READ activo y un resumen del proceso, las estadísticas salen
     # del resumen (O(1)) en vez del scan de estados.

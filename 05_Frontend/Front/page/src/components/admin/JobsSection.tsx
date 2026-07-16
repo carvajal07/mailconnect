@@ -22,9 +22,12 @@ import {
 import RefreshIcon from '@mui/icons-material/Refresh';
 import WorkHistoryIcon from '@mui/icons-material/WorkHistory';
 import BlockIcon from '@mui/icons-material/Block';
+import ReplayIcon from '@mui/icons-material/Replay';
 import { jobsService } from '../../services/jobsService';
 import type { JobRow, JobsData } from '../../services/jobsService';
 import { isOk } from '../../services/apiClient';
+import { useFeedback } from '../../hooks/useFeedback';
+import { useConfirm } from '../../hooks/useConfirm';
 
 const num = (n: number) => new Intl.NumberFormat('es-CO').format(n || 0);
 
@@ -63,11 +66,14 @@ const JobProgress = ({ job }: { job: JobRow }) => {
  * recientes (tabla `process`), con estado, progreso y bloqueos de la preparación.
  */
 export const JobsSection = () => {
+  const { notify, FeedbackSnackbar } = useFeedback();
+  const { confirm, ConfirmDialog } = useConfirm();
   const [month, setMonth] = useState('');
   const [state, setState] = useState('');
   const [data, setData] = useState<JobsData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [requeuing, setRequeuing] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,6 +87,33 @@ export const JobsSection = () => {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Un trabajo es "reintentable" si es un envío troceado (parts>0), no terminó y le faltan
+  // envíos. El backend reencola SOLO las partes pendientes (idempotente: no reduplica).
+  const canRetry = (j: JobRow) =>
+    (j.parts || 0) > 0 && j.processState !== 'Terminada' && (j.progress || 0) < 1;
+
+  const retry = async (j: JobRow) => {
+    const ok = await confirm({
+      title: 'Reintentar envío',
+      message: `Se reencolarán las partes pendientes de "${j.campaignName || j.processId}". ` +
+        `Es seguro: los envíos ya realizados no se repiten (solo se procesan las partes que faltan).`,
+      confirmText: 'Reintentar',
+      confirmColor: 'primary',
+    });
+    if (!ok) return;
+    setRequeuing(j.processId);
+    const res = await jobsService.requeue(j.processId);
+    setRequeuing(null);
+    if (isOk(res) && res.data) {
+      notify(res.data.requeued > 0
+        ? `Reencoladas ${res.data.requeued} parte(s) pendiente(s).`
+        : 'No había partes pendientes; el proceso ya está completo.', 'success');
+      load();
+    } else {
+      notify(res.description || 'No se pudo reintentar el proceso.', 'error');
+    }
+  };
 
   return (
     <Box>
@@ -136,14 +169,15 @@ export const JobsSection = () => {
               <TableCell>Progreso</TableCell>
               <TableCell align="center">Filtrados</TableCell>
               <TableCell>Fecha</TableCell>
+              <TableCell align="right">Acciones</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {loading && !data && (
-              <TableRow><TableCell colSpan={7} align="center" sx={{ py: 4 }}><CircularProgress size={26} /></TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} align="center" sx={{ py: 4 }}><CircularProgress size={26} /></TableCell></TableRow>
             )}
             {!loading && data && (data.jobs?.length ?? 0) === 0 && (
-              <TableRow><TableCell colSpan={7} align="center" sx={{ py: 4, color: 'text.secondary' }}>No hay trabajos en el periodo/estado seleccionado.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} align="center" sx={{ py: 4, color: 'text.secondary' }}>No hay trabajos en el periodo/estado seleccionado.</TableCell></TableRow>
             )}
             {(data?.jobs ?? []).map((j) => {
               const b = j.blocked ?? { blacklist: 0, unsubscribe: 0, invalid: 0 };
@@ -170,12 +204,31 @@ export const JobsSection = () => {
                     ) : '—'}
                   </TableCell>
                   <TableCell><Typography variant="caption">{j.date || '—'}</Typography></TableCell>
+                  <TableCell align="right">
+                    {canRetry(j) ? (
+                      <Tooltip title="Reencolar las partes pendientes de este envío">
+                        <span>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={requeuing === j.processId ? <CircularProgress size={14} /> : <ReplayIcon />}
+                            disabled={requeuing === j.processId}
+                            onClick={() => retry(j)}
+                          >
+                            Reintentar
+                          </Button>
+                        </span>
+                      </Tooltip>
+                    ) : '—'}
+                  </TableCell>
                 </TableRow>
               );
             })}
           </TableBody>
         </Table>
       </TableContainer>
+      {FeedbackSnackbar}
+      {ConfirmDialog}
     </Box>
   );
 };

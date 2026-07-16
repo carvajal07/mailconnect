@@ -18,7 +18,6 @@ export const AUTH_ENDPOINTS = {
   LOGIN: '/Security/Login',
   REGISTER: '/Security/Register',
   LOGOUT: '/Security/Logout',
-  VERIFY_CODE: '/Security/Verify-code',
   ACCOUNT_ACTIVATION: '/Security/Acount-activation',
   FORGOT_PASSWORD: '/Security/Recovery-password',
   CHANGE_PASSWORD: '/Security/Change-password',

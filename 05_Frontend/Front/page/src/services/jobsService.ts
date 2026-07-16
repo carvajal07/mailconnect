@@ -12,7 +12,17 @@ import type { ApiResponse } from './apiClient';
 
 export const JOBS_ENDPOINTS = {
   LIST: '/Admin/Jobs',
+  REQUEUE: '/Admin/Requeue',
 };
+
+/** Resultado del reintento/reencolado de un proceso atascado. */
+export interface RequeueData {
+  processId: string;
+  parts: number;
+  done: number;
+  requeued: number;
+  pendingParts: number[];
+}
 
 export interface JobRow {
   processId: string;
@@ -44,4 +54,8 @@ export const jobsService = {
       ...(month ? { month } : {}),
       ...(state ? { state } : {}),
     }),
+
+  /** Reencola SOLO las partes pendientes de un proceso atascado (idempotente). */
+  requeue: (processId: string): Promise<ApiResponse<RequeueData>> =>
+    apiPost(JOBS_ENDPOINTS.REQUEUE, { processId }),
 };

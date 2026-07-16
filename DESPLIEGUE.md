@@ -100,10 +100,26 @@ el "cuenta nueva → apply → todo".
 | `pricingRate` | `customerId` (S) | `channel` (S) | `customerId='*'` = tarifa global. La usan estimador, Pricing_* y Billing. |
 | `platformConfig` | `configKey` (S) | — | `Config_Set` la crea sola si falta, pero mejor provisionarla. |
 | `adminAudit` | `auditId` (S) | — | Bitácora de auditoría. Si no existe, el lector devuelve vacío y los escritores no rompen. |
+| `messageIndex` | `messageId` (S) | — | Índice `messageId → {customer, processId, uniqueId}` que escribe `Wsp_Send-batch` y lee `Wsp_ReceptionStatus` (los recibos de Meta solo traen el messageId). |
+| `campaignCounter` | `customerId` (S) | — | Contador ATÓMICO del consecutivo por cliente (evita consecutivos duplicados en creaciones concurrentes). `Create-campaign` lo siembra desde el valor legado. |
 
 - [ ] `[J]` Crear `pricingRate` (PK `customerId` + SK `channel`).
 - [ ] `[J]` Crear `platformConfig` (PK `configKey`).
 - [ ] `[J]` Crear `adminAudit` (PK `auditId`).
+- [ ] `[J]` Crear `messageIndex` (PK `messageId`) — para los estados de entrega de WhatsApp.
+- [ ] `[J]` Crear `campaignCounter` (PK `customerId`) — consecutivo atómico. Sin ella,
+  `Create-campaign` cae al método legado (con su carrera); con ella, no hay duplicados.
+
+### GSI `customerId-index` (para pasar scans a queries)
+
+| Tabla | Índice | PK del índice | Lo usa |
+|-------|--------|---------------|--------|
+| `campaign` | `customerId-index` | `customerId` (S) | `Campaign_List` y `Portal_Bootstrap` cuando `USE_GSI=true` |
+
+- [ ] `[J]` Crear el GSI **`customerId-index`** (PK `customerId`) en `campaign` (Projection ALL).
+- [ ] `[J]` Poner `USE_GSI=true` en `Api_V1_Campaign_List` y `Api_V1_Portal_Bootstrap` (y opcional
+  `GSI_CUSTOMER_INDEX` si el índice tiene otro nombre). Sin el índice/env, ambas caen a Scan
+  paginado (correcto, solo más costoso) — así se puede desplegar el código antes que el índice.
 
 > Todas en modo **On-Demand (PAY_PER_REQUEST)** salvo que prefieras capacidad provisionada.
 
@@ -118,7 +134,7 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 | Lambda | Ruta | Permisos IAM (DynamoDB salvo nota) |
 |--------|------|-----------------------------------|
 | `Api_V1_Pricing_List` | `/Pricing/List` | `GetItem` sobre `pricingRate` |
-| `Api_V1_Pricing_Update` | `/Pricing/Update` | `UpdateItem` sobre `pricingRate`; `PutItem` sobre `adminAudit` |
+| `Api_V1_Pricing_Update` | `/Pricing/Update` | `UpdateItem`/`GetItem` sobre `pricingRate`; `GetItem` sobre `customer` (nombre de empresa en la auditoría); `PutItem` sobre `adminAudit` |
 | `Api_V1_Customer_Detail` | `/Customer/Detail` | `Scan` sobre `customer`, `user`, `userData` |
 | `Api_V1_User_SetRole` | `/User/SetRole` | `GetItem`/`UpdateItem`/`Scan` sobre `user`; `PutItem` sobre `adminAudit` |
 | `Api_V1_Billing_Summary` | `/Billing/Summary` | `Scan` sobre `customer`/`campaign`/`process`; `Query` sobre `*_sendStatus`; `GetItem` sobre `pricingRate` |
@@ -128,9 +144,15 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 | `Api_V1_Config_Set` | `/Config/Set` | `PutItem`/`CreateTable`/`DescribeTable` sobre `platformConfig`; `PutItem` sobre `adminAudit` |
 | `Api_V1_Admin_Audit` | `/Admin/Audit` | `Scan` sobre `adminAudit` |
 | `Api_V1_Admin_Campaigns` | `/Admin/Campaigns` | `Scan` sobre `campaign`/`customer` |
+| `Api_V1_Admin_Requeue` | `/Admin/Requeue` | `GetItem` sobre `process`; **`sqs:SendMessage`** sobre `Email_Prepare-batch-part`; `PutItem` sobre `adminAudit` |
 
-- [ ] `[J]` Crear las 11 funciones vacías + sus rutas + permisos de la tabla.
-- [ ] `[J]` Confirmar que el **Authorizer** está asignado a las 11 rutas.
+- [ ] `[J]` Crear las 12 funciones vacías + sus rutas + permisos de la tabla.
+- [ ] `[J]` Confirmar que el **Authorizer** está asignado a las 12 rutas.
+- [ ] `[J]` `Api_V1_Admin_Requeue` reencola las partes pendientes de un envío atascado
+  (botón "Reintentar" en Trabajos). Necesita `sqs:SendMessage` sobre la cola
+  `Email_Prepare-batch-part` y la env `URL_SQS_PREPARE_PART` (misma URL que usa Prepare-batch).
+  Solo funciona con procesos creados **después** de desplegar el Prepare-batch que guarda
+  `resumeCtx` (los anteriores devuelven 409 "sin contexto de reanudación").
 - [ ] `[J]` `Api_V1_Admin_Campaigns` es la vista **admin** de campañas de todos los clientes
   (columna de empresa + filtros en el panel). La ruta `/Admin/Campaigns` ya está en
   `infra/api/routes.json`, así que el workflow `deploy-api.yml` la crea sola.
@@ -158,11 +180,29 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 | `Api_V1_Security_Create-otp` | Lee `SENDER_EMAIL`/`OTP_EXPIRATION_MIN` de `platformConfig` | `GetItem` sobre `platformConfig` |
 | `Api_V1_Security_Recovery-password` | Lee `SENDER_EMAIL`/`OTP_EXPIRATION_MIN` de `platformConfig` | `GetItem` sobre `platformConfig` |
 | `Api_V1_Security_Login` | Auditoría de **seguridad** (`security.login` intentos/fallos + `security.token`) | `PutItem` sobre `adminAudit` |
-| `Api_V1_Campaign_Create-campaign` | Auditoría `campaign.create` | `PutItem` sobre `adminAudit` |
+| `Api_V1_Campaign_Create-campaign` | Auditoría `campaign.create`; **consecutivo atómico** (contador por cliente) | `PutItem` sobre `adminAudit`; `PutItem`/`UpdateItem` sobre `campaignCounter` |
 | `Api_V1_Template_Create-template` | Auditoría `template.create` (además del `templateAudit` existente) | `PutItem` sobre `adminAudit` |
 | `Api_V1_MessageTemplate_Create` | Auditoría `messageTemplate.create`/`.update` | `PutItem` sobre `adminAudit` |
-| `Api_V1_Email_Prepare-batch-template` | Auditoría `send.samples` / `send.real` (quién envió) | `PutItem` sobre `adminAudit` |
+| `Api_V1_Email_Prepare-batch-template` | Auditoría `send.samples`/`send.real`; guarda `resumeCtx` para reintentar; scans de `customer` por PK → GetItem | `PutItem` sobre `adminAudit`; `UpdateItem` sobre `process` (resumeCtx) |
+| `Api_V1_Email_Send-batch-template-EAP` | Rellena `{{unsubscribeUrl}}` + headers List-Unsubscribe | env **`SECRET_KEY`** y `UNSUBSCRIBE_URL` |
+| `Api_V1_Security_Login` | `select_client`/`select_name`/email → GetItem/Query (GSI opcional) | env opcional **`USER_EMAIL_GSI`** (+ crear el GSI `email` en `user`) |
+| `Api_V1_Cost_Estimate` | Toma el `customerId` del Authorizer, no del body | — (sin permisos nuevos) |
+| `Api_V1_Portal_Bootstrap` | Campañas por GSI `customerId-index` si `USE_GSI` (fallback Scan) | env opcional **`USE_GSI`** (+ GSI en `campaign`) |
+| `Api_V1_Campaign_List` | Campañas por GSI `customerId-index` si `USE_GSI` (ya existía) | env opcional **`USE_GSI`** (+ GSI en `campaign`) |
+| `Api_V1_Wsp_Send-batch` | Indexa `messageId → {customer, proceso}` para los recibos de Meta | `PutItem`/`BatchWriteItem` sobre `messageIndex` |
 | `Api_V1_Billing_Summary` | **3 scans totales** (no 1+2·C) + `sendSummary` O(1) opcional | `GetItem` sobre `*_sendSummary` (si `SEND_SUMMARY_READ`) |
+
+### Lambda nueva disparada por SNS (no es ruta de API Gateway)
+
+- **`Api_V1_Wsp_ReceptionStatus`** (crear la función vacía): procesa los recibos de entrega/
+  lectura de WhatsApp que **Meta** publica en la **SNS de End User Messaging Social**. Como el
+  recibo solo trae el `messageId`, ubica el cliente/proceso en `messageIndex` y escribe el
+  estado en `{customer}_sendStatus`.
+  - [ ] `[J]` Suscribir esta lambda a la **SNS de WhatsApp** (End User Messaging Social → event
+    destination). Permisos: `GetItem` sobre `messageIndex`; `PutItem` sobre `*_sendStatus`;
+    (si `SEND_SUMMARY_ENABLED`) `UpdateItem` sobre `*_sendState`/`*_sendSummary`.
+  - [ ] `[J]` Env `WSP_MESSAGE_INDEX` en `Wsp_Send-batch` y `Wsp_ReceptionStatus` solo si la
+    tabla no se llama `messageIndex`.
 
 > `Api_V1_User_SetRole`, `Api_V1_Pricing_Update` y `Api_V1_Config_Set` también escriben
 > auditoría (ahora más **descriptiva**: antes→después), pero ya están en §3 (son nuevas)
@@ -183,7 +223,28 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 - Proxy: si alguna ruta se pasa a proxy, la **lambda debe emitir** el header
   `Access-Control-Allow-Origin` en su respuesta (el "Enable CORS" solo añade el OPTIONS).
 
-- [ ] `[J]` Habilitar CORS en las 11 rutas nuevas.
+- [ ] `[J]` Habilitar CORS en las 12 rutas nuevas.
+
+---
+
+## 5c. IP del usuario en el login (aparece "unknown")
+
+La lambda `Api_V1_Security_Login` es **no-proxy**, así que API Gateway **no** le pasa
+`requestContext.identity.sourceIp` salvo que el **mapping template del login lo inyecte**.
+Por eso hoy la IP queda en `unknown` (en la sesión y en la auditoría de seguridad). El
+código ya sabe leerla si llega por el body (`ip`) o por `X-Forwarded-For`; falta el mapping.
+
+- [ ] `[J]` En el mapping template de la ruta de **login** (`application/json`), agregar la
+  IP al body. Ejemplo (ajusta a tu template actual):
+  ```vtl
+  #set($b = $input.path('$'))
+  {
+    "user": "$util.escapeJavaScript($b.user)",
+    "password": "$util.escapeJavaScript($b.password)",
+    "ip": "$context.identity.sourceIp"
+  }
+  ```
+  (Alternativa: pasar la ruta a **proxy**, donde `requestContext.identity.sourceIp` ya viene.)
 
 ---
 
@@ -270,20 +331,32 @@ domain** (`api.mailconnect.com.co/V1`): el CORS va en la API/stage detrás del d
 
 Lo que queda por hacer en el repo (no es despliegue):
 
-- [ ] **WhatsApp — ReceptionStatus:** los recibos de entrega/lectura vienen de **Meta**
-  (formato distinto, vía la SNS de `socialmessaging`). Falta el parser (mismo patrón que
-  `Api_V1_Messaging_ReceptionStatus` de SMS/Voz, otro formato de evento).
-- [ ] **EAP — variable de desuscripción:** el envío EAP aún no reemplaza `{{unsubscribeUrl}}`
-  por destinatario (EM y EAU sí). Mismo patrón que EAU (token HMAC + relleno por destinatario).
-- [ ] **Trabajos — reencolar:** hoy el monitor es solo lectura. Falta la acción de
-  reencolar/reintentar un proceso atascado (requiere permisos SQS + las URLs de las colas).
-- [ ] **`verify-code`:** sigue como **stub** (el flujo real de OTP usa create/validate-otp).
-- [ ] **Fase 5 (Prepare-batch):** pasar los `scan` a `query`/índices y garantizar la
-  **unicidad de campaña** (índice) — última fase del refactor de Prepare-batch.
+- [x] **`verify-code` eliminado (jul 2026):** era un stub sin uso (el flujo real usa
+  create-otp/validate-otp + activación por enlace). Se borró la lambda y sus referencias
+  en el front (`authService.verifyCode`, `AUTH_ENDPOINTS.VERIFY_CODE`) y en `deploy-map`.
+- [~] **Fase 5 (Prepare-batch / scans→queries):** hecho lo de mayor impacto (scans de
+  `customer` por PK → GetItem; `Create-otp` por userId; login por email GSI-ready + scan
+  paginado; **campañas por GSI `customerId-index` en Campaign_List y Portal_Bootstrap**,
+  gated por `USE_GSI`; **consecutivo atómico de campañas** con `campaignCounter`).
+  **Falta (`[J]`):** crear los GSI (`campaign.customerId-index`, `user.email`) + tabla
+  `campaignCounter`, y activar los envs. (El consecutivo de PLANTILLAS `Template_Create-template`
+  tiene la misma carrera; se puede migrar igual si hace falta.)
 - [ ] **CI — build del frontend:** agregar `npm ci && npm run build` al workflow para
   atrapar regresiones de TypeScript en cada PR.
-- [ ] **(Opcional) Auditoría ampliada:** hoy audita realSend, rol, tarifas y config; se puede
-  extender a más acciones adoptando el helper `_audit`.
+- [x] **WhatsApp — ReceptionStatus (hecho jul 2026):** `Api_V1_Wsp_ReceptionStatus` procesa los
+  recibos de Meta (SNS de socialmessaging); `Wsp_Send-batch` indexa `messageId → cliente/proceso`
+  en `messageIndex` para poder ubicarlos. Estados WhatsApp: enviado/entregado/leído/fallido.
+- [x] **EAP — desuscripción (hecho jul 2026):** `Send-batch-template-EAP` ya rellena
+  `{{unsubscribeUrl}}` por destinatario (token HMAC) + headers List-Unsubscribe.
+- [x] **Trabajos — reencolar (hecho jul 2026):** `Api_V1_Admin_Requeue` reencola las partes
+  pendientes de un proceso atascado (idempotente); botón "Reintentar" en el tab Trabajos.
+- [x] **`Cost_Estimate` — tenant del token (hecho jul 2026):** toma el `customerId` del
+  Authorizer, no del body.
+- [x] **Auditoría ampliada (hecho jul 2026):** seguridad (login/token), creación de campañas y
+  plantillas, envíos (muestras/real); objetivos legibles (nombre/correo, no ids); tarifas con
+  solo el campo cambiado.
+- [x] **Timeouts admin (hecho jul 2026):** `Billing_Summary` (3 scans, no 1+2·C) y `Admin_Jobs`
+  (conteo O(1) por `sendSummary`); + `ErrorBoundary` global y render defensivo en el panel.
 
 ## 9. Pendiente de seguridad (compartido) `[J]`/`[C]`
 

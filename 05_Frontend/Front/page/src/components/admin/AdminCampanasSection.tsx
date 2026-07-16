@@ -68,12 +68,13 @@ export const AdminCampanasSection = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // El filtrado por mes/estado/cliente/canal lo hace el backend; la búsqueda por texto
-  // (nombre de campaña o empresa) es local para respuesta inmediata.
+  // La lista se trae UNA vez (o al refrescar); TODO el filtrado (mes/estado/cliente/canal/
+  // búsqueda) es LOCAL para respuesta inmediata. Antes cada cambio de filtro re-escaneaba
+  // las tablas en el backend, lo cual es innecesario para una lista acotada.
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
-    const res = await adminCampaignsService.list({ month, state, customerId, channel });
+    const res = await adminCampaignsService.list();
     setLoading(false);
     if (isOk(res) && res.data) {
       setRows(res.data.campaigns ?? []);
@@ -83,7 +84,7 @@ export const AdminCampanasSection = () => {
       setRows([]);
       setError(res.description || 'No se pudieron cargar las campañas.');
     }
-  }, [month, state, customerId, channel]);
+  }, []);
 
   useEffect(() => {
     load();
@@ -91,13 +92,15 @@ export const AdminCampanasSection = () => {
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (r) =>
-        (r.campaignName || '').toLowerCase().includes(q) ||
-        (r.company || '').toLowerCase().includes(q),
-    );
-  }, [rows, search]);
+    return rows.filter((r) => {
+      if (month && !String(r.date || '').startsWith(month)) return false;
+      if (state && r.campaignState !== state) return false;
+      if (customerId && r.customerId !== customerId) return false;
+      if (channel && String(r.channel || '').toUpperCase() !== channel) return false;
+      if (q && !(`${r.campaignName || ''} ${r.company || ''}`.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [rows, month, state, customerId, channel, search]);
 
   return (
     <Box>
@@ -188,7 +191,7 @@ export const AdminCampanasSection = () => {
 
       {!loading && rows.length > 0 && (
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          {visible.length} de {rows.length} campaña(s){search ? ' (filtradas por búsqueda)' : ''}.
+          {visible.length} de {rows.length} campaña(s){visible.length !== rows.length ? ' (filtradas)' : ''}.
         </Typography>
       )}
     </Box>
