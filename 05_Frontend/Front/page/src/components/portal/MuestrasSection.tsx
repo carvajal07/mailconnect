@@ -75,7 +75,7 @@ export const MuestrasSection = () => {
   const user = getUser();
   const { notify, FeedbackSnackbar } = useFeedback();
   // Saldo del monedero (precargado): gate del "Enviar campaña real" (cobro PREPAGO).
-  const { balance } = usePortalData();
+  const { balance, refreshBalance } = usePortalData();
   // Último estimado calculado (lo reporta CostEstimate): permite avisar y bloquear el
   // envío real si el saldo no alcanza (gate del front; el backend igual valida con 402).
   const [estimate, setEstimate] = useState<EstimateResult | null>(null);
@@ -233,6 +233,8 @@ export const MuestrasSection = () => {
     if (isOk(res)) {
       setEstado(l.id, 'enviada_real');
       notify(`Campaña "${l.campaign}" enviada. La base completa entró al proceso de envío.`, 'success');
+      // El envío real debitó el saldo: refréscalo para que el gate refleje el saldo nuevo.
+      refreshBalance();
     } else {
       notify(res.description || 'No se pudo iniciar el envío real de la campaña.', 'error');
     }
