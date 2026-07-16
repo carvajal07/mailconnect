@@ -15,6 +15,7 @@ import { Sidebar } from '../../components/admin/Sidebar';
 import { DashboardSection } from '../../components/admin/DashboardSection';
 import { ClientesSection } from '../../components/admin/ClientesSection';
 import { TarifasSection } from '../../components/admin/TarifasSection';
+import { SaldosSection } from '../../components/admin/SaldosSection';
 import { FacturacionSection } from '../../components/admin/FacturacionSection';
 import { JobsSection } from '../../components/admin/JobsSection';
 import { ConfiguracionSection } from '../../components/admin/ConfiguracionSection';
@@ -63,6 +64,8 @@ export const AdminPage = () => {
         return <ClientesSection />;
       case 'tarifas':
         return <TarifasSection />;
+      case 'saldos':
+        return <SaldosSection />;
       case 'facturacion':
         return <FacturacionSection />;
       case 'trabajos':

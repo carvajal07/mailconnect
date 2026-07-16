@@ -349,6 +349,11 @@ def test_admin_balances_lista_todos(wallet_env):
     assert resp['data']['totals']['balance'] == 30000
     # Orden: saldo más bajo primero (CU2=0 antes que CU1=30000).
     assert resp['data']['customers'][0]['customerId'] == 'CU2'
+    # Movimientos recientes del ledger (enriquecidos con la empresa).
+    recent = resp['data']['recentTransactions']
+    assert len(recent) == 1
+    assert recent[0]['customerId'] == 'CU1' and recent[0]['company'] == 'empresa'
+    assert recent[0]['type'] == 'topup_manual' and recent[0]['amount'] == 30000
     # No admin → 403.
     no_admin = {'body': {}, 'requestContext': {'authorizer': {'role': 'client'}}}
     assert admin.lambda_handler(no_admin, None)['statusCode'] == 403
