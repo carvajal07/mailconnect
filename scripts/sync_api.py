@@ -196,14 +196,27 @@ def apply(prefix, routes):
         gw.put_integration(**kwargs)
         if not r['proxy']:
             # Respuesta 200 de integración/método (no-proxy necesita method response).
-            _ensure_method_response(res_id, r['method'], '200')
+            # CORS: la respuesta REAL del POST también debe llevar Access-Control-Allow-Origin
+            # (no solo el OPTIONS/preflight), o el navegador bloquea la respuesta.
+            _ensure_method_response(res_id, r['method'], '200',
+                                    headers=['Access-Control-Allow-Origin'])
+            cors = {'method.response.header.Access-Control-Allow-Origin': "'%s'" % CORS_ORIGIN}
             try:
                 gw.put_integration_response(restApiId=api_id, resourceId=res_id,
                                             httpMethod=r['method'], statusCode='200',
-                                            selectionPattern='')
+                                            selectionPattern='', responseParameters=cors)
             except ClientError as e:
                 if e.response['Error']['Code'] != 'ConflictException':
                     raise
+                # Ya existe: parchear para (re)poner el header CORS en la respuesta.
+                # 'add' crea el parámetro si no existe y lo reemplaza si ya está
+                # (la respuesta previa se creó SIN el header CORS, por eso no 'replace').
+                gw.update_integration_response(
+                    restApiId=api_id, resourceId=res_id, httpMethod=r['method'], statusCode='200',
+                    patchOperations=[{
+                        'op': 'add',
+                        'path': '/responseParameters/method.response.header.Access-Control-Allow-Origin',
+                        'value': "'%s'" % CORS_ORIGIN}])
 
     def _ensure_method_response(res_id, method, code, headers=None):
         params = {f'method.response.header.{h}': False for h in (headers or [])}
@@ -214,6 +227,20 @@ def apply(prefix, routes):
         except ClientError as e:
             if e.response['Error']['Code'] != 'ConflictException':
                 raise
+            # El method response ya existe: asegurar que declare los headers CORS
+            # (si no, la integration response no puede setearlos).
+            for h in (headers or []):
+                try:
+                    gw.update_method_response(
+                        restApiId=api_id, resourceId=res_id, httpMethod=method, statusCode=code,
+                        patchOperations=[{
+                            'op': 'add',
+                            'path': f'/responseParameters/method.response.header.{h}',
+                            'value': 'false'}])
+                except ClientError as e2:
+                    # Ya declarado (o no soporta 'add' porque existe): se ignora.
+                    if e2.response['Error']['Code'] not in ('ConflictException', 'BadRequestException'):
+                        raise
 
     def ensure_options_cors(res_id):
         h = 'method.response.header.Access-Control-Allow-'
