@@ -118,7 +118,7 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 | Lambda | Ruta | Permisos IAM (DynamoDB salvo nota) |
 |--------|------|-----------------------------------|
 | `Api_V1_Pricing_List` | `/Pricing/List` | `GetItem` sobre `pricingRate` |
-| `Api_V1_Pricing_Update` | `/Pricing/Update` | `UpdateItem` sobre `pricingRate`; `PutItem` sobre `adminAudit` |
+| `Api_V1_Pricing_Update` | `/Pricing/Update` | `UpdateItem`/`GetItem` sobre `pricingRate`; `GetItem` sobre `customer` (nombre de empresa en la auditoría); `PutItem` sobre `adminAudit` |
 | `Api_V1_Customer_Detail` | `/Customer/Detail` | `Scan` sobre `customer`, `user`, `userData` |
 | `Api_V1_User_SetRole` | `/User/SetRole` | `GetItem`/`UpdateItem`/`Scan` sobre `user`; `PutItem` sobre `adminAudit` |
 | `Api_V1_Billing_Summary` | `/Billing/Summary` | `Scan` sobre `customer`/`campaign`/`process`; `Query` sobre `*_sendStatus`; `GetItem` sobre `pricingRate` |
@@ -184,6 +184,27 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
   `Access-Control-Allow-Origin` en su respuesta (el "Enable CORS" solo añade el OPTIONS).
 
 - [ ] `[J]` Habilitar CORS en las 11 rutas nuevas.
+
+---
+
+## 5c. IP del usuario en el login (aparece "unknown")
+
+La lambda `Api_V1_Security_Login` es **no-proxy**, así que API Gateway **no** le pasa
+`requestContext.identity.sourceIp` salvo que el **mapping template del login lo inyecte**.
+Por eso hoy la IP queda en `unknown` (en la sesión y en la auditoría de seguridad). El
+código ya sabe leerla si llega por el body (`ip`) o por `X-Forwarded-For`; falta el mapping.
+
+- [ ] `[J]` En el mapping template de la ruta de **login** (`application/json`), agregar la
+  IP al body. Ejemplo (ajusta a tu template actual):
+  ```vtl
+  #set($b = $input.path('$'))
+  {
+    "user": "$util.escapeJavaScript($b.user)",
+    "password": "$util.escapeJavaScript($b.password)",
+    "ip": "$context.identity.sourceIp"
+  }
+  ```
+  (Alternativa: pasar la ruta a **proxy**, donde `requestContext.identity.sourceIp` ya viene.)
 
 ---
 

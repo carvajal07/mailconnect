@@ -97,19 +97,35 @@ def generate_jwt(username, customer_id="", customer="", user_id="", role="client
     return token
 
 def _client_info(event):
-    """Extrae IP y user-agent del evento (soporta proxy y no-proxy)."""
+    """Extrae IP y user-agent del evento (soporta proxy y no-proxy).
+
+    En integración NO-PROXY (como esta lambda), API Gateway NO incluye
+    requestContext.identity.sourceIp a menos que el mapping template lo inyecte. Por eso,
+    además del caso proxy, se busca la IP en:
+      - el body (campo 'ip'/'sourceIp' que el mapping puede rellenar con
+        $context.identity.sourceIp), y
+      - el header 'X-Forwarded-For' (si el mapping reenvía los headers).
+    Si nada de eso llega, queda 'unknown' (ver DESPLIEGUE.md → inyectar la IP en el
+    mapping template del login).
+    """
     ip = "unknown"
     device = "unknown"
     if isinstance(event, dict):
         rc = event.get('requestContext') or {}
         identity = rc.get('identity') or {}
         ip = identity.get('sourceIp') or ip
+        # No-proxy: el mapping template puede inyectar la IP en el body.
+        if ip == "unknown":
+            ip = event.get('ip') or event.get('sourceIp') or ip
         headers = event.get('headers') or {}
-        # Los headers pueden venir con distinta capitalización
+        # Los headers pueden venir con distinta capitalización.
         for k, v in headers.items():
-            if str(k).lower() == 'user-agent' and v:
+            lk = str(k).lower()
+            if lk == 'user-agent' and v:
                 device = v
-                break
+            elif ip == "unknown" and lk == 'x-forwarded-for' and v:
+                # X-Forwarded-For puede traer varias IPs; la primera es el cliente.
+                ip = str(v).split(',')[0].strip()
     return ip, device
 
 
