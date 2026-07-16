@@ -4,6 +4,7 @@ import uuid
 import boto3
 from datetime import datetime, timedelta
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 
 
 # Configurar el cliente de DynamoDB
@@ -14,6 +15,9 @@ ses_client = boto3.client('ses', region_name='us-east-2')
 
 table_customer = dynamodb.Table('customer')
 tabla_consecutive = dynamodb.Table('campaignControl')
+# Contador ATÓMICO por cliente para el consecutivo (PK customerId). Garantiza que dos
+# creaciones concurrentes NO obtengan el mismo número (ver next_consecutive).
+table_counter = dynamodb.Table('campaignCounter')
 table_campaign = dynamodb.Table('campaign')
 table_channel = dynamodb.Table('channel')
 table_document = dynamodb.Table('document')
@@ -107,6 +111,60 @@ def update_consecutive(customerId,consecutive):
             ReturnValues='UPDATED_NEW'
         )
         print(responseUpdateConsecutive['Attributes'])
+
+
+def _legacy_next_consecutive(customerId):
+    """Fallback SIN contador atómico (tabla campaignCounter no provisionada): el viejo
+    lee-incrementa-escribe sobre campaignControl. Mantiene la carrera conocida, pero deja
+    operar antes de crear campaignCounter (deploy flexible)."""
+    consecutive = consult_consecutive(customerId)
+    update_consecutive(customerId, consecutive)
+    return consecutive
+
+
+def _seed_counter_if_absent(customerId):
+    """Siembra el contador del cliente, la PRIMERA vez, desde el valor legado de
+    campaignControl, para NO colisionar con las campañas ya creadas. Condicional
+    (attribute_not_exists): si el contador ya existe no lo toca; ante concurrencia solo un
+    put gana y el resto ve ConditionalCheckFailed (comportamiento correcto)."""
+    item = _find_control(customerId, 'numeration')
+    legacy = 0
+    if item:
+        try:
+            legacy = int(item.get('numeration', 0))
+        except (TypeError, ValueError):
+            legacy = 0
+    try:
+        table_counter.put_item(
+            Item={'customerId': customerId, 'numeration': legacy},
+            ConditionExpression='attribute_not_exists(customerId)')
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
+            raise  # el ResourceNotFound (tabla ausente) sube y lo maneja next_consecutive
+
+
+def next_consecutive(customerId):
+    """Siguiente consecutivo del cliente de forma ATÓMICA (sin carrera).
+
+    Usa un contador por cliente (campaignCounter, PK customerId) con `ADD numeration :1`,
+    operación que DynamoDB serializa a nivel de ítem: dos creaciones concurrentes obtienen
+    números DISTINTOS → no hay consecutivos duplicados (unicidad garantizada). El número
+    devuelto ya quedó PERSISTIDO (no hay que reescribirlo). Si la tabla del contador aún no
+    existe, cae al método legado (con su carrera) para no romper la creación."""
+    try:
+        _seed_counter_if_absent(customerId)
+        resp = table_counter.update_item(
+            Key={'customerId': customerId},
+            UpdateExpression='ADD numeration :one',
+            ExpressionAttributeValues={':one': 1},
+            ReturnValues='UPDATED_NEW')
+        return str(int(resp['Attributes']['numeration'])).zfill(4)
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            print('campaignCounter no existe; se usa el consecutivo legado (con carrera).')
+            return _legacy_next_consecutive(customerId)
+        raise
+
 
 def insert_campaign(customerId,campaignName,numeration,channel,dataPath,template,source,date,documentFormat=None):
     campaignId = str(uuid.uuid4())
@@ -243,11 +301,11 @@ def lambda_handler(event, context):
     else:
         if validData:            
             while(status):
-                #Consultar el consecutivo de la comunicacion para el cliente especificado
+                #Consecutivo ATÓMICO del cliente (sin carrera; ya queda persistido).
                 try:
-                    consecutive = consult_consecutive(customerId)
+                    consecutive = next_consecutive(customerId)
                 except:
-                    status = False                    
+                    status = False
                     statusCode = 404
                     description = "Error consultando el consecutivo en la tabla campaignControl"
                     break
@@ -274,14 +332,8 @@ def lambda_handler(event, context):
                     break
                 '''
 
-                #Actualizar la informacion del consecutivo de campañas
-                try:
-                    update_consecutive(customerId,consecutive)
-                except:
-                    status = False
-                    statusCode = 404
-                    description = "Error actualizando el consecutivo en la tabla campaignControl"
-                    break
+                # (El consecutivo ya se persistió atómicamente en next_consecutive; ya no
+                #  hay un paso separado de "actualizar" — eso era lo que abría la carrera.)
 
                 #Insertar la informacion de la campaña
                 try:

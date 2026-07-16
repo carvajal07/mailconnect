@@ -8,7 +8,6 @@
   "Api_V1_Security_Create-otp": "Api_V1_Security_Create-otp",
   "Api_V1_Security_Validate-otp": "Api_V1_Security_Validate-otp",
   "Api_V1_Security_Recovery-password": "Api_V1_Security_Recovery-password",
-  "Api_V1_Security_Verify-code": "Api_V1_Security_Verify-code",
   "Api_V1_Security_Refresh-token": "Api_V1_Security_Refresh-token",
   "Authorizer": "Authorizer",
   "Authorizer2": "Authorizer2",

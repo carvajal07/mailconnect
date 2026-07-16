@@ -75,7 +75,6 @@ Corrige la tabla del README (que marca varias como TODO):
 | `Create-otp` | `POST /api/create-otp` | ✅ Implementado |
 | `Validate-otp` | `POST /api/validate-otp` | ✅ Implementado |
 | `Recovery-password` | `POST /api/forgot-password` | ✅ Implementado (genera y envía OTP; respuesta genérica) |
-| `Verify-code` | `POST /api/verify-code` | ⚠️ **Stub** |
 | `Refresh-token` | `POST /api/token/refresh` | ✅ Implementado (renueva el JWT con los mismos claims) |
 | `Authorizer` / `Authorizer2` | (Lambda Authorizer) | ✅ Valida el JWT (HS256) con `SECRET_KEY`; deniega por defecto |
 
@@ -566,7 +565,8 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
 - [x] `change-password`, `logout`, `create-otp`, `validate-otp`, `account-activation`.
 - [x] Implementar `/forgot-password` como wrapper que crea y envía el OTP (con respuesta
       genérica anti-enumeración). `change-password` ahora valida la clave antes de consumir el OTP.
-- [ ] Implementar `verify-code` y `token/refresh` (hoy stubs).
+- [x] `token/refresh` implementado. **`verify-code` eliminado** (era un stub sin uso; el flujo
+      de verificación real usa create-otp/validate-otp y la activación por enlace).
 - [x] Endurecer el `Authorizer` (y `Authorizer2`) para que **valide el JWT** (HS256) con
       `SECRET_KEY`, soportando autorizadores TOKEN y REQUEST, y denegando por defecto.
 - [x] `SECRET_KEY` se lee desde variable de entorno (`Login` + lambdas nuevas + Authorizers).

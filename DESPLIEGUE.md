@@ -101,11 +101,14 @@ el "cuenta nueva → apply → todo".
 | `platformConfig` | `configKey` (S) | — | `Config_Set` la crea sola si falta, pero mejor provisionarla. |
 | `adminAudit` | `auditId` (S) | — | Bitácora de auditoría. Si no existe, el lector devuelve vacío y los escritores no rompen. |
 | `messageIndex` | `messageId` (S) | — | Índice `messageId → {customer, processId, uniqueId}` que escribe `Wsp_Send-batch` y lee `Wsp_ReceptionStatus` (los recibos de Meta solo traen el messageId). |
+| `campaignCounter` | `customerId` (S) | — | Contador ATÓMICO del consecutivo por cliente (evita consecutivos duplicados en creaciones concurrentes). `Create-campaign` lo siembra desde el valor legado. |
 
 - [ ] `[J]` Crear `pricingRate` (PK `customerId` + SK `channel`).
 - [ ] `[J]` Crear `platformConfig` (PK `configKey`).
 - [ ] `[J]` Crear `adminAudit` (PK `auditId`).
 - [ ] `[J]` Crear `messageIndex` (PK `messageId`) — para los estados de entrega de WhatsApp.
+- [ ] `[J]` Crear `campaignCounter` (PK `customerId`) — consecutivo atómico. Sin ella,
+  `Create-campaign` cae al método legado (con su carrera); con ella, no hay duplicados.
 
 ### GSI `customerId-index` (para pasar scans a queries)
 
@@ -177,7 +180,7 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 | `Api_V1_Security_Create-otp` | Lee `SENDER_EMAIL`/`OTP_EXPIRATION_MIN` de `platformConfig` | `GetItem` sobre `platformConfig` |
 | `Api_V1_Security_Recovery-password` | Lee `SENDER_EMAIL`/`OTP_EXPIRATION_MIN` de `platformConfig` | `GetItem` sobre `platformConfig` |
 | `Api_V1_Security_Login` | Auditoría de **seguridad** (`security.login` intentos/fallos + `security.token`) | `PutItem` sobre `adminAudit` |
-| `Api_V1_Campaign_Create-campaign` | Auditoría `campaign.create` | `PutItem` sobre `adminAudit` |
+| `Api_V1_Campaign_Create-campaign` | Auditoría `campaign.create`; **consecutivo atómico** (contador por cliente) | `PutItem` sobre `adminAudit`; `PutItem`/`UpdateItem` sobre `campaignCounter` |
 | `Api_V1_Template_Create-template` | Auditoría `template.create` (además del `templateAudit` existente) | `PutItem` sobre `adminAudit` |
 | `Api_V1_MessageTemplate_Create` | Auditoría `messageTemplate.create`/`.update` | `PutItem` sobre `adminAudit` |
 | `Api_V1_Email_Prepare-batch-template` | Auditoría `send.samples`/`send.real`; guarda `resumeCtx` para reintentar; scans de `customer` por PK → GetItem | `PutItem` sobre `adminAudit`; `UpdateItem` sobre `process` (resumeCtx) |
@@ -328,12 +331,16 @@ domain** (`api.mailconnect.com.co/V1`): el CORS va en la API/stage detrás del d
 
 Lo que queda por hacer en el repo (no es despliegue):
 
-- [ ] **`verify-code`:** sigue como **stub** (el flujo real de OTP usa create/validate-otp).
+- [x] **`verify-code` eliminado (jul 2026):** era un stub sin uso (el flujo real usa
+  create-otp/validate-otp + activación por enlace). Se borró la lambda y sus referencias
+  en el front (`authService.verifyCode`, `AUTH_ENDPOINTS.VERIFY_CODE`) y en `deploy-map`.
 - [~] **Fase 5 (Prepare-batch / scans→queries):** hecho lo de mayor impacto (scans de
   `customer` por PK → GetItem; `Create-otp` por userId; login por email GSI-ready + scan
   paginado; **campañas por GSI `customerId-index` en Campaign_List y Portal_Bootstrap**,
-  gated por `USE_GSI`). **Falta (código):** el índice de **unicidad de campaña** (consecutivo).
-  **Falta (`[J]`):** crear los GSI (`campaign.customerId-index`, `user.email`) y activar los envs.
+  gated por `USE_GSI`; **consecutivo atómico de campañas** con `campaignCounter`).
+  **Falta (`[J]`):** crear los GSI (`campaign.customerId-index`, `user.email`) + tabla
+  `campaignCounter`, y activar los envs. (El consecutivo de PLANTILLAS `Template_Create-template`
+  tiene la misma carrera; se puede migrar igual si hace falta.)
 - [ ] **CI — build del frontend:** agregar `npm ci && npm run build` al workflow para
   atrapar regresiones de TypeScript en cada PR.
 - [x] **WhatsApp — ReceptionStatus (hecho jul 2026):** `Api_V1_Wsp_ReceptionStatus` procesa los

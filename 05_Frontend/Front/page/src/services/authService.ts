@@ -135,10 +135,6 @@ export const authService = {
     return post(AUTH_ENDPOINTS.REGISTER, payload);
   },
 
-  /** Verificación de la cuenta por código (activación). Backend pendiente. */
-  verifyCode: (user: string, code: number) =>
-    post(AUTH_ENDPOINTS.VERIFY_CODE, { user, code }),
-
   /**
    * Solicita el envío de un OTP de recuperación al correo del usuario.
    * Por seguridad el backend responde siempre 200 (no revela si el correo existe).
