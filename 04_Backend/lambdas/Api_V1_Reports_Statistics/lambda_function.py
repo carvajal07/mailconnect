@@ -22,6 +22,7 @@ Cómo se agregan las métricas:
 '''
 import json
 import os
+import re
 import boto3
 from decimal import Decimal
 from collections import defaultdict
@@ -32,6 +33,13 @@ REGION = 'us-east-1'
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 table_campaign = dynamodb.Table('campaign')
 table_process = dynamodb.Table('process')
+
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas por cliente ({tenant}_sendStatus,
+    _sendSummary). Igual que en Prepare-batch/buckets. Idempotente. OJO: el filtro del
+    scan de `process` sigue por customerName (nombre), no por esta llave."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 
 # Lee SIEMPRE (por defecto) el RESUMEN pre-agregado por proceso ({customer}_sendSummary)
 # en vez de escanear los estados de cada mensaje (O(1)). Si el proceso aún no tiene resumen
@@ -167,19 +175,19 @@ def _counts_from_states(states):
 
 
 def _resolve_tenant(event, payload):
-    """(customerId, customer) del token (Authorizer). Multi-tenant OBLIGATORIO:
-    el tenant nunca sale del body; si el context no llega, el handler deniega."""
-    # El tenant SIEMPRE sale del token (Authorizer); NUNCA del body. Si el context
-    # no llega (mapping template no desplegado), devuelve None -> el handler deniega.
+    """(customerId, customer, nit) del token (Authorizer). Multi-tenant OBLIGATORIO:
+    el tenant nunca sale del body; si el context no llega, el handler deniega. `customer`
+    (nombre) filtra el scan de `process`; `nit` (→ tenant_key) nombra las tablas por cliente."""
     a = _tenant_from_authorizer(event) or {}
-    return a.get('customerId'), a.get('customer')
+    return a.get('customerId'), a.get('customer'), a.get('nit')
 
 
 
 def lambda_handler(event, context):
     payload = _get_payload(event)
-    customer_id, customer = _resolve_tenant(event, payload)
+    customer_id, customer, nit = _resolve_tenant(event, payload)
     customer = (customer or '').strip()
+    tenant = tenant_key(nit)   # llave de {tenant}_sendStatus / _sendSummary
 
     if not customer_id or not customer:
         return {
@@ -218,7 +226,7 @@ def lambda_handler(event, context):
                 counts = None
                 # 1) Resumen pre-agregado (O(1)) — por defecto.
                 try:
-                    item = dynamodb.Table(f'{customer}_sendSummary').get_item(
+                    item = dynamodb.Table(f'{tenant}_sendSummary').get_item(
                         Key={'processId': process_id}).get('Item')
                 except Exception:
                     item = None
@@ -226,7 +234,7 @@ def lambda_handler(event, context):
                     counts = {k: _to_int(item.get(k, 0)) for k in _SUMMARY_FIELDS}
                 # 2) Fallback: agregación por scan de los estados de ESE proceso.
                 if counts is None:
-                    status_table = dynamodb.Table(f'{customer}_sendStatus')
+                    status_table = dynamodb.Table(f'{tenant}_sendStatus')
                     counts = _counts_from_states(_current_state_per_message(_query_process(status_table, process_id)))
                 for k in totals:
                     totals[k] += counts[k]

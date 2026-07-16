@@ -26,11 +26,17 @@ def _load():
     return m
 
 
+# La tabla de estados se nombra por NIT saneado (tenant_key). El envío pone el `nit` en el
+# Context de EUM; ReceptionStatus lo lee para ubicar la tabla del cliente.
+NIT = '900123456'
+TENANT = '900123456'   # tenant_key(NIT)
+
+
 @pytest.fixture
 def recep():
     with mock_aws():
         boto3.client('dynamodb', region_name='us-east-1').create_table(
-            TableName='empresa_sendStatus',
+            TableName=f'{TENANT}_sendStatus',
             KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'},
                        {'AttributeName': 'sendStatusId', 'KeyType': 'RANGE'}],
             AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'},
@@ -50,12 +56,12 @@ def _eum(event_type, message_id='MID-1'):
         'messageId': message_id,
         'destinationPhoneNumber': '+573001112233',
         'eventTimestamp': 1720000000000,
-        'context': {'customer': 'empresa', 'processId': 'P1', 'uniqueId': '100'},
+        'context': {'customer': 'empresa', 'nit': NIT, 'processId': 'P1', 'uniqueId': '100'},
     }
 
 
 def _items():
-    return boto3.resource('dynamodb', region_name='us-east-1').Table('empresa_sendStatus').scan()['Items']
+    return boto3.resource('dynamodb', region_name='us-east-1').Table(f'{TENANT}_sendStatus').scan()['Items']
 
 
 def test_sms_entregado_registra_estado_2(recep):

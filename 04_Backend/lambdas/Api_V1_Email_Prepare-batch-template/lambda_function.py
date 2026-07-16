@@ -73,9 +73,28 @@ CORS_HEADERS = {
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 
 
+def tenant_key(nit):
+    """Llave de tenant para nombres de recursos por cliente (tablas y buckets): el NIT
+    (companyTin) saneado a [a-z0-9] → DNS/DynamoDB-safe. UNIFICA el naming: las tablas
+    ({tenant_key}_sendStatus, _sendDetail, _blackList, …) y los buckets usan la MISMA
+    llave, en vez de mezclar nombre-de-empresa (tablas) con NIT (buckets). Es idempotente:
+    tenant_key(tenant_key(x)) == tenant_key(x)."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+
+
 def tenant_bucket(nit, doc_type):
-    clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
-    return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+    return '{}-{}-{}'.format(BUCKET_PREFIX, tenant_key(nit), doc_type)
+
+
+def require_tenant(nit):
+    """Llave de tenant (tenant_key) EXIGIENDO que exista. Un cliente sin NIT no puede
+    nombrar sus tablas por cliente: si se dejara vacío, TODOS los clientes sin NIT
+    compartirían la tabla '_sendStatus' (fuga entre tenants). Falla ruidosamente."""
+    key = tenant_key(nit)
+    if not key:
+        raise ValueError('El cliente no tiene NIT (companyTin); no se pueden nombrar sus '
+                         'recursos por cliente. Configure companyTin antes de enviar.')
+    return key
 
 
 def detect_delimiter(temp_file, default=DELIMITER):
@@ -115,7 +134,13 @@ class ProcessState:
         self.sms_body = ''       # texto SMS (solo canal SMS)
         self.wsp_template = ''   # nombre HSM (solo canal WSP)
         self.voice_message = ''  # texto TTS (solo canal VOZ)
-        self.nit = None          # NIT del cliente → define el bucket S3
+        self.nit = None          # NIT (companyTin) del cliente → llave de recursos por cliente
+
+    @property
+    def tenant(self):
+        """Llave de tenant (NIT saneado) para las tablas/buckets por cliente. Se deriva
+        del NIT: todas las tablas del cliente son {tenant}_sendStatus, _sendDetail, etc."""
+        return tenant_key(self.nit)
 
 
 # Configurar el cliente de DynamoDB
@@ -395,6 +420,9 @@ def insert_process(st:'ProcessState',campaign_name:str,user_id:str,registers_on_
         Item={
             'processId': st.process_id,
             'customerName': st.customer_name,
+            # NIT del cliente: permite a los lectores (p. ej. Admin/Jobs) construir la llave
+            # de las tablas por cliente ({tenant_key(nit)}_sendStatus) sin re-mapear el nombre.
+            'companyTin': str(st.nit or ''),
             'campaignName': campaign_name,
             'campaignId': st.campaign_id,
             'userId': user_id,
@@ -695,13 +723,14 @@ def check_and_create_table(table_name:str, id:str)->bool:
     return was_created
 
 
-def ensure_status_table(customer_name:str)->str:
-    """Crea (si no existe) la tabla ÚNICA de estados del cliente {customer}_sendStatus con
-    llave compuesta PK 'processId' + SK 'sendStatusId', y devuelve su nombre.
+def ensure_status_table(tenant:str)->str:
+    """Crea (si no existe) la tabla ÚNICA de estados del cliente {tenant}_sendStatus con
+    llave compuesta PK 'processId' + SK 'sendStatusId', y devuelve su nombre. `tenant` es la
+    llave por NIT (tenant_key), no el nombre de empresa.
 
-    Reemplaza al anti-patrón de una tabla por proceso ({customer}_sendStatus_{uuid}): ahora
+    Reemplaza al anti-patrón de una tabla por proceso ({tenant}_sendStatus_{uuid}): ahora
     hay UNA tabla por cliente y cada proceso es una partición (query por processId)."""
-    table_name = f'{customer_name}_sendStatus'
+    table_name = f'{tenant}_sendStatus'
     try:
         dynamodb.create_table(
             TableName=table_name,
@@ -723,12 +752,12 @@ def ensure_status_table(customer_name:str)->str:
     return table_name
 
 
-def ensure_detail_table(customer_name:str)->str:
-    """Crea (si no existe) la tabla ÚNICA de DETALLE del cliente {customer}_sendDetail con
+def ensure_detail_table(tenant:str)->str:
+    """Crea (si no existe) la tabla ÚNICA de DETALLE del cliente {tenant}_sendDetail con
     llave compuesta PK 'processId' + SK 'sendDetailId'. Reemplaza el anti-patrón de una tabla
-    por proceso ({customer}_sendDetail_{uuid}) → una sola tabla por cliente (query por
-    processId), consistente con {customer}_sendStatus."""
-    table_name = f'{customer_name}_sendDetail'
+    por proceso ({tenant}_sendDetail_{uuid}) → una sola tabla por cliente (query por
+    processId), consistente con {tenant}_sendStatus. `tenant` es la llave por NIT (tenant_key)."""
+    table_name = f'{tenant}_sendDetail'
     try:
         dynamodb.create_table(
             TableName=table_name,
@@ -747,17 +776,17 @@ def ensure_detail_table(customer_name:str)->str:
     return table_name
 
 
-def ensure_summary_tables(customer_name:str)->None:
+def ensure_summary_tables(tenant:str)->None:
     """Crea (si no existen) las tablas de PRE-AGREGACIÓN del cliente para que los reportes
-    lean O(1): {customer}_sendSummary (PK processId, contadores del embudo) y
-    {customer}_sendState (PK processId + SK messageId, estado actual por mensaje). Las llena
+    lean O(1): {tenant}_sendSummary (PK processId, contadores del embudo) y
+    {tenant}_sendState (PK processId + SK messageId, estado actual por mensaje). Las llena
     ReceptionStatus (bump_send_summary) al llegar cada evento. Best-effort: si no se pueden
-    crear, la recepción sigue y los reportes caen al scan por proceso."""
+    crear, la recepción sigue y los reportes caen al scan por proceso. `tenant` = tenant_key(NIT)."""
     for name, schema, attrs in (
-        (f'{customer_name}_sendSummary',
+        (f'{tenant}_sendSummary',
          [{'AttributeName': 'processId', 'KeyType': 'HASH'}],
          [{'AttributeName': 'processId', 'AttributeType': 'S'}]),
-        (f'{customer_name}_sendState',
+        (f'{tenant}_sendState',
          [{'AttributeName': 'processId', 'KeyType': 'HASH'},
           {'AttributeName': 'messageId', 'KeyType': 'RANGE'}],
          [{'AttributeName': 'processId', 'AttributeType': 'S'},
@@ -803,21 +832,21 @@ def _batch_get_emails(table_name:str, keys:list)->set:
         return set()
     return found
 
-def check_blacklist(customer_name:str, keys:list)->set:
+def check_blacklist(tenant:str, keys:list)->set:
     """
     Consulta los email en la lista negra del cliente. La tabla
-    '{customer}_blackList' se crea con PK 'email' (ReceptionStatus escribe
+    '{tenant}_blackList' se crea con PK 'email' (ReceptionStatus escribe
     compatible porque su Item incluye 'email'). Tablas viejas con PK
-    'blackListId' devuelven vacío sin interrumpir el envío.
+    'blackListId' devuelven vacío sin interrumpir el envío. `tenant` = tenant_key(NIT).
     """
-    return _batch_get_emails(f'{customer_name}_blackList', keys)
+    return _batch_get_emails(f'{tenant}_blackList', keys)
 
-def check_unsubscribes(customer_name:str, keys:list)->set:
+def check_unsubscribes(tenant:str, keys:list)->set:
     """
-    Consulta los email desuscritos del cliente. La tabla '{customer}_unsubscribe'
-    se crea con PK 'email' (igual que la escribe la lambda Unsubscribe).
+    Consulta los email desuscritos del cliente. La tabla '{tenant}_unsubscribe'
+    se crea con PK 'email' (igual que la escribe la lambda Unsubscribe). `tenant` = tenant_key(NIT).
     """
-    return _batch_get_emails(f'{customer_name}_unsubscribe', keys)
+    return _batch_get_emails(f'{tenant}_unsubscribe', keys)
 
 def insert_mails_status(st:'ProcessState',emails:list,state:str,description:str,id_prefix:str=None)->None:
     """
@@ -868,8 +897,8 @@ def insert_mails_status(st:'ProcessState',emails:list,state:str,description:str,
             'type2': description
         })
 
-    # Tabla ÚNICA de detalle del cliente (antes: una por proceso {customer}_sendDetail_{uuid}).
-    table_name_details = f'{st.customer_name}_sendDetail'
+    # Tabla ÚNICA de detalle del cliente (antes: una por proceso {tenant}_sendDetail_{uuid}).
+    table_name_details = f'{st.tenant}_sendDetail'
     table_details = dynamodb.Table(table_name_details)
 
     #Almacena en bufer la data para hacer el insert por batch y maneja internamente los reintentos de elementos no procesados
@@ -878,7 +907,7 @@ def insert_mails_status(st:'ProcessState',emails:list,state:str,description:str,
             batch.put_item(Item=item)
 
     # Tabla ÚNICA de estados del cliente (antes: una por proceso).
-    table_status = dynamodb.Table(f'{st.customer_name}_sendStatus')
+    table_status = dynamodb.Table(f'{st.tenant}_sendStatus')
     with table_status.batch_writer() as batch:
         for item in data_to_insert_send_status:
             batch.put_item(Item=item)
@@ -1373,6 +1402,7 @@ def procesar_parte(st, job, patron_email)->None:
     # Reconstruye el estado de la invocación desde el ctx que viaja en el trabajo.
     st.customer_id = job['customerId']
     st.customer_name = job['customerName']
+    st.nit = job.get('nit')   # llave de tablas por cliente (st.tenant) en el worker
     st.process_id = job['processId']
     st.campaign_id = job['campaignId']
     st.attachment = job.get('attachment', False)
@@ -1414,9 +1444,9 @@ def procesar_parte(st, job, patron_email)->None:
     blacklist_emails = set()
     unsubscribes_emails = set()
     if unsubscribe_existed:
-        unsubscribes_emails = check_unsubscribes(st.customer_name, keys)
+        unsubscribes_emails = check_unsubscribes(st.tenant, keys)
     if blacklist_existed:
-        blacklist_emails = check_blacklist(st.customer_name, keys)
+        blacklist_emails = check_blacklist(st.tenant, keys)
 
     # Encola al canal con parte ÚNICA (part_offset garantiza que no choque con otras partes).
     ctx = build_ctx(st)
@@ -1531,32 +1561,40 @@ def lambda_handler(event, context):
                 # Para Voz el campo 'template' guarda el TEXTO a leer por TTS.
                 st.voice_message = response_campaign['Items'][0].get("template", "") if channel_name == "VOZ" else ""
 
+                # Todas las tablas por cliente se nombran con la LLAVE POR NIT (st.tenant =
+                # tenant_key(companyTin)), igual que los buckets S3. Antes se usaba el nombre
+                # de empresa (inconsistente con los buckets); ahora tabla y bucket comparten llave.
+                # require_tenant falla si el cliente no tiene NIT (evita colisión entre tenants).
+                tenant = require_tenant(st.nit)
+
                 # Define los detalles de la tabla processDetail
-                check_and_create_table(f'{st.customer_name}_processDetail', 'processDetailId')
+                check_and_create_table(f'{tenant}_processDetail', 'processDetailId')
 
                 # Tabla de desuscritos: PK 'email' (así la escribe la lambda Unsubscribe y
                 # así la consulta check_unsubscribes). Si la tabla ya existía, hay que
                 # FILTRAR contra ella en el envío real.
-                unsubscribe_existed = not check_and_create_table(f'{st.customer_name}_unsubscribe', 'email')
+                unsubscribe_existed = not check_and_create_table(f'{tenant}_unsubscribe', 'email')
 
                 # Tabla de lista negra: PK 'email' (igual que unsubscribe), para que el
                 # filtrado por email de check_blacklist funcione directo. ReceptionStatus
                 # incluye 'email' en sus inserts, así que escribe compatible. Tablas viejas
                 # con PK 'blackListId' se ignoran con gracia (borrar y dejar que se recreen).
-                blacklist_existed = not check_and_create_table(f'{st.customer_name}_blackList', 'email')
+                blacklist_existed = not check_and_create_table(f'{tenant}_blackList', 'email')
 
                 #Estas tablas siempre se deben crear
                 # Tabla ÚNICA de detalle del cliente (PK processId + SK sendDetailId).
-                # Antes se creaba una tabla por proceso ({customer}_sendDetail_{uuid}).
-                ensure_detail_table(st.customer_name)
+                # Antes se creaba una tabla por proceso ({tenant}_sendDetail_{uuid}).
+                ensure_detail_table(tenant)
 
                 # Tabla ÚNICA de estados del cliente (PK processId + SK sendStatusId).
-                # Antes se creaba una tabla por proceso ({customer}_sendStatus_{uuid}).
-                ensure_status_table(st.customer_name)
+                # Antes se creaba una tabla por proceso ({tenant}_sendStatus_{uuid}).
+                ensure_status_table(tenant)
                 # Tablas de PRE-AGREGACIÓN (resumen O(1) para reportes). Se crean acá para
                 # que existan antes de que lleguen los eventos de recepción (best-effort).
-                ensure_summary_tables(st.customer_name)
+                ensure_summary_tables(tenant)
 
+                # OJO: el nombre de la PLANTILLA SES sigue por nombre de empresa (namespace
+                # SES, lo crea el builder del front con create-template) — NO es tabla/bucket.
                 st.template_name = f'{st.customer_name}_{consecutive}_{channel_name}_{campaign_name}'
 
                 print(f"Channel: {channel_name}")

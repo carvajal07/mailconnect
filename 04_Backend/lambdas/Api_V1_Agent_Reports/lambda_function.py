@@ -19,6 +19,7 @@ Parámetros de entrada requeridos (via event['parameters']):
   page              int  (opcional) Página para full_report (default 1)
   pageSize          int  (opcional) Registros por página en full_report (default 500, max 1000)
 '''
+import re
 import json
 import openpyxl
 from openpyxl.styles import Font, PatternFill
@@ -37,6 +38,33 @@ dynamodb = boto3.resource('dynamodb', region_name=REGION)
 
 table_campaign = dynamodb.Table("campaign")
 table_process = dynamodb.Table("process")
+
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas por cliente ({tenant}_sendStatus,
+    _sendDetail). Igual que en Prepare-batch/buckets. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+
+
+_TENANT_CACHE: Dict[str, str] = {}
+
+
+def resolve_tenant(customer_id: str, customer_name: str = '') -> str:
+    """Llave por NIT (tenant_key(companyTin)) del cliente para nombrar sus tablas. Cachea
+    por customerId; fallback al nombre saneado si el cliente no tuviera NIT."""
+    if customer_id in _TENANT_CACHE:
+        return _TENANT_CACHE[customer_id]
+    nit = ''
+    try:
+        item = dynamodb.Table('customer').get_item(
+            Key={'customerId': customer_id},
+            ProjectionExpression='companyTin').get('Item') or {}
+        nit = item.get('companyTin', '')
+    except Exception as exc:
+        print(f"[RESOLVE_TENANT] ⚠ {customer_id}: {exc}")
+    tenant = tenant_key(nit) or tenant_key(customer_name)
+    _TENANT_CACHE[customer_id] = tenant
+    return tenant
 
 # Mapeo de códigos numéricos a nombres legibles
 STATE_NAMES = {
@@ -180,10 +208,10 @@ def query_table_by_key(table: str, key_name: str, key_value: str,
         raise
 
 
-def query_status_by_process(customer_name: str, process_id: str) -> List[Dict]:
-    """Estados de UN proceso desde la tabla única {customer}_sendStatus (PK processId).
-    Reemplaza el scan de la antigua tabla-por-proceso {customer}_sendStatus_{proceso}."""
-    table = dynamodb.Table(f'{customer_name}_sendStatus')
+def query_status_by_process(tenant: str, process_id: str) -> List[Dict]:
+    """Estados de UN proceso desde la tabla única {tenant}_sendStatus (PK processId).
+    tenant=tenant_key(NIT). Reemplaza el scan de la antigua tabla-por-proceso."""
+    table = dynamodb.Table(f'{tenant}_sendStatus')
     items: List[Dict] = []
     kwargs = {'KeyConditionExpression': Key('processId').eq(process_id)}
     try:
@@ -195,15 +223,15 @@ def query_status_by_process(customer_name: str, process_id: str) -> List[Dict]:
                 break
             kwargs['ExclusiveStartKey'] = last_key
     except Exception as exc:
-        print(f"[QUERY_STATUS] ⚠ {customer_name}_sendStatus proceso {process_id}: {exc}")
+        print(f"[QUERY_STATUS] ⚠ {tenant}_sendStatus proceso {process_id}: {exc}")
     return items
 
 
-def query_detail_by_process(customer_name: str, process_id: str) -> List[Dict]:
-    """Detalle de UN proceso desde la tabla única {customer}_sendDetail (PK processId +
-    SK sendDetailId). Reemplaza el scan de la antigua tabla-por-proceso
-    {customer}_sendDetail_{proceso}. Pagina por LastEvaluatedKey."""
-    table = dynamodb.Table(f'{customer_name}_sendDetail')
+def query_detail_by_process(tenant: str, process_id: str) -> List[Dict]:
+    """Detalle de UN proceso desde la tabla única {tenant}_sendDetail (PK processId +
+    SK sendDetailId). tenant=tenant_key(NIT). Reemplaza el scan de la antigua
+    tabla-por-proceso. Pagina por LastEvaluatedKey."""
+    table = dynamodb.Table(f'{tenant}_sendDetail')
     items: List[Dict] = []
     kwargs = {'KeyConditionExpression': Key('processId').eq(process_id)}
     try:
@@ -215,7 +243,7 @@ def query_detail_by_process(customer_name: str, process_id: str) -> List[Dict]:
                 break
             kwargs['ExclusiveStartKey'] = last_key
     except Exception as exc:
-        print(f"[QUERY_DETAIL] ⚠ {customer_name}_sendDetail proceso {process_id}: {exc}")
+        print(f"[QUERY_DETAIL] ⚠ {tenant}_sendDetail proceso {process_id}: {exc}")
     return items
 
 
@@ -449,7 +477,7 @@ def collect_campaign_metrics(campaign_id: str, customer_name: str,
                 # Estados de este proceso desde la tabla única {customer}_sendStatus.
                 print(f"[COLLECT_METRICS] Consultando estados del proceso {process_id}")
                 try:
-                    status_records = query_status_by_process(customer_name, process_id)
+                    status_records = query_status_by_process(resolve_tenant(customer_id, customer_name), process_id)
                     print(f"[COLLECT_METRICS] {len(status_records)} registros de estado")
                     
                     current_states = get_current_state_per_message(status_records)
@@ -634,13 +662,13 @@ def report_full_records(campaign_id: str, customer_name: str, customer_id: str,
             try:
                 # Tabla ÚNICA de detalle: Query por processId (antes: scan de la tabla por proceso).
                 print(f"[REPORT_FULL_RECORDS] Consultando detalle del proceso {process_id}")
-                send_details = query_detail_by_process(customer_name, process_id)
+                send_details = query_detail_by_process(resolve_tenant(customer_id, customer_name), process_id)
                 print(f"[REPORT_FULL_RECORDS] {len(send_details)} detalles obtenidos")
 
                 # Estados de este proceso desde la tabla única {customer}_sendStatus.
                 try:
                     print(f"[REPORT_FULL_RECORDS] Consultando estados del proceso {process_id}")
-                    status_records = query_status_by_process(customer_name, process_id)
+                    status_records = query_status_by_process(resolve_tenant(customer_id, customer_name), process_id)
                     print(f"[REPORT_FULL_RECORDS] {len(status_records)} estados obtenidos")
                     
                     current_states = get_current_state_per_message(status_records)

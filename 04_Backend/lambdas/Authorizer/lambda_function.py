@@ -87,6 +87,9 @@ def lambda_handler(event, context):
         'user': str(user),
         'customerId': str(decoded.get('customerId', '') or ''),
         'customer': str(decoded.get('customer', '') or ''),
+        # NIT (companyTin): llave de los recursos por cliente (tablas/buckets). Las
+        # read-lambdas la usan para {tenant_key(nit)}_sendStatus, etc.
+        'nit': str(decoded.get('nit', '') or ''),
         'userId': str(decoded.get('userId', '') or ''),
         'role': str(decoded.get('role', 'client') or 'client'),
     }

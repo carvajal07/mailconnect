@@ -16,6 +16,7 @@ Códigos de estado (mismos que email):
   1 Enviado · 2 Entregado · 3 Rechazado/Fallido
 '''
 import os
+import re
 import json
 import uuid
 import boto3
@@ -27,6 +28,12 @@ dynamodb = boto3.resource('dynamodb', region_name=REGION)
 STATE_SENT = 1
 STATE_DELIVERED = 2
 STATE_REJECTED = 3
+
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas por cliente ({tenant}_sendStatus,
+    _sendState, _sendSummary). Igual que en Prepare-batch/buckets. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 
 # Mapeo de eventType de End User Messaging (SMS y Voz) a nuestros códigos de estado.
 EVENT_STATE = {
@@ -84,10 +91,10 @@ def _iter_events(event):
             yield msg
 
 
-def _record_status(customer_name, process_id, item):
-    # Tabla ÚNICA {customer}_sendStatus (PK processId + SK sendStatusId).
+def _record_status(tenant, process_id, item):
+    # Tabla ÚNICA {tenant}_sendStatus (PK processId + SK sendStatusId). tenant=tenant_key(NIT).
     item['processId'] = process_id
-    table = dynamodb.Table(f'{customer_name}_sendStatus')
+    table = dynamodb.Table(f'{tenant}_sendStatus')
     table.put_item(Item=item)
 
 
@@ -122,10 +129,10 @@ def _summary_milestones(state_num):
     return ms
 
 
-def bump_send_summary(customer_name, process_id, message_id, state):
+def bump_send_summary(tenant, process_id, message_id, state):
     '''Actualiza el resumen agregado del proceso ante un nuevo estado de un mensaje.
-    Idempotente y transición-consciente; best-effort (nunca lanza).'''
-    if not (customer_name and process_id and message_id):
+    Idempotente y transición-consciente; best-effort (nunca lanza). tenant=tenant_key(NIT).'''
+    if not (tenant and process_id and message_id):
         return
     try:
         new_state = int(state)
@@ -136,7 +143,7 @@ def bump_send_summary(customer_name, process_id, message_id, state):
     new_prio = _SUMMARY_PRIORITY.get(new_state, 0)
     try:
         # Avanza el estado del mensaje SOLO si el nuevo tiene mayor prioridad (atómico).
-        resp = dynamodb.Table('{}_sendState'.format(customer_name)).update_item(
+        resp = dynamodb.Table('{}_sendState'.format(tenant)).update_item(
             Key={'processId': process_id, 'messageId': message_id},
             UpdateExpression='SET #s = :s, #p = :p',
             ConditionExpression='attribute_not_exists(#p) OR #p < :p',
@@ -162,7 +169,7 @@ def bump_send_summary(customer_name, process_id, message_id, state):
         names['#m{0}'.format(i)] = m
         vals[':v{0}'.format(i)] = 1 if m in gained else -1
     try:
-        dynamodb.Table('{}_sendSummary'.format(customer_name)).update_item(
+        dynamodb.Table('{}_sendSummary'.format(tenant)).update_item(
             Key={'processId': process_id},
             UpdateExpression='ADD ' + ', '.join(parts),
             ExpressionAttributeNames=names,
@@ -182,10 +189,12 @@ def lambda_handler(event, context):
 
         ctx = ev.get('context') or ev.get('Context') or {}
         customer_name = ctx.get('customer', '')
+        # Llave de las tablas por cliente: el `nit` (tenant_key) que puso el envío en el Context.
+        tenant = tenant_key(ctx.get('nit', '')) or tenant_key(customer_name)
         process_id = ctx.get('processId', '')
         unique_id = ctx.get('uniqueId', '')
-        if not customer_name or not process_id:
-            print('Evento EUM sin customer/processId en el context; se omite.')
+        if not tenant or not process_id:
+            print('Evento EUM sin nit/processId en el context; se omite.')
             continue
 
         message_id = ev.get('messageId') or ev.get('MessageId') or str(uuid.uuid4())
@@ -204,8 +213,8 @@ def lambda_handler(event, context):
             'type2': event_type,
         }
         try:
-            _record_status(customer_name, process_id, item)
-            bump_send_summary(customer_name, process_id, message_id, state)
+            _record_status(tenant, process_id, item)
+            bump_send_summary(tenant, process_id, message_id, state)
             procesados += 1
         except Exception as e:
             print('No se pudo registrar el estado EUM ({}): {}'.format(event_type, e))

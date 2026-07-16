@@ -16,6 +16,7 @@ Umbrales de reputación (referencia AWS SES, aplican sobre todo al correo):
   rebote   > 5%  = atención · > 10% = crítico
   queja    > 0.1% = atención · > 0.5% = crítico
 '''
+import re
 import json
 import boto3
 from decimal import Decimal
@@ -28,6 +29,13 @@ REGION = 'us-east-1'
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 table_customer = dynamodb.Table('customer')
 table_campaign = dynamodb.Table('campaign')
+
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas por cliente ({tenant}_sendStatus,
+    _sendSummary). Igual que en Prepare-batch/buckets. Idempotente. OJO: el filtro del scan
+    de `process` sigue por customerName (nombre), no por esta llave."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 table_process = dynamodb.Table('process')
 
 MAX_PROCESSES = 500  # tope global de procesos agregados por llamada
@@ -146,18 +154,19 @@ _SUMMARY_MAP = {'sent': 'enviados', 'delivered': 'entregados', 'opened': 'abiert
                 'clicked': 'clics', 'bounces': 'rebotes', 'complaints': 'quejas'}
 
 
-def _counts_for_process(company, process_id):
+def _counts_for_process(tenant, process_id):
     """Contadores del proceso: RESUMEN pre-agregado (O(1)) por defecto; si el proceso no
-    tiene resumen aún, agregación por Query de sus estados (acotada a ESE proceso)."""
+    tiene resumen aún, agregación por Query de sus estados (acotada a ESE proceso).
+    tenant=tenant_key(NIT): las tablas del cliente son {tenant}_sendSummary / _sendStatus."""
     try:
-        item = dynamodb.Table(f'{company}_sendSummary').get_item(
+        item = dynamodb.Table(f'{tenant}_sendSummary').get_item(
             Key={'processId': process_id}).get('Item')
     except Exception:
         item = None
     if item:
         return {dk: _to_int(item.get(sk, 0)) for dk, sk in _SUMMARY_MAP.items()}
     acc = {'sent': 0, 'delivered': 0, 'opened': 0, 'clicked': 0, 'bounces': 0, 'complaints': 0}
-    _accumulate(_states_of_process(dynamodb.Table(f'{company}_sendStatus'), process_id), acc)
+    _accumulate(_states_of_process(dynamodb.Table(f'{tenant}_sendStatus'), process_id), acc)
     return acc
 
 
@@ -195,6 +204,9 @@ def lambda_handler(event, context):
         for cust in customers:
             customer_id = cust.get('customerId')
             company = cust.get('company', '')
+            # Llave de las tablas por cliente (NIT saneado). El filtro de `process` es por
+            # customerName (nombre); las tablas de estados/resumen son por NIT.
+            tenant = tenant_key(cust.get('companyTin', ''))
 
             campaigns = _scan_all(table_campaign, FilterExpression=Attr('customerId').eq(customer_id))
             if month:
@@ -225,7 +237,7 @@ def lambda_handler(event, context):
                     if not pid:
                         continue
                     budget -= 1
-                    counts = _counts_for_process(company, pid)
+                    counts = _counts_for_process(tenant, pid)
                     for k in camp_acc:
                         camp_acc[k] += counts[k]
 

@@ -44,25 +44,29 @@ def _pk_sk(name, pk, sk):
         BillingMode='PAY_PER_REQUEST')
 
 
+# La tabla de estados por cliente se nombra por NIT saneado (tenant_key). El proceso guarda
+# el companyTin (Prepare-batch lo escribe); Admin/Jobs lo usa como llave de {tenant}_sendStatus.
 @pytest.fixture
 def jobs():
     with mock_aws():
         _pk('campaign', 'campaignId')
         _pk('process', 'processId')
-        _pk_sk('Acme_sendStatus', 'processId', 'sendStatusId')
+        _pk('customer', 'customerId')
+        _pk_sk('111_sendStatus', 'processId', 'sendStatusId')   # Acme (companyTin 111)
         ddb = boto3.resource('dynamodb', region_name='us-east-1')
+        ddb.Table('customer').put_item(Item={'customerId': 'CU1', 'company': 'Acme', 'companyTin': '111'})
         ddb.Table('campaign').put_item(Item={'campaignId': 'CA1', 'campaignState': 'Enviando', 'channel': 'EM'})
         ddb.Table('campaign').put_item(Item={'campaignId': 'CA2', 'campaignState': 'Muestras', 'channel': 'SMS'})
         # Proceso real en curso (5 enviados de 10) con bloqueos.
         ddb.Table('process').put_item(Item={
-            'processId': 'P1', 'customerName': 'Acme', 'campaignId': 'CA1', 'campaignName': 'Julio',
+            'processId': 'P1', 'customerName': 'Acme', 'companyTin': '111', 'campaignId': 'CA1', 'campaignName': 'Julio',
             'processState': 'Procesando', 'registersToSend': 10, 'parts': 1,
             'quantityBlacklist': 2, 'quantityUnsubscribe': 1, 'quantityDeletions': 3, 'date': '2026-07-05'})
         # Proceso de muestras (mes distinto).
         ddb.Table('process').put_item(Item={
-            'processId': 'P2', 'customerName': 'Acme', 'campaignId': 'CA2', 'campaignName': 'Muestra',
+            'processId': 'P2', 'customerName': 'Acme', 'companyTin': '111', 'campaignId': 'CA2', 'campaignName': 'Muestra',
             'processState': 'Muestras', 'registersToSend': 3, 'date': '2026-06-01'})
-        st = ddb.Table('Acme_sendStatus')
+        st = ddb.Table('111_sendStatus')
         for i, m in enumerate(['m1', 'm2', 'm3', 'm4', 'm5']):
             st.put_item(Item={'processId': 'P1', 'sendStatusId': f's{i}', 'messageId': m, 'state': 1})
         yield _load('Api_V1_Admin_Jobs')

@@ -31,6 +31,7 @@ Rendimiento (evita timeouts con muchos clientes):
   ({customer}_sendSummary, GetItem O(1) por proceso) en vez de paginar {customer}_sendStatus.
 '''
 import os
+import re
 import json
 import boto3
 from decimal import Decimal
@@ -44,6 +45,12 @@ table_customer = dynamodb.Table('customer')
 table_campaign = dynamodb.Table('campaign')
 table_process = dynamodb.Table('process')
 table_rates = dynamodb.Table('pricingRate')
+
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas de estados por cliente
+    ({tenant}_sendStatus, _sendSummary). Igual que en Prepare-batch/buckets. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 
 CURRENCY = 'COP'
 MAX_PROCESSES = 500   # tope global de procesos agregados por llamada (evita barridos enormes)
@@ -159,15 +166,16 @@ def _campaign_unit(rate, channel_name, document_format):
     return 0.0
 
 
-def _count_sent(company, process_id):
+def _count_sent(tenant, process_id):
     """Nº de mensajes efectivamente enviados (messageId distinto) en un proceso.
+    tenant=tenant_key(NIT): las tablas del cliente son {tenant}_sendSummary / _sendStatus.
 
     Con SEND_SUMMARY_READ usa el resumen pre-agregado (GetItem O(1)); si no existe,
-    cae a paginar {company}_sendStatus (comportamiento legacy).
+    cae a paginar {tenant}_sendStatus (comportamiento legacy).
     """
     # 1) Resumen pre-agregado (O(1)) — por defecto.
     try:
-        summ = dynamodb.Table('{}_sendSummary'.format(company)).get_item(
+        summ = dynamodb.Table('{}_sendSummary'.format(tenant)).get_item(
             Key={'processId': process_id}).get('Item')
         if summ and 'enviados' in summ:
             return int(_num(summ['enviados']))
@@ -179,7 +187,7 @@ def _count_sent(company, process_id):
     # 2) Fallback: conteo por Query de los estados de ESE proceso.
 
     seen = set()
-    status_table = dynamodb.Table('{}_sendStatus'.format(company))
+    status_table = dynamodb.Table('{}_sendStatus'.format(tenant))
     kwargs = {'KeyConditionExpression': Key('processId').eq(process_id),
               'ProjectionExpression': 'messageId'}
     try:
@@ -210,6 +218,8 @@ def _bill_customer(cust, camps_by_customer, procs_by_campaign, rate_cache, budge
     """
     customer_id = cust.get('customerId')
     company = cust.get('company', '')
+    # Llave de las tablas de estados por cliente (NIT saneado), igual que en el resto.
+    tenant = tenant_key(cust.get('companyTin', ''))
 
     by_channel = defaultdict(lambda: {'sent': 0, 'amount': 0.0})
     subtotal = 0.0
@@ -238,7 +248,7 @@ def _bill_customer(cust, camps_by_customer, procs_by_campaign, rate_cache, budge
             if not pid:
                 continue
             budget[0] -= 1
-            sent += _count_sent(company, pid)
+            sent += _count_sent(tenant, pid)
 
         if sent <= 0:
             continue

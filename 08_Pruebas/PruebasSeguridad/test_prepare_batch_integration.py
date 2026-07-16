@@ -48,6 +48,11 @@ def _load_prepare_batch():
     return module
 
 
+# Las tablas por cliente se nombran por NIT saneado (tenant_key), igual que los buckets.
+# El cliente CU1 tiene companyTin='900123' → tenant_key('900123')='900123'.
+TENANT = '900123'
+
+
 def _mk_table(ddb, name, keys):
     ddb.create_table(
         TableName=name,
@@ -65,8 +70,8 @@ def env(monkeypatch):
         _mk_table(ddb, 'campaign', [('campaignId', 'HASH')])
         _mk_table(ddb, 'process', [('processId', 'HASH')])
         _mk_table(ddb, 'customer', [('customerId', 'HASH')])
-        _mk_table(ddb, 'empresa_unsubscribe', [('email', 'HASH')])
-        _mk_table(ddb, 'empresa_blackList', [('email', 'HASH')])
+        _mk_table(ddb, f'{TENANT}_unsubscribe', [('email', 'HASH')])
+        _mk_table(ddb, f'{TENANT}_blackList', [('email', 'HASH')])
 
         res.Table('campaign').put_item(Item={
             'campaignId': 'C1', 'campaignName': 'Promo', 'customerId': 'CU1',
@@ -76,7 +81,7 @@ def env(monkeypatch):
         })
         res.Table('customer').put_item(Item={
             'customerId': 'CU1', 'company': 'empresa', 'companyTin': '900123', 'realSendEnabled': True})
-        res.Table('empresa_blackList').put_item(Item={'email': 'negro@test.com'})
+        res.Table(f'{TENANT}_blackList').put_item(Item={'email': 'negro@test.com'})
 
         # Bucket del cliente por NIT (nuevo esquema). La base vive aquí; el download y los
         # part-files deben usar mailconnect-900123-database (no el viejo por nombre).
@@ -194,7 +199,7 @@ def test_workers_procesan_partes_y_acumulan(env):
     assert int(proc['quantityUnsubscribe']) == 0
 
     # Estados de los filtrados: 1 inválido (11) + 1 lista negra (13).
-    status_tbl = boto3.resource('dynamodb', region_name='us-east-1').Table('empresa_sendStatus')
+    status_tbl = boto3.resource('dynamodb', region_name='us-east-1').Table(f'{TENANT}_sendStatus')
     rows = status_tbl.query(KeyConditionExpression=Key('processId').eq(process_id))['Items']
     assert sorted(int(r['state']) for r in rows) == [11, 13]
 
@@ -211,8 +216,8 @@ def test_sendDetail_es_tabla_unica_con_processId(env):
 
     ddb = boto3.resource('dynamodb', region_name='us-east-1')
     # La tabla por proceso ya NO se crea.
-    assert f'empresa_sendDetail_{process_id}' not in ddb.meta.client.list_tables()['TableNames']
-    detail = ddb.Table('empresa_sendDetail')
+    assert f'{TENANT}_sendDetail_{process_id}' not in ddb.meta.client.list_tables()['TableNames']
+    detail = ddb.Table(f'{TENANT}_sendDetail')
     rows = detail.query(KeyConditionExpression=Key('processId').eq(process_id))['Items']
     assert len(rows) == 2                                   # malformado + lista negra
     assert all(r['processId'] == process_id for r in rows)  # PK del tenant único

@@ -52,7 +52,8 @@ def billing():
         _pk('customer', 'customerId')
         _pk('campaign', 'campaignId')
         _pk('process', 'processId')
-        _pk_sk('Acme_sendStatus', 'processId', 'sendStatusId')
+        # Estados por cliente nombrados por NIT saneado (tenant_key('900')='900').
+        _pk_sk('900_sendStatus', 'processId', 'sendStatusId')
         _pk_sk('pricingRate', 'customerId', 'channel')
         ddb = boto3.resource('dynamodb', region_name='us-east-1')
         ddb.Table('customer').put_item(Item={'customerId': 'CU1', 'company': 'Acme', 'companyTin': '900'})
@@ -61,7 +62,7 @@ def billing():
         ddb.Table('campaign').put_item(Item={'campaignId': 'CA2', 'customerId': 'CU1', 'channel': 'SMS', 'campaignName': 'Junio', 'date': '2026-06-01'})
         ddb.Table('process').put_item(Item={'processId': 'P1', 'customerName': 'Acme', 'campaignId': 'CA1'})
         ddb.Table('process').put_item(Item={'processId': 'P2', 'customerName': 'Acme', 'campaignId': 'CA2'})
-        st = ddb.Table('Acme_sendStatus')
+        st = ddb.Table('900_sendStatus')
         # P1 (EM): 3 mensajes; P2 (SMS): 2 mensajes.
         for i, m in enumerate(['m1', 'm2', 'm3']):
             st.put_item(Item={'processId': 'P1', 'sendStatusId': f's{i}', 'messageId': m, 'state': 1})

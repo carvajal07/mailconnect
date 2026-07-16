@@ -22,6 +22,7 @@ las URLs de las colas); el "progreso" del trabajo es la señal operativa equival
 desde la app. Es de solo lectura: el reencolado se hará en una iteración aparte.
 '''
 import os
+import re
 import json
 import boto3
 from decimal import Decimal
@@ -33,6 +34,13 @@ REGION = 'us-east-1'
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 table_campaign = dynamodb.Table('campaign')
 table_process = dynamodb.Table('process')
+table_customer = dynamodb.Table('customer')
+
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para las tablas por cliente ({tenant}_sendStatus,
+    _sendSummary). Igual que en Prepare-batch/buckets. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 
 MAX_JOBS = 200  # tope de procesos enriquecidos con conteo de envíos
 
@@ -93,15 +101,15 @@ def _scan_all(table, **kwargs):
     return items
 
 
-def _count_sent(company, process_id):
-    """Mensajes efectivamente enviados (messageId distinto) del proceso.
+def _count_sent(tenant, process_id):
+    """Mensajes efectivamente enviados (messageId distinto) del proceso. tenant=tenant_key(NIT).
 
     Con SEND_SUMMARY_READ usa el resumen pre-agregado (GetItem O(1) sobre
-    {company}_sendSummary); si no existe, cae a paginar {company}_sendStatus.
+    {tenant}_sendSummary); si no existe, cae a paginar {tenant}_sendStatus.
     """
     if SEND_SUMMARY_READ:
         try:
-            summ = dynamodb.Table(f'{company}_sendSummary').get_item(
+            summ = dynamodb.Table(f'{tenant}_sendSummary').get_item(
                 Key={'processId': process_id}).get('Item')
             if summ and 'enviados' in summ:
                 return _to_int(summ['enviados'])
@@ -112,7 +120,7 @@ def _count_sent(company, process_id):
             pass
 
     seen = set()
-    table = dynamodb.Table(f'{company}_sendStatus')
+    table = dynamodb.Table(f'{tenant}_sendStatus')
     kwargs = {'KeyConditionExpression': Key('processId').eq(process_id),
               'ProjectionExpression': 'messageId'}
     try:
@@ -148,6 +156,12 @@ def lambda_handler(event, context):
         if state_filter:
             processes = [p for p in processes if str(p.get('processState', '')) == state_filter]
 
+        # Mapa nombre-de-empresa -> NIT (companyTin) para nombrar las tablas por cliente
+        # ({tenant_key(nit)}_sendStatus). Cubre procesos antiguos que no guardaban companyTin.
+        company_to_nit = {}
+        for cust in _scan_all(table_customer, ProjectionExpression='company, companyTin'):
+            company_to_nit[cust.get('company', '')] = cust.get('companyTin', '')
+
         # Más recientes primero.
         processes.sort(key=lambda p: str(p.get('date', '')), reverse=True)
 
@@ -181,12 +195,14 @@ def lambda_handler(event, context):
             counts[pstate or 'Desconocido'] += 1
 
             company = p.get('customerName', '')
+            # Llave de las tablas por cliente: NIT del proceso (nuevo) o del mapa por nombre.
+            tenant = tenant_key(p.get('companyTin') or company_to_nit.get(company, ''))
             campaign_id = p.get('campaignId', '')
             cstate, channel = campaign_info(campaign_id)
             to_send = _to_int(p.get('registersToSend'))
 
             if enriched < MAX_JOBS:
-                sent = _count_sent(company, p.get('processId'))
+                sent = _count_sent(tenant, p.get('processId'))
                 enriched += 1
             else:
                 sent = 0

@@ -21,12 +21,19 @@ Env:
   WSP_META_API_VERSION             — versión de la Meta API (default 'v20.0').
 '''
 import os
+import re
 import json
 import uuid
 from datetime import datetime
 
 import boto3
 from botocore.exceptions import ClientError
+
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para la tabla {tenant}_sendStatus. Igual que en
+    Prepare-batch/buckets. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 
 REGION = 'us-east-1'
 ORIGINATION_PHONE_NUMBER_ID = os.environ.get('WSP_ORIGINATION_PHONE_NUMBER_ID', '')
@@ -68,19 +75,20 @@ def build_whatsapp_message(phone, template_name, params):
     return message
 
 
-def _record_status(customer_name, process_id, rows):
-    # Tabla ÚNICA {customer}_sendStatus (PK processId + SK sendStatusId).
-    table = dynamodb.Table(f'{customer_name}_sendStatus')
+def _record_status(tenant, process_id, rows):
+    # Tabla ÚNICA {tenant}_sendStatus (PK processId + SK sendStatusId). tenant=tenant_key(NIT).
+    table = dynamodb.Table(f'{tenant}_sendStatus')
     with table.batch_writer() as batch:
         for item in rows:
             item['processId'] = process_id
             batch.put_item(Item=item)
 
 
-def _index_messages(customer_name, process_id, index_rows):
-    """Guarda messageId -> (customer, processId, uniqueId) para que el ReceptionStatus de
-    WhatsApp pueda mapear los recibos de Meta. Best-effort: si la tabla no existe o falla,
-    no rompe el envío (solo no habrá estados de entrega para esos mensajes)."""
+def _index_messages(tenant, customer_name, process_id, index_rows):
+    """Guarda messageId -> (nit, processId, uniqueId) para que el ReceptionStatus de
+    WhatsApp pueda mapear los recibos de Meta (que solo traen el messageId). `nit` es la
+    llave (tenant_key) con la que se nombra {tenant}_sendStatus. Best-effort: si la tabla no
+    existe o falla, no rompe el envío (solo no habrá estados de entrega para esos mensajes)."""
     if not index_rows:
         return
     try:
@@ -88,7 +96,8 @@ def _index_messages(customer_name, process_id, index_rows):
             for r in index_rows:
                 batch.put_item(Item={
                     'messageId': r['messageId'],
-                    'customer': customer_name,
+                    'nit': tenant,               # llave de {tenant}_sendStatus (ReceptionStatus)
+                    'customer': customer_name,   # informativo (nombre de empresa)
                     'processId': process_id,
                     'uniqueId': r.get('uniqueId', ''),
                     'channel': 'WSP',
@@ -111,11 +120,12 @@ def lambda_handler(event, context):
             continue
 
         customer_name = body.get('customerName', '')
+        tenant = tenant_key(body.get('nit', ''))   # llave de {tenant}_sendStatus
         process_id = body.get('processId', '')
         # El nombre de la plantilla HSM viaja en wspTemplate (campo template de la campaña).
         template_name = body.get('wspTemplate') or body.get('templateName', '')
         data = body.get('data', [])
-        print(f'WSP lote: cliente={customer_name} proceso={process_id} plantilla={template_name} registros={len(data)}')
+        print(f'WSP lote: cliente={customer_name} nit={tenant} proceso={process_id} plantilla={template_name} registros={len(data)}')
 
 
         status_rows = []
@@ -162,11 +172,11 @@ def lambda_handler(event, context):
             if sent_ok:
                 index_rows.append({'messageId': message_id, 'uniqueId': unique_id})
 
-        if status_rows and process_id and customer_name:
+        if status_rows and process_id and tenant:
             try:
-                _record_status(customer_name, process_id, status_rows)
+                _record_status(tenant, process_id, status_rows)
             except Exception as e:
                 print('No se pudieron registrar los estados WhatsApp: {}'.format(e))
-            _index_messages(customer_name, process_id, index_rows)
+            _index_messages(tenant, customer_name, process_id, index_rows)
 
     return {'statusCode': 200, 'body': json.dumps('WhatsApp batch procesado')}

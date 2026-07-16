@@ -31,11 +31,16 @@ def _load(folder, alias):
     return m
 
 
+# La tabla por cliente se nombra por NIT saneado (tenant_key).
+NIT = '900123456'
+TENANT = '900123456'   # tenant_key(NIT)
+
+
 @pytest.fixture
 def env():
     with mock_aws():
         boto3.client('dynamodb', region_name='us-east-1').create_table(
-            TableName='empresa_sendStatus',
+            TableName=f'{TENANT}_sendStatus',
             KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'},
                        {'AttributeName': 'sendStatusId', 'KeyType': 'RANGE'}],
             AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'},
@@ -46,13 +51,13 @@ def env():
 
 def _sms_event(process_id, data):
     return {'Records': [{'body': json.dumps({
-        'customerName': 'empresa', 'processId': process_id,
+        'customerName': 'empresa', 'nit': NIT, 'processId': process_id,
         'headers': ['Id', 'Celular', 'Nombre'], 'smsBody': 'Hola {{Nombre}}', 'data': data,
     })}]}
 
 
 def _query(process_id):
-    table = boto3.resource('dynamodb', region_name='us-east-1').Table('empresa_sendStatus')
+    table = boto3.resource('dynamodb', region_name='us-east-1').Table(f'{TENANT}_sendStatus')
     return table.query(KeyConditionExpression=Key('processId').eq(process_id))['Items']
 
 

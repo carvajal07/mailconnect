@@ -112,6 +112,7 @@ def lambda_handler(event, context):
         'user': decoded.get('user', ''),
         'customerId': decoded.get('customerId', ''),
         'customer': decoded.get('customer', ''),
+        'nit': decoded.get('nit', ''),   # llave de recursos por cliente: preservar en el refresco
         'userId': user_id,
         'role': role,
         'iat': int(orig_iat) if orig_iat is not None else now,

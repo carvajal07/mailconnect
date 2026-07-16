@@ -257,6 +257,11 @@ def test_login_exitoso_devuelve_token(ctx):
     assert resp['statusCode'] == 200
     assert resp['data']['token']
     assert resp['data']['userId']
+    # El NIT (companyTin) viaja como claim `nit`: es la LLAVE de los recursos por cliente
+    # (tablas/buckets vía tenant_key). El Authorizer lo reenvía en el context.
+    assert resp['data']['companyTin'] == '900123456'
+    claims = jwt.decode(resp['data']['token'], os.environ['SECRET_KEY'], algorithms=['HS256'])
+    assert claims['nit'] == '900123456'
 
 
 def test_login_password_incorrecta_404(ctx):

@@ -1,6 +1,6 @@
 """
 Pruebas de la gestión de la LISTA NEGRA por cliente (List / Add / Delete), sobre la
-tabla {customer}_blackList (PK 'email'), multi-tenant por nombre de empresa.
+tabla {tenant}_blackList (PK 'email'), multi-tenant por NIT (tenant_key) del token.
 """
 import os
 import importlib.util
@@ -26,22 +26,27 @@ def _load(folder):
     return m
 
 
+# Las tablas por cliente se nombran por NIT saneado (tenant_key), no por nombre de empresa.
+NIT = '900123456'
+
+
 @pytest.fixture
 def bl():
     with mock_aws():
-        # La tabla customer permite resolver customerId -> company (por si se usa).
+        # La tabla customer permite resolver customerId -> companyTin (fallback si el token
+        # no trae el claim `nit`).
         boto3.client('dynamodb', region_name='us-east-1').create_table(
             TableName='customer',
             KeySchema=[{'AttributeName': 'customerId', 'KeyType': 'HASH'}],
             AttributeDefinitions=[{'AttributeName': 'customerId', 'AttributeType': 'S'}],
             BillingMode='PAY_PER_REQUEST')
         boto3.resource('dynamodb', region_name='us-east-1').Table('customer').put_item(
-            Item={'customerId': 'CU1', 'company': 'empresa'})
+            Item={'customerId': 'CU1', 'company': 'empresa', 'companyTin': NIT})
         yield _load('Api_V1_Blacklist_List'), _load('Api_V1_Blacklist_Add'), _load('Api_V1_Blacklist_Delete')
 
 
-def _auth(body, customer='empresa'):
-    return {**body, 'requestContext': {'authorizer': {'customer': customer, 'customerId': 'CU1'}}}
+def _auth(body, customer='empresa', nit=NIT):
+    return {**body, 'requestContext': {'authorizer': {'customer': customer, 'customerId': 'CU1', 'nit': nit}}}
 
 
 def test_lista_vacia_si_no_existe_tabla(bl):
@@ -87,7 +92,7 @@ def test_quitar_inexistente_404(bl):
 
 def test_multitenant_no_ve_otra_empresa(bl):
     lst, add, _ = bl
-    add.lambda_handler(_auth({'email': 'a@test.com'}, customer='empresa'), None)
-    # Otra empresa (otro nombre) tiene su propia tabla → no ve la de 'empresa'.
-    resp = lst.lambda_handler(_auth({}, customer='otraempresa'), None)
+    add.lambda_handler(_auth({'email': 'a@test.com'}, customer='empresa', nit=NIT), None)
+    # Otra empresa (otro NIT) tiene su propia tabla → no ve la de 'empresa'.
+    resp = lst.lambda_handler(_auth({}, customer='otraempresa', nit='800987654'), None)
     assert resp['data']['count'] == 0

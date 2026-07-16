@@ -483,9 +483,44 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   (agregan el campo a la lista de parámetros/campos de combinación).
 - Bases cargadas **antes** de esta función no tienen `columns` → el picker avisa "vuelve a subirla".
 
+### Estandarización del naming por cliente: NIT (`tenant_key`) (jul 2026)
+> **Antes:** los **buckets** S3 se nombraban por **NIT** (`tenant_bucket`) pero las **tablas**
+> por cliente por **nombre de empresa** (`{customer}_sendStatus`, `_sendDetail`, `_blackList`,
+> `_unsubscribe`, `_processDetail`, `_sendSummary`, `_sendState`). Inconsistente y frágil (el
+> nombre de empresa puede cambiar/colisionar y no siempre es DynamoDB-safe).
+> **Ahora:** TODO recurso por cliente (tablas **y** buckets) usa la **misma llave**: el **NIT
+> saneado** `tenant_key(nit) = re.sub(r'[^a-z0-9]', '', str(nit).lower())` (companyTin). El NIT
+> es inmutable y único. `tenant_bucket(nit, tipo)` = `{prefix}-{tenant_key(nit)}-{tipo}`.
+- **`tenant_key` es idempotente** (`tenant_key(tenant_key(x)) == tenant_key(x)`), así que aplicarlo
+  a un valor ya saneado es inocuo. Está copiado en cada lambda que nombra tablas por cliente
+  (mismo patrón que `tenant_bucket`; no hay import compartido entre lambdas).
+- **El NIT viaja por todo el pipeline** para poder nombrar la tabla del cliente en cada etapa:
+  - **JWT** (`Login` claim `nit`) → **Authorizer/Authorizer2** context `nit` → **mapping template**
+    (`$context.authorizer.nit`, ver `routes.json`/`sync_api.py`) → lambdas de cliente/admin.
+    `Refresh-token` preserva `nit`.
+  - **SQS** (Prepare-batch → Send-batch): el mensaje ya llevaba `nit` (`build_ctx`).
+  - **SES tag `nit`** (Send-EM/EAU/EAP → `Email_ReceptionStatus`), **EUM `Context.nit`**
+    (SMS/Voz → `Messaging_ReceptionStatus`), **`messageIndex.nit`** (WSP → `Wsp_ReceptionStatus`),
+    **token de desuscripción `n`** (Send → `Unsubscribe`). Los lectores aplican `tenant_key` (con
+    fallback defensivo al nombre saneado para eventos/tokens viejos en vuelo).
+  - **`process.companyTin`** se guarda ahora en el registro de proceso (Prepare-batch) para que
+    los lectores admin (`Admin/Jobs`) obtengan el NIT sin re-mapear el nombre (con fallback a un
+    mapa nombre→NIT desde la tabla `customer`).
+- **`process`/`sendStatus`/etc. — el filtro sigue por nombre:** el `Scan`/filtro de la tabla
+  **`process`** usa `customerName` (nombre de empresa, que es lo que guarda el proceso). Solo las
+  **tablas por cliente** (`{tenant}_sendStatus`, …) pasan a llave por NIT. No confundir ambos.
+- **Guard anti-fuga:** Prepare-batch usa `require_tenant(nit)` (falla si el cliente no tiene NIT):
+  sin esto, todos los clientes sin NIT compartirían la tabla `_sendStatus` (fuga entre tenants).
+- **⚠️ Migración (`[J]`):** este cambio **renombra** las tablas por cliente. Los datos de
+  desarrollo bajo `{nombreEmpresa}_*` quedan huérfanos → **recrear** (o migrar) las tablas al
+  esquema `{tenant_key(nit)}_*`. En dev basta con volver a enviar (Prepare-batch crea las tablas).
+  El **nombre de la plantilla SES** (`{customer}_{consecutivo}_{canal}_{campaña}`) **NO** cambia
+  (es otro namespace, lo crea el builder del front) — sigue por nombre de empresa.
+
 ### Multi-tenant y refresh (jul 2026)
-- **Claims en el JWT:** `Login` embebe `customerId`, `customer` y `userId` en el token.
-  El `Authorizer`/`Authorizer2` los reenvían en el **context** de la policy.
+- **Claims en el JWT:** `Login` embebe `customerId`, `customer`, **`nit` (companyTin)** y `userId`
+  en el token. El `Authorizer`/`Authorizer2` los reenvían en el **context** de la policy. El `nit`
+  es la **llave de los recursos por cliente** (tablas/buckets vía `tenant_key`, ver arriba).
 - **Enforcement:** las read-lambdas (`Campaign_List`, `Template_List`, `Database_List`,
   `Reports_Statistics`) **prefieren el `customerId`/`customer` del context del Authorizer**
   (`event.requestContext.authorizer.*`) sobre el body → un cliente no puede consultar datos
@@ -735,8 +770,14 @@ se puede leer del objeto ya subido a S3.)
       - **⚠️ Mapping template del rol en rutas admin (bug de "Acceso restringido"):** las rutas
         admin **no-proxy** (`/Customer/*`, `/User/SetRole`, `/Pricing/*`, `/Billing/Summary`) NO
         reciben el `role` a menos que el body mapping template inyecte
-        `$context.authorizer.role` (y `customerId`/`customer`). Sin eso la lambda ve el context
-        vacío → 403 aunque el usuario SÍ sea admin. Alternativa: pasar esas rutas a **proxy**.
+        `$context.authorizer.role` (y `customerId`/`customer`/**`nit`**). Sin eso la lambda ve el
+        context vacío → 403 aunque el usuario SÍ sea admin. Alternativa: pasar esas rutas a
+        **proxy**. El template de `sync_api.py` ya inyecta `nit` (llave de tablas por cliente).
+      - **⚠️ NIT en el context (naming por cliente):** las read-lambdas de cliente
+        (`Reports_Statistics`, `Portal_Bootstrap`, `Blacklist_*`, `state-report`) construyen las
+        tablas por cliente con `tenant_key(nit)`. El `nit` DEBE llegar en el context (JWT + mapping
+        template `$context.authorizer.nit`). Sin él caen a un lookup de `companyTin` por `customerId`
+        (Blacklist) o devuelven vacío (Statistics/Bootstrap). Ver "Estandarización del naming" (§3).
       - **Panel admin ampliado (jul 2026):** desplegar `Api_V1_Pricing_List`,
         `Api_V1_Pricing_Update`, `Api_V1_Customer_Detail`, `Api_V1_User_SetRole`,
         `Api_V1_Billing_Summary` (crear la función vacía antes del CD) + sus rutas

@@ -49,27 +49,29 @@ def _put_states(table, process_id, prefix, states):
         table.put_item(Item={'processId': process_id, 'sendStatusId': f'{prefix}{i}', 'messageId': f'{prefix}{i}', 'state': st})
 
 
+# Las tablas de estados por cliente se nombran por NIT saneado (tenant_key(companyTin)).
+# El display sigue mostrando el nombre de empresa (company).
 @pytest.fixture
 def dash():
     with mock_aws():
         _pk('customer', 'customerId')
         _pk('campaign', 'campaignId')
         _pk('process', 'processId')
-        _pk_sk('Acme_sendStatus', 'processId', 'sendStatusId')
-        _pk_sk('Bad_sendStatus', 'processId', 'sendStatusId')
+        _pk_sk('111_sendStatus', 'processId', 'sendStatusId')   # Acme (companyTin 111)
+        _pk_sk('222_sendStatus', 'processId', 'sendStatusId')   # Bad (companyTin 222)
         ddb = boto3.resource('dynamodb', region_name='us-east-1')
-        ddb.Table('customer').put_item(Item={'customerId': 'CU1', 'company': 'Acme'})
-        ddb.Table('customer').put_item(Item={'customerId': 'CU2', 'company': 'Bad'})
+        ddb.Table('customer').put_item(Item={'customerId': 'CU1', 'company': 'Acme', 'companyTin': '111'})
+        ddb.Table('customer').put_item(Item={'customerId': 'CU2', 'company': 'Bad', 'companyTin': '222'})
         # Sin actividad (no debe salir en salud ni sumar envíos).
-        ddb.Table('customer').put_item(Item={'customerId': 'CU3', 'company': 'Idle'})
+        ddb.Table('customer').put_item(Item={'customerId': 'CU3', 'company': 'Idle', 'companyTin': '333'})
         ddb.Table('campaign').put_item(Item={'campaignId': 'CA1', 'customerId': 'CU1', 'channel': 'EM', 'campaignState': 'Enviando', 'date': '2026-07-01'})
         ddb.Table('campaign').put_item(Item={'campaignId': 'CA2', 'customerId': 'CU2', 'channel': 'EM', 'campaignState': 'Terminada', 'date': '2026-06-01'})
         ddb.Table('process').put_item(Item={'processId': 'P1', 'customerName': 'Acme', 'campaignId': 'CA1'})
         ddb.Table('process').put_item(Item={'processId': 'P2', 'customerName': 'Bad', 'campaignId': 'CA2'})
         # Acme: 20 envíos sanos (18 entregados, 2 abiertos), 0 rebotes.
-        _put_states(ddb.Table('Acme_sendStatus'), 'P1', 'a', [2] * 18 + [4, 4])
+        _put_states(ddb.Table('111_sendStatus'), 'P1', 'a', [2] * 18 + [4, 4])
         # Bad: 10 envíos, 2 rebotes (6) + 1 queja (7) → tasas altas = crítico.
-        _put_states(ddb.Table('Bad_sendStatus'), 'P2', 'b', [2] * 7 + [6, 6, 7])
+        _put_states(ddb.Table('222_sendStatus'), 'P2', 'b', [2] * 7 + [6, 6, 7])
         yield _load('Api_V1_Admin_Dashboard')
 
 

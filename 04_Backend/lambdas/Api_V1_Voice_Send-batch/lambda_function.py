@@ -42,6 +42,12 @@ def _mask_phone(phone):
     p = str(phone)
     return (p[:4] + '***' + p[-2:]) if len(p) > 6 else '***'
 
+
+def tenant_key(nit):
+    """Llave de tenant (NIT saneado) para la tabla {tenant}_sendStatus del cliente. Igual
+    que en Prepare-batch/buckets. Idempotente."""
+    return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
+
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 voice = boto3.client('pinpoint-sms-voice-v2', region_name=REGION)
 
@@ -60,10 +66,10 @@ def _personalize(text, headers, row):
     return _VAR.sub(lambda m: str(values.get(m.group(1), m.group(0))), text)
 
 
-def _record_status(customer_name, process_id, rows):
-    """Inserta los estados de envío en la tabla ÚNICA {customer}_sendStatus por lotes.
-    processId es la PK (una partición por proceso) y sendStatusId la SK."""
-    table = dynamodb.Table(f'{customer_name}_sendStatus')
+def _record_status(tenant, process_id, rows):
+    """Inserta los estados de envío en la tabla ÚNICA {tenant}_sendStatus por lotes
+    (tenant=tenant_key(NIT)). processId es la PK (una partición por proceso) y sendStatusId la SK."""
+    table = dynamodb.Table(f'{tenant}_sendStatus')
     with table.batch_writer() as batch:
         for item in rows:
             item['processId'] = process_id
@@ -84,11 +90,12 @@ def lambda_handler(event, context):
             continue
 
         customer_name = body.get('customerName', '')
+        tenant = tenant_key(body.get('nit', ''))   # llave de {tenant}_sendStatus
         process_id = body.get('processId', '')
         headers = body.get('headers', [])
         voice_message = body.get('voiceMessage', '') or ''
         data = body.get('data', [])
-        print(f'VOZ lote: cliente={customer_name} proceso={process_id} registros={len(data)}')
+        print(f'VOZ lote: cliente={customer_name} nit={tenant} proceso={process_id} registros={len(data)}')
 
 
         status_rows = []
@@ -112,8 +119,9 @@ def lambda_handler(event, context):
                     'MessageBodyTextType': BODY_TEXT_TYPE,
                     'VoiceId': VOICE_ID,
                     # Metadata que EUM incluye en los eventos de la llamada (SNS) para que
-                    # ReceptionStatus sepa a qué cliente/proceso pertenece cada estado.
-                    'Context': {'customer': customer_name, 'processId': process_id, 'uniqueId': unique_id},
+                    # ReceptionStatus sepa a qué cliente/proceso pertenece cada estado. `nit`
+                    # es la llave (tenant_key) con la que se nombra {tenant}_sendStatus.
+                    'Context': {'customer': customer_name, 'nit': tenant, 'processId': process_id, 'uniqueId': unique_id},
                 }
                 if CONFIGURATION_SET:
                     params['ConfigurationSetName'] = CONFIGURATION_SET
@@ -135,9 +143,9 @@ def lambda_handler(event, context):
                 'type2': error[:250] if error else 'Llamada iniciada',
             })
 
-        if status_rows and process_id and customer_name:
+        if status_rows and process_id and tenant:
             try:
-                _record_status(customer_name, process_id, status_rows)
+                _record_status(tenant, process_id, status_rows)
             except Exception as e:
                 print('No se pudieron registrar los estados de voz: {}'.format(e))
 
