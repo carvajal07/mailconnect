@@ -46,10 +46,11 @@ def _audit(action, actor, detail, customer='', target=''):
 
 PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '100000'))
 
-# GSI de `user` por email (PK 'email'). Si se define, la búsqueda del login es Query O(1);
-# si no, cae a Scan PAGINADO (correcto, solo más costoso). Permite activar el índice sin
-# redesplegar código (crear el GSI + poner la env).
-USER_EMAIL_GSI = os.environ.get('USER_EMAIL_GSI', '').strip()
+# GSI de `user` por email (PK 'email'). El login busca SIEMPRE por Query O(1) al índice
+# (escalable por defecto). Si el GSI no existe, el login FALLA (no cae a Scan de tabla
+# completa) para que la ausencia del índice se detecte en el despliegue. Override del nombre
+# por env solo si el índice se llama distinto.
+USER_EMAIL_GSI = os.environ.get('USER_EMAIL_GSI', 'email-index').strip() or 'email-index'
 
 
 def _hash_password(password, salt):
@@ -172,33 +173,16 @@ def select_name(userDataId):
     return item.get('userName', '')
 
 def _find_user_by_email(email):
-    """Busca el usuario por email. Query O(1) por el GSI `USER_EMAIL_GSI` si está
-    configurado; si no, Scan PAGINADO. (Antes era un scan de UNA sola página que podía NO
-    encontrar al usuario si la tabla `user` superaba 1 MB → login intermitente.)"""
+    """Busca el usuario por email con Query O(1) al GSI `USER_EMAIL_GSI` (PK 'email').
+    Escalable por defecto; si el GSI no existe, propaga el error (no cae a Scan)."""
     proj = 'userId, userHash, userSalt, active, customerId, userDataId, #r'
     names = {'#r': 'role'}  # 'role' es palabra reservada → alias
-    if USER_EMAIL_GSI:
-        resp = table_user.query(
-            IndexName=USER_EMAIL_GSI,
-            KeyConditionExpression=Key('email').eq(email),
-            ProjectionExpression=proj,
-            ExpressionAttributeNames=names)
-        return resp.get('Items', [])
-    items = []
-    kwargs = {
-        'FilterExpression': 'email = :value',
-        'ExpressionAttributeValues': {':value': email},
-        'ExpressionAttributeNames': names,
-        'ProjectionExpression': proj,
-    }
-    while True:
-        resp = table_user.scan(**kwargs)
-        items.extend(resp.get('Items', []))
-        last = resp.get('LastEvaluatedKey')
-        if not last:
-            break
-        kwargs['ExclusiveStartKey'] = last
-    return items
+    resp = table_user.query(
+        IndexName=USER_EMAIL_GSI,
+        KeyConditionExpression=Key('email').eq(email),
+        ProjectionExpression=proj,
+        ExpressionAttributeNames=names)
+    return resp.get('Items', [])
 
 
 def lambda_handler(event, context):

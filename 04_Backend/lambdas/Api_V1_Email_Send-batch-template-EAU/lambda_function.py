@@ -140,7 +140,8 @@ def insert_send_detail(data:dict)->None:
         None: No retorna resultados
     """
 
-    table_name = f'{customer_name}_sendDetail_{process_id}'
+    # Tabla ÚNICA de detalle del cliente (PK processId + SK sendDetailId).
+    table_name = f'{customer_name}_sendDetail'
     table_send_detail = dynamodb.Table(table_name)
 
 
@@ -430,8 +431,9 @@ def send_bulk(data:list, headers:list, start:int, end:int, tags:dict)->None:
         send_detail_id = response.get('MessageId', str(uuid.uuid4())+"-Error")
         error = response.get('Error', '')
 
-        # Define los datos que deseas insertar
+        # Define los datos que deseas insertar (processId = PK de la tabla única).
         data_to_insert.append({
+            'processId': {'S': process_id},
             'sendDetailId': {'S': send_detail_id},
             'processDetailId': {'S': process_detail_id},
             'uniqueId': {'S': unique_id},

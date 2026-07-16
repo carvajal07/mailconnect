@@ -721,6 +721,55 @@ def ensure_status_table(customer_name:str)->str:
             print("Error al crear la tabla de estados:", e)
     return table_name
 
+
+def ensure_detail_table(customer_name:str)->str:
+    """Crea (si no existe) la tabla ÚNICA de DETALLE del cliente {customer}_sendDetail con
+    llave compuesta PK 'processId' + SK 'sendDetailId'. Reemplaza el anti-patrón de una tabla
+    por proceso ({customer}_sendDetail_{uuid}) → una sola tabla por cliente (query por
+    processId), consistente con {customer}_sendStatus."""
+    table_name = f'{customer_name}_sendDetail'
+    try:
+        dynamodb.create_table(
+            TableName=table_name,
+            KeySchema=[
+                {'AttributeName': 'processId', 'KeyType': 'HASH'},
+                {'AttributeName': 'sendDetailId', 'KeyType': 'RANGE'},
+            ],
+            AttributeDefinitions=[
+                {'AttributeName': 'processId', 'AttributeType': 'S'},
+                {'AttributeName': 'sendDetailId', 'AttributeType': 'S'},
+            ],
+            BillingMode='PAY_PER_REQUEST')
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ResourceInUseException':
+            print("Error al crear la tabla de detalle:", e)
+    return table_name
+
+
+def ensure_summary_tables(customer_name:str)->None:
+    """Crea (si no existen) las tablas de PRE-AGREGACIÓN del cliente para que los reportes
+    lean O(1): {customer}_sendSummary (PK processId, contadores del embudo) y
+    {customer}_sendState (PK processId + SK messageId, estado actual por mensaje). Las llena
+    ReceptionStatus (bump_send_summary) al llegar cada evento. Best-effort: si no se pueden
+    crear, la recepción sigue y los reportes caen al scan por proceso."""
+    for name, schema, attrs in (
+        (f'{customer_name}_sendSummary',
+         [{'AttributeName': 'processId', 'KeyType': 'HASH'}],
+         [{'AttributeName': 'processId', 'AttributeType': 'S'}]),
+        (f'{customer_name}_sendState',
+         [{'AttributeName': 'processId', 'KeyType': 'HASH'},
+          {'AttributeName': 'messageId', 'KeyType': 'RANGE'}],
+         [{'AttributeName': 'processId', 'AttributeType': 'S'},
+          {'AttributeName': 'messageId', 'AttributeType': 'S'}]),
+    ):
+        try:
+            dynamodb.create_table(TableName=name, KeySchema=schema,
+                                  AttributeDefinitions=attrs, BillingMode='PAY_PER_REQUEST')
+        except ClientError as e:
+            if e.response['Error']['Code'] != 'ResourceInUseException':
+                print(f"No se pudo crear '{name}':", e)
+
+
 def _batch_get_emails(table_name:str, keys:list)->set:
     """
     Consulta por lotes qué emails de `keys` existen en la tabla `table_name`
@@ -795,8 +844,10 @@ def insert_mails_status(st:'ProcessState',emails:list,state:str,description:str,
         unique_id = register[0]
         email = register[1]
 
-        #Data para insertar en los datos de envios
+        #Data para insertar en los datos de envios. processId = PK (tabla única
+        #{customer}_sendDetail, PK processId + SK sendDetailId).
         data_to_insert_send_detail.append({
+            'processId': st.process_id,
             'sendDetailId': id,
             'processDetailId': id,
             'uniqueId': unique_id,
@@ -816,7 +867,8 @@ def insert_mails_status(st:'ProcessState',emails:list,state:str,description:str,
             'type2': description
         })
 
-    table_name_details = f'{st.customer_name}_sendDetail_{st.process_id}'
+    # Tabla ÚNICA de detalle del cliente (antes: una por proceso {customer}_sendDetail_{uuid}).
+    table_name_details = f'{st.customer_name}_sendDetail'
     table_details = dynamodb.Table(table_name_details)
 
     #Almacena en bufer la data para hacer el insert por batch y maneja internamente los reintentos de elementos no procesados
@@ -1437,12 +1489,16 @@ def lambda_handler(event, context):
                 blacklist_existed = not check_and_create_table(f'{st.customer_name}_blackList', 'email')
 
                 #Estas tablas siempre se deben crear
-                # Define los detalles de la tabla sendDetail
-                check_and_create_table(f'{st.customer_name}_sendDetail_{st.process_id}', 'sendDetailId')
+                # Tabla ÚNICA de detalle del cliente (PK processId + SK sendDetailId).
+                # Antes se creaba una tabla por proceso ({customer}_sendDetail_{uuid}).
+                ensure_detail_table(st.customer_name)
 
                 # Tabla ÚNICA de estados del cliente (PK processId + SK sendStatusId).
                 # Antes se creaba una tabla por proceso ({customer}_sendStatus_{uuid}).
                 ensure_status_table(st.customer_name)
+                # Tablas de PRE-AGREGACIÓN (resumen O(1) para reportes). Se crean acá para
+                # que existan antes de que lleguen los eventos de recepción (best-effort).
+                ensure_summary_tables(st.customer_name)
 
                 st.template_name = f'{st.customer_name}_{consecutive}_{channel_name}_{campaign_name}'
 

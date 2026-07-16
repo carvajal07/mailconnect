@@ -8,16 +8,19 @@
 locals {
   dynamo_tables = {
     # panel / negocio
+    # GSIs OBLIGATORIOS: las list-lambdas consultan SIEMPRE por Query (escalable por
+    # defecto) y FALLAN si el índice no existe (no caen a Scan). Provisionar antes de
+    # desplegar/usar esas lambdas.
     customer        = { hash = "customerId" }
-    user            = { hash = "userId" }
+    user            = { hash = "userId", gsis = [{ name = "email-index", hash = "email" }] }
     userData        = { hash = "userDataId" }
     userActivation  = { hash = "userActivationId" }
     session         = { hash = "sessionId" }
-    campaign        = { hash = "campaignId" }
+    campaign        = { hash = "campaignId", gsis = [{ name = "customerId-index", hash = "customerId" }] }
     campaignControl = { hash = "campaignControlId" }
     process         = { hash = "processId" }
-    databaseFile    = { hash = "databaseFileId" }
-    messageTemplate = { hash = "messageTemplateId" }
+    databaseFile    = { hash = "databaseFileId", gsis = [{ name = "customerId-index", hash = "customerId" }] }
+    messageTemplate = { hash = "messageTemplateId", gsis = [{ name = "customerId-index", hash = "customerId" }] }
     document        = { hash = "documentId" } # VERIFICAR
     channel         = { hash = "channelId" }  # VERIFICAR
     templateControl = { hash = "templateControlId" }

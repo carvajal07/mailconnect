@@ -13,11 +13,16 @@
 
 ## 0. TL;DR — el orden correcto
 
+> **Estado (jul 2026):** ✅ Mapping template de context desplegado (`API_ID`/`AUTHORIZER_ID`/
+> `STAGE`/`PREFIX` configuradas + `deploy-api.yml` corrido) → aislamiento multi-tenant activo.
+> ✅ `SECRET_KEY` rotada. ✅ SES en producción. ✅ Despliegue del **monedero PREPAGO** completo.
+> **Falta (`[J]`):** crear los **GSIs + tablas** de DynamoDB pendientes (§2) — el código ya los
+> usa por defecto y **falla si no existen** (ver §8).
+
 1. **Crear las 3 tablas DynamoDB nuevas** (§2).
 2. **Crear las 10 lambdas nuevas vacías** (el CD las actualiza al hacer push) (§3).
 3. **Crear sus rutas** en API Gateway, todas **admin-only** + **CORS** (§3, §5).
-4. **⚠️ Configurar el mapping template de rol** en TODAS las rutas admin no-proxy (§1).
-   Sin esto, cada tab nuevo responde **403 "Acceso restringido"** aunque el usuario sea admin.
+4. ✅ **Mapping template de rol** en TODAS las rutas no-proxy (§1) — **desplegado**.
 5. **Dar los permisos IAM** por lambda (§3, §4).
 6. **Redesplegar las 4 lambdas modificadas** (config + auditoría) (§4).
 7. **Promover a `admin`** al menos un usuario en la tabla `user` (§6).
@@ -63,9 +68,10 @@ usa este **body mapping template**:
 > para pasar el body como string; era frágil (400 por VTL). Con `_get_payload` aceptando
 > objeto, esta forma cruda es la recomendada._
 
-- [ ] `[J]` Aplicar el template en: `/Pricing/List`, `/Pricing/Update`, `/Customer/List`,
-  `/Customer/Update`, `/Customer/Detail`, `/User/SetRole`, `/Billing/Summary`,
-  `/Admin/Dashboard`, `/Admin/Jobs`, `/Admin/Audit`, `/Config/Get`, `/Config/Set`.
+- [x] `[J]` **DESPLEGADO** — las variables `API_ID`/`AUTHORIZER_ID`/`STAGE`/`PREFIX` están
+  configuradas y `deploy-api.yml` corrió y aplicó el mapping template de context (rol/tenant)
+  a TODAS las rutas no-proxy autenticadas (cliente y admin). El aislamiento multi-tenant ya
+  está activo end-to-end.
 
 ### ¿Hay que ponerlo a mano en cada ruta? No — se despliega desde GitHub
 
@@ -110,16 +116,23 @@ el "cuenta nueva → apply → todo".
 - [ ] `[J]` Crear `campaignCounter` (PK `customerId`) — consecutivo atómico. Sin ella,
   `Create-campaign` cae al método legado (con su carrera); con ella, no hay duplicados.
 
-### GSI `customerId-index` (para pasar scans a queries)
+### GSIs OBLIGATORIOS (escalabilidad por defecto — sin `USE_GSI`)
 
-| Tabla | Índice | PK del índice | Lo usa |
-|-------|--------|---------------|--------|
-| `campaign` | `customerId-index` | `customerId` (S) | `Campaign_List` y `Portal_Bootstrap` cuando `USE_GSI=true` |
+> ⚠️ **Cambio (jul 2026):** las list-lambdas **ya no** dependen de `USE_GSI`/`USER_EMAIL_GSI`.
+> Consultan **SIEMPRE por Query** al índice (Projection ALL) y **FALLAN si el índice no existe**
+> (no caen a Scan). Hay que **crear estos GSIs ANTES** de usar esas rutas. Ya declarados en
+> `infra/terraform/dynamodb.tf`.
 
-- [ ] `[J]` Crear el GSI **`customerId-index`** (PK `customerId`) en `campaign` (Projection ALL).
-- [ ] `[J]` Poner `USE_GSI=true` en `Api_V1_Campaign_List` y `Api_V1_Portal_Bootstrap` (y opcional
-  `GSI_CUSTOMER_INDEX` si el índice tiene otro nombre). Sin el índice/env, ambas caen a Scan
-  paginado (correcto, solo más costoso) — así se puede desplegar el código antes que el índice.
+| Tabla | Índice | Llave del índice | Lo usa (por defecto) |
+|-------|--------|------------------|----------------------|
+| `campaign` | `customerId-index` | PK `customerId` (S) | `Campaign_List`, `Portal_Bootstrap` |
+| `databaseFile` | `customerId-index` | PK `customerId` (S) | `Database_List`, `Portal_Bootstrap` |
+| `messageTemplate` | `customerId-index` | PK `customerId` (S) | `MessageTemplate_List`, `Portal_Bootstrap` |
+| `user` | `email-index` | PK `email` (S) | `Login` (`_find_user_by_email`) |
+| `walletTransaction` | `customerId-createdAt-index` | PK `customerId` + SK `createdAt` (S) | `Balance_Get` (historial) |
+
+- [ ] `[J]` Crear los **5 GSIs** de la tabla (Projection ALL, On-Demand). Sin ellos, esas
+  lambdas responden **500** (por diseño: la ausencia del índice se detecta, no se degrada a Scan).
 
 > Todas en modo **On-Demand (PAY_PER_REQUEST)** salvo que prefieras capacidad provisionada.
 
@@ -185,10 +198,10 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 | `Api_V1_MessageTemplate_Create` | Auditoría `messageTemplate.create`/`.update` | `PutItem` sobre `adminAudit` |
 | `Api_V1_Email_Prepare-batch-template` | Auditoría `send.samples`/`send.real`; guarda `resumeCtx` para reintentar; scans de `customer` por PK → GetItem | `PutItem` sobre `adminAudit`; `UpdateItem` sobre `process` (resumeCtx) |
 | `Api_V1_Email_Send-batch-template-EAP` | Rellena `{{unsubscribeUrl}}` + headers List-Unsubscribe | env **`SECRET_KEY`** y `UNSUBSCRIBE_URL` |
-| `Api_V1_Security_Login` | `select_client`/`select_name`/email → GetItem/Query (GSI opcional) | env opcional **`USER_EMAIL_GSI`** (+ crear el GSI `email` en `user`) |
+| `Api_V1_Security_Login` | email → **Query al GSI `email-index`** (por defecto, sin fallback) | **crear el GSI `email-index` en `user`** (obligatorio) |
 | `Api_V1_Cost_Estimate` | Toma el `customerId` del Authorizer, no del body | — (sin permisos nuevos) |
-| `Api_V1_Portal_Bootstrap` | Campañas por GSI `customerId-index` si `USE_GSI` (fallback Scan) | env opcional **`USE_GSI`** (+ GSI en `campaign`) |
-| `Api_V1_Campaign_List` | Campañas por GSI `customerId-index` si `USE_GSI` (ya existía) | env opcional **`USE_GSI`** (+ GSI en `campaign`) |
+| `Api_V1_Portal_Bootstrap` | Campañas/bases/plantillas por **Query al GSI `customerId-index`** (por defecto) | **crear los GSIs `customerId-index`** en `campaign`/`databaseFile`/`messageTemplate` |
+| `Api_V1_Campaign_List` / `Database_List` / `MessageTemplate_List` | Listan por **Query al GSI `customerId-index`** (por defecto, sin fallback a Scan) | **crear el GSI `customerId-index`** en la tabla respectiva |
 | `Api_V1_Wsp_Send-batch` | Indexa `messageId → {customer, proceso}` para los recibos de Meta | `PutItem`/`BatchWriteItem` sobre `messageIndex` |
 | `Api_V1_Billing_Summary` | **3 scans totales** (no 1+2·C) + `sendSummary` O(1) opcional | `GetItem` sobre `*_sendSummary` (si `SEND_SUMMARY_READ`) |
 
@@ -334,13 +347,23 @@ Lo que queda por hacer en el repo (no es despliegue):
 - [x] **`verify-code` eliminado (jul 2026):** era un stub sin uso (el flujo real usa
   create-otp/validate-otp + activación por enlace). Se borró la lambda y sus referencias
   en el front (`authService.verifyCode`, `AUTH_ENDPOINTS.VERIFY_CODE`) y en `deploy-map`.
-- [~] **Fase 5 (Prepare-batch / scans→queries):** hecho lo de mayor impacto (scans de
-  `customer` por PK → GetItem; `Create-otp` por userId; login por email GSI-ready + scan
-  paginado; **campañas por GSI `customerId-index` en Campaign_List y Portal_Bootstrap**,
-  gated por `USE_GSI`; **consecutivo atómico de campañas** con `campaignCounter`).
-  **Falta (`[J]`):** crear los GSI (`campaign.customerId-index`, `user.email`) + tabla
-  `campaignCounter`, y activar los envs. (El consecutivo de PLANTILLAS `Template_Create-template`
-  tiene la misma carrera; se puede migrar igual si hace falta.)
+- [x] **Fase 5 (scans→queries) — GSI POR DEFECTO (jul 2026):** las list-lambdas
+  (`Campaign_List`, `Database_List`, `MessageTemplate_List`, `Portal_Bootstrap`) y `Login`
+  consultan **SIEMPRE por Query** al GSI (`customerId-index` / `email-index`) — se quitó el
+  gate `USE_GSI`/`USER_EMAIL_GSI` y el fallback a Scan. Si el índice no existe, la lambda
+  **falla** (por diseño). Scans de `customer` por PK → GetItem; `Create-otp` por userId;
+  **consecutivo atómico de campañas** con `campaignCounter`.
+  **Falta (`[J]`):** crear los **5 GSIs** (§2) + tabla `campaignCounter`. (El consecutivo de
+  PLANTILLAS `Template_Create-template` tiene la misma carrera; se puede migrar igual si hace falta.)
+- [x] **Pre-agregación POR DEFECTO (jul 2026):** `Admin_Dashboard`/`Billing_Summary`/
+  `Reports_Statistics`/`Portal_Bootstrap` leen el resumen `{customer}_sendSummary` O(1) por
+  proceso (fallback al scan de ESE proceso); los `ReceptionStatus` (Email/SMS-Voz/WhatsApp) lo
+  mantienen SIEMPRE (sin `SEND_SUMMARY_*`). Prepare-batch crea `{customer}_sendSummary`/`_sendState`.
+  Ver `PLAN_PREAGREGACION.md`. **Falta (`[J]`):** IAM `UpdateItem` sobre `*_sendSummary`/`*_sendState`
+  (cubierto por la política amplia); backfill de procesos VIEJOS (opcional; mientras, se leen por scan).
+- [x] **`sendDetail` unificado (jul 2026):** una tabla por cliente `{customer}_sendDetail`
+  (PK `processId` + SK `sendDetailId`), no una por proceso. Escritores (EM/EAU/Prepare-batch) y
+  lectores (state-report/Agent_Reports por Query) alineados. La crea `ensure_detail_table`.
 - [ ] **CI — build del frontend:** agregar `npm ci && npm run build` al workflow para
   atrapar regresiones de TypeScript en cada PR.
 - [x] **WhatsApp — ReceptionStatus (hecho jul 2026):** `Api_V1_Wsp_ReceptionStatus` procesa los
@@ -360,20 +383,26 @@ Lo que queda por hacer en el repo (no es despliegue):
 
 ## 9. Pendiente de seguridad (compartido) `[J]`/`[C]`
 
-- [ ] `[J]` **Confirmar que `SECRET_KEY` sea NUEVA** (32+ bytes). La vieja quedó en el
-  **historial git** del repo público; si no se rotó el valor, sigue comprometida.
+- [x] `[J]` **`SECRET_KEY` ROTADA** (32+ bytes) — se cambió el valor; la clave vieja del
+  historial git ya no está en uso.
 - [ ] `[J]` Hacer el repo **privado** (o limpiar el historial con BFG/filter-repo).
-- [ ] `[C]`/`[J]` Mover `SECRET_KEY` a **AWS Secrets Manager** (hoy es env var).
-- [ ] `[J]` Sacar **SES del sandbox** y verificar remitente/dominio.
+- [ ] `[C]`/`[J]` Mover `SECRET_KEY` a **AWS Secrets Manager** (hoy es env var; ya rotada).
+- [x] `[J]` **SES en PRODUCCIÓN** — fuera del sandbox, remitente/dominio verificados.
 
 ---
 
-## 10. Cobro PREPAGO / monedero (jul 2026)
+## 10. Cobro PREPAGO / monedero (jul 2026) — ✅ DESPLEGADO
 
+> **Estado:** despliegue **completo** — tablas (`customerBalance`, `walletTransaction` + GSI
+> `customerId-createdAt-index`), las 9 lambdas del monedero + sus rutas, env vars Wompi y el
+> **webhook registrado** en Wompi. Los checklists de abajo quedan como **referencia** de lo
+> aplicado. Pendiente `[J]` de calibración: ajustar las **tarifas** reales (hoy indicativas).
+>
 > Saldo por cliente en **COP**. El envío REAL **debita el saldo ANTES de trocear** con
 > **bloqueo DURO** (sin cupo negativo). Todo movimiento de dinero deja un registro en el
-> **ledger auditable** `walletTransaction`. Recarga **manual** (admin) y **Wompi** (widget +
-> webhook). El costo del débito usa la **misma fórmula/tarifas** que `Api_V1_Cost_Estimate`.
+> **ledger auditable** `walletTransaction`. Recarga **manual** (comprobante + aprobación) y
+> **Wompi** (widget + webhook). El costo del débito usa la **misma fórmula/tarifas** que
+> `Api_V1_Cost_Estimate`.
 
 ### 10.1 Tablas DynamoDB nuevas (On-Demand)
 - [ ] `[J]` `customerBalance` (PK `customerId` S) — saldo actual en COP.

@@ -32,7 +32,12 @@ def db():
         boto3.client('dynamodb', region_name='us-east-1').create_table(
             TableName='databaseFile',
             KeySchema=[{'AttributeName': 'databaseFileId', 'KeyType': 'HASH'}],
-            AttributeDefinitions=[{'AttributeName': 'databaseFileId', 'AttributeType': 'S'}],
+            AttributeDefinitions=[{'AttributeName': 'databaseFileId', 'AttributeType': 'S'},
+                                  {'AttributeName': 'customerId', 'AttributeType': 'S'}],
+            GlobalSecondaryIndexes=[{
+                'IndexName': 'customerId-index',
+                'KeySchema': [{'AttributeName': 'customerId', 'KeyType': 'HASH'}],
+                'Projection': {'ProjectionType': 'ALL'}}],
             BillingMode='PAY_PER_REQUEST')
         yield _load('Api_V1_Database_Register-file'), _load('Api_V1_Database_List'), _load('Api_V1_Database_Delete')
 

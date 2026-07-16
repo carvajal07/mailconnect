@@ -55,15 +55,23 @@ def mods():
     with mock_aws():
         ddb = boto3.client('dynamodb', region_name='us-east-1')
 
-        def mk(name, pk):
+        def mk(name, pk, gsi_attr=None, gsi_name='customerId-index'):
+            attrs = [{'AttributeName': pk, 'AttributeType': 'S'}]
+            kw = {}
+            if gsi_attr:  # GSI que ahora exigen las list-lambdas (Query por defecto)
+                attrs.append({'AttributeName': gsi_attr, 'AttributeType': 'S'})
+                kw['GlobalSecondaryIndexes'] = [{
+                    'IndexName': gsi_name,
+                    'KeySchema': [{'AttributeName': gsi_attr, 'KeyType': 'HASH'}],
+                    'Projection': {'ProjectionType': 'ALL'}}]
             ddb.create_table(
                 TableName=name, KeySchema=[{'AttributeName': pk, 'KeyType': 'HASH'}],
-                AttributeDefinitions=[{'AttributeName': pk, 'AttributeType': 'S'}],
-                BillingMode='PAY_PER_REQUEST')
+                AttributeDefinitions=attrs, BillingMode='PAY_PER_REQUEST', **kw)
 
-        for t, pk in [('campaign', 'campaignId'), ('process', 'processId'),
-                      ('customer', 'customerId'), ('databaseFile', 'databaseFileId')]:
-            mk(t, pk)
+        mk('campaign', 'campaignId', gsi_attr='customerId')
+        mk('process', 'processId')
+        mk('customer', 'customerId')
+        mk('databaseFile', 'databaseFileId', gsi_attr='customerId')
 
         res = boto3.resource('dynamodb', region_name='us-east-1')
         # Cliente CU1 (empresa) y CU2 (otra) para probar aislamiento multi-tenant.

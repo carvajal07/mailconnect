@@ -28,10 +28,8 @@ from collections import defaultdict
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
-# Lee el RESUMEN pre-agregado por proceso ({customer}_sendSummary) en vez de escanear
-# los estados de cada mensaje. Gated: actívalo SOLO tras habilitar la escritura
-# (SEND_SUMMARY_ENABLED en ReceptionStatus) y hacer backfill de los procesos existentes.
-SEND_SUMMARY_READ = os.environ.get('SEND_SUMMARY_READ', 'false').strip().lower() == 'true'
+# Lee SIEMPRE (por defecto) el RESUMEN pre-agregado por proceso ({customer}_sendSummary);
+# si un proceso no tiene resumen aún, cae al scan de ESE proceso (correcto, acotado).
 _SUMMARY_FIELDS = ('enviados', 'entregados', 'abiertos', 'clics', 'rebotes', 'quejas')
 
 dynamodb = boto3.resource('dynamodb')
@@ -40,10 +38,10 @@ table_database = dynamodb.Table('databaseFile')
 table_message = dynamodb.Table('messageTemplate')
 table_process = dynamodb.Table('process')
 
-# GSI por customerId (mismas envs que Api_V1_Campaign_List: al poner USE_GSI=true, las
-# lecturas por cliente pasan de Scan O(tabla) a Query O(resultado)). Cada tabla debe tener
-# un índice con el nombre GSI_CUSTOMER_INDEX (PK 'customerId'). Sin el índice/env, cae a Scan.
-USE_GSI = os.environ.get('USE_GSI', 'false').strip().lower() == 'true'
+# GSI por customerId: las lecturas por cliente (campañas, bases, plantillas) usan SIEMPRE
+# Query por el índice `customerId-index` (PK 'customerId') → escalables por defecto. Cada
+# tabla (campaign, databaseFile, messageTemplate) debe tener ese GSI; si falta, la lectura
+# FALLA (no cae a Scan) para que la ausencia del índice se note en el despliegue.
 GSI_CUSTOMER_INDEX = os.environ.get('GSI_CUSTOMER_INDEX', 'customerId-index')
 
 _SAFE_CUSTOMER_RE = re.compile(r'^[A-Za-z0-9_]+$')
@@ -96,18 +94,13 @@ def _scan_all(table, **kwargs):
 
 
 def _by_customer(table, customer_id):
-    '''Items del cliente: Query por el GSI customerId si USE_GSI, si no Scan+filter.
-    Ambos caminos paginan (LastEvaluatedKey).'''
+    '''Items del cliente vía Query por el GSI `customerId-index` (paginado). Escalable por
+    defecto; si el GSI no existe, propaga el error (no cae a Scan).'''
     items = []
-    if USE_GSI:
-        kwargs = {'IndexName': GSI_CUSTOMER_INDEX,
-                  'KeyConditionExpression': Key('customerId').eq(customer_id)}
-        op = table.query
-    else:
-        kwargs = {'FilterExpression': Attr('customerId').eq(customer_id)}
-        op = table.scan
+    kwargs = {'IndexName': GSI_CUSTOMER_INDEX,
+              'KeyConditionExpression': Key('customerId').eq(customer_id)}
     while True:
-        resp = op(**kwargs)
+        resp = table.query(**kwargs)
         items.extend(resp.get('Items', []))
         last = resp.get('LastEvaluatedKey')
         if not last:
@@ -125,8 +118,8 @@ def _load_campaigns(customer_id):
 def _load_databases(customer_id, customer):
     items = []
     if customer_id:
-        items = _scan_all(table_database, FilterExpression=Attr('customerId').eq(customer_id))
-    if not items and customer:  # fallback por nombre de empresa (desalineación de id)
+        items = _by_customer(table_database, customer_id)   # GSI customerId-index
+    if not items and customer:  # fallback por NOMBRE de empresa (desalineación de id) — Scan
         items = _scan_all(table_database, FilterExpression=Attr('customer').eq(customer))
     items = [_clean(i) for i in items]
     items.sort(key=lambda x: x.get('uploadDate', ''), reverse=True)
@@ -134,7 +127,7 @@ def _load_databases(customer_id, customer):
 
 
 def _load_message_templates(customer_id):
-    items = [_clean(i) for i in _scan_all(table_message, FilterExpression=Attr('customerId').eq(customer_id))]
+    items = [_clean(i) for i in _by_customer(table_message, customer_id)]  # GSI customerId-index
     items.sort(key=lambda x: x.get('created', ''), reverse=True)
     return items
 
@@ -213,15 +206,14 @@ def _load_stats(customer_id, customer):
     summary_table = dynamodb.Table('{}_sendSummary'.format(customer))
 
     def _counts_for(process_id):
-        # 1) Resumen pre-agregado (O(1)) si está activo y existe para este proceso.
-        if SEND_SUMMARY_READ:
-            try:
-                item = summary_table.get_item(Key={'processId': process_id}).get('Item')
-            except Exception:
-                item = None
-            if item:
-                return {k: _to_int(item.get(k, 0)) for k in _SUMMARY_FIELDS}
-        # 2) Fallback: agregación por scan de los estados del proceso.
+        # 1) Resumen pre-agregado (O(1)) por defecto.
+        try:
+            item = summary_table.get_item(Key={'processId': process_id}).get('Item')
+        except Exception:
+            item = None
+        if item:
+            return {k: _to_int(item.get(k, 0)) for k in _SUMMARY_FIELDS}
+        # 2) Fallback: agregación por scan de los estados de ESE proceso.
         return _counts_from_states(_current_state_per_message(_query_process(status_table, process_id)))
 
     result = []
