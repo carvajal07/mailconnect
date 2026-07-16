@@ -148,11 +148,13 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 ### Desuscripción (cómo funciona)
 1. El builder agrega SIEMPRE un pie con `{{unsubscribeUrl}}` al HTML generado (no removible).
 2. Send-EM llena esa variable por destinatario (token HMAC `base64url({c,e}).firma`);
-   Send-EAU además agrega headers `List-Unsubscribe` + `List-Unsubscribe-Post` (RFC 8058).
+   Send-EAU **y Send-EAP** además agregan headers `List-Unsubscribe` +
+   `List-Unsubscribe-Post` (RFC 8058).
 3. La lambda `Api_V1_Email_Unsubscribe` (pública) valida la firma e inserta el email en
    `{customer}_unsubscribe` (PK `email`) y muestra una página de confirmación con la marca.
 4. Prepare-batch filtra contra esa tabla en el envío real (chequeo reparado: antes nunca corría).
-   ⚠️ EAP aún no reemplaza la variable (pendiente, mismo patrón que EAU).
+   ✅ EAP ya reemplaza `{{unsubscribeUrl}}` por destinatario (mismo patrón que EAU; jul 2026).
+   Requiere la env `SECRET_KEY` (y `UNSUBSCRIBE_URL`) también en `Send-batch-template-EAP`.
 
 ### Portal: precarga y edición (jul 2026)
 - **Precarga al loguear:** `PortalDataProvider` (`context/PortalDataContext.tsx`) envuelve el

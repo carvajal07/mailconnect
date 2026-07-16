@@ -6,6 +6,9 @@ import boto3
 import uuid
 import json
 import sys
+import hmac
+import base64
+import hashlib
 from datetime import datetime, timedelta
 import re
 from botocore.exceptions import ClientError
@@ -22,6 +25,23 @@ BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 def tenant_bucket(nit, doc_type):
     clean = re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
     return '{}-{}-{}'.format(BUCKET_PREFIX, clean, doc_type)
+
+
+# Desuscripción: igual que EM/EAU. El builder SIEMPRE inserta {{unsubscribeUrl}} en el
+# HTML; aquí se rellena POR DESTINATARIO (token HMAC firmado que valida la lambda
+# Unsubscribe) y, como el correo es MIME crudo (send_raw_email), se agrega además el header
+# estándar List-Unsubscribe (RFC 8058). Antes EAP no reemplazaba la variable → llegaba el
+# literal {{unsubscribeUrl}} al destinatario.
+UNSUBSCRIBE_URL = os.environ.get('UNSUBSCRIBE_URL', 'https://api.mailconnect.com.co/V1/Email/Unsubscribe')
+SECRET_KEY = os.environ.get('SECRET_KEY', '')
+
+
+def build_unsubscribe_url(customer, email):
+    """Token firmado (HMAC-SHA256) que la lambda Unsubscribe valida (mismo formato que EAU)."""
+    payload = json.dumps({'c': customer, 'e': email}, separators=(',', ':'))
+    payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode().rstrip('=')
+    signature = hmac.new(SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()[:32]
+    return "{}?t={}.{}".format(UNSUBSCRIBE_URL, payload_b64, signature)
 
 
 global customer_name
@@ -426,6 +446,10 @@ def lambda_handler(event, context):
                 #Reemplazar variables en HTML
                 personalized_body = personalized_data(personalized_body_list,register,html)
                 personalized_text = personalized_data(personalized_text_list,register,text)
+                # Desuscripción por destinatario (token firmado) + header List-Unsubscribe.
+                unsubscribe_url = build_unsubscribe_url(customer_name, email)
+                personalized_body = (personalized_body or "").replace('{{unsubscribeUrl}}', unsubscribe_url)
+                personalized_text = (personalized_text or "").replace('{{unsubscribeUrl}}', unsubscribe_url)
                 '''
                 for field_body in custom_body_fields:
                     key = re.sub(replace_pattern, "", field_body)
@@ -436,8 +460,10 @@ def lambda_handler(event, context):
 
                 msg = MIMEMultipart('mixed')
                 msg['Subject'] = personalized_subject
-                
-                
+                msg['List-Unsubscribe'] = f'<{unsubscribe_url}>'
+                msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+
+
                 # Add body to email
                 msg_body = MIMEMultipart('alternative')
                 textpart = MIMEText(personalized_text.encode('utf-8'), 'plain', 'utf-8')
@@ -445,7 +471,7 @@ def lambda_handler(event, context):
                 msg_body.attach(textpart)
                 msg_body.attach(htmlpart)
                 msg.attach(msg_body)
-                
+
 
                 #Agregar adjunto
                 part = MIMEApplication(file_content)
@@ -498,6 +524,10 @@ def lambda_handler(event, context):
                 print(personalized_body)
                 personalized_text = personalized_data(personalized_text_list,register,text)
                 print(personalized_text)
+                # Desuscripción por destinatario (token firmado) + header List-Unsubscribe.
+                unsubscribe_url = build_unsubscribe_url(customer_name, email)
+                personalized_body = (personalized_body or "").replace('{{unsubscribeUrl}}', unsubscribe_url)
+                personalized_text = (personalized_text or "").replace('{{unsubscribeUrl}}', unsubscribe_url)
                 '''
                 for field_body in custom_body_fields:
                     key = re.sub(replace_pattern, "", field_body)
@@ -505,11 +535,13 @@ def lambda_handler(event, context):
                     personalized_body = personalized_body.replace(field_body,value)
                     personalized_text = personalized_text.replace(field_body,value)
                 '''
-                    
+
                 msg = MIMEMultipart('mixed')
                 msg['Subject'] = personalized_subject
-                
-                
+                msg['List-Unsubscribe'] = f'<{unsubscribe_url}>'
+                msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+
+
                 # Add body to email
                 msg_body = MIMEMultipart('alternative')
                 textpart = MIMEText(personalized_text.encode('utf-8'), 'plain', 'utf-8')
