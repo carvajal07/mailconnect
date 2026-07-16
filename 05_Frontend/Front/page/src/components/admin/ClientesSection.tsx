@@ -24,6 +24,8 @@ import {
   Alert,
   Divider,
   Tooltip,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import SearchIcon from '@mui/icons-material/Search';
@@ -32,7 +34,7 @@ import ApartmentIcon from '@mui/icons-material/Apartment';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import PersonIcon from '@mui/icons-material/Person';
 import { customerService } from '../../services/customerService';
-import type { CustomerSummary, CustomerDetail, CustomerUser, UserRole } from '../../services/customerService';
+import type { CustomerSummary, CustomerDetail, CustomerUser, UserRole, TenantRole } from '../../services/customerService';
 import { isOk } from '../../services/apiClient';
 import { formatDateTime } from '../../utils/datetime';
 import { useFeedback } from '../../hooks/useFeedback';
@@ -117,6 +119,20 @@ export const ClientesSection = () => {
       notify(`Rol actualizado a ${next === 'admin' ? 'administrador' : 'cliente'}.`, 'success');
     } else {
       notify(res.description || 'No se pudo cambiar el rol.', 'error');
+    }
+  };
+
+  /** Cambia el sub-rol de empresa (owner|approver|operator) de un usuario. */
+  const changeTenantRole = async (u: CustomerUser, next: TenantRole) => {
+    if (!detail || next === (u.tenantRole ?? 'owner')) return;
+    setRoleBusy(u.userId);
+    const res = await customerService.setTenantRole(u.userId, next);
+    setRoleBusy(null);
+    if (isOk(res)) {
+      setDetail({ ...detail, users: detail.users.map((x) => (x.userId === u.userId ? { ...x, tenantRole: next } : x)) });
+      notify(`Sub-rol actualizado a ${next}.`, 'success');
+    } else {
+      notify(res.description || 'No se pudo cambiar el sub-rol.', 'error');
     }
   };
 
@@ -254,13 +270,18 @@ export const ClientesSection = () => {
                         <TableCell>Nombre</TableCell>
                         <TableCell>Email</TableCell>
                         <TableCell>Rol</TableCell>
+                        <TableCell>
+                          <Tooltip title="Sub-rol dentro de la empresa (RBAC): owner (todo), approver (aprueba + envía), operator (solo prepara y solicita aprobación).">
+                            <Box component="span" sx={{ cursor: 'help' }}>Sub-rol</Box>
+                          </Tooltip>
+                        </TableCell>
                         <TableCell>Estado</TableCell>
                         <TableCell align="right">Acciones</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       {detail.users.length === 0 && (
-                        <TableRow><TableCell colSpan={5} align="center" sx={{ py: 2, color: 'text.secondary' }}>Sin usuarios.</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={6} align="center" sx={{ py: 2, color: 'text.secondary' }}>Sin usuarios.</TableCell></TableRow>
                       )}
                       {detail.users.map((u) => (
                         <TableRow key={u.userId} hover>
@@ -270,6 +291,19 @@ export const ClientesSection = () => {
                             <Chip size="small" icon={u.role === 'admin' ? <AdminPanelSettingsIcon /> : <PersonIcon />}
                               color={u.role === 'admin' ? 'primary' : 'default'} variant={u.role === 'admin' ? 'filled' : 'outlined'}
                               label={u.role === 'admin' ? 'Administrador' : 'Cliente'} />
+                          </TableCell>
+                          <TableCell>
+                            <Select
+                              size="small"
+                              value={u.tenantRole ?? 'owner'}
+                              onChange={(e) => changeTenantRole(u, e.target.value as TenantRole)}
+                              disabled={roleBusy === u.userId}
+                              sx={{ minWidth: 120 }}
+                            >
+                              <MenuItem value="owner">Owner</MenuItem>
+                              <MenuItem value="approver">Aprobador</MenuItem>
+                              <MenuItem value="operator">Funcional</MenuItem>
+                            </Select>
                           </TableCell>
                           <TableCell>
                             <Chip size="small" variant="outlined" color={u.active ? 'success' : 'warning'}

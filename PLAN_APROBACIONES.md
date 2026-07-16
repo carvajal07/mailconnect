@@ -132,12 +132,19 @@ Fuente única en el front (`portalAccess.ts`), fácil de mover a config del back
     usar estado local y **lee/escribe el estado persistido** de la campaña; el envío real se
     habilita solo con `approved`. (Aprobar/Rechazar visibles inline mientras no hay roles.)
   - Tests: pytest+moto de los 3 endpoints.
-- **Fase 2 — Roles + tab Aprobaciones + RBAC:**
-  - `tenantRole` en `user`/JWT/Authorizer/Login; `Register` default `owner`.
-  - `portalAccess.ts` (matriz) + el sidebar filtra tabs; tab **Aprobaciones** (bandeja).
-  - Mueve el envío real a Aprobaciones; endurece los endpoints por `tenantRole`.
-  - Gestión de sub-rol por usuario en la ficha de cliente (`User/SetRole` extendido o nuevo
-    `User/SetTenantRole`).
+- **Fase 2 — Roles + tab Aprobaciones + RBAC (✅ implementada):**
+  - `tenantRole` en `user`/JWT/Authorizer(+2)/Login; `Register` default `owner`.
+  - `config/portalAccess.ts` (matriz `TAB_ACCESS` + `canAccessTab`) + el sidebar filtra tabs
+    por `getTenantRole`; `PortalPage` gatea el render (fallback al tab por defecto).
+  - Tab **Aprobaciones** (`AprobacionesSection`): bandeja de pendientes (aprobar/rechazar) +
+    aprobadas listas para envío (modal de envío real). Solo owner/approver.
+  - Endurecido por rol: `Campaign/Approve` y `Campaign/Reject` exigen owner|approver (403);
+    el envío real (`Prepare-batch`) también (fail-open de rollout si falta el context).
+  - Provisión de sub-rol: **`Api_V1_User_SetTenantRole`** (admin) + ruta `/User/SetTenantRole`;
+    la ficha de cliente (`ClientesSection`) trae un selector Owner/Aprobador/Funcional por
+    usuario. `Customer/Detail` ahora devuelve `tenantRole`.
+  - **Pendiente (follow-up):** auto-servicio del owner (tab "Mi equipo" en el portal) para que
+    la empresa gestione sus propios sub-roles sin pasar por el admin de MailConnect.
 
 ---
 
@@ -148,4 +155,8 @@ Fuente única en el front (`portalAccess.ts`), fácil de mover a config del back
   `Api_V1_Campaign_Reject` (+ rutas en `infra/api/routes.json`, ya declaradas).
   Permisos: `dynamodb:GetItem/UpdateItem` sobre `campaign`, `PutItem` sobre `adminAudit`.
 - **Fase 2**: campo `tenantRole` en `user` (default `owner`); el Authorizer debe reenviar
-  `tenantRole` en el context (proxy directo; en no-proxy, inyectar `$context.authorizer.tenantRole`).
+  `tenantRole` en el context (proxy directo; en no-proxy, inyectar `$context.authorizer.tenantRole`
+  en el mapping template de las rutas de aprobación y del envío real). Desplegar la lambda
+  `Api_V1_User_SetTenantRole` + ruta `/User/SetTenantRole` (admin) con permiso
+  `dynamodb:GetItem/UpdateItem/Scan` sobre `user`. Promover manualmente al menos un usuario
+  por empresa a `owner` no es necesario (default owner).

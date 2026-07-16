@@ -313,6 +313,10 @@ def lambda_handler(event, context):
                             'userHash': hashed_password,
                             'userSalt': salt,
                             'role': 'client',
+                            # Sub-rol dentro de la empresa (RBAC; ver PLAN_APROBACIONES.md).
+                            # El que registra la empresa queda como 'owner' (hace todo);
+                            # owner/approver aprueban y envían, operator solo prepara/prueba.
+                            'tenantRole': 'owner',
                             # Evidencia de aceptación de términos (Ley 1581).
                             'termsAccepted': accepted_terms,
                             'termsAcceptedAt': formattedDate if accepted_terms else '',

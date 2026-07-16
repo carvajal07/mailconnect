@@ -1690,12 +1690,24 @@ def lambda_handler(event, context):
                                         "Envío de {} muestra(s) de la campaña '{}' ({})".format(
                                             data.get('quantitySamples', ''), campaign_name, channel_name))
                     else:
-                        # Envío real → SPLIT: trocea el CSV y encola un trabajo por parte
-                        # (cada parte la procesa un worker en su propia invocación, Fase 4).
-                        status, status_code, description = preparar_split(
-                            st, data, response_campaign, user_id, template_version,
-                            temp_file, delimiter, url_sqs, channel_name,
-                            unsubscribe_existed, blacklist_existed)
+                        # RBAC: el envío real solo lo puede disparar owner/approver (el
+                        # funcional/operator solo prepara y solicita aprobación). Fail-open
+                        # de rollout: si el context no trae tenantRole, default 'owner'.
+                        _trole = str(((event.get('requestContext') or {}).get('authorizer') or {})
+                                     .get('tenantRole', 'owner') or 'owner') if isinstance(event, dict) else 'owner'
+                        if _trole not in ('owner', 'approver'):
+                            status = False
+                            status_code = 403
+                            description = ('Tu rol no permite el envío real. Solicita la '
+                                           'aprobación a un aprobador de tu empresa.')
+                            print(description)
+                        else:
+                            # Envío real → SPLIT: trocea el CSV y encola un trabajo por parte
+                            # (cada parte la procesa un worker en su propia invocación, Fase 4).
+                            status, status_code, description = preparar_split(
+                                st, data, response_campaign, user_id, template_version,
+                                temp_file, delimiter, url_sqs, channel_name,
+                                unsubscribe_existed, blacklist_existed)
                         if status:
                             _audit_send(event, data, 'send.real',
                                         "Envío REAL iniciado de la campaña '{}' ({})".format(

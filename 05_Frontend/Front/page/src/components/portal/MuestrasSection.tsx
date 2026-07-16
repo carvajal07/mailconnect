@@ -38,7 +38,7 @@ import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import HowToRegIcon from '@mui/icons-material/HowToReg';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import MenuItem from '@mui/material/MenuItem';
-import { getUser } from '../../services/authService';
+import { getUser, canApprove } from '../../services/authService';
 import { campaignsService, MAX_SAMPLE_SENDS } from '../../services/campaignsService';
 import type { CampaignSummary, ApprovalStatus } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
@@ -134,6 +134,9 @@ export const MuestrasSection = () => {
   // ¿El cliente tiene habilitados los envíos reales? (lo define el admin; el backend
   // también lo bloquea). Si falta el dato en la sesión se asume habilitado.
   const realSendEnabled = user?.realSendEnabled !== false;
+  // RBAC: solo owner/approver aprueban/rechazan y disparan el envío real. El operator
+  // solo envía muestras y solicita la aprobación (el envío real está en tab Aprobaciones).
+  const canApproveActions = canApprove(user);
 
   // Canal de la campaña seleccionada → parámetros del estimador de costo.
   const selectedChannel = selectedCampaign?.channel ?? 'EM';
@@ -611,8 +614,8 @@ export const MuestrasSection = () => {
                   </Tooltip>
                 )}
 
-                {/* pending → aprobar / rechazar (en Fase 2 esto vive en el tab Aprobaciones) */}
-                {approval === 'pending' && (
+                {/* pending → aprobar / rechazar (solo owner/approver; también en Aprobaciones) */}
+                {approval === 'pending' && canApproveActions && (
                   <>
                     <Button color="success" variant="outlined" startIcon={<CheckCircleIcon />} disabled={approvalBusy} onClick={handleApprove}>
                       Aprobar
@@ -622,9 +625,14 @@ export const MuestrasSection = () => {
                     </Button>
                   </>
                 )}
+                {approval === 'pending' && !canApproveActions && (
+                  <Typography variant="caption" color="text.secondary">
+                    Un aprobador de tu empresa debe revisarla en el tab <strong>Aprobaciones</strong>.
+                  </Typography>
+                )}
 
-                {/* approved → envío real */}
-                {approval === 'approved' && (
+                {/* approved → envío real (solo owner/approver) */}
+                {approval === 'approved' && canApproveActions && (
                   <Tooltip title={!realSendEnabled ? 'Envíos reales deshabilitados para tu cuenta.' : insufficientBalance ? 'Saldo insuficiente: recarga tu monedero para enviar.' : 'Envía la campaña a TODA la base de datos (envío real).'}>
                     <span>
                       <Button
@@ -638,6 +646,11 @@ export const MuestrasSection = () => {
                       </Button>
                     </span>
                   </Tooltip>
+                )}
+                {approval === 'approved' && !canApproveActions && (
+                  <Typography variant="caption" color="success.main">
+                    Aprobada. Un aprobador puede enviarla desde el tab <strong>Aprobaciones</strong>.
+                  </Typography>
                 )}
               </Stack>
             )}

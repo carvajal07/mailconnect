@@ -6,6 +6,7 @@
     { "path": "/Customer/Update",          "lambda": "Api_V1_Customer_Update",          "admin": true },
     { "path": "/Customer/Detail",          "lambda": "Api_V1_Customer_Detail",          "admin": true },
     { "path": "/User/SetRole",             "lambda": "Api_V1_User_SetRole",             "admin": true },
+    { "path": "/User/SetTenantRole",       "lambda": "Api_V1_User_SetTenantRole",       "admin": true },
     { "path": "/Pricing/List",             "lambda": "Api_V1_Pricing_List",             "admin": true },
     { "path": "/Pricing/Update",           "lambda": "Api_V1_Pricing_Update",           "admin": true },
     { "path": "/Billing/Summary",          "lambda": "Api_V1_Billing_Summary",          "admin": true },

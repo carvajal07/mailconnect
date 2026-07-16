@@ -64,6 +64,11 @@ def lambda_handler(event, context):
 
     if not tenant_customer_id:
         return {'status': False, 'statusCode': 403, 'description': 'Sesión sin identidad de cliente.'}
+    # RBAC: solo owner/approver pueden rechazar. Fail-open de rollout (default 'owner').
+    tenant_role = str(auth.get('tenantRole', 'owner') or 'owner')
+    if tenant_role not in ('owner', 'approver'):
+        return {'status': False, 'statusCode': 403,
+                'description': 'Tu rol no permite rechazar campañas.'}
     if not campaign_id:
         return {'status': False, 'statusCode': 400, 'description': 'Indica el campaignId.'}
     if not reason:

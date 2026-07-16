@@ -18,6 +18,7 @@ export const CUSTOMER_ENDPOINTS = {
   UPDATE: '/Customer/Update',
   DETAIL: '/Customer/Detail',
   SET_ROLE: '/User/SetRole',
+  SET_TENANT_ROLE: '/User/SetTenantRole',
 };
 
 export interface CustomerSummary {
@@ -29,6 +30,8 @@ export interface CustomerSummary {
 }
 
 export type UserRole = 'admin' | 'client';
+/** Sub-rol dentro de la empresa (RBAC del portal). */
+export type TenantRole = 'owner' | 'approver' | 'operator';
 
 export interface CustomerUser {
   userId: string;
@@ -36,6 +39,8 @@ export interface CustomerUser {
   name: string;
   phone: string;
   role: UserRole;
+  /** Sub-rol de empresa (RBAC): owner|approver|operator. */
+  tenantRole?: TenantRole;
   active: boolean;
   date?: string;
 }
@@ -68,4 +73,11 @@ export const customerService = {
     role: UserRole,
   ): Promise<ApiResponse<{ userId?: string; role?: UserRole }>> =>
     apiPost(CUSTOMER_ENDPOINTS.SET_ROLE, { userId, role }),
+
+  /** Cambia el sub-rol de empresa (owner|approver|operator) de un usuario (admin). */
+  setTenantRole: (
+    userId: string,
+    tenantRole: TenantRole,
+  ): Promise<ApiResponse<{ userId?: string; tenantRole?: TenantRole }>> =>
+    apiPost(CUSTOMER_ENDPOINTS.SET_TENANT_ROLE, { userId, tenantRole }),
 };

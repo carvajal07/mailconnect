@@ -57,8 +57,11 @@ def env():
         yield req, apr, rej, t
 
 
-def _auth(body, cid='CU1', user='ana@x.com', uid='U1'):
-    return {**body, 'requestContext': {'authorizer': {'customerId': cid, 'user': user, 'userId': uid}}}
+def _auth(body, cid='CU1', user='ana@x.com', uid='U1', trole=None):
+    authz = {'customerId': cid, 'user': user, 'userId': uid}
+    if trole is not None:
+        authz['tenantRole'] = trole
+    return {**body, 'requestContext': {'authorizer': authz}}
 
 
 # --- Request-approval ---------------------------------------------------------
@@ -120,6 +123,38 @@ def test_approve_otro_cliente_403(env):
     req.lambda_handler(_auth({'campaignId': 'C1'}), None)
     resp = apr.lambda_handler(_auth({'campaignId': 'C1'}, cid='CU2'), None)
     assert resp['statusCode'] == 403
+
+
+def test_approve_operator_403(env):
+    """RBAC: un operator (funcional) NO puede aprobar."""
+    req, apr, _, _ = env
+    req.lambda_handler(_auth({'campaignId': 'C1'}), None)
+    resp = apr.lambda_handler(_auth({'campaignId': 'C1'}, trole='operator'), None)
+    assert resp['statusCode'] == 403
+
+
+def test_approve_approver_ok(env):
+    """RBAC: un approver SÍ puede aprobar."""
+    req, apr, _, t = env
+    req.lambda_handler(_auth({'campaignId': 'C1'}), None)
+    resp = apr.lambda_handler(_auth({'campaignId': 'C1'}, trole='approver'), None)
+    assert resp['statusCode'] == 200
+    assert t.get_item(Key={'campaignId': 'C1'})['Item']['approvalStatus'] == 'approved'
+
+
+def test_reject_operator_403(env):
+    """RBAC: un operator NO puede rechazar."""
+    req, _, rej, _ = env
+    req.lambda_handler(_auth({'campaignId': 'C1'}), None)
+    resp = rej.lambda_handler(_auth({'campaignId': 'C1', 'reason': 'x'}, trole='operator'), None)
+    assert resp['statusCode'] == 403
+
+
+def test_request_approval_operator_ok(env):
+    """RBAC: el operator SÍ puede solicitar aprobación (es su función)."""
+    req, _, _, _ = env
+    resp = req.lambda_handler(_auth({'campaignId': 'C1'}, trole='operator'), None)
+    assert resp['statusCode'] == 200
 
 
 # --- Reject -------------------------------------------------------------------
