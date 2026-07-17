@@ -131,6 +131,7 @@ class ProcessState:
         self.headers = None
         self.template_name = None
         self.attachment = False
+        self.channel = ''        # canal de la campaña (EM/EAU/EAP/SMS/WSP/VOZ) → tipo de contacto
         self.sms_body = ''       # texto SMS (solo canal SMS)
         self.wsp_template = ''   # nombre HSM (solo canal WSP)
         self.voice_message = ''  # texto TTS (solo canal VOZ)
@@ -615,6 +616,7 @@ def build_ctx(st:'ProcessState')->dict:
         "fromEmail": st.from_email,
         "headers": st.headers,
         "templateName": st.template_name,
+        "channel": st.channel,           # EM/EAU/EAP/SMS/WSP/VOZ → tipo de contacto en el worker
         "smsBody": st.sms_body,          # texto SMS (solo canal SMS)
         "wspTemplate": st.wsp_template,  # nombre HSM (solo canal WSP)
         "voiceMessage": st.voice_message,  # texto TTS (solo canal VOZ)
@@ -981,7 +983,7 @@ def validate_csv():
 
 
 def preparar_muestras(st, data, response_campaign, user_id, template_version,
-                      temp_file, delimiter, url_sqs, patron_email):
+                      temp_file, delimiter, url_sqs):
     """Rama de ENVÍO DE MUESTRAS (correos de prueba). Reemplaza el correo real de los
     primeros registros (o de las identificaciones seleccionadas) por los correos de
     prueba y los encola. No toca la base real ni marca la campaña como 'Enviando'.
@@ -1002,8 +1004,11 @@ def preparar_muestras(st, data, response_campaign, user_id, template_version,
     print("Cantidad  muestras en el payload: " + str(quantity_samples))
     selective_samples = data.get('selectiveSamples', False)
     recipients = data["recipients"]
-    print(f"Correos de muestras: {recipients}")
-    #Validar que los email sean correctos
+    print(f"Destinatarios de muestras: {recipients}")
+    # Validar los destinatarios SEGÚN EL CANAL: correo (EM/EAU/EAP) o celular E.164
+    # (SMS/WSP/VOZ). Antes se validaban SIEMPRE como correo, por lo que un celular como
+    # "3502452219" era rechazado ("emails con error"). Los celulares se normalizan a E.164
+    # (`+57...`) para que las lambdas de envío (que exigen E.164) los acepten.
     quantity_recipients = len(recipients)
     invalid_mail = False
     invalid_mails = ""
@@ -1012,10 +1017,14 @@ def preparar_muestras(st, data, response_campaign, user_id, template_version,
     quantity_blacklist = 0
     quantity_unsubscribe = 0
     quantity_deletions = 0
-    for email in recipients:
-        if not re.match(patron_email, email):
+    normalized_recipients = []
+    for recipient in recipients:
+        ok, value = valid_contact(st.channel, recipient)
+        if not ok:
             invalid_mail = True
-            invalid_mails += email
+            invalid_mails += (", " if invalid_mails else "") + str(recipient)
+        normalized_recipients.append(value)
+    recipients = normalized_recipients  # celulares ya en E.164; correos sin cambios
 
     # Límite de envíos de muestras por campaña (acumulado). Cada operación de muestras
     # cuenta 1; al llegar a MAX_SAMPLE_SENDS se bloquea (evita abuso/costos con envíos
@@ -1034,13 +1043,14 @@ def preparar_muestras(st, data, response_campaign, user_id, template_version,
         return status, status_code, description
 
     if invalid_mail:
-        description = f'Error en las direcciones email enviadas para las muestras, emails con error: {invalid_mails}'
+        tipo = 'celulares' if is_phone_channel(st.channel) else 'emails'
+        description = f'Error en los destinatarios enviados para las muestras, {tipo} con error: {invalid_mails}'
         status = False
         print(description)
         status_code = 400
         return status, status_code, description
 
-    print("Todos los email enviados son validos")
+    print("Todos los destinatarios de muestras son validos")
     if selective_samples:
         print("Proceso con muestras selectivas")
         #En el proceso de muestras selectivas solo se van a enviar la cantidad de registros que se encuentren en el spool del cliente
@@ -1203,12 +1213,69 @@ def enqueue_part_job(st, part:int, part_key:str, bucket_name:str, channel_queue:
 # (SMS/WhatsApp/Voz). Es la clave para deduplicar contactos repetidos.
 CONTACT_COL = 1
 
+# Canales cuyo contacto (columna 2 del CSV) es un CELULAR (E.164), no un correo.
+PHONE_CHANNELS = ('SMS', 'WSP', 'VOZ')
+# Patrón de correo (estructura del email). Se usa para validar el contacto de los canales
+# de EMAIL, tanto en las muestras como en el envío real (procesar_parte).
+PATRON_EMAIL = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{2,}$'
+
+
+def is_phone_channel(channel):
+    """¿El canal usa CELULAR como contacto (SMS/WhatsApp/Voz)?"""
+    return str(channel or '').upper() in PHONE_CHANNELS
+
+
+def normalize_phone(raw):
+    """Normaliza un celular a formato E.164 (`+57...`). Colombia (+57) por defecto cuando el
+    número viene sin indicativo, igual que el front (`csv.ts` usa libphonenumber con
+    DEFAULT_COUNTRY='CO', que acepta E.164 o el celular local colombiano de 10 dígitos). Las
+    lambdas de envío (SMS/Voz → DestinationPhoneNumber; WhatsApp → `to`) EXIGEN E.164, así que
+    un local `3502452219` debe convertirse a `+573502452219`. Devuelve el E.164 o '' si no es
+    un celular con longitud/estructura plausible."""
+    if raw is None:
+        return ''
+    p = re.sub(r'[\s()\-.]', '', str(raw))
+    if not p:
+        return ''
+    if p.startswith('00'):            # prefijo de salida internacional (00XX) → +
+        p = '+' + p[2:]
+    if p.startswith('+'):
+        digits = p[1:]
+        return '+' + digits if (digits.isdigit() and 8 <= len(digits) <= 15) else ''
+    if not p.isdigit():
+        return ''
+    if p.startswith('57') and len(p) == 12:   # 57 + celular de 10 dígitos → ya trae indicativo
+        return '+' + p
+    if len(p) == 10:                          # celular local colombiano → anteponer +57
+        return '+57' + p
+    return ''
+
+
+def valid_contact(channel, raw):
+    """Valida el contacto (columna 2) SEGÚN EL CANAL. Devuelve (ok, valor_normalizado):
+      - EMAIL (EM/EAU/EAP): ok si cumple el patrón de correo; el valor no se altera.
+      - CELULAR (SMS/WSP/VOZ): ok si se puede normalizar a E.164; devuelve el E.164.
+    Antes se validaba SIEMPRE como correo, lo que rechazaba los celulares de SMS/WhatsApp/Voz
+    (tanto en muestras como en el envío real)."""
+    value = str(raw or '').strip()
+    if is_phone_channel(channel):
+        norm = normalize_phone(value)
+        return (bool(norm), norm or value)
+    return (bool(re.match(PATRON_EMAIL, value)), value)
+
 
 def _contact_key(line):
-    """Clave normalizada del contacto (columna 2) para deduplicar. '' si no hay contacto."""
+    """Clave normalizada del contacto (columna 2) para deduplicar. '' si no hay contacto.
+    Los correos se comparan en minúsculas; los celulares se normalizan a E.164 para que
+    `3502452219` y `+573502452219` cuenten como el MISMO contacto."""
     if not line or len(line) <= CONTACT_COL:
         return ''
-    return str(line[CONTACT_COL] or '').strip().lower()
+    raw = str(line[CONTACT_COL] or '').strip()
+    if not raw:
+        return ''
+    if '@' in raw:
+        return raw.lower()
+    return normalize_phone(raw) or raw.lower()
 
 
 def base_allows_duplicates(customer_id, data_path):
@@ -1449,9 +1516,10 @@ def _mark_and_count_part(st, part, enqueued, quantity_blacklist, quantity_unsubs
         raise
 
 
-def procesar_parte(st, job, patron_email)->None:
-    """WORKER del ENVÍO REAL (Fase 4). Procesa UNA parte: descarga el part-file, valida la
-    estructura de email, filtra lista negra/desuscritos, agrupa en lotes y ENCOLA al canal
+def procesar_parte(st, job)->None:
+    """WORKER del ENVÍO REAL (Fase 4). Procesa UNA parte: descarga el part-file, valida el
+    contacto (correo o celular E.164 según el canal), filtra lista negra/desuscritos, agrupa
+    en lotes y ENCOLA al canal
     con numeración de parte ÚNICA, registra los estados de los filtrados y ACUMULA los
     conteos en la fila del proceso. IDEMPOTENTE: encolado deduplicado por la lambda de envío
     (por (processId, part)); estados con IDs deterministas (put idempotente); conteo con
@@ -1466,6 +1534,7 @@ def procesar_parte(st, job, patron_email)->None:
     st.from_email = job.get('fromEmail', '')
     st.headers = job.get('headers')
     st.template_name = job.get('templateName')
+    st.channel = job.get('channel', '')   # tipo de contacto (correo vs celular E.164)
     st.sms_body = job.get('smsBody', '')
     st.wsp_template = job.get('wspTemplate', '')
     st.voice_message = job.get('voiceMessage', '')
@@ -1489,9 +1558,16 @@ def procesar_parte(st, job, patron_email)->None:
     emails_error = []
     registers_correct = []
     for line in rows:
-        email = line[1]
-        if re.match(patron_email, email):
-            keys.append({'email': email})
+        raw = line[CONTACT_COL] if len(line) > CONTACT_COL else ''
+        # Validación del contacto SEGÚN EL CANAL: correo (EM/EAU/EAP) o celular E.164
+        # (SMS/WSP/VOZ). Antes se validaba SIEMPRE como correo, por lo que en el envío real de
+        # SMS/WhatsApp/Voz TODOS los contactos caían en emails_error (estado 11) y NO se
+        # encolaba nada. Los celulares válidos se normalizan a E.164 en la fila.
+        ok, contact = valid_contact(st.channel, raw)
+        if ok:
+            if len(line) > CONTACT_COL:
+                line[CONTACT_COL] = contact   # celular → E.164 (el correo queda igual)
+            keys.append({'email': contact})
             registers_correct.append(line)
         else:
             emails_error.append(line)
@@ -1512,7 +1588,10 @@ def procesar_parte(st, job, patron_email)->None:
         registers_for_message, channel_queue, part_offset=part * PART_SIZE)
 
     # Estados de los filtrados con IDs deterministas (reprocesar SOBREESCRIBE, no duplica).
-    insert_mails_status(st, emails_error, 11, "El email no tiene una estructura valida", id_prefix=f'{part}-11')
+    invalid_desc = ("El celular no tiene un formato valido (E.164)"
+                    if is_phone_channel(st.channel)
+                    else "El email no tiene una estructura valida")
+    insert_mails_status(st, emails_error, 11, invalid_desc, id_prefix=f'{part}-11')
     insert_mails_status(st, registers_unsubscribe, 12, "El email se encuentra desinscrito para este cliente", id_prefix=f'{part}-12')
     insert_mails_status(st, registers_blacklist, 13, "El email se encuentra en la lista negra de este cliente", id_prefix=f'{part}-13')
 
@@ -1551,13 +1630,12 @@ def lambda_handler(event, context):
 
     try:
         # WORKER (Fase 4): si el evento viene de SQS (cola de partes), procesa cada parte.
-        # Es la MISMA lambda, disparada por URL_SQS_PREPARE_PART. patron_email por posición:
-        # line[0]=Identificacion, line[1]=Correo, line[2]=Nombre.
+        # Es la MISMA lambda, disparada por URL_SQS_PREPARE_PART. La validación del contacto
+        # (correo o celular E.164) la resuelve procesar_parte por canal (job['channel']).
         if 'Records' in event:
-            patron_email = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{2,}$'
             for record in event['Records']:
                 job = json.loads(record['body'])
-                procesar_parte(st, job, patron_email)  # st ya trae formatted_date
+                procesar_parte(st, job)  # st ya trae formatted_date
             return {'statusCode': 200, 'headers': CORS_HEADERS,
                     'body': json.dumps({'status': True, 'status_code': 200,
                     'description': 'Partes procesadas'})}
@@ -1607,6 +1685,7 @@ def lambda_handler(event, context):
                 st.nit = get_customer_nit(st.customer_id)
                 consecutive = response_campaign['Items'][0]["consecutive"]
                 channel_name = response_campaign['Items'][0]["channel"]
+                st.channel = channel_name  # define el tipo de contacto (correo vs celular E.164)
                 data_path = response_campaign['Items'][0]["dataPath"]
                 st.from_email = response_campaign['Items'][0]["originEmail"]
                 # Para SMS el campo 'template' de la campaña guarda el TEXTO del mensaje
@@ -1710,13 +1789,14 @@ def lambda_handler(event, context):
                 else:
                     # Detectar el delimitador del CSV (el cliente pudo subirlo con ; , tab o |).
                     delimiter = detect_delimiter(temp_file)
-                    #Estructura obligatoria por posicion: line[0]=Identificacion, line[1]=Correo, line[2]=Nombre
-                    patron_email = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{2,}$'
+                    # Estructura obligatoria por posición: line[0]=Identificación, line[1]=contacto
+                    # (correo o celular según el canal), line[2]=Nombre. La validación del contacto
+                    # la hacen preparar_muestras/procesar_parte con valid_contact(st.channel, ...).
 
                     if samples:
                         status, status_code, description = preparar_muestras(
                             st, data, response_campaign, user_id, template_version,
-                            temp_file, delimiter, url_sqs, patron_email)
+                            temp_file, delimiter, url_sqs)
                         if status:
                             # Historial de muestras para el flujo de aprobación (best-effort).
                             record_sample_batch(st, data, event)

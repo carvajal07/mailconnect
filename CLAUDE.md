@@ -327,6 +327,17 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   el TEXTO del mensaje, no un template de SES). Admite variables `{{columna}}` del CSV.
 - **CSV en SMS:** la **columna 2** (line[1]) es el **celular E.164** (`+57…`), no el correo.
   `csv.ts` exporta `isValidPhone`. ⚠️ La validación por canal en la carga de bases queda pendiente.
+- **Validación de contacto por canal + E.164 (fix jul 2026):** `Prepare-batch` validaba el
+  contacto (col 2) **siempre como correo**, tanto en **muestras** (`preparar_muestras`) como en
+  el **envío real** (`procesar_parte`). Para SMS/WSP/VOZ eso rechazaba el celular: las muestras
+  daban 400 *"emails con error: 3502…"* y el envío real mandaba **todos** los contactos a estado
+  11 (email inválido) sin encolar nada. Ahora `valid_contact(st.channel, contacto)` valida
+  **por canal** (correo para EM/EAU/EAP · celular para SMS/WSP/VOZ) y **`normalize_phone`**
+  convierte los celulares a **E.164** (Colombia `+57` por defecto, igual que el front con
+  libphonenumber) antes de encolar — las lambdas de envío (SMS/Voz `DestinationPhoneNumber`,
+  WhatsApp `to`) EXIGEN E.164. El canal viaja en `build_ctx` (`channel`) → mensajes de muestra
+  y part-jobs. `_contact_key` (dedup/cobro) también normaliza el celular. Cubierto por
+  `08_Pruebas/PruebasSeguridad/test_sms_channel.py`.
 - **Front:** el form de campaña (`CampanasSection`) tiene el canal **SMS** con campo de texto
   (contador de segmentos) en vez del selector de plantilla SES.
 - ⚠️ `[J]`: crear la cola `Sms_Send-batch` + trigger, y configurar origen en End User Messaging.
