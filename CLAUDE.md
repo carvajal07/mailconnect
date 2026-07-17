@@ -108,6 +108,9 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Campaign/Request-approval` | `{ campaignId }` | 200 ok · 400 (sin muestras) · 403 · 404 · 409. Flujo maker-checker: `approvalStatus none/rejected→pending` (exige `samplesSentCount>0`). Audita `campaign.request-approval` |
 | `Campaign/Approve` | `{ campaignId }` | 200 ok · 403 · 404 · 409 (no pending). `pending→approved` (habilita el envío real). Audita `campaign.approve` |
 | `Campaign/Reject` | `{ campaignId, reason }` | 200 ok · 400 (sin motivo) · 403 · 404 · 409. `pending→rejected` + motivo. Audita `campaign.reject` |
+| `Schedule/Create` | `{ campaignId, scheduledAt (UTC ISO), templateVersion? }` | 201 `data:{scheduleId, scheduledAt, status:'pending'}` · 400 (fecha pasada/inválida) · 403 (otro cliente / no owner-approver) · 404 · 409 (ya enviando o aprobación pendiente). Programa el envío real a futuro (tabla `scheduledSend`) |
+| `Schedule/List` | `{}` | 200 `data:{schedules:[{scheduleId, campaignId, campaignName, scheduledAt, status, firedAt, processId, error}], count}` (del tenant, próximos primero) |
+| `Schedule/Cancel` | `{ scheduleId }` | 200 ok · 400 · 403 otro cliente · 404 · 409 (ya no está `pending`). `pending→canceled` |
 | `Template/List` | `{ customer }` o `{ customerId }` | 200 `data:{templates:[{name, created}], count}` (SES filtrado por prefijo `{customer}_`) |
 | `Email/Unsubscribe` | **GET/POST público (proxy, sin authorizer)** `?t=<token HMAC>` | 200 página HTML (confirmación / enlace inválido). El token lo firman las lambdas Send con `SECRET_KEY`; inserta en `{customer}_unsubscribe` (PK `email`) |
 | `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, duplicates?, allowDuplicates?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`). `allowDuplicates` = si el envío real NO filtra contactos repetidos |
@@ -277,11 +280,18 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Orden de tabs del portal:** **Bases de datos** primero · separador · **Plantillas** (HTML/DOCX/
   **PDF**/SMS/WhatsApp) · separador · **Campañas** · **Programar envíos** · Muestras · el resto
   (`PortalSidebar`, con `dividerAfter`).
-- **Tabs nuevos scaffold (jul 2026):** **Plantillas PDF** (`PdfTemplatesSection`, tablero **vacío**
-  reservado para plantillas PDF del envío EAP-PDF) y **Programar envíos** (`ProgramarEnviosSection`,
-  scaffold para agendar el envío real a fecha/hora futura; hoy todo es on-demand). Ambos son placeholders
-  montados en el portal (sin backend aún). `programar` es acción de envío → RBAC **owner/approver**
-  (`portalAccess`). Futuro Programar envíos: tabla de envíos programados + EventBridge Scheduler → Prepare-batch.
+- **Plantillas PDF (jul 2026):** **Plantillas PDF** (`PdfTemplatesSection`) es un tablero **vacío**
+  (scaffold) reservado para las plantillas PDF del envío EAP-PDF (sin backend aún).
+- **Programar envíos (jul 2026, FUNCIONAL):** `ProgramarEnviosSection` (tab junto a Campañas, RBAC
+  **owner/approver**) permite **agendar el envío real** de una campaña aprobada a una fecha/hora
+  futura. Backend: tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`) + lambdas
+  `Api_V1_Schedule_{Create,List,Cancel}` (cliente) y **`Api_V1_Schedule_Dispatch`** (cron, NO es
+  ruta de API): cada ~5 min busca los `pending` cuya hora ya llegó (`scheduledAt<=now`), los
+  **reclama** (transición atómica `pending→firing`, idempotente) e **invoca Prepare-batch** con el
+  MISMO evento del envío on-demand (`/Email/Send-batch-template` + context) → reutiliza TODOS los
+  gates (aprobación, saldo, RBAC, lock) sin duplicar. Estados: `pending|firing|sent|canceled|failed`.
+  El front convierte el `datetime-local` a **UTC ISO** antes de enviar. Cubierto por
+  `08_Pruebas/PruebasSeguridad/test_schedule.py`.
 
 ### Portal: precarga y edición (jul 2026)
 - **Precarga al loguear:** `PortalDataProvider` (`context/PortalDataContext.tsx`) envuelve el

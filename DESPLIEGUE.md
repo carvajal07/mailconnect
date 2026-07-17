@@ -169,6 +169,14 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 | `Api_V1_Admin_Campaigns` | `/Admin/Campaigns` | `Scan` sobre `campaign`/`customer` |
 | `Api_V1_Admin_Requeue` | `/Admin/Requeue` | `GetItem` sobre `process`; **`sqs:SendMessage`** sobre `Email_Prepare-batch-part`; `PutItem` sobre `adminAudit` |
 
+### 3b. Programar envíos **🆕 (nuevo, post-2026-07-17)** — tabla + 4 lambdas + cron
+
+- [ ] `[J]` Tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`, On-Demand) — la crea `Schedule/Create` on-demand, o créala a mano.
+- [ ] `[J]` `Api_V1_Schedule_Create` → ruta **`/Schedule/Create`** (client, authorizer + CORS + mapping template con `customerId`/`customer`/`nit`/`userId`/`tenantRole`). IAM: `Put/DescribeTable/CreateTable` sobre `scheduledSend`; `GetItem` sobre `campaign`.
+- [ ] `[J]` `Api_V1_Schedule_List` → ruta **`/Schedule/List`** (client). IAM: `Query` sobre `scheduledSend` (GSI).
+- [ ] `[J]` `Api_V1_Schedule_Cancel` → ruta **`/Schedule/Cancel`** (client). IAM: `GetItem`/`UpdateItem` sobre `scheduledSend`.
+- [ ] `[J]` `Api_V1_Schedule_Dispatch` **(sin ruta de API)** — disparada por una **regla EventBridge programada** (`rate(5 minutes)`). IAM: `Scan`/`UpdateItem` sobre `scheduledSend`; `GetItem` sobre `campaign`; **`lambda:InvokeFunction`** sobre `Api_V1_Email_Prepare-batch-template`. Env `PREPARE_BATCH_FUNCTION` (si el nombre AWS difiere del de la carpeta) y `SCHEDULE_MAX_BATCH` (opc).
+
 - [x] `[J]` Crear las 12 funciones vacías + sus rutas + permisos de la tabla.
 - [x] `[J]` Confirmar que el **Authorizer** está asignado a las 12 rutas.
 - [x] `[J]` `Api_V1_Admin_Requeue` reencola las partes pendientes de un envío atascado
