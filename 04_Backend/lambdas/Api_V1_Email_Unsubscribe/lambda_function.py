@@ -32,7 +32,10 @@ from datetime import datetime
 import boto3
 from botocore.exceptions import ClientError
 
-REGION = 'us-east-1'
+# Región de DynamoDB. Debe ser la MISMA donde Prepare-batch crea {tenant}_unsubscribe
+# (por defecto us-east-1, igual que las demás lambdas). Se permite override por env por si
+# el despliegue vive en otra región (así el registro se escribe donde se lee al filtrar).
+REGION = os.environ.get('DYNAMODB_REGION', 'us-east-1')
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
 
 
@@ -166,7 +169,17 @@ def lambda_handler(event, context):
                 'source': 'link',
             }
         )
-        print(f'{email} desuscrito de {tenant}')
+        # Verificación de lectura (read-back) para dejar EVIDENCIA en los logs de que el
+        # registro quedó escrito y EN QUÉ tabla/región (si no aparece en la consola suele
+        # ser porque se mira otra región o el "Item count" — que se refresca cada ~6h — en
+        # vez de "Explore items"/Scan). Best-effort: no cambia la respuesta al usuario.
+        try:
+            back = table.get_item(Key={'email': email}, ConsistentRead=True).get('Item')
+            print('Read-back OK={} tabla={} region={} email={}'.format(
+                bool(back), table_name, REGION, email))
+        except Exception as _rb:
+            print('Read-back falló ({}) tabla={} region={}'.format(_rb, table_name, REGION))
+        print(f'{email} desuscrito de {tenant} (tabla {table_name}, region {REGION})')
         # Escapar el email antes de interponerlo en el HTML (defensa en profundidad
         # contra XSS reflejado si algún firmante no valida el correo).
         safe_email = html.escape(str(email))
