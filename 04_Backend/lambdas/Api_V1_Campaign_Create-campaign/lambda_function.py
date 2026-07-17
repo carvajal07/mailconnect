@@ -28,10 +28,15 @@ table_domain = dynamodb.Table('senderDomain')
 PLATFORM_DOMAIN = os.environ.get('PLATFORM_DOMAIN', 'mailconnect.com.co')
 
 
-def _from_domain_allowed(customer_id, from_domain):
-    """¿El dominio del remitente está permitido para el cliente? True si es el dominio de la
-    plataforma o un dominio VERIFICADO del propio cliente. Fail-open: si la tabla no existe o
+def _from_allowed(customer_id, from_address):
+    """¿El remitente está permitido para el cliente? True si:
+       - el dominio del remitente es el de la plataforma, o
+       - hay un DOMINIO verificado del cliente que coincide con el dominio del remitente, o
+       - hay un CORREO verificado del cliente que coincide EXACTO con la dirección completa.
+    (SES permite ambos tipos de identidad de remitente.) Fail-open: si la tabla no existe o
     falla el lookup, devuelve True (no bloquea el rollout)."""
+    from_address = str(from_address or '').strip().lower()
+    from_domain = from_address.split('@')[-1]
     if from_domain == PLATFORM_DOMAIN or from_domain.endswith('.' + PLATFORM_DOMAIN):
         return True
     try:
@@ -40,11 +45,18 @@ def _from_domain_allowed(customer_id, from_domain):
             IndexName='customerId-index',
             KeyConditionExpression=Key('customerId').eq(customer_id))
         for it in resp.get('Items', []):
-            if str(it.get('domain', '')).lower() == from_domain and it.get('status') == 'verified':
+            if it.get('status') != 'verified':
+                continue
+            value = str(it.get('domain', '')).lower()
+            # kind autodetectado por '@' para filas legacy sin el campo.
+            kind = it.get('kind') or ('email' if '@' in value else 'domain')
+            if kind == 'email' and value == from_address:
+                return True
+            if kind == 'domain' and value == from_domain:
                 return True
         return False
     except Exception as e:
-        print('No se pudo validar el dominio del remitente (fail-open): {}'.format(e))
+        print('No se pudo validar el remitente (fail-open): {}'.format(e))
         return True
 
 
@@ -292,16 +304,15 @@ def lambda_handler(event, context):
         if (not "@" in source):
             source += "@mailconnect.com.co"
 
-        # Validación del dominio del remitente (solo email): debe ser el dominio de la
-        # plataforma o un dominio VERIFICADO del propio cliente (evita spoofing entre
-        # tenants — las identidades SES son a nivel de cuenta). Fail-open de rollout: si la
-        # tabla senderDomain no existe o falla el lookup, no se bloquea.
+        # Validación del remitente (solo email): debe ser el dominio de la plataforma, un
+        # DOMINIO verificado del propio cliente, o un CORREO verificado del cliente (identidad
+        # exacta). Evita spoofing entre tenants — las identidades SES son a nivel de cuenta.
+        # Fail-open de rollout: si la tabla senderDomain no existe o falla el lookup, no se bloquea.
         if channelName in ("EM", "EAU", "EAP"):
-            from_domain = source.split("@")[-1].strip().lower()
-            if from_domain and not _from_domain_allowed(customerId, from_domain):
+            if source and not _from_allowed(customerId, source):
                 return {'status': False, 'statusCode': 400,
-                        'description': 'El dominio del remitente no está verificado para tu cuenta. '
-                                       'Configúralo en "Dominios" o usa el remitente por defecto.'}
+                        'description': 'El remitente no está verificado para tu cuenta. Configura tu '
+                                       'dominio o correo en "Dominios" o usa el remitente por defecto.'}
             
             
 

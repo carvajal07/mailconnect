@@ -121,8 +121,8 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Blacklist/List` | `{ customerId }` o `{ customer }` | 200 `data:{items:[{email, rejectionType, description, date}], count}` (tabla `{customer}_blackList`) |
 | `Blacklist/Add` | `{ email (correo o celular), reason? }` | 201 ok · 400 datos. Crea la tabla si no existe (PK `email`) |
 | `Blacklist/Delete` | `{ email }` | 200 ok · 404 no estaba · 400 datos |
-| `Domain/Add` | `{ domain }` | 201 `data:{domainId, domain, status:'pending', records:[{type,name,value,purpose}]}` · 400 · 403 · 409. Registra la identidad SES (verify_domain_identity + verify_domain_dkim) y devuelve los registros DNS (1 TXT + 3 CNAME) |
-| `Domain/List` | `{}` | 200 `data:{domains:[{domainId, domain, status, records, createdAt, verifiedAt}], count}`. Refresca el estado de verificación desde SES (pending/verified/failed) |
+| `Domain/Add` | `{ identity }` (dominio `empresa.com` o correo `x@empresa.com`; se detecta por `@`) | 201 `data:{domainId, kind, domain, status:'pending', records[]}` · 200 (reenvío de correo pendiente) · 400 · 403 · 409. **Dominio**: `verify_domain_identity + verify_domain_dkim` → 1 TXT + 3 CNAME. **Correo**: `verify_email_identity` → SES envía un enlace al correo (`records:[]`, sin DNS) |
+| `Domain/List` | `{}` | 200 `data:{domains:[{domainId, kind, domain, status, records, createdAt, verifiedAt}], count}`. Refresca el estado desde SES (pending/verified/failed) para dominios **y** correos |
 | `Domain/Delete` | `{ domainId }` | 200 ok · 400 · 403 otro cliente · 404. Borra el registro + `delete_identity` en SES (best-effort) |
 | `Pricing/List` | `{ customerId? }` (**admin**) | 200 `data:{customerId, defaults, effective, overrides, currency}` (alcance `*` global o cliente) |
 | `Pricing/Update` | `{ customerId?, channel, fields }` (**admin**) | 200 ok · 400. `channel` ∈ EMAIL·SMS·WHATSAPP·VOICE·COMMON (COMMON escribe taxRate/minCampaign en los 4) |
@@ -208,17 +208,33 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
     `pending|verified|failed` y lo persiste. La UI muestra los registros con botones de copiar.
   - `Delete` borra el registro + `delete_identity` (best-effort). ⚠️ Las identidades SES son a
     **nivel de cuenta AWS**; la tabla guarda **qué cliente** es dueño de cada dominio.
-- **Remitente = nombre del correo + dominio:** el "De (From)" de crear campaña pasa a **dos
-  campos**: un texto **"Nombre del correo"** (`comunicaciones`, `avisos`, `notificaciones`) + un
-  **selector de Dominio** con `mailconnect.com.co` (plataforma) y los dominios **verificados** del
-  cliente. `from = {mailbox}@{dominio}` (`DEFAULT_FROM = notificaciones@mailconnect.com.co`).
-- **Validación anti-spoofing:** `Create-campaign` valida (solo email, **fail-open** de rollout) que
-  el dominio del `from` sea el de la plataforma o uno **verificado del propio cliente**
-  (`senderDomain` por `customerId`), para que un tenant no envíe desde el dominio de otro.
+- **Correos como remitente (además de dominios) (jul 2026):** en la misma pestaña y tabla el
+  cliente puede verificar **un correo específico** (ej. `ventas@empresa.com`) en vez del dominio
+  completo. SES soporta las dos identidades y esta feature usa **la misma** tabla `senderDomain`
+  con un campo **`kind`** (`domain` | `email`); el valor (dominio o correo) se guarda en el campo
+  `domain` (sin cambiar el esquema ni los lectores). `Domain_Add` **detecta el tipo por el `@`**:
+  - **Correo** → `ses.verify_email_identity` (SES manda un **correo con un enlace** a esa dirección;
+    el dueño hace clic → verificado, **sin DNS**). Se guarda `records:[]`, estado `pending`. Si el
+    correo pendiente ya existe, **reenvía** la verificación (200) en vez de duplicar (409); si ya
+    está verificado → 409. La UI muestra un **paso a paso** (revisar bandeja/spam, clic en “Verify
+    this email address”, el enlace vence en **24 h**, botón **Reenviar**) en vez de la tabla DNS.
+  - **Dominio** → igual que antes (TXT + 3 CNAME DKIM). `Domain_List` refresca ambos por SES
+    (`get_identity_verification_attributes` sirve para dominio y correo) y devuelve `kind`.
+- **Remitente = nombre del correo + dominio, o correo verificado completo:** el "De (From)" de
+  crear campaña tiene un texto **"Nombre del correo"** (`comunicaciones`, `avisos`…) + un selector
+  **"Dominio o correo"** con `mailconnect.com.co` (plataforma), los **dominios verificados** y un
+  grupo **"Correos verificados"**. Al elegir un correo verificado, `from` = esa dirección exacta y
+  el campo "Nombre del correo" se **deshabilita** (identidad fija). `DEFAULT_FROM =
+  notificaciones@mailconnect.com.co`.
+- **Validación anti-spoofing:** `Create-campaign._from_allowed` valida (solo email, **fail-open**
+  de rollout) que el `from` sea el dominio de la plataforma, un **dominio verificado** del cliente,
+  **o un correo verificado exacto** del cliente (`senderDomain` por `customerId`), para que un
+  tenant no envíe a nombre de otro.
 - ⚠️ `[J]`: la verificación SES debe estar en la **misma región del envío** (`us-east-1`); permisos
-  `ses:VerifyDomainIdentity/VerifyDomainDkim/GetIdentityVerificationAttributes/GetIdentityDkimAttributes/DeleteIdentity`
-  en las lambdas de dominio; tabla `senderDomain` (+ GSI) — la crea `Domain/Add` on-demand; rutas
-  `/Domain/{Add,List,Delete}` (authorizer + CORS); permiso `Query senderDomain` (GSI) en `Create-campaign`.
+  `ses:VerifyDomainIdentity/VerifyDomainDkim/VerifyEmailIdentity/GetIdentityVerificationAttributes/GetIdentityDkimAttributes/DeleteIdentity`
+  en las lambdas de dominio; tabla `senderDomain` (+ GSI) con el campo `kind` — la crea `Domain/Add`
+  on-demand; rutas `/Domain/{Add,List,Delete}` (authorizer + CORS); permiso `Query senderDomain`
+  (GSI) en `Create-campaign`.
 
 ### Remitente, plantilla del payload y mínimo de recarga (jul 2026)
 - **Remitente por defecto `notificaciones@mailconnect.com.co`:** el campo "De (From)" de crear
