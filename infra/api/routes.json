@@ -54,6 +54,7 @@
     { "path": "/Balance/Topup-manual-request", "lambda": "Api_V1_Balance_Topup-manual-request" },
     { "path": "/Portal/Bootstrap",         "lambda": "Api_V1_Portal_Bootstrap" },
 
+    { "path": "/Email/Unsubscribe",        "lambda": "Api_V1_Email_Unsubscribe", "method": "ANY", "auth": false, "proxy": true, "cors": false },
     { "path": "/Wallet/Wompi-webhook",     "lambda": "Api_V1_Wallet_Wompi-webhook", "auth": false, "proxy": true, "cors": false }
   ]
 }
