@@ -100,6 +100,17 @@ def _is_admin(event):
     return str(auth.get('role', '')).lower() == 'admin'
 
 
+def _is_sample_process(p):
+    """¿Es un proceso de MUESTRAS (envío de prueba)? Las muestras NO se facturan (el monedero
+    prepago tampoco las cobra; por eso están limitadas por campaña). Se excluyen del consumo.
+    Señal explícita `isSamples`; fallback por processState/nombre para procesos viejos."""
+    if p.get('isSamples'):
+        return True
+    if str(p.get('processState', '')) == 'Muestras':
+        return True
+    return str(p.get('campaignName', '')).endswith('-Samples')
+
+
 def _num(value, default=0.0):
     if isinstance(value, Decimal):
         return float(value)
@@ -315,11 +326,14 @@ def lambda_handler(event, context):
         for c in campaigns:
             camps_by_customer[c.get('customerId')].append(c)
 
-        # 3) UN scan de `process` (toda la tabla) agrupado por campaña en memoria.
+        # 3) UN scan de `process` (toda la tabla) agrupado por campaña en memoria. Se
+        #    EXCLUYEN los procesos de muestra: las pruebas no se facturan (igual que el monedero).
         processes = _scan_all(table_process,
-                              ProjectionExpression='processId, campaignId')
+                              ProjectionExpression='processId, campaignId, processState, campaignName, isSamples')
         procs_by_campaign = defaultdict(list)
         for p in processes:
+            if _is_sample_process(p):
+                continue
             procs_by_campaign[p.get('campaignId')].append(p)
 
         rate_cache = {}

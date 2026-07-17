@@ -399,7 +399,7 @@ def get_processes_for_campaign(campaign_id: str) -> List[Dict]:
             table_process,
             'campaignId-date',
             {'campaignId': campaign_id},
-            projection='processId, campaignId, campaignName, #dt, registersToSend, registersOnSpool, quantityBlacklist, quantityUnsubscribe, quantityDeletions'
+            projection='processId, campaignId, campaignName, isSamples, #dt, registersToSend, registersOnSpool, quantityBlacklist, quantityUnsubscribe, quantityDeletions'
         )        
         print(f"[GET_PROCESSES] ✓ {len(processes)} procesos encontrados")
         return processes
@@ -453,9 +453,10 @@ def collect_campaign_metrics(campaign_id: str, customer_name: str,
         state_counts: Dict = defaultdict(int)
 
         for process in processes:
-            # Omitir procesos de muestras
-            if "-Samples" in  process['campaignName']:
-                print("Saltando...")
+            # Omitir procesos de MUESTRAS (envíos de prueba): no cuentan en el reporte.
+            # Marca explícita `isSamples`; fallback por el sufijo del nombre para procesos viejos.
+            if process.get('isSamples') or "-Samples" in str(process.get('campaignName', '')):
+                print("Saltando proceso de muestras...")
                 continue
             process_id = process['processId']
             

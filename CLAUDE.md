@@ -427,6 +427,18 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   cuenta 1 en `campaign.samplesSentCount` (contador atómico); al llegar a `MAX_SAMPLE_SENDS`
   (5) Prepare-batch bloquea (429). `Create-campaign` inicializa el contador y `Campaign/List`
   lo devuelve. Front (`MuestrasSection`): chip "usados/quedan" y botón deshabilitado al límite.
+- **Muestras EXCLUIDAS de reportes/estadísticas/facturación (jul 2026):** como en el resto del
+  mercado (Mailchimp/HubSpot/SendGrid…), las **pruebas no cuentan** en las métricas de la
+  campaña ni en el consumo. `insert_process` marca el proceso de muestra con **`isSamples=true`**
+  (`st.is_samples` ya es True en `preparar_muestras`, False en el envío real). Los agregados
+  **saltan** los procesos de muestra con `_is_sample_process(p)` (marca `isSamples`, o *fallback*
+  `processState=='Muestras'` / nombre `-Samples` para procesos viejos): `Api_V1_Reports_Statistics`,
+  `Api_V1_Admin_Dashboard` (KPIs, embudo **y reputación** rebote/queja), `Api_V1_Billing_Summary`
+  (coherente: el monedero **no cobra** muestras) y `Api_V1_Agent_Reports`. Las muestras SÍ siguen
+  visibles, separadas, en el **tab Muestras** (`samplesSentCount` + `campaign.sampleBatches`), en
+  **Admin/Jobs** (procesos `processState='Muestras'`) y en el **reporte por proceso** (state-report,
+  bajo demanda). El filtro es a **nivel de proceso** → no cambia `sendStatus`/`sendSummary`.
+  Cubierto por `08_Pruebas/PruebasSeguridad/test_sample_exclusion.py`.
 - **Deshabilitar envíos reales por cliente:** campo `customer.realSendEnabled` (default `true`
   en `Register`; fail-open si falta). Prepare-batch, en el **envío real** (no muestras),
   lanza `RealSendDisabled` → 403 si está deshabilitado. `Login` devuelve `realSendEnabled` →

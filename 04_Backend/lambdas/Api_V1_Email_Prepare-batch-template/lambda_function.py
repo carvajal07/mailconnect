@@ -444,6 +444,11 @@ def insert_process(st:'ProcessState',campaign_name:str,user_id:str,registers_on_
             'templateVersion': template_version,
             'date': st.formatted_date,
             'processState': state,
+            # ¿Es un proceso de MUESTRAS (envío de prueba)? st.is_samples ya viene True desde
+            # preparar_muestras y False en el envío real. Los reportes/estadísticas/facturación
+            # EXCLUYEN los procesos de muestra (el mercado no cuenta las pruebas y el monedero
+            # no las cobra). Marca explícita para no depender de interpretar processState/nombre.
+            'isSamples': bool(st.is_samples),
             # Monto debitado del saldo por este envío (0 en muestras). Sirve para la
             # conciliación fina (fase posterior) y para el reembolso si aplica.
             'chargedAmount': charged_amount,
