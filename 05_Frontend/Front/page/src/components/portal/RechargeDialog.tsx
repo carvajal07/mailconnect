@@ -45,6 +45,9 @@ export const RechargeDialog = ({ open, onClose, onDone, notify }: Props) => {
   const [error, setError] = useState('');
 
   const value = parseInt(amount, 10) || 0;
+  // Monto ingresado pero por debajo del mínimo: se avisa explícitamente (antes el botón
+  // solo quedaba deshabilitado sin explicar por qué → parecía un error genérico).
+  const belowMin = value > 0 && value < MIN_TOPUP;
 
   const reset = () => {
     setAmount('');
@@ -137,9 +140,20 @@ export const RechargeDialog = ({ open, onClose, onDone, notify }: Props) => {
             type="number"
             fullWidth
             autoFocus
+            error={belowMin}
             InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
-            helperText={`Mínimo ${formatCOP(MIN_TOPUP)} (COP).`}
+            helperText={
+              belowMin
+                ? `El monto mínimo de recarga es ${formatCOP(MIN_TOPUP)} (COP).`
+                : `Mínimo ${formatCOP(MIN_TOPUP)} (COP).`
+            }
           />
+          {belowMin && (
+            <Alert severity="warning">
+              El monto mínimo de recarga con Wompi es <strong>{formatCOP(MIN_TOPUP)}</strong>. Si
+              necesitas recargar menos, usa <strong>Registrar transferencia</strong> (aprobación manual).
+            </Alert>
+          )}
           {error && <Alert severity="error">{error}</Alert>}
           <Divider />
           <Typography variant="caption" color="text.secondary">

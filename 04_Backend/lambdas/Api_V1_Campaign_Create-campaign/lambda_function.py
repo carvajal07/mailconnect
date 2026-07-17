@@ -22,6 +22,30 @@ table_campaign = dynamodb.Table('campaign')
 table_channel = dynamodb.Table('channel')
 table_document = dynamodb.Table('document')
 _audit_table = dynamodb.Table('adminAudit')
+table_domain = dynamodb.Table('senderDomain')
+
+# Dominio de la plataforma (remitente por defecto, siempre permitido).
+PLATFORM_DOMAIN = os.environ.get('PLATFORM_DOMAIN', 'mailconnect.com.co')
+
+
+def _from_domain_allowed(customer_id, from_domain):
+    """¿El dominio del remitente está permitido para el cliente? True si es el dominio de la
+    plataforma o un dominio VERIFICADO del propio cliente. Fail-open: si la tabla no existe o
+    falla el lookup, devuelve True (no bloquea el rollout)."""
+    if from_domain == PLATFORM_DOMAIN or from_domain.endswith('.' + PLATFORM_DOMAIN):
+        return True
+    try:
+        from boto3.dynamodb.conditions import Key
+        resp = table_domain.query(
+            IndexName='customerId-index',
+            KeyConditionExpression=Key('customerId').eq(customer_id))
+        for it in resp.get('Items', []):
+            if str(it.get('domain', '')).lower() == from_domain and it.get('status') == 'verified':
+                return True
+        return False
+    except Exception as e:
+        print('No se pudo validar el dominio del remitente (fail-open): {}'.format(e))
+        return True
 
 
 def _audit_event(event, action, target, detail):
@@ -267,6 +291,17 @@ def lambda_handler(event, context):
         #Si el campo de from llega con @ quiere decir que este ya tiene su dominio, en caso contrario agregamos "mailconnect.com.co"
         if (not "@" in source):
             source += "@mailconnect.com.co"
+
+        # Validación del dominio del remitente (solo email): debe ser el dominio de la
+        # plataforma o un dominio VERIFICADO del propio cliente (evita spoofing entre
+        # tenants — las identidades SES son a nivel de cuenta). Fail-open de rollout: si la
+        # tabla senderDomain no existe o falla el lookup, no se bloquea.
+        if channelName in ("EM", "EAU", "EAP"):
+            from_domain = source.split("@")[-1].strip().lower()
+            if from_domain and not _from_domain_allowed(customerId, from_domain):
+                return {'status': False, 'statusCode': 400,
+                        'description': 'El dominio del remitente no está verificado para tu cuenta. '
+                                       'Configúralo en "Dominios" o usa el remitente por defecto.'}
             
             
 

@@ -17,6 +17,8 @@ export const TAB_ACCESS: Record<string, TenantRole[]> = {
   aprobaciones: ['owner', 'approver'],
   listanegra: ['owner', 'approver'],
   saldo: ['owner'],
+  // Configuración de dominios de envío (identidades SES): sensible → solo owner.
+  dominios: ['owner'],
 };
 
 /** ¿El rol puede acceder al tab? (tab no listado en la matriz → visible para todos). */
