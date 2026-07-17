@@ -127,6 +127,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Pricing/List` | `{ customerId? }` (**admin**) | 200 `data:{customerId, defaults, effective, overrides, currency}` (alcance `*` global o cliente) |
 | `Pricing/Update` | `{ customerId?, channel, fields }` (**admin**) | 200 ok · 400. `channel` ∈ EMAIL·SMS·WHATSAPP·VOICE·COMMON (COMMON escribe taxRate/minCampaign en los 4) |
 | `Customer/Detail` | `{ customerId }` (**admin**) | 200 `data:{customer, users:[{userId,email,name,phone,role,active}], count}` · 404 |
+| `Customer/Delete` | `{ customerId }` (**admin**) | 200 `data:{customerId, deletedUsers}` · 400 (falta id / es tu propia empresa) · 403 · 404. Borra `customer` + sus `user`/`userData` (best-effort); **no** purga el histórico (campañas/envíos/saldo). Audita `customer.delete` |
 | `User/SetRole` | `{ userId, role (admin\|client) }` (**admin**) | 200 ok · 400 · 404 · 409 (no degradar al último admin) |
 | `Billing/Summary` | `{ month?, customerId? }` (**admin**) | 200 `data:{customers:[{company, totalSent, subtotal, tax, total, byChannel[]}], totals, truncated}` |
 | `Admin/Dashboard` | `{ month? }` (**admin**) | 200 `data:{kpis, funnel[], byChannel[], health:[{company, sent, bounceRate, complaintRate, level}], truncated}` (panel global + reputación) |
@@ -274,7 +275,13 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   comprobante en un **modal** (iframe, imagen/PDF) sin salir de la pestaña (+ enlace "abrir en
   pestaña nueva").
 - **Orden de tabs del portal:** **Bases de datos** primero · separador · **Plantillas** (HTML/DOCX/
-  SMS/WhatsApp) · separador · el resto (`PortalSidebar`, con `dividerAfter`).
+  **PDF**/SMS/WhatsApp) · separador · **Campañas** · **Programar envíos** · Muestras · el resto
+  (`PortalSidebar`, con `dividerAfter`).
+- **Tabs nuevos scaffold (jul 2026):** **Plantillas PDF** (`PdfTemplatesSection`, tablero **vacío**
+  reservado para plantillas PDF del envío EAP-PDF) y **Programar envíos** (`ProgramarEnviosSection`,
+  scaffold para agendar el envío real a fecha/hora futura; hoy todo es on-demand). Ambos son placeholders
+  montados en el portal (sin backend aún). `programar` es acción de envío → RBAC **owner/approver**
+  (`portalAccess`). Futuro Programar envíos: tabla de envíos programados + EventBridge Scheduler → Prepare-batch.
 
 ### Portal: precarga y edición (jul 2026)
 - **Precarga al loguear:** `PortalDataProvider` (`context/PortalDataContext.tsx`) envuelve el
@@ -462,6 +469,14 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   con `userData`), toggle de envíos reales y **promover/degradar admin** vía
   `Api_V1_User_SetRole` (bloquea degradar al **último admin**, 409). Esto **cierra el `[J]` de
   promover admins a mano** en DynamoDB.
+  - **Eliminar cliente (jul 2026):** botón papelera por fila + `Api_V1_Customer_Delete`
+    (`/Customer/Delete`, admin). Borra `customer` + sus `user`/`userData` (best-effort → sin
+    logins huérfanos); **no** purga el histórico (campañas/envíos/saldo se conservan). Guard: un
+    admin **no** puede borrar su **propia empresa** (evita auto-bloqueo). Audita `customer.delete`.
+    Servicio `customerService.delete`. ⚠️ `[J]` (nuevo): desplegar `Api_V1_Customer_Delete` + ruta
+    `/Customer/Delete` (authorizer admin + CORS + mapping template de `role`/`customerId`) +
+    permisos `dynamodb:GetItem/DeleteItem/Scan` sobre `customer`/`user`/`userData` y `PutItem`
+    sobre `adminAudit`.
 - **Facturación** (`FacturacionSection`): `Api_V1_Billing_Summary` convierte los envíos reales
   (messageId en `{customer}_sendStatus`) en consumo por cliente y canal, aplica `pricingRate` +
   IVA + mínimo por campaña. Filtros por **mes** y **cliente**; tope de procesos con aviso de

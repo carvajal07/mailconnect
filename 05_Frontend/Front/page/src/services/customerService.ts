@@ -17,6 +17,7 @@ export const CUSTOMER_ENDPOINTS = {
   LIST: '/Customer/List',
   UPDATE: '/Customer/Update',
   DETAIL: '/Customer/Detail',
+  DELETE: '/Customer/Delete',
   SET_ROLE: '/User/SetRole',
   SET_TENANT_ROLE: '/User/SetTenantRole',
 };
@@ -66,6 +67,13 @@ export const customerService = {
   /** Ficha de un cliente: sus datos + los usuarios de la empresa (admin). */
   detail: (customerId: string): Promise<ApiResponse<CustomerDetail>> =>
     apiPost(CUSTOMER_ENDPOINTS.DETAIL, { customerId }),
+
+  /**
+   * Elimina un cliente (empresa) y sus cuentas de usuario (admin). NO purga el histórico
+   * (campañas/envíos/saldo se conservan). No permite borrar la propia empresa del admin.
+   */
+  delete: (customerId: string): Promise<ApiResponse<{ customerId?: string; deletedUsers?: number }>> =>
+    apiPost(CUSTOMER_ENDPOINTS.DELETE, { customerId }),
 
   /** Cambia el rol de un usuario entre admin y client (admin). */
   setUserRole: (

@@ -158,6 +158,7 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 | `Api_V1_Pricing_List` | `/Pricing/List` | `GetItem` sobre `pricingRate` |
 | `Api_V1_Pricing_Update` | `/Pricing/Update` | `UpdateItem`/`GetItem` sobre `pricingRate`; `GetItem` sobre `customer` (nombre de empresa en la auditoría); `PutItem` sobre `adminAudit` |
 | `Api_V1_Customer_Detail` | `/Customer/Detail` | `Scan` sobre `customer`, `user`, `userData` |
+| `Api_V1_Customer_Delete` **🆕 (nuevo, post-2026-07-17)** | `/Customer/Delete` | `GetItem`/`DeleteItem` sobre `customer`; `Scan`/`DeleteItem` sobre `user`/`userData`; `PutItem` sobre `adminAudit`. Mapping template debe pasar `role` **y `customerId`** (guard de propia empresa) |
 | `Api_V1_User_SetRole` | `/User/SetRole` | `GetItem`/`UpdateItem`/`Scan` sobre `user`; `PutItem` sobre `adminAudit` |
 | `Api_V1_Billing_Summary` | `/Billing/Summary` | `Scan` sobre `customer`/`campaign`/`process`; `Query` sobre `*_sendStatus`; `GetItem` sobre `pricingRate` |
 | `Api_V1_Admin_Dashboard` | `/Admin/Dashboard` | `Scan` sobre `customer`/`campaign`/`process`; `Query` sobre `*_sendStatus` |

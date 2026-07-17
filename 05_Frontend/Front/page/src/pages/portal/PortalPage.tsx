@@ -17,6 +17,8 @@ import { PortalSidebar, DRAWER_WIDTH_FULL, DRAWER_WIDTH_MINI } from '../../compo
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
 import { MessageTemplatesSection } from '../../components/portal/MessageTemplatesSection';
 import { DocxTemplatesSection } from '../../components/portal/DocxTemplatesSection';
+import { PdfTemplatesSection } from '../../components/portal/PdfTemplatesSection';
+import { ProgramarEnviosSection } from '../../components/portal/ProgramarEnviosSection';
 import { BasesDatosSection } from '../../components/portal/BasesDatosSection';
 import { ListaNegraSection } from '../../components/portal/ListaNegraSection';
 import { MuestrasSection } from '../../components/portal/MuestrasSection';
@@ -61,12 +63,16 @@ export const PortalPage = () => {
         return <HtmlBuilderSection />;
       case 'docx':
         return <DocxTemplatesSection />;
+      case 'pdf':
+        return <PdfTemplatesSection />;
       case 'sms':
         return <MessageTemplatesSection channel="SMS" />;
       case 'whatsapp':
         return <MessageTemplatesSection channel="WSP" />;
       case 'campanas':
         return <CampanasSection />;
+      case 'programar':
+        return <ProgramarEnviosSection />;
       case 'muestras':
         return <MuestrasSection />;
       case 'aprobaciones':

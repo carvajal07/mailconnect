@@ -28,6 +28,7 @@ import {
   MenuItem,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ApartmentIcon from '@mui/icons-material/Apartment';
@@ -64,8 +65,31 @@ export const ClientesSection = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [savingSend, setSavingSend] = useState(false);
   const [roleBusy, setRoleBusy] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = refreshCustomers;
+
+  /** Elimina un cliente (empresa) + sus cuentas. Confirmación fuerte; no purga el histórico. */
+  const handleDelete = async (c: CustomerSummary) => {
+    const ok = await confirm({
+      title: 'Eliminar cliente',
+      message: `¿Eliminar la empresa "${c.company}" y todas sus cuentas de usuario? No podrán volver `
+        + `a iniciar sesión. El histórico (campañas, envíos, saldo) se conserva. Esta acción no se puede deshacer.`,
+      confirmText: 'Eliminar cliente',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
+    setDeletingId(c.customerId);
+    const res = await customerService.delete(c.customerId);
+    setDeletingId(null);
+    if (isOk(res)) {
+      notify(`Cliente "${c.company}" eliminado.`, 'success');
+      if (detail?.customer.customerId === c.customerId) closeFicha();
+      refreshCustomers();
+    } else {
+      notify(res.description || 'No se pudo eliminar el cliente.', 'error');
+    }
+  };
 
   const openFicha = async (c: CustomerSummary) => {
     setOpen(true);
@@ -208,6 +232,19 @@ export const ClientesSection = () => {
                   <Button size="small" startIcon={<EditIcon />} onClick={() => openFicha(c)}>
                     Ver ficha
                   </Button>
+                  <Tooltip title={c.customerId === me?.customerId ? 'No puedes eliminar tu propia empresa' : 'Eliminar cliente'}>
+                    <span>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        sx={{ ml: 0.5 }}
+                        onClick={() => handleDelete(c)}
+                        disabled={deletingId === c.customerId || c.customerId === me?.customerId}
+                      >
+                        {deletingId === c.customerId ? <CircularProgress size={18} /> : <DeleteIcon fontSize="small" />}
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                 </TableCell>
               </TableRow>
             ))}
