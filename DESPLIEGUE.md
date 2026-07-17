@@ -9,6 +9,8 @@
 >
 > _Región: `us-east-1`. Integración de las rutas de datos: **no-proxy** con envelope._
 
+> **✅ Despliegue e infraestructura COMPLETADOS (2026-07-17):** todas las tareas [J] (tablas, GSIs, lambdas, rutas, IAM, mapping templates, provisión de admins) están desplegadas en AWS. Quedan solo, si acaso, tareas de código [C] (§8).
+
 ---
 
 ## 0. TL;DR — el orden correcto
@@ -16,8 +18,10 @@
 > **Estado (jul 2026):** ✅ Mapping template de context desplegado (`API_ID`/`AUTHORIZER_ID`/
 > `STAGE`/`PREFIX` configuradas + `deploy-api.yml` corrido) → aislamiento multi-tenant activo.
 > ✅ `SECRET_KEY` rotada. ✅ SES en producción. ✅ Despliegue del **monedero PREPAGO** completo.
-> **Falta (`[J]`):** crear los **GSIs + tablas** de DynamoDB pendientes (§2) — el código ya los
-> usa por defecto y **falla si no existen** (ver §8).
+> **✅ Despliegue `[J]` COMPLETO (2026-07-17):** los **GSIs + tablas** de DynamoDB pendientes (§2)
+> ya están creados; todas las tareas de infraestructura `[J]` (tablas, GSIs, lambdas, rutas, IAM,
+> mapping templates, provisión de admins) están desplegadas en AWS. Quedan solo, si acaso,
+> tareas de código `[C]` (§8).
 
 1. **Crear las 3 tablas DynamoDB nuevas** (§2).
 2. **Crear las 10 lambdas nuevas vacías** (el CD las actualiza al hacer push) (§3).
@@ -114,11 +118,11 @@ el "cuenta nueva → apply → todo".
 | `messageIndex` | `messageId` (S) | — | Índice `messageId → {customer, processId, uniqueId}` que escribe `Wsp_Send-batch` y lee `Wsp_ReceptionStatus` (los recibos de Meta solo traen el messageId). |
 | `campaignCounter` | `customerId` (S) | — | Contador ATÓMICO del consecutivo por cliente (evita consecutivos duplicados en creaciones concurrentes). `Create-campaign` lo siembra desde el valor legado. |
 
-- [ ] `[J]` Crear `pricingRate` (PK `customerId` + SK `channel`).
-- [ ] `[J]` Crear `platformConfig` (PK `configKey`).
-- [ ] `[J]` Crear `adminAudit` (PK `auditId`).
-- [ ] `[J]` Crear `messageIndex` (PK `messageId`) — para los estados de entrega de WhatsApp.
-- [ ] `[J]` Crear `campaignCounter` (PK `customerId`) — consecutivo atómico. Sin ella,
+- [x] `[J]` Crear `pricingRate` (PK `customerId` + SK `channel`).
+- [x] `[J]` Crear `platformConfig` (PK `configKey`).
+- [x] `[J]` Crear `adminAudit` (PK `auditId`).
+- [x] `[J]` Crear `messageIndex` (PK `messageId`) — para los estados de entrega de WhatsApp.
+- [x] `[J]` Crear `campaignCounter` (PK `customerId`) — consecutivo atómico. Sin ella,
   `Create-campaign` cae al método legado (con su carrera); con ella, no hay duplicados.
 
 ### GSIs OBLIGATORIOS (escalabilidad por defecto — sin `USE_GSI`)
@@ -136,7 +140,7 @@ el "cuenta nueva → apply → todo".
 | `user` | `email-index` | PK `email` (S) | `Login` (`_find_user_by_email`) |
 | `walletTransaction` | `customerId-createdAt-index` | PK `customerId` + SK `createdAt` (S) | `Balance_Get` (historial) |
 
-- [ ] `[J]` Crear los **5 GSIs** de la tabla (Projection ALL, On-Demand). Sin ellos, esas
+- [x] `[J]` Crear los **5 GSIs** de la tabla (Projection ALL, On-Demand). Sin ellos, esas
   lambdas responden **500** (por diseño: la ausencia del índice se detecta, no se degrada a Scan).
 
 > Todas en modo **On-Demand (PAY_PER_REQUEST)** salvo que prefieras capacidad provisionada.
@@ -164,14 +168,14 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 | `Api_V1_Admin_Campaigns` | `/Admin/Campaigns` | `Scan` sobre `campaign`/`customer` |
 | `Api_V1_Admin_Requeue` | `/Admin/Requeue` | `GetItem` sobre `process`; **`sqs:SendMessage`** sobre `Email_Prepare-batch-part`; `PutItem` sobre `adminAudit` |
 
-- [ ] `[J]` Crear las 12 funciones vacías + sus rutas + permisos de la tabla.
-- [ ] `[J]` Confirmar que el **Authorizer** está asignado a las 12 rutas.
-- [ ] `[J]` `Api_V1_Admin_Requeue` reencola las partes pendientes de un envío atascado
+- [x] `[J]` Crear las 12 funciones vacías + sus rutas + permisos de la tabla.
+- [x] `[J]` Confirmar que el **Authorizer** está asignado a las 12 rutas.
+- [x] `[J]` `Api_V1_Admin_Requeue` reencola las partes pendientes de un envío atascado
   (botón "Reintentar" en Trabajos). Necesita `sqs:SendMessage` sobre la cola
   `Email_Prepare-batch-part` y la env `URL_SQS_PREPARE_PART` (misma URL que usa Prepare-batch).
   Solo funciona con procesos creados **después** de desplegar el Prepare-batch que guarda
   `resumeCtx` (los anteriores devuelven 409 "sin contexto de reanudación").
-- [ ] `[J]` `Api_V1_Admin_Campaigns` es la vista **admin** de campañas de todos los clientes
+- [x] `[J]` `Api_V1_Admin_Campaigns` es la vista **admin** de campañas de todos los clientes
   (columna de empresa + filtros en el panel). La ruta `/Admin/Campaigns` ya está en
   `infra/api/routes.json`, así que el workflow `deploy-api.yml` la crea sola.
 
@@ -216,10 +220,10 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
   lectura de WhatsApp que **Meta** publica en la **SNS de End User Messaging Social**. Como el
   recibo solo trae el `messageId`, ubica el cliente/proceso en `messageIndex` y escribe el
   estado en `{customer}_sendStatus`.
-  - [ ] `[J]` Suscribir esta lambda a la **SNS de WhatsApp** (End User Messaging Social → event
+  - [x] `[J]` Suscribir esta lambda a la **SNS de WhatsApp** (End User Messaging Social → event
     destination). Permisos: `GetItem` sobre `messageIndex`; `PutItem` sobre `*_sendStatus`;
     (si `SEND_SUMMARY_ENABLED`) `UpdateItem` sobre `*_sendState`/`*_sendSummary`.
-  - [ ] `[J]` Env `WSP_MESSAGE_INDEX` en `Wsp_Send-batch` y `Wsp_ReceptionStatus` solo si la
+  - [x] `[J]` Env `WSP_MESSAGE_INDEX` en `Wsp_Send-batch` y `Wsp_ReceptionStatus` solo si la
     tabla no se llama `messageIndex`.
 
 > `Api_V1_User_SetRole`, `Api_V1_Pricing_Update` y `Api_V1_Config_Set` también escriben
@@ -230,7 +234,7 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 > operación sigue funcionando, solo no deja rastro. Igual el `GetItem` sobre `*_sendSummary`:
 > sin él (o con `SEND_SUMMARY_READ` apagado) se cae al `Query` de `*_sendStatus`.
 
-- [ ] `[J]` Redesplegar las lambdas modificadas y darles el permiso extra (`adminAudit`/`*_sendSummary`).
+- [x] `[J]` Redesplegar las lambdas modificadas y darles el permiso extra (`adminAudit`/`*_sendSummary`).
 
 ---
 
@@ -241,7 +245,7 @@ tabla, siguen funcionando como antes (sin auditar / con la env var).
 - Proxy: si alguna ruta se pasa a proxy, la **lambda debe emitir** el header
   `Access-Control-Allow-Origin` en su respuesta (el "Enable CORS" solo añade el OPTIONS).
 
-- [ ] `[J]` Habilitar CORS en las 12 rutas nuevas.
+- [x] `[J]` Habilitar CORS en las 12 rutas nuevas.
 
 ---
 
@@ -252,7 +256,7 @@ La lambda `Api_V1_Security_Login` es **no-proxy**, así que API Gateway **no** l
 Por eso hoy la IP queda en `unknown` (en la sesión y en la auditoría de seguridad). El
 código ya sabe leerla si llega por el body (`ip`) o por `X-Forwarded-For`; falta el mapping.
 
-- [ ] `[J]` En el mapping template de la ruta de **login** (`application/json`), agregar la
+- [x] `[J]` En el mapping template de la ruta de **login** (`application/json`), agregar la
   IP al body. Ejemplo (ajusta a tu template actual):
   ```vtl
   #set($b = $input.path('$'))
@@ -268,7 +272,7 @@ código ya sabe leerla si llega por el body (`ip`) o por `X-Forwarded-For`; falt
 
 ## 6. Datos / provisión
 
-- [ ] `[J]` **Promover a `admin`** al menos un usuario: en la tabla `user`, poner
+- [x] `[J]` **Promover a `admin`** al menos un usuario: en la tabla `user`, poner
   `role = "admin"` en el ítem del usuario. (Después ya se hace desde la ficha de cliente).
 - [ ] `[J]` (Opcional) Cargar la tarifa **global** en `pricingRate` (`customerId='*'`) por
   canal, o dejar que apliquen los `DEFAULT_RATES` embebidos hasta calibrar.
@@ -341,9 +345,9 @@ curl -i -X OPTIONS 'https://api.mailconnect.com.co/V1/Customer/List' \
 Debe volver 200 con `Access-Control-Allow-*` (incluyendo `Authorization`). Es **custom
 domain** (`api.mailconnect.com.co/V1`): el CORS va en la API/stage detrás del dominio + **Deploy**.
 
-- [ ] `[J]` Confirmar layer PyJWT + env `SECRET_KEY` en `Authorizer`/`Authorizer2`.
-- [ ] `[J]` CORS en Gateway Responses `DEFAULT_4XX`/`DEFAULT_5XX`.
-- [ ] `[J]` Verificar preflight OPTIONS por curl en las rutas admin.
+- [x] `[J]` Confirmar layer PyJWT + env `SECRET_KEY` en `Authorizer`/`Authorizer2`.
+- [x] `[J]` CORS en Gateway Responses `DEFAULT_4XX`/`DEFAULT_5XX`.
+- [x] `[J]` Verificar preflight OPTIONS por curl en las rutas admin.
 
 ## 8. Pendiente de MI lado (código) `[C]`
 
@@ -390,7 +394,7 @@ Lo que queda por hacer en el repo (no es despliegue):
 
 - [x] `[J]` **`SECRET_KEY` ROTADA** (32+ bytes) — se cambió el valor; la clave vieja del
   historial git ya no está en uso.
-- [ ] `[J]` Hacer el repo **privado** (o limpiar el historial con BFG/filter-repo).
+- [x] `[J]` Hacer el repo **privado** (o limpiar el historial con BFG/filter-repo).
 - [ ] `[C]`/`[J]` Mover `SECRET_KEY` a **AWS Secrets Manager** (hoy es env var; ya rotada).
 - [x] `[J]` **SES en PRODUCCIÓN** — fuera del sandbox, remitente/dominio verificados.
 
@@ -410,8 +414,8 @@ Lo que queda por hacer en el repo (no es despliegue):
 > `Api_V1_Cost_Estimate`.
 
 ### 10.1 Tablas DynamoDB nuevas (On-Demand)
-- [ ] `[J]` `customerBalance` (PK `customerId` S) — saldo actual en COP.
-- [ ] `[J]` `walletTransaction` (PK `txId` S) **+ GSI `customerId-createdAt-index`** (PK
+- [x] `[J]` `customerBalance` (PK `customerId` S) — saldo actual en COP.
+- [x] `[J]` `walletTransaction` (PK `txId` S) **+ GSI `customerId-createdAt-index`** (PK
   `customerId` S + SK `createdAt` S, Projection ALL) — ledger de movimientos (recargas manuales/
   Wompi, débitos/reembolsos de envío, ajustes). En Wompi/manual, `txId` de la recarga **= la
   `reference`** (idempotencia del webhook/aprobación). El GSI sirve el historial del cliente
@@ -431,11 +435,11 @@ Crear la **función vacía** (mismo nombre de carpeta) antes del primer push (la
 | `Api_V1_Admin_Topup-reject` | `/Admin/Topup-reject` | **sí** | `GetItem`/`UpdateItem` sobre `walletTransaction`; `PutItem` sobre `adminAudit` |
 | `Api_V1_Admin_Balances` | `/Admin/Balances` | **sí** | `Scan` sobre `customer`/`customerBalance`/`walletTransaction` |
 
-- [ ] `[J]` Crear las 7 funciones vacías + sus rutas (ya están en `infra/api/routes.json`,
+- [x] `[J]` Crear las 7 funciones vacías + sus rutas (ya están en `infra/api/routes.json`,
   el workflow `deploy-api.yml` las crea) + permisos. `/Balance/Get` y `/Balance/Topup-manual-request`
   son **de cliente** (tenant del token); el resto son **admin** (mapping template de `role`).
-- [ ] `[J]` Confirmar el **Authorizer** en las 7 rutas.
-- [ ] `[J]` `s3:GetObject` para `Admin_Topups` (ver comprobante) y `dynamodb:TransactWriteItems`
+- [x] `[J]` Confirmar el **Authorizer** en las 7 rutas.
+- [x] `[J]` `s3:GetObject` para `Admin_Topups` (ver comprobante) y `dynamodb:TransactWriteItems`
   para `Admin_Topup-approve` (ya cubiertos por la política amplia de `infra/terraform/iam.tf`).
 
 > **Recarga manual = comprobante + aprobación:** el cliente sube el comprobante y crea la
@@ -445,7 +449,7 @@ Crear la **función vacía** (mismo nombre de carpeta) antes del primer push (la
 > `Topup-manual` queda como **ajuste directo** del admin (correcciones/cortesías).
 
 ### 10.3 Lambda EXISTENTE modificada (débito) — redesplegar
-- [ ] `[J]` `Api_V1_Email_Prepare-batch-template`: en el **envío real** debita el saldo
+- [x] `[J]` `Api_V1_Email_Prepare-batch-template`: en el **envío real** debita el saldo
   (orden gate manual → lock → **reserva de saldo** → troceo; 402 si no alcanza; reembolso si
   el troceo falla). El débito es `debit_send`, el reembolso `refund_send`, y el proceso guarda
   `chargedAmount`. Permisos extra: `UpdateItem` sobre `customerBalance`, `PutItem` sobre
@@ -455,14 +459,14 @@ Crear la **función vacía** (mismo nombre de carpeta) antes del primer push (la
   cobro activo.
 
 ### 10.4 Verificación post-deploy
-- [ ] `[J]` Cliente registra una recarga por transferencia (sube comprobante) → aparece en
+- [x] `[J]` Cliente registra una recarga por transferencia (sube comprobante) → aparece en
   `/Admin/Topups` como **pendiente** (saldo sin cambios).
-- [ ] `[J]` Admin **aprueba** → el saldo sube y la tx queda `approved`; **rechaza** → `declined`
+- [x] `[J]` Admin **aprueba** → el saldo sube y la tx queda `approved`; **rechaza** → `declined`
   con motivo, saldo sin cambios. Aprobar/rechazar dos veces es idempotente.
-- [ ] `[J]` Admin hace un **ajuste directo** (`/Balance/Topup-manual`) → crédito inmediato (`adjustment`).
-- [ ] `[J]` Cliente ve su saldo/movimientos y el estado de sus solicitudes en el portal (`/Balance/Get`).
-- [ ] `[J]` Envío real con saldo suficiente → descuenta el costo y aparece en el ledger.
-- [ ] `[J]` Envío real con saldo insuficiente → **402** y la campaña sigue en `Pendiente`.
+- [x] `[J]` Admin hace un **ajuste directo** (`/Balance/Topup-manual`) → crédito inmediato (`adjustment`).
+- [x] `[J]` Cliente ve su saldo/movimientos y el estado de sus solicitudes en el portal (`/Balance/Get`).
+- [x] `[J]` Envío real con saldo suficiente → descuenta el costo y aparece en el ledger.
+- [x] `[J]` Envío real con saldo insuficiente → **402** y la campaña sigue en `Pendiente`.
 
 ### 10.5 Recarga WOMPI (Fase 2)
 Recarga en línea autoservicio con el Widget/Checkout de Wompi. **El saldo SOLO se acredita
@@ -475,29 +479,29 @@ en el webhook firmado por Wompi**, nunca desde el redirect del navegador.
 | `Api_V1_Balance_Topup-init` | `/Balance/Topup-init` | cliente (authorizer) | `PutItem` sobre `walletTransaction` |
 | `Api_V1_Wallet_Wompi-webhook` | `/Wallet/Wompi-webhook` | **PÚBLICA (proxy, SIN authorizer, sin CORS)** | `GetItem`/`UpdateItem` sobre `walletTransaction`; `UpdateItem` sobre `customerBalance`; `dynamodb:TransactWriteItems` sobre ambas |
 
-- [ ] `[J]` Crear las 2 funciones vacías + rutas (ya en `infra/api/routes.json`; el webhook va
+- [x] `[J]` Crear las 2 funciones vacías + rutas (ya en `infra/api/routes.json`; el webhook va
   `auth:false, proxy:true, cors:false`). **El webhook NO lleva Authorizer** (Wompi no manda JWT;
   la autenticidad la da la **firma del evento**). Como es **proxy**, la lambda ya devuelve
   `{statusCode, headers, body}`.
-- [ ] `[J]` **Registrar la URL del webhook en el panel de Wompi** (Eventos): apuntar a
+- [x] `[J]` **Registrar la URL del webhook en el panel de Wompi** (Eventos): apuntar a
   `https://api.mailconnect.com.co/V1/Wallet/Wompi-webhook`.
-- [ ] `[J]` Permiso `dynamodb:TransactWriteItems` para el webhook (acreditación atómica
+- [x] `[J]` Permiso `dynamodb:TransactWriteItems` para el webhook (acreditación atómica
   transición+saldo). Sin él la acreditación falla (aunque la firma sea válida).
 
 **Env vars (llaves Wompi — pendiente a Secrets Manager):**
-- [ ] `[J]` `WOMPI_PUBLIC_KEY` (Topup-init la devuelve al front para el widget).
-- [ ] `[J]` `WOMPI_INTEGRITY_SECRET` (Topup-init firma la integridad del pago).
-- [ ] `[J]` `WOMPI_EVENTS_SECRET` (webhook verifica la firma del evento).
-- [ ] `[J]` `WOMPI_PRIVATE_KEY` (reservada para llamadas server-to-server; hoy no se usa).
-- [ ] `[J]` `WOMPI_REDIRECT_URL` (opcional; a dónde vuelve el navegador tras pagar).
-- [ ] `[J]` `WOMPI_CURRENCY` (default `COP`), `MIN_TOPUP` (default `20000`).
+- [x] `[J]` `WOMPI_PUBLIC_KEY` (Topup-init la devuelve al front para el widget).
+- [x] `[J]` `WOMPI_INTEGRITY_SECRET` (Topup-init firma la integridad del pago).
+- [x] `[J]` `WOMPI_EVENTS_SECRET` (webhook verifica la firma del evento).
+- [x] `[J]` `WOMPI_PRIVATE_KEY` (reservada para llamadas server-to-server; hoy no se usa).
+- [x] `[J]` `WOMPI_REDIRECT_URL` (opcional; a dónde vuelve el navegador tras pagar).
+- [x] `[J]` `WOMPI_CURRENCY` (default `COP`), `MIN_TOPUP` (default `20000`).
   > En Terraform, pásalas por el mapa **`wompi_env`** (`TF_VAR_wompi_env`), que se mergea en el
   > env común de las lambdas. NO commitear las llaves.
 
 **Verificación (Fase 2):**
-- [ ] `[J]` Recarga de prueba en sandbox: `Topup-init` → widget → pago aprobado → el webhook
+- [x] `[J]` Recarga de prueba en sandbox: `Topup-init` → widget → pago aprobado → el webhook
   acredita y el saldo sube. Reintento del webhook (mismo evento) → **no doble-acredita**.
-- [ ] `[J]` Firma inválida al webhook → **401**, sin acreditar. Pago declinado → sin acreditar.
+- [x] `[J]` Firma inválida al webhook → **401**, sin acreditar. Pago declinado → sin acreditar.
 
 ---
 
@@ -516,17 +520,17 @@ Tablas afectadas (prefijo `{nombreEmpresa}_` → `{tenant_key(nit)}_`):
   (`sync_api.py`/`routes.json`) + `Refresh-token`; `nit` propagado por SES tag / EUM Context /
   `messageIndex` / token de desuscripción; `process.companyTin` guardado por Prepare-batch.
   244 pruebas en verde.
-- [ ] `[J]` **Redesplegar el mapping template** (`deploy-api.yml`) para que inyecte
+- [x] `[J]` **Redesplegar el mapping template** (`deploy-api.yml`) para que inyecte
   `$context.authorizer.nit` en las rutas no-proxy (ya está en `sync_api.py`). Sin esto, las
   read-lambdas de cliente no encuentran las tablas del tenant tras el cambio.
-- [ ] `[J]` **Redesplegar TODAS las lambdas** del pipeline (Prepare-batch, Send-EM/EAU/EAP/
+- [x] `[J]` **Redesplegar TODAS las lambdas** del pipeline (Prepare-batch, Send-EM/EAU/EAP/
   SMS/WSP/Voz, ReceptionStatus Email/Messaging/Wsp, Unsubscribe, Combination, y las read/admin
   Statistics/Bootstrap/Blacklist/Dashboard/Jobs/Billing/state-report/Agent_Reports) + Login/
   Authorizers/Refresh-token. Deben ir **juntas** (writers y readers usan la misma llave).
-- [ ] `[J]` **Migración de datos** (dev/no productivo → basta recrear): las tablas viejas
+- [x] `[J]` **Migración de datos** (dev/no productivo → basta recrear): las tablas viejas
   `{nombreEmpresa}_*` quedan huérfanas. Opciones: (a) en dev, volver a enviar (Prepare-batch
   crea las tablas nuevas); (b) en un entorno con datos, copiar los ítems de `{nombre}_X` a
   `{tenant_key(nit)}_X` por cliente antes del corte. **Permiso IAM:** `CreateTable`/`DescribeTable`
   sobre `*_sendStatus`/`_sendDetail`/… ya existía (mismo patrón, solo cambia el prefijo).
-- [ ] `[J]` Requisito: **todos los clientes deben tener `companyTin`** (Prepare-batch ahora
+- [x] `[J]` Requisito: **todos los clientes deben tener `companyTin`** (Prepare-batch ahora
   falla `require_tenant` si falta, para no colisionar tenants). Verificar la tabla `customer`.

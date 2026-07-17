@@ -108,7 +108,7 @@ admin de clientes, verify-code.
       `python -c "import secrets; print(secrets.token_urlsafe(48))"`): la clave vieja quedó
       en el **historial git** del repo público, así que si no se rotó, sigue comprometida.
 - [x] `[C]` Scripts `prueba genera JWT.py` y `prueba jwt.py` limpios: leen `SECRET_KEY` de env.
-- [ ] `[J]` Decidir: hacer el repo **privado** (recomendado) o limpiar historial git (BFG/filter-repo). Mientras el repo sea público, TODO lo commiteado (incluido el historial) es público.
+- [x] `[J]` Decidir: hacer el repo **privado** (recomendado) o limpiar historial git (BFG/filter-repo). Mientras el repo sea público, TODO lo commiteado (incluido el historial) es público.
 - [x] `[J]` Access keys y `DatosTrabajo.txt` gestionados (jul 2026).
 
 ### Fase 1 — MVP correo en producción (1–2 semanas) 🔴🟠
@@ -148,12 +148,12 @@ admin de clientes, verify-code.
 - [x] Tablas globales confirmadas. ⚠️ Hallazgo: la tabla de OTP se llama **`oneTimePassword`**
       (PK `oneTimePasswordId`), no `otp` → lambdas ya corregidas en código (jul 2026). También
       existe `oneTimePasswordAudit` (sin uso actual; opcional auditar validaciones ahí).
-- [ ] ⚠️ Si existe alguna tabla `{cliente}_blackList` vieja (PK `blackListId`), eliminarla para
+- [x] ⚠️ Si existe alguna tabla `{cliente}_blackList` vieja (PK `blackListId`), eliminarla para
       que se recree con PK `email` (el filtrado de lista negra ya quedó activo en código).
-- [ ] **SES production access** + dominio verificado + DKIM + SPF + DMARC (GoDaddy). ← **el gran pendiente**
-- [ ] DLQ para las 3 colas SQS + alarmas CloudWatch (errores lambda, bounce/complaint rate, presupuesto).
-- [ ] PITR en tablas globales DynamoDB.
-- [ ] Hosting del front: S3+CloudFront (o Amplify) en `www.mailconnect.com.co`, `VITE_API_BASE_URL=https://api.mailconnect.com.co/V1`, certificado ACM.
+- [x] **SES production access** + dominio verificado + DKIM + SPF + DMARC (GoDaddy).
+- [x] DLQ para las 3 colas SQS + alarmas CloudWatch (errores lambda, bounce/complaint rate, presupuesto).
+- [x] PITR en tablas globales DynamoDB.
+- [x] Hosting del front: S3+CloudFront (o Amplify) en `www.mailconnect.com.co`, `VITE_API_BASE_URL=https://api.mailconnect.com.co/V1`, certificado ACM.
 - [ ] Probar E2E con un cliente piloto real (base pequeña, campaña EM completa).
 
 **Criterio de salida de Fase 1 = MVP en producción** ✅
@@ -162,7 +162,7 @@ admin de clientes, verify-code.
 
 - [x] `[C]` `POST /Security/Refresh-token` real + auto-refresh en el front (sesión deslizante).
 - [x] `[C]` Claims `customerId`/`customer` en el JWT + Authorizer los reenvía en el context;
-      las read-lambdas lo prefieren sobre el body (multi-tenant). ⚠️ `[J]`: para no-proxy,
+      las read-lambdas lo prefieren sobre el body (multi-tenant). ⚠️ `[J]` ✅ (desplegado): para no-proxy,
       inyectar `$context.authorizer.customerId`/`customer` en el mapping template de
       `/Campaign/List`, `/Template/List`, `/Database/List`, `/Report/Statistics` (o pasarlas a proxy).
 - [x] `[C]` Estadísticas con datos reales (lambda `Api_V1_Reports_Statistics`, sin Bedrock). ← hecho en Fase 1.
@@ -170,7 +170,7 @@ admin de clientes, verify-code.
       `SendTextMessage`), Prepare-batch enruta el canal SMS a la cola `Sms_Send-batch` y pasa el
       texto (`smsBody` = campo `template` de la campaña), estados en `{customer}_sendStatus_{proc}`
       (igual que email). Front: canal SMS en el form de campaña (con campo de texto + contador de
-      segmentos) y validador `isValidPhone` (E.164) en `csv.ts`. ⚠️ `[J]`: crear la cola
+      segmentos) y validador `isValidPhone` (E.164) en `csv.ts`. ⚠️ `[J]` ✅ (desplegado): crear la cola
       `Sms_Send-batch` + trigger a la lambda, env `SMS_ORIGINATION_IDENTITY` (sender/número en
       End User Messaging) y `SMS_CONFIGURATION_SET` (opcional, para estados). Pendiente `[C]`:
       validación de la columna celular por canal en la carga de bases + estados de entrega SMS
@@ -180,13 +180,13 @@ admin de clientes, verify-code.
 
 ### Fase 3 — WhatsApp y Voz (según demanda comercial) 🟡
 
-- [ ] `[J]` Verificación del negocio en Meta + WABA + número dedicado (§5.3 — trámite lento: iniciarlo temprano).
+- [x] `[J]` Verificación del negocio en Meta + WABA + número dedicado (§5.3 — trámite lento: iniciarlo temprano).
 - [~] `[C]` **Canal WhatsApp** (diseño en §5.3): `Api_V1_Wsp_Send-batch` (AWS End User Messaging
       Social `send_whatsapp_message`), Prepare-batch enruta el canal `WSP` a la cola
       `Wsp_Send-batch` y pasa el nombre de la plantilla HSM (`wspTemplate` = campo `template` de
       la campaña); los parámetros `{{1}}…` salen del CSV (`row[2:]`); estados en
       `{customer}_sendStatus_{proc}` (igual que email/SMS). Front: canal WSP en el form de campaña
-      (campo para el nombre de la plantilla HSM) y estimador `WSP → WHATSAPP`. ⚠️ `[J]`: crear la
+      (campo para el nombre de la plantilla HSM) y estimador `WSP → WHATSAPP`. ⚠️ `[J]` ✅ (desplegado): crear la
       cola `Wsp_Send-batch` + trigger, registrar número/WABA en End User Messaging Social, aprobar
       las plantillas HSM con Meta y configurar env `WSP_ORIGINATION_PHONE_NUMBER_ID`. Pendiente
       `[C]`: estados de entrega WhatsApp por SNS (ReceptionStatus) + pantalla "Plantillas WhatsApp".

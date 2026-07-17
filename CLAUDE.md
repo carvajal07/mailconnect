@@ -230,7 +230,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   de rollout) que el `from` sea el dominio de la plataforma, un **dominio verificado** del cliente,
   **o un correo verificado exacto** del cliente (`senderDomain` por `customerId`), para que un
   tenant no envíe a nombre de otro.
-- ⚠️ `[J]`: la verificación SES debe estar en la **misma región del envío** (`us-east-1`); permisos
+- ⚠️ `[J]` ✅ (desplegado): la verificación SES debe estar en la **misma región del envío** (`us-east-1`); permisos
   `ses:VerifyDomainIdentity/VerifyDomainDkim/VerifyEmailIdentity/GetIdentityVerificationAttributes/GetIdentityDkimAttributes/DeleteIdentity`
   en las lambdas de dominio; tabla `senderDomain` (+ GSI) con el campo `kind` — la crea `Domain/Add`
   on-demand; rutas `/Domain/{Add,List,Delete}` (authorizer + CORS); permiso `Query senderDomain`
@@ -240,7 +240,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Remitente por defecto `notificaciones@mailconnect.com.co`:** el campo "De (From)" de crear
   campaña pasa de texto libre a **desplegable** (`DEFAULT_FROM` en `CampanasSection`); por ahora
   solo esa opción (+ ítem deshabilitado "Tu dominio propio (próximamente)"). Al editar conserva
-  el remitente previo si difiere. ⚠️ `[J]`: `notificaciones@mailconnect.com.co` debe estar
+  el remitente previo si difiere. ⚠️ `[J]` ✅ (desplegado): `notificaciones@mailconnect.com.co` debe estar
   **verificado en SES** como identidad de envío. Futuro: dominios verificados por cliente.
 - **Plantilla SES del payload (no recalculada):** `Prepare-batch` usa `campaign.template` (la
   plantilla que el cliente eligió al crear la campaña) como `st.template_name` para los canales
@@ -340,7 +340,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   `08_Pruebas/PruebasSeguridad/test_sms_channel.py`.
 - **Front:** el form de campaña (`CampanasSection`) tiene el canal **SMS** con campo de texto
   (contador de segmentos) en vez del selector de plantilla SES.
-- ⚠️ `[J]`: crear la cola `Sms_Send-batch` + trigger, y configurar origen en End User Messaging.
+- ⚠️ `[J]` ✅ (desplegado): crear la cola `Sms_Send-batch` + trigger, y configurar origen en End User Messaging.
 
 ### Canal WhatsApp (jul 2026, base)
 - **Envío:** `Api_V1_Wsp_Send-batch` (trigger cola `Wsp_Send-batch`) manda cada mensaje con
@@ -359,7 +359,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Front:** el form de campaña (`CampanasSection`) tiene el canal **WSP** con un campo para el
   **nombre de la plantilla HSM** en vez del selector de plantilla SES. El estimador de costo
   mapea `WSP → WHATSAPP` (y `VOZ → VOICE`).
-- ⚠️ `[J]`: crear la cola `Wsp_Send-batch` + trigger, registrar el número/WABA en End User
+- ⚠️ `[J]` ✅ (desplegado): crear la cola `Wsp_Send-batch` + trigger, registrar el número/WABA en End User
   Messaging Social y aprobar las plantillas HSM con Meta.
 
 ### Canal Voz (jul 2026, base)
@@ -374,7 +374,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   a leer). Admite variables `{{columna}}` del CSV. Columna 2 = celular E.164.
 - **Front:** el form de campaña tiene el canal **VOZ** con un campo de texto del mensaje; el
   estimador mapea `VOZ → VOICE`.
-- ⚠️ `[J]`: crear la cola `Voice_Send-batch` + trigger y habilitar el origen de voz en End User
+- ⚠️ `[J]` ✅ (desplegado): crear la cola `Voice_Send-batch` + trigger y habilitar el origen de voz en End User
   Messaging (número con capacidad de voz).
 
 ### Roles (admin/client) (jul 2026)
@@ -388,7 +388,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Front:** la sesión guarda `role`; `isAdmin(user)` en `authService`. `RequireAuth requireAdmin`
   protege `/admin` (un `client` autenticado se redirige a `/panel`).
 - **Provisión de admins:** `Register` siempre crea `client`. Un admin se crea cambiando el campo
-  `role` a `admin` en la tabla `user` (consola/script). ⚠️ `[J]`: promover el/los usuarios admin.
+  `role` a `admin` en la tabla `user` (consola/script). ⚠️ `[J]` ✅ (desplegado): promover el/los usuarios admin.
 - **Aceptación de términos:** `Register` guarda `termsAccepted` (bool) + `termsAcceptedAt` +
   `termsVersion` (evidencia Ley 1581); el front envía `acceptedTerms` desde la casilla del registro.
 
@@ -418,7 +418,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   el cliente/proceso y escribir el estado (`sent`→1, `delivered`→2, `read`→4, `failed`→3) en
   `{customer}_sendStatus` (+ `bump_send_summary`). Estadísticas de WhatsApp ahora reflejan
   entrega/lectura, no solo envío.
-- ⚠️ `[J]`: crear los **configuration sets** de SMS y Voz con **event destination → SNS**, y
+- ⚠️ `[J]` ✅ (desplegado): crear los **configuration sets** de SMS y Voz con **event destination → SNS**, y
   suscribir `Api_V1_Messaging_ReceptionStatus` a esa SNS. Env `SMS_CONFIGURATION_SET` /
   `VOICE_CONFIGURATION_SET` en los envíos para que emitan eventos.
 
@@ -864,10 +864,10 @@ overrides por cliente. (El peso del adjunto hoy lo declara el usuario en el esti
 se puede leer del objeto ya subido a S3.)
 
 ### Infraestructura / despliegue
-- [ ] Desplegar las lambdas nuevas y **crear sus rutas** en API Gateway
+- [x] Desplegar las lambdas nuevas y **crear sus rutas** en API Gateway
       (`/change-password`, `/logout`, `/create-otp`, `/validate-otp`, `/account-activation`).
-- [ ] **Habilitar CORS** en API Gateway para los endpoints que llama el navegador.
-- [ ] **Nuevas de esta sesión** `[J]`:
+- [x] **Habilitar CORS** en API Gateway para los endpoints que llama el navegador.
+- [x] **Nuevas de esta sesión** `[J]`:
       - Tabla DynamoDB **`messageTemplate`** (PK `messageTemplateId`) + permisos
         `PutItem/Scan/GetItem/DeleteItem`.
       - Campo **`realSendEnabled`** en la tabla `customer` (lo escriben Register/Customer_Update;
@@ -935,8 +935,8 @@ se puede leer del objeto ya subido a S3.)
         Para que el actor quede identificado, el Authorizer ya reenvía `user`/`userId` en el
         context (en no-proxy, inyectarlos en el mapping template junto con `role`).
 - [x] **SES en PRODUCCIÓN** (fuera del sandbox, remitente/dominio verificados).
-- [ ] Configurar las **variables de entorno** de §3 en cada lambda.
-- [ ] Definir `VITE_API_BASE_URL` de producción en el front.
+- [x] Configurar las **variables de entorno** de §3 en cada lambda.
+- [x] Definir `VITE_API_BASE_URL` de producción en el front.
 
 ### Calidad / CI-CD
 - [x] **CI con GitHub Actions:** `pytest` de `08_Pruebas/PruebasSeguridad` corre
@@ -953,7 +953,7 @@ se puede leer del objeto ya subido a S3.)
 - [x] **`SECRET_KEY` ROTADA** (32+ bytes) — la clave vieja del historial git ya no está en uso.
 - [x] **Aislamiento multi-tenant desplegado** — `API_ID`/`AUTHORIZER_ID`/`STAGE`/`PREFIX`
       configuradas + `deploy-api.yml` corrido (mapping template de context en todas las rutas).
-- [ ] Hacer el repo **privado** (o limpiar el historial con BFG/filter-repo).
+- [x] Hacer el repo **privado** (o limpiar el historial con BFG/filter-repo).
 - [ ] Mover `SECRET_KEY` a **AWS Secrets Manager** (ya rotada; hoy es env var).
 - [x] AWS access keys y `DatosTrabajo.txt` gestionados por Jhon (jul 2026).
 
