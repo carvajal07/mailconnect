@@ -52,17 +52,12 @@ async function request<T = unknown>(
     };
   }
 
-  // Rechazo del Authorizer (token vencido/ inválido): cerrar sesión y volver al login.
-  if ((res.status === 401 || res.status === 403) && useAuth && getToken()) {
-    sessionExpired('expired');
-    return { status: false, statusCode: 401, description: 'Tu sesión expiró. Inicia sesión nuevamente.' };
-  }
-
   let json: unknown;
+  let parseFailed = false;
   try {
     json = await res.json();
   } catch {
-    return { status: false, statusCode: res.status, description: 'Respuesta inválida del servidor.' };
+    parseFailed = true;
   }
 
   // Lambda-proxy: cuerpo como string JSON dentro de "body".
@@ -70,9 +65,28 @@ async function request<T = unknown>(
     try { json = JSON.parse((json as { body: string }).body); } catch { /* se deja tal cual */ }
   }
 
+  // ¿El cuerpo es el ENVELOPE estándar del backend? (status + statusCode/status_code).
+  // OJO: hay que distinguir un 403/401 de NEGOCIO (envelope con description; p. ej.
+  // envío real deshabilitado, saldo insuficiente, rol sin permiso) de un 401/403 del
+  // AUTHORIZER (API Gateway devuelve {message:'Unauthorized'} SIN envelope). Solo el
+  // segundo debe cerrar la sesión; un 403 de negocio NO debe sacar al usuario al login.
+  const isEnvelope = !!json && typeof json === 'object'
+    && 'status' in json && ('statusCode' in json || 'status_code' in json);
+
+  // Rechazo del Authorizer (token vencido/inválido): SIN envelope y con 401/403 →
+  // cerrar sesión y volver al login. Un envelope de negocio con 401/403 NO cae aquí.
+  if ((res.status === 401 || res.status === 403) && useAuth && getToken() && !isEnvelope) {
+    sessionExpired('expired');
+    return { status: false, statusCode: 401, description: 'Tu sesión expiró. Inicia sesión nuevamente.' };
+  }
+
+  if (parseFailed) {
+    return { status: false, statusCode: res.status, description: 'Respuesta inválida del servidor.' };
+  }
+
   // Envelope estándar del backend. Soporta 'statusCode' (no-proxy) y 'status_code'
   // (snake_case, como devuelve Prepare-batch-template), normalizando a ApiResponse.
-  if (json && typeof json === 'object' && 'status' in json && ('statusCode' in json || 'status_code' in json)) {
+  if (isEnvelope) {
     const j = json as Record<string, unknown>;
     return {
       status: Boolean(j.status),

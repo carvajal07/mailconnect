@@ -88,6 +88,13 @@ const ESTADO_COLOR: Record<string, 'default' | 'info' | 'warning' | 'success' | 
   Error: 'error',
 };
 
+/** Estado de aprobación (maker-checker): chip complementario al estado de la campaña. */
+const APPROVAL_META: Record<string, { label: string; color: 'info' | 'warning' | 'success' | 'error' }> = {
+  pending: { label: 'En aprobación', color: 'warning' },
+  approved: { label: 'Aprobada', color: 'success' },
+  rejected: { label: 'Rechazada', color: 'error' },
+};
+
 export const CampanasSection = () => {
   // El cliente (empresa) se toma de la sesión, no se captura en formularios.
   const customer = getUser()?.customer ?? '';
@@ -388,11 +395,22 @@ export const CampanasSection = () => {
                   <Chip label={campana.channel} size="small" color="primary" variant="outlined" sx={{ fontWeight: 600 }} />
                 </TableCell>
                 <TableCell>
-                  <Chip
-                    label={campana.campaignState || '—'}
-                    size="small"
-                    color={ESTADO_COLOR[campana.campaignState] ?? 'default'}
-                  />
+                  <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap>
+                    <Chip
+                      label={campana.campaignState || '—'}
+                      size="small"
+                      color={ESTADO_COLOR[campana.campaignState] ?? 'default'}
+                    />
+                    {/* Estado de aprobación (si la campaña entró al flujo maker-checker). */}
+                    {campana.approvalStatus && campana.approvalStatus !== 'none' && APPROVAL_META[campana.approvalStatus] && (
+                      <Chip
+                        label={APPROVAL_META[campana.approvalStatus].label}
+                        size="small"
+                        variant="outlined"
+                        color={APPROVAL_META[campana.approvalStatus].color}
+                      />
+                    )}
+                  </Stack>
                 </TableCell>
                 <TableCell><Typography fontWeight={600}>{campana.campaignName}</Typography></TableCell>
                 <TableCell>{campana.consecutive ?? '—'}</TableCell>
