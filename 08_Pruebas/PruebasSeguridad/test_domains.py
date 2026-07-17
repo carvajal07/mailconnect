@@ -106,3 +106,65 @@ def test_delete_no_existe_404(mods):
     add = _load('dom_add2', 'Api_V1_Domain_Add')
     add.lambda_handler(_auth({'domain': 'otro.com'}), None)
     assert dele.lambda_handler(_auth({'domainId': 'NADA'}), None)['statusCode'] == 404
+
+
+# --- Identidades de CORREO (verify_email_identity de SES) --------------------------------
+
+def test_add_correo_devuelve_pending_sin_dns(mods):
+    add, _, _ = mods
+    resp = add.lambda_handler(_auth({'identity': 'ventas@empresa.com'}), None)
+    assert resp['statusCode'] == 201
+    data = resp['data']
+    assert data['kind'] == 'email' and data['domain'] == 'ventas@empresa.com'
+    assert data['status'] == 'pending'
+    # Los correos NO llevan registros DNS (se verifican por el enlace del correo).
+    assert data['records'] == []
+
+
+def test_add_correo_invalido_400(mods):
+    add, _, _ = mods
+    assert add.lambda_handler(_auth({'identity': 'bad@nodomain'}), None)['statusCode'] == 400
+
+
+def test_add_correo_plataforma_400(mods):
+    add, _, _ = mods
+    assert add.lambda_handler(_auth({'identity': 'x@mailconnect.com.co'}), None)['statusCode'] == 400
+
+
+def test_add_correo_pendiente_reenvia_200(mods):
+    add, _, _ = mods
+    assert add.lambda_handler(_auth({'identity': 'ventas@empresa.com'}), None)['statusCode'] == 201
+    # Repetir un correo pendiente REENVÍA la verificación (200), no lo duplica (409).
+    resp = add.lambda_handler(_auth({'identity': 'ventas@empresa.com'}), None)
+    assert resp['statusCode'] == 200 and resp['data']['kind'] == 'email'
+
+
+def test_list_incluye_correo_con_kind(mods):
+    add, lst, _ = mods
+    add.lambda_handler(_auth({'identity': 'ventas@empresa.com'}), None)
+    resp = lst.lambda_handler(_auth({}), None)
+    assert resp['statusCode'] == 200
+    item = next((d for d in resp['data']['domains'] if d['domain'] == 'ventas@empresa.com'), None)
+    assert item is not None and item['kind'] == 'email'
+
+
+def test_from_allowed_remitente(mods):
+    """Create-campaign permite el remitente si es plataforma, dominio verificado o correo
+    verificado exacto del cliente."""
+    add, _, _ = mods
+    add._ensure_table()  # crea senderDomain (+GSI) en el mismo backend mock
+    cc = _load('create_campaign', 'Api_V1_Campaign_Create-campaign')
+    tbl = boto3.resource('dynamodb', region_name='us-east-1').Table('senderDomain')
+
+    # Correo verificado del cliente CU1.
+    tbl.put_item(Item={'domainId': 'D1', 'customerId': 'CU1', 'kind': 'email',
+                       'domain': 'ventas@empresa.com', 'status': 'verified'})
+    assert cc._from_allowed('CU1', 'ventas@empresa.com') is True          # correo exacto
+    assert cc._from_allowed('CU1', 'algo@mailconnect.com.co') is True      # plataforma
+    assert cc._from_allowed('CU1', 'otro@empresa.com') is False            # dominio NO verificado
+    assert cc._from_allowed('CU2', 'ventas@empresa.com') is False          # otro cliente
+
+    # Un DOMINIO verificado sí habilita cualquier buzón de ese dominio.
+    tbl.put_item(Item={'domainId': 'D2', 'customerId': 'CU1', 'kind': 'domain',
+                       'domain': 'empresa.com', 'status': 'verified'})
+    assert cc._from_allowed('CU1', 'otro@empresa.com') is True

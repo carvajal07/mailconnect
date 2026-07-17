@@ -21,28 +21,48 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DnsIcon from '@mui/icons-material/Dns';
+import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
-import { domainsService } from '../../services/domainsService';
-import type { SenderDomain, DomainStatus, DnsRecord } from '../../services/domainsService';
+import MarkEmailUnreadIcon from '@mui/icons-material/MarkEmailUnread';
+import SendIcon from '@mui/icons-material/Send';
+import { domainsService, senderKindOf } from '../../services/domainsService';
+import type { SenderDomain, DomainStatus, DnsRecord, SenderKind } from '../../services/domainsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
 import { formatDateTime } from '../../utils/datetime';
 
-const STATUS_META: Record<DomainStatus, { label: string; color: 'success' | 'warning' | 'error'; icon: React.ReactElement }> = {
-  verified: { label: 'Verificado', color: 'success', icon: <CheckCircleIcon fontSize="small" /> },
-  pending: { label: 'Pendiente de DNS', color: 'warning', icon: <HourglassEmptyIcon fontSize="small" /> },
-  failed: { label: 'Falló', color: 'error', icon: <ErrorOutlineIcon fontSize="small" /> },
+const STATUS_META: Record<DomainStatus, { color: 'success' | 'warning' | 'error'; icon: React.ReactElement }> = {
+  verified: { color: 'success', icon: <CheckCircleIcon fontSize="small" /> },
+  pending: { color: 'warning', icon: <HourglassEmptyIcon fontSize="small" /> },
+  failed: { color: 'error', icon: <ErrorOutlineIcon fontSize="small" /> },
 };
+
+/** Etiqueta del estado, sensible al tipo (los pendientes se verifican distinto). */
+const statusLabel = (d: SenderDomain): string => {
+  if (d.status === 'verified') return 'Verificado';
+  if (d.status === 'failed') return 'Falló';
+  return senderKindOf(d) === 'email' ? 'Pendiente de correo' : 'Pendiente de DNS';
+};
+
+const KIND_META: Record<SenderKind, { label: string; icon: React.ReactElement }> = {
+  domain: { label: 'Dominio', icon: <DnsIcon fontSize="small" color="action" /> },
+  email: { label: 'Correo', icon: <AlternateEmailIcon fontSize="small" color="action" /> },
+};
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const DOMAIN_RE = /^([a-z0-9](-?[a-z0-9])*\.)+[a-z]{2,}$/;
 
 const copy = (text: string, notify: (m: string, s?: 'success' | 'info') => void) => {
   navigator.clipboard?.writeText(text).then(
@@ -59,43 +79,70 @@ export const DominiosSection = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [newDomain, setNewDomain] = useState('');
+  const [addKind, setAddKind] = useState<SenderKind>('domain');
+  const [newValue, setNewValue] = useState('');
   const [adding, setAdding] = useState(false);
-  const [recordsView, setRecordsView] = useState<SenderDomain | null>(null);
+  const [resending, setResending] = useState(false);
+  const [detailView, setDetailView] = useState<SenderDomain | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     const res = await domainsService.list();
     setLoading(false);
     if (isOk(res) && res.data?.domains) setDomains(res.data.domains);
-    else if (!isOk(res)) notify(res.description || 'No se pudieron cargar los dominios.', 'error');
+    else if (!isOk(res)) notify(res.description || 'No se pudieron cargar los remitentes.', 'error');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
+  const openAdd = (kind: SenderKind) => {
+    setAddKind(kind);
+    setNewValue('');
+    setAddOpen(true);
+  };
+
   const handleAdd = async () => {
-    const d = newDomain.trim().toLowerCase();
-    if (!d) return notify('Indica un dominio (ej. empresa.com).', 'warning');
+    const v = newValue.trim().toLowerCase();
+    if (addKind === 'email') {
+      if (!EMAIL_RE.test(v)) return notify('Indica un correo válido (ej. ventas@tuempresa.com).', 'warning');
+    } else if (!DOMAIN_RE.test(v)) {
+      return notify('Indica un dominio válido (ej. empresa.com).', 'warning');
+    }
     setAdding(true);
-    const res = await domainsService.add(d);
+    const res = await domainsService.add(v);
     setAdding(false);
     if (isOk(res) && res.data) {
-      notify('Dominio registrado. Publica los registros DNS para verificarlo.', 'success');
+      notify(
+        res.data.kind === 'email'
+          ? 'Correo registrado. Revisa tu bandeja y haz clic en el enlace de verificación.'
+          : 'Dominio registrado. Publica los registros DNS para verificarlo.',
+        'success',
+      );
       setAddOpen(false);
-      setNewDomain('');
+      setNewValue('');
       await load();
-      // Abre directamente los registros DNS del dominio recién creado.
-      setRecordsView(res.data);
+      // Abre directamente las instrucciones del remitente recién creado.
+      setDetailView(res.data);
     } else {
-      notify(res.description || 'No se pudo registrar el dominio.', 'error');
+      notify(res.description || 'No se pudo registrar el remitente.', 'error');
     }
   };
 
+  /** Reenvía el correo de verificación (SES) para un correo pendiente. */
+  const handleResend = async (email: string) => {
+    setResending(true);
+    const res = await domainsService.add(email);
+    setResending(false);
+    if (isOk(res)) notify('Te reenviamos el correo de verificación. Revisa tu bandeja (y spam).', 'success');
+    else notify(res.description || 'No se pudo reenviar la verificación.', 'error');
+  };
+
   const handleDelete = async (d: SenderDomain) => {
+    const isEmail = senderKindOf(d) === 'email';
     const ok = await confirm({
-      title: 'Eliminar dominio',
-      message: `¿Eliminar el dominio "${d.domain}"? Dejará de estar disponible como remitente y se quitará la identidad en SES.`,
+      title: isEmail ? 'Eliminar correo' : 'Eliminar dominio',
+      message: `¿Eliminar "${d.domain}"? Dejará de estar disponible como remitente y se quitará la identidad en SES.`,
       confirmText: 'Eliminar',
       confirmColor: 'error',
     });
@@ -104,45 +151,52 @@ export const DominiosSection = () => {
     const res = await domainsService.delete(d.domainId);
     setDeletingId(null);
     if (isOk(res)) {
-      notify('Dominio eliminado.', 'success');
+      notify('Remitente eliminado.', 'success');
       load();
     } else {
-      notify(res.description || 'No se pudo eliminar el dominio.', 'error');
+      notify(res.description || 'No se pudo eliminar el remitente.', 'error');
     }
   };
+
+  const detailKind = detailView ? senderKindOf(detailView) : 'domain';
 
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1}>
         <Box>
-          <Typography variant="h4">Dominios de envío</Typography>
+          <Typography variant="h4">Dominios y correos de envío</Typography>
           <Typography variant="body2" color="text.secondary">
-            Configura tu propio dominio para enviar desde tus direcciones (ej. comunicaciones@tuempresa.com).
+            Verifica tu propio dominio (para enviar desde cualquier dirección, ej.
+            comunicaciones@tuempresa.com) o un correo específico (para enviar solo desde esa dirección).
           </Typography>
         </Box>
         <Stack direction="row" spacing={1}>
           <Button variant="outlined" startIcon={loading ? <CircularProgress size={16} /> : <RefreshIcon />} onClick={load} disabled={loading}>
             Actualizar
           </Button>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setNewDomain(''); setAddOpen(true); }}>
+          <Button variant="outlined" startIcon={<AlternateEmailIcon />} onClick={() => openAdd('email')}>
+            Agregar correo
+          </Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => openAdd('domain')}>
             Agregar dominio
           </Button>
         </Stack>
       </Stack>
 
       <Alert severity="info" sx={{ mb: 2 }}>
-        Para usar tu dominio: <strong>1)</strong> agrégalo aquí, <strong>2)</strong> publica en tu proveedor
-        de DNS los registros que te mostramos (1 TXT de verificación + 3 CNAME de firma DKIM), y{' '}
-        <strong>3)</strong> pulsa <strong>Actualizar</strong> hasta que quede <em>Verificado</em>. La
-        propagación de DNS puede tardar de minutos a unas horas. Solo los dominios <strong>verificados</strong>
-        se pueden elegir como remitente al crear una campaña.
+        Puedes verificar un <strong>dominio</strong> (publicando registros DNS: 1 TXT + 3 CNAME) o
+        un <strong>correo</strong> específico (haciendo clic en el enlace que Amazon SES envía a esa
+        dirección — sin tocar el DNS). El correo es más rápido si solo quieres enviar desde una
+        dirección; el dominio te habilita cualquier dirección de tu empresa. Solo los remitentes{' '}
+        <strong>verificados</strong> se pueden elegir al crear una campaña.
       </Alert>
 
       <TableContainer component={Paper} variant="outlined">
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell>Dominio</TableCell>
+              <TableCell>Tipo</TableCell>
+              <TableCell>Remitente</TableCell>
               <TableCell>Estado</TableCell>
               <TableCell>Registrado</TableCell>
               <TableCell align="right">Acciones</TableCell>
@@ -151,32 +205,32 @@ export const DominiosSection = () => {
           <TableBody>
             {domains.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} align="center" sx={{ py: 4, color: 'text.secondary' }}>
-                  {loading ? 'Cargando…' : 'Aún no configuras ningún dominio propio.'}
+                <TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                  {loading ? 'Cargando…' : 'Aún no configuras ningún dominio o correo propio.'}
                 </TableCell>
               </TableRow>
             )}
             {domains.map((d) => {
               const meta = STATUS_META[d.status] ?? STATUS_META.pending;
+              const kind = senderKindOf(d);
+              const kindMeta = KIND_META[kind];
               return (
                 <TableRow key={d.domainId} hover>
-                  <TableCell sx={{ fontWeight: 600 }}>
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <DnsIcon fontSize="small" color="action" />
-                      {d.domain}
-                    </Stack>
-                  </TableCell>
                   <TableCell>
-                    <Chip size="small" variant="outlined" color={meta.color} icon={meta.icon} label={meta.label} />
+                    <Chip size="small" variant="outlined" icon={kindMeta.icon} label={kindMeta.label} />
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{d.domain}</TableCell>
+                  <TableCell>
+                    <Chip size="small" variant="outlined" color={meta.color} icon={meta.icon} label={statusLabel(d)} />
                   </TableCell>
                   <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDateTime(d.createdAt)}</TableCell>
                   <TableCell align="right">
-                    <Tooltip title="Ver registros DNS">
-                      <IconButton color="info" onClick={() => setRecordsView(d)}>
+                    <Tooltip title={kind === 'email' ? 'Ver instrucciones' : 'Ver registros DNS'}>
+                      <IconButton color="info" onClick={() => setDetailView(d)}>
                         <VisibilityIcon />
                       </IconButton>
                     </Tooltip>
-                    <Tooltip title="Eliminar dominio">
+                    <Tooltip title="Eliminar">
                       <span>
                         <IconButton color="error" onClick={() => handleDelete(d)} disabled={deletingId === d.domainId}>
                           {deletingId === d.domainId ? <CircularProgress size={20} /> : <DeleteIcon />}
@@ -191,24 +245,58 @@ export const DominiosSection = () => {
         </Table>
       </TableContainer>
 
-      {/* Diálogo: agregar dominio */}
+      {/* Diálogo: agregar dominio o correo */}
       <Dialog open={addOpen} onClose={() => !adding && setAddOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Agregar dominio de envío</DialogTitle>
+        <DialogTitle>Agregar remitente de envío</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2}>
-            <Typography variant="body2" color="text.secondary">
-              Escribe el dominio desde el que quieres enviar (sin <code>www</code> ni <code>@</code>).
-              Debes ser dueño del dominio y poder editar sus registros DNS.
-            </Typography>
-            <TextField
-              label="Dominio"
-              placeholder="tuempresa.com"
-              value={newDomain}
-              onChange={(e) => setNewDomain(e.target.value)}
-              fullWidth
-              autoFocus
-              InputProps={{ startAdornment: <DnsIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} /> }}
-            />
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              color="primary"
+              value={addKind}
+              onChange={(_, v) => { if (v) { setAddKind(v); setNewValue(''); } }}
+            >
+              <ToggleButton value="domain"><DnsIcon fontSize="small" sx={{ mr: 1 }} />Dominio</ToggleButton>
+              <ToggleButton value="email"><AlternateEmailIcon fontSize="small" sx={{ mr: 1 }} />Correo</ToggleButton>
+            </ToggleButtonGroup>
+
+            {addKind === 'domain' ? (
+              <>
+                <Typography variant="body2" color="text.secondary">
+                  Escribe el dominio desde el que quieres enviar (sin <code>www</code> ni <code>@</code>).
+                  Debes ser dueño del dominio y poder editar sus registros DNS. Te mostraremos los
+                  registros a publicar (1 TXT + 3 CNAME).
+                </Typography>
+                <TextField
+                  label="Dominio"
+                  placeholder="tuempresa.com"
+                  value={newValue}
+                  onChange={(e) => setNewValue(e.target.value)}
+                  fullWidth
+                  autoFocus
+                  InputProps={{ startAdornment: <DnsIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} /> }}
+                />
+              </>
+            ) : (
+              <>
+                <Typography variant="body2" color="text.secondary">
+                  Escribe el correo desde el que quieres enviar. Amazon SES le enviará un enlace de
+                  verificación; debes tener acceso a esa bandeja para confirmarlo. Podrás enviar solo
+                  desde esa dirección exacta.
+                </Typography>
+                <TextField
+                  label="Correo"
+                  placeholder="ventas@tuempresa.com"
+                  type="email"
+                  value={newValue}
+                  onChange={(e) => setNewValue(e.target.value)}
+                  fullWidth
+                  autoFocus
+                  InputProps={{ startAdornment: <AlternateEmailIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} /> }}
+                />
+              </>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -217,20 +305,77 @@ export const DominiosSection = () => {
             variant="contained"
             startIcon={adding ? <CircularProgress size={16} color="inherit" /> : <AddIcon />}
             onClick={handleAdd}
-            disabled={adding || !newDomain.trim()}
+            disabled={adding || !newValue.trim()}
           >
-            Registrar y ver DNS
+            {addKind === 'email' ? 'Registrar y enviar verificación' : 'Registrar y ver DNS'}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Diálogo: registros DNS del dominio */}
-      <Dialog open={!!recordsView} onClose={() => setRecordsView(null)} maxWidth="md" fullWidth>
-        <DialogTitle>Registros DNS — {recordsView?.domain}</DialogTitle>
+      {/* Diálogo: detalle del remitente (registros DNS para dominio, guía para correo) */}
+      <Dialog open={!!detailView} onClose={() => setDetailView(null)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          {detailKind === 'email' ? 'Verificación del correo' : 'Registros DNS'} — {detailView?.domain}
+        </DialogTitle>
         <DialogContent dividers>
-          {recordsView && (
+          {detailView && detailKind === 'email' && (
             <Stack spacing={2}>
-              {recordsView.status === 'verified' ? (
+              {detailView.status === 'verified' ? (
+                <Alert severity="success" icon={<CheckCircleIcon />}>
+                  Este correo ya está <strong>verificado</strong> y listo para usarse como remitente.
+                </Alert>
+              ) : (
+                <>
+                  <Alert severity="warning" icon={<MarkEmailUnreadIcon />}>
+                    Sigue estos pasos para verificar <strong>{detailView.domain}</strong>. El enlace de
+                    verificación vence en <strong>24 horas</strong>.
+                  </Alert>
+                  <Box component="ol" sx={{ pl: 3, m: 0, '& li': { mb: 1.5 } }}>
+                    <li>
+                      <Typography variant="body2">
+                        Amazon SES envió un correo de verificación a <strong>{detailView.domain}</strong>.
+                        Revisa esa bandeja (y la carpeta de <em>spam</em>). Remitente:{' '}
+                        <code>no-reply-aws@amazon.com</code> · Asunto: <em>“Amazon SES Address Verification Request”</em>.
+                      </Typography>
+                    </li>
+                    <li>
+                      <Typography variant="body2">
+                        Abre ese correo y haz clic en el enlace <strong>“Verify this email address”</strong>
+                        (verificar esta dirección).
+                      </Typography>
+                    </li>
+                    <li>
+                      <Typography variant="body2">
+                        Vuelve aquí y pulsa <strong>Actualizar estado</strong> hasta que quede{' '}
+                        <em>Verificado</em>.
+                      </Typography>
+                    </li>
+                    <li>
+                      <Typography variant="body2">
+                        Listo: podrás elegir <strong>{detailView.domain}</strong> como remitente al crear
+                        una campaña.
+                      </Typography>
+                    </li>
+                  </Box>
+                  <Box>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={resending ? <CircularProgress size={14} /> : <SendIcon />}
+                      onClick={() => handleResend(detailView.domain)}
+                      disabled={resending}
+                    >
+                      ¿No llegó? Reenviar correo de verificación
+                    </Button>
+                  </Box>
+                </>
+              )}
+            </Stack>
+          )}
+
+          {detailView && detailKind === 'domain' && (
+            <Stack spacing={2}>
+              {detailView.status === 'verified' ? (
                 <Alert severity="success">Este dominio ya está <strong>verificado</strong> y listo para usarse como remitente.</Alert>
               ) : (
                 <Alert severity="warning">
@@ -249,7 +394,7 @@ export const DominiosSection = () => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {(recordsView.records || []).map((r: DnsRecord, i: number) => (
+                    {(detailView.records || []).map((r: DnsRecord, i: number) => (
                       <TableRow key={i}>
                         <TableCell><Chip size="small" label={r.type} /></TableCell>
                         <TableCell sx={{ maxWidth: 260 }}>
@@ -279,8 +424,8 @@ export const DominiosSection = () => {
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setRecordsView(null)}>Cerrar</Button>
-          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => { setRecordsView(null); load(); }}>
+          <Button onClick={() => setDetailView(null)}>Cerrar</Button>
+          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => { setDetailView(null); load(); }}>
             Actualizar estado
           </Button>
         </DialogActions>

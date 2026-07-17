@@ -1,14 +1,16 @@
 '''
-Lambda: LISTAR los dominios de envío del cliente y REFRESCAR su estado desde SES.
+Lambda: LISTAR los remitentes del cliente (DOMINIOS y CORREOS) y REFRESCAR su estado desde SES.
 
-Consulta los dominios del cliente (tabla `senderDomain`, GSI por customerId) y para cada uno
-pregunta a SES el estado de verificación (`get_identity_verification_attributes`) y de DKIM
-(`get_identity_dkim_attributes`). Actualiza `status` (pending|verified|failed) en la tabla y
-devuelve la lista con sus registros DNS.
+Consulta las identidades del cliente (tabla `senderDomain`, GSI por customerId) y para cada una
+pregunta a SES el estado de verificación (`get_identity_verification_attributes`). Este mismo
+endpoint sirve para dominios y para correos: `get_identity_verification_attributes` devuelve el
+estado tanto de una identidad de dominio como de una de correo. Actualiza `status`
+(pending|verified|failed) en la tabla y devuelve la lista con su tipo y registros DNS (los
+correos no llevan registros; se verifican por el enlace que SES envía a la dirección).
 
 Ruta: POST /Domain/List  (no-proxy, envelope estándar)
 Request:  {}
-Respuesta: 200 data:{ domains:[{domainId, domain, status, records, createdAt, verifiedAt}], count }
+Respuesta: 200 data:{ domains:[{domainId, kind, domain, status, records, createdAt, verifiedAt}], count }
 '''
 import os
 import time
@@ -107,6 +109,8 @@ def lambda_handler(event, context):
                     print('No se pudo actualizar el estado de {}: {}'.format(d, e))
             out.append(_clean({
                 'domainId': it.get('domainId'),
+                # kind: 'domain' | 'email'. Autodetecta por '@' para filas legacy sin el campo.
+                'kind': it.get('kind') or ('email' if '@' in d else 'domain'),
                 'domain': d,
                 'status': it.get('status', 'pending'),
                 'records': it.get('records', []),

@@ -1,20 +1,28 @@
 '''
-Lambda: AGREGAR un dominio de envío propio del cliente (identidad SES por dominio).
+Lambda: AGREGAR un remitente propio del cliente — DOMINIO o CORREO — como identidad SES.
 
-El cliente registra su dominio (p. ej. empresa.com) para poder enviar desde
-{cualquier}@empresa.com. Esta lambda pide a SES los tokens de verificación:
-  - verify_domain_identity  → 1 registro TXT (`_amazonses.{dominio}` = token) [verificación]
-  - verify_domain_dkim      → 3 registros CNAME (`{t}._domainkey.{dominio}` = `{t}.dkim.amazonses.com`) [DKIM]
-Guarda el dominio (estado 'pending') + los registros DNS en la tabla `senderDomain` y los
-DEVUELVE para que el cliente los cargue en su proveedor DNS. SES verifica solo cuando los
-registros están publicados (ver Domain_List, que refresca el estado).
+SES soporta DOS tipos de identidad de remitente, y esta lambda registra ambos:
+  - DOMINIO (ej. empresa.com): habilita enviar desde {cualquier}@empresa.com. Se verifica por
+    DNS → verify_domain_identity (1 registro TXT) + verify_domain_dkim (3 CNAME). El cliente
+    publica los registros en su proveedor DNS y SES verifica cuando están propagados.
+  - CORREO (ej. ventas@empresa.com): habilita enviar SOLO desde esa dirección exacta. Se verifica
+    por correo → verify_email_identity: SES manda un mensaje con un enlace de confirmación a esa
+    dirección; el dueño de la bandeja hace clic y queda verificada (NO requiere tocar el DNS).
+
+El tipo se detecta por la presencia de '@' en el valor recibido (o el hint opcional `kind`).
+Se guarda en la MISMA tabla `senderDomain` con un campo `kind` ('domain' | 'email'); el valor
+(dominio o correo) se guarda en el campo `domain` para no cambiar el esquema ni los lectores.
 
 Ruta: POST /Domain/Add  (no-proxy, envelope estándar)
-Request:  { domain }
-Respuesta: 201 data:{ domainId, domain, status, records:[{type,name,value}] } · 400 · 403 · 409
+Request:  { identity }   (alias legacy: { domain } / { email })
+Respuesta:
+  - dominio → 201 data:{ domainId, kind:'domain', domain, status:'pending', records:[TXT + 3 CNAME] }
+  - correo  → 201 data:{ domainId, kind:'email',  domain(=correo), status:'pending', records:[] }
+  - correo pendiente ya registrado → 200 (REENVÍA el correo de verificación)
+  - 400 inválido · 403 sin sesión · 409 duplicado (dominio, o correo ya verificado)
 
-⚠️ Las identidades SES son a NIVEL DE CUENTA AWS (compartidas entre tenants): esta tabla
-guarda QUÉ cliente es dueño de cada dominio para no permitir que otro lo use como remitente.
+⚠️ Las identidades SES son a NIVEL DE CUENTA AWS (compartidas entre tenants): esta tabla guarda
+QUÉ cliente es dueño de cada identidad para no permitir que otro la use como remitente.
 '''
 import os
 import re
@@ -23,7 +31,7 @@ import uuid
 import boto3
 from botocore.exceptions import ClientError
 
-# La verificación de dominio DEBE hacerse en la MISMA región donde se envía (us-east-1).
+# La verificación de identidad DEBE hacerse en la MISMA región donde se envía (us-east-1).
 REGION = os.environ.get('SES_REGION', 'us-east-1')
 ses = boto3.client('ses', region_name=REGION)
 dynamodb = boto3.resource('dynamodb')
@@ -32,6 +40,8 @@ table_domain = dynamodb.Table('senderDomain')
 # Dominio del propio MailConnect: no se puede registrar como "propio" del cliente.
 PLATFORM_DOMAIN = os.environ.get('PLATFORM_DOMAIN', 'mailconnect.com.co')
 DOMAIN_RE = re.compile(r'^(?=.{4,253}$)([a-z0-9](-?[a-z0-9])*\.)+[a-z]{2,}$')
+# Correo: parte local simple + dominio válido (reusa la forma del dominio).
+EMAIL_RE = re.compile(r"^[a-z0-9._%+\-]+@(?=.{4,253}$)([a-z0-9](-?[a-z0-9])*\.)+[a-z]{2,}$")
 
 
 def _get_payload(event):
@@ -82,23 +92,24 @@ def _ensure_table():
             raise
 
 
-def _existing(customer_id, domain):
-    """¿El cliente ya tiene ese dominio? (Query por el GSI). Devuelve el item o None."""
+def _existing(customer_id, value):
+    """¿El cliente ya tiene esa identidad (dominio o correo)? (Query por el GSI).
+    Devuelve el item o None. La comparación es sobre el campo `domain` (guarda ambos)."""
     try:
         from boto3.dynamodb.conditions import Key
         resp = table_domain.query(
             IndexName='customerId-index',
             KeyConditionExpression=Key('customerId').eq(customer_id))
         for it in resp.get('Items', []):
-            if str(it.get('domain', '')).lower() == domain:
+            if str(it.get('domain', '')).lower() == value:
                 return it
     except Exception as e:
-        print('No se pudo consultar dominios existentes: {}'.format(e))
+        print('No se pudo consultar identidades existentes: {}'.format(e))
     return None
 
 
 def _dns_records(domain, verification_token, dkim_tokens):
-    """Arma la lista de registros DNS que el cliente debe publicar."""
+    """Arma la lista de registros DNS que el cliente debe publicar (solo dominios)."""
     records = [{
         'type': 'TXT',
         'name': '_amazonses.{}'.format(domain),
@@ -115,6 +126,74 @@ def _dns_records(domain, verification_token, dkim_tokens):
     return records
 
 
+def _add_email(customer_id, customer, email):
+    """Registra un CORREO como identidad SES (verificación por enlace enviado al correo).
+    Si el correo pendiente ya existe, REENVÍA la verificación (200) en vez de duplicar (409)."""
+    existing = _existing(customer_id, email)
+    if existing:
+        if existing.get('status') == 'verified':
+            return {'status': False, 'statusCode': 409, 'description': 'Ese correo ya está verificado.'}
+        # Pendiente: reenviar el correo de verificación (idempotente, útil si el enlace venció).
+        ses.verify_email_identity(EmailAddress=email)
+        return {'status': True, 'statusCode': 200,
+                'description': 'Te reenviamos el correo de verificación a {}. Revisa la bandeja '
+                               '(y spam) y haz clic en el enlace.'.format(email),
+                'data': {'domainId': existing['domainId'], 'kind': 'email', 'domain': email,
+                         'status': existing.get('status', 'pending'), 'records': []}}
+
+    # SES envía un correo con un enlace de confirmación a esa dirección.
+    ses.verify_email_identity(EmailAddress=email)
+
+    domain_id = str(uuid.uuid4())
+    now = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
+    table_domain.put_item(Item={
+        'domainId': domain_id,
+        'customerId': customer_id,
+        'customer': customer,
+        'kind': 'email',
+        'domain': email,               # el valor (correo) va en `domain` para no cambiar lectores
+        'status': 'pending',           # pending | verified | failed
+        'records': [],                 # los correos NO llevan registros DNS
+        'createdAt': now,
+        'verifiedAt': '',
+    })
+    return {'status': True, 'statusCode': 201,
+            'description': 'Correo registrado. Revisa la bandeja de {} y haz clic en el enlace '
+                           'de verificación de Amazon SES.'.format(email),
+            'data': {'domainId': domain_id, 'kind': 'email', 'domain': email,
+                     'status': 'pending', 'records': []}}
+
+
+def _add_domain(customer_id, customer, domain):
+    """Registra un DOMINIO como identidad SES (verificación por DNS: 1 TXT + 3 CNAME DKIM)."""
+    if _existing(customer_id, domain):
+        return {'status': False, 'statusCode': 409, 'description': 'Ya registraste ese dominio.'}
+
+    verification_token = ses.verify_domain_identity(Domain=domain).get('VerificationToken', '')
+    dkim_tokens = ses.verify_domain_dkim(Domain=domain).get('DkimTokens', [])
+    records = _dns_records(domain, verification_token, dkim_tokens)
+
+    domain_id = str(uuid.uuid4())
+    now = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
+    table_domain.put_item(Item={
+        'domainId': domain_id,
+        'customerId': customer_id,
+        'customer': customer,
+        'kind': 'domain',
+        'domain': domain,
+        'status': 'pending',           # pending | verified | failed
+        'verificationToken': verification_token,
+        'dkimTokens': dkim_tokens,
+        'records': records,
+        'createdAt': now,
+        'verifiedAt': '',
+    })
+    return {'status': True, 'statusCode': 201,
+            'description': 'Dominio registrado. Publica los registros DNS para verificarlo.',
+            'data': {'domainId': domain_id, 'kind': 'domain', 'domain': domain,
+                     'status': 'pending', 'records': records}}
+
+
 def lambda_handler(event, context):
     payload = _get_payload(event)
     auth = _authorizer(event)
@@ -123,45 +202,37 @@ def lambda_handler(event, context):
     if not customer_id:
         return {'status': False, 'statusCode': 403, 'description': 'Sesión sin identidad de cliente.'}
 
-    domain = str(payload.get('domain', '') or '').strip().lower().lstrip('@')
-    # Quita un esquema o path por si el usuario pega una URL.
-    domain = re.sub(r'^https?://', '', domain).split('/')[0]
-    if not DOMAIN_RE.match(domain):
-        return {'status': False, 'statusCode': 400, 'description': 'Indica un dominio válido (ej. empresa.com).'}
-    if domain == PLATFORM_DOMAIN or domain.endswith('.' + PLATFORM_DOMAIN):
-        return {'status': False, 'statusCode': 400,
-                'description': 'Ese dominio es de MailConnect; usa el remitente por defecto.'}
+    # Valor recibido: acepta `identity` (canónico) o los alias legacy `domain` / `email`.
+    raw = str(payload.get('identity') or payload.get('domain') or payload.get('email') or '').strip().lower()
+    kind_hint = str(payload.get('kind') or '').strip().lower()
+    # Es correo si el hint lo dice, o si trae '@' y el hint no fuerza 'domain'.
+    is_email = kind_hint == 'email' or ('@' in raw and kind_hint != 'domain')
 
     try:
         _ensure_table()
-        if _existing(customer_id, domain):
-            return {'status': False, 'statusCode': 409, 'description': 'Ya registraste ese dominio.'}
+        if is_email:
+            email = raw.lstrip('@')  # por si pegan "@correo" por error
+            if not EMAIL_RE.match(email):
+                return {'status': False, 'statusCode': 400,
+                        'description': 'Indica un correo válido (ej. ventas@tuempresa.com).'}
+            dom = email.split('@')[-1]
+            if dom == PLATFORM_DOMAIN or dom.endswith('.' + PLATFORM_DOMAIN):
+                return {'status': False, 'statusCode': 400,
+                        'description': 'Ese correo es de MailConnect; usa el remitente por defecto.'}
+            return _add_email(customer_id, customer, email)
 
-        # SES: token de verificación (TXT) + tokens DKIM (3 CNAME).
-        verification_token = ses.verify_domain_identity(Domain=domain).get('VerificationToken', '')
-        dkim_tokens = ses.verify_domain_dkim(Domain=domain).get('DkimTokens', [])
-        records = _dns_records(domain, verification_token, dkim_tokens)
-
-        domain_id = str(uuid.uuid4())
-        now = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
-        table_domain.put_item(Item={
-            'domainId': domain_id,
-            'customerId': customer_id,
-            'customer': customer,
-            'domain': domain,
-            'status': 'pending',          # pending | verified | failed
-            'verificationToken': verification_token,
-            'dkimTokens': dkim_tokens,
-            'records': records,
-            'createdAt': now,
-            'verifiedAt': '',
-        })
-        return {'status': True, 'statusCode': 201,
-                'description': 'Dominio registrado. Publica los registros DNS para verificarlo.',
-                'data': {'domainId': domain_id, 'domain': domain, 'status': 'pending', 'records': records}}
+        # Dominio: quita un esquema o path por si pegan una URL, y un '@' al inicio.
+        domain = re.sub(r'^https?://', '', raw).split('/')[0].lstrip('@')
+        if not DOMAIN_RE.match(domain):
+            return {'status': False, 'statusCode': 400,
+                    'description': 'Indica un dominio válido (ej. empresa.com) o un correo (ej. ventas@empresa.com).'}
+        if domain == PLATFORM_DOMAIN or domain.endswith('.' + PLATFORM_DOMAIN):
+            return {'status': False, 'statusCode': 400,
+                    'description': 'Ese dominio es de MailConnect; usa el remitente por defecto.'}
+        return _add_domain(customer_id, customer, domain)
     except ClientError as e:
-        print('Error SES/DynamoDB al agregar dominio: {}'.format(e))
-        return {'status': False, 'statusCode': 500, 'description': 'No se pudo registrar el dominio.'}
+        print('Error SES/DynamoDB al agregar identidad: {}'.format(e))
+        return {'status': False, 'statusCode': 500, 'description': 'No se pudo registrar el remitente.'}
     except Exception as e:
-        print('Error no controlado al agregar dominio: {}'.format(e))
-        return {'status': False, 'statusCode': 500, 'description': 'Error no controlado al agregar el dominio.'}
+        print('Error no controlado al agregar identidad: {}'.format(e))
+        return {'status': False, 'statusCode': 500, 'description': 'Error no controlado al agregar el remitente.'}
