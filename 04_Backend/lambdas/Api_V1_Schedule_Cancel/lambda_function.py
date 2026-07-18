@@ -8,11 +8,21 @@ Respuesta: 200 ok · 400 falta id · 403 otro cliente · 404 no existe · 409 (y
 Solo se puede cancelar mientras esté `pending` (aún no disparado). La transición
 pending→canceled es condicional (atómica) para no chocar con el dispatcher que justo lo tome.
 '''
+import os
 import boto3
 from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource('dynamodb')
 table_schedule = dynamodb.Table('scheduledSend')
+scheduler_client = boto3.client('scheduler')
+
+SCHEDULER_GROUP = os.environ.get('SCHEDULER_GROUP', 'default')
+SCHEDULE_NAME_PREFIX = 'mc-send-'
+
+
+def _delete_schedule(name):
+    """Borra el schedule one-shot en EventBridge (best-effort). Aislada para poder mockearla."""
+    scheduler_client.delete_schedule(Name=name, GroupName=SCHEDULER_GROUP)
 
 
 def _get_payload(event):
@@ -65,6 +75,15 @@ def lambda_handler(event, context):
                 return {'status': False, 'statusCode': 409,
                         'description': 'El envío ya no está pendiente (posiblemente ya se disparó).'}
             raise
+
+        # Borra el schedule one-shot para que no dispare (best-effort; si ya se disparó y se
+        # autoeliminó, o no existe, no es error). El nombre se deriva del scheduleId.
+        name = str(current.get('scheduleName') or (SCHEDULE_NAME_PREFIX + schedule_id))
+        try:
+            _delete_schedule(name)
+        except Exception as e:
+            print('No se pudo borrar el schedule {} (best-effort): {}'.format(name, e))
+
         return {'status': True, 'statusCode': 200, 'description': 'Envío programado cancelado.'}
     except ClientError as e:
         print('Error cancelando programado: {}'.format(e))

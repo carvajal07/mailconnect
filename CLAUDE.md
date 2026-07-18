@@ -282,16 +282,25 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   (`PortalSidebar`, con `dividerAfter`).
 - **Plantillas PDF (jul 2026):** **Plantillas PDF** (`PdfTemplatesSection`) es un tablero **vacío**
   (scaffold) reservado para las plantillas PDF del envío EAP-PDF (sin backend aún).
-- **Programar envíos (jul 2026, FUNCIONAL):** `ProgramarEnviosSection` (tab junto a Campañas, RBAC
-  **owner/approver**) permite **agendar el envío real** de una campaña aprobada a una fecha/hora
-  futura. Backend: tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`) + lambdas
-  `Api_V1_Schedule_{Create,List,Cancel}` (cliente) y **`Api_V1_Schedule_Dispatch`** (cron, NO es
-  ruta de API): cada ~5 min busca los `pending` cuya hora ya llegó (`scheduledAt<=now`), los
-  **reclama** (transición atómica `pending→firing`, idempotente) e **invoca Prepare-batch** con el
-  MISMO evento del envío on-demand (`/Email/Send-batch-template` + context) → reutiliza TODOS los
-  gates (aprobación, saldo, RBAC, lock) sin duplicar. Estados: `pending|firing|sent|canceled|failed`.
-  El front convierte el `datetime-local` a **UTC ISO** antes de enviar. Cubierto por
-  `08_Pruebas/PruebasSeguridad/test_schedule.py`.
+- **Programar envíos (jul 2026, FUNCIONAL — HORA EXACTA):** `ProgramarEnviosSection` (tab junto a
+  Campañas, RBAC **owner/approver**) permite **agendar el envío real** de una campaña aprobada a una
+  fecha/hora futura. Backend: tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`).
+  - **Disparo por HORA EXACTA (EventBridge Scheduler one-shot):** `Api_V1_Schedule_Create` valida
+    (tenant, RBAC owner/approver, fecha futura, campaña aprobable) y crea (a) la fila `pending` con
+    todo el contexto para refirir y (b) un **schedule de una sola vez** `at(fecha exacta UTC)`
+    (`FlexibleTimeWindow OFF`, `ActionAfterCompletion DELETE`) cuyo target es **`Api_V1_Schedule_Fire`**
+    con `Input={scheduleId}`. Si `create_schedule` falla → **rollback** de la fila (no queda un
+    `pending` que nunca dispara). El nombre del schedule = `mc-send-{scheduleId}`.
+  - **`Api_V1_Schedule_Fire`** (target, sin ruta): a la hora exacta EventBridge lo invoca; carga esa
+    fila, la **reclama** (`pending→firing`, condicional/idempotente) e **invoca Prepare-batch** con el
+    MISMO evento del envío on-demand (`/Email/Send-batch-template` + context) → reutiliza TODOS los
+    gates (aprobación, saldo, RBAC, lock). Marca `sent`/`failed`. El schedule se autoelimina.
+  - **`Api_V1_Schedule_Cancel`:** `pending→canceled` (atómico) + **`delete_schedule`** del one-shot.
+    **`Api_V1_Schedule_List`:** los del tenant (GSI). El front convierte `datetime-local`→UTC ISO.
+  - **`Api_V1_Schedule_Dispatch`** queda como **barrido de respaldo OPCIONAL** (cron de baja
+    frecuencia): recoge `pending` vencidos cuyo one-shot no disparó. La reclamación + el lock de
+    Prepare-batch evitan doble envío aunque coincida con el Fire. Estados:
+    `pending|firing|sent|canceled|failed`. Cubierto por `08_Pruebas/PruebasSeguridad/test_schedule.py`.
 
 ### Portal: precarga y edición (jul 2026)
 - **Precarga al loguear:** `PortalDataProvider` (`context/PortalDataContext.tsx`) envuelve el

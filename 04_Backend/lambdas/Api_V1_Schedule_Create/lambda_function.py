@@ -28,9 +28,35 @@ from botocore.exceptions import ClientError
 dynamodb = boto3.resource('dynamodb')
 table_schedule = dynamodb.Table('scheduledSend')
 table_campaign = dynamodb.Table('campaign')
+scheduler_client = boto3.client('scheduler')
 
 # Estados de campaña en los que YA NO tiene sentido programar (ya salió o terminó).
 NON_SCHEDULABLE_STATES = ('Enviando', 'Procesando', 'Terminada')
+
+# EventBridge Scheduler: se crea un schedule de UNA sola vez por campaña (hora EXACTA). El
+# target es la lambda Api_V1_Schedule_Fire; el schedule se autoelimina al dispararse.
+FIRE_LAMBDA_ARN = os.environ.get('SCHEDULER_FIRE_LAMBDA_ARN', '')     # ARN de Api_V1_Schedule_Fire
+SCHEDULER_ROLE_ARN = os.environ.get('SCHEDULER_ROLE_ARN', '')        # rol que EventBridge Scheduler asume para invocar
+SCHEDULER_GROUP = os.environ.get('SCHEDULER_GROUP', 'default')
+SCHEDULE_NAME_PREFIX = 'mc-send-'   # nombre del schedule = prefijo + scheduleId (derivable en Cancel)
+
+
+def _schedule_event(schedule_id, scheduled_dt):
+    """Crea el schedule de una sola vez que disparará el envío a la hora EXACTA. Lanza si el
+    scheduling no está configurado (env) o si la API de EventBridge falla → el caller hace
+    rollback de la fila. Aislada para poder mockearla en pruebas."""
+    if not FIRE_LAMBDA_ARN or not SCHEDULER_ROLE_ARN:
+        raise RuntimeError('Scheduling no configurado: faltan SCHEDULER_FIRE_LAMBDA_ARN / SCHEDULER_ROLE_ARN.')
+    at_expr = 'at({})'.format(scheduled_dt.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S'))
+    scheduler_client.create_schedule(
+        Name=SCHEDULE_NAME_PREFIX + schedule_id,
+        GroupName=SCHEDULER_GROUP,
+        ScheduleExpression=at_expr,
+        ScheduleExpressionTimezone='UTC',
+        FlexibleTimeWindow={'Mode': 'OFF'},        # dispara a la hora exacta (sin ventana)
+        ActionAfterCompletion='DELETE',            # el schedule de un solo uso se limpia solo
+        Target={'Arn': FIRE_LAMBDA_ARN, 'RoleArn': SCHEDULER_ROLE_ARN,
+                'Input': json.dumps({'scheduleId': schedule_id})})
 
 
 def _get_payload(event):
@@ -163,11 +189,26 @@ def lambda_handler(event, context):
             'templateVersion': template_version,
             'scheduledAt': scheduled_at,
             'status': 'pending',                                # pending | firing | sent | canceled | failed
+            'scheduleName': SCHEDULE_NAME_PREFIX + schedule_id, # nombre del schedule EventBridge (para Cancel)
             'createdAt': time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime()),
             'firedAt': '',
             'processId': '',
             'error': '',
         })
+
+        # Crea el schedule de HORA EXACTA (EventBridge Scheduler). Si falla, se hace ROLLBACK
+        # de la fila para no dejar un envío "pending" que nunca se dispararía.
+        try:
+            _schedule_event(schedule_id, scheduled_dt)
+        except Exception as e:
+            print('No se pudo crear el schedule de {}: {}'.format(schedule_id, e))
+            try:
+                table_schedule.delete_item(Key={'scheduleId': schedule_id})
+            except Exception as del_e:
+                print('No se pudo revertir la fila {}: {}'.format(schedule_id, del_e))
+            return {'status': False, 'statusCode': 500,
+                    'description': 'No se pudo agendar el disparo del envío. Intenta de nuevo.'}
+
         return {'status': True, 'statusCode': 201,
                 'description': 'Envío programado.',
                 'data': {'scheduleId': schedule_id, 'scheduledAt': scheduled_at, 'status': 'pending'}}

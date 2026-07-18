@@ -169,13 +169,19 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 | `Api_V1_Admin_Campaigns` | `/Admin/Campaigns` | `Scan` sobre `campaign`/`customer` |
 | `Api_V1_Admin_Requeue` | `/Admin/Requeue` | `GetItem` sobre `process`; **`sqs:SendMessage`** sobre `Email_Prepare-batch-part`; `PutItem` sobre `adminAudit` |
 
-### 3b. Programar envíos **🆕 (nuevo, post-2026-07-17)** — tabla + 4 lambdas + cron
+### 3b. Programar envíos **🆕 (nuevo, post-2026-07-17)** — HORA EXACTA (EventBridge Scheduler one-shot)
+
+> Disparo por **hora exacta**: `Schedule/Create` crea un **EventBridge Scheduler** de una sola vez
+> por campaña (`at(...)`) cuyo target es `Api_V1_Schedule_Fire`. El schedule se autoelimina al
+> dispararse. Requiere **un rol IAM que EventBridge Scheduler asuma** para invocar el Fire.
 
 - [ ] `[J]` Tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`, On-Demand) — la crea `Schedule/Create` on-demand, o créala a mano.
-- [ ] `[J]` `Api_V1_Schedule_Create` → ruta **`/Schedule/Create`** (client, authorizer + CORS + mapping template con `customerId`/`customer`/`nit`/`userId`/`tenantRole`). IAM: `Put/DescribeTable/CreateTable` sobre `scheduledSend`; `GetItem` sobre `campaign`.
+- [ ] `[J]` **Rol IAM `MailConnectSchedulerInvokeRole`** (nuevo): trust policy con principal `scheduler.amazonaws.com`; permiso `lambda:InvokeFunction` sobre `Api_V1_Schedule_Fire`. Su ARN va en la env `SCHEDULER_ROLE_ARN` de `Schedule_Create`.
+- [ ] `[J]` `Api_V1_Schedule_Create` → ruta **`/Schedule/Create`** (client, authorizer + CORS + mapping template con `customerId`/`customer`/`nit`/`userId`/`tenantRole`). IAM: `Put/DescribeTable/CreateTable` sobre `scheduledSend`; `GetItem` sobre `campaign`; **`scheduler:CreateSchedule`** + **`iam:PassRole`** (sobre `MailConnectSchedulerInvokeRole`). Env: `SCHEDULER_FIRE_LAMBDA_ARN` (ARN de `Api_V1_Schedule_Fire`), `SCHEDULER_ROLE_ARN`, `SCHEDULER_GROUP` (opc, default `default`).
+- [ ] `[J]` `Api_V1_Schedule_Fire` **(sin ruta de API)** — target del schedule. IAM: `GetItem`/`UpdateItem` sobre `scheduledSend`; `GetItem` sobre `campaign`; **`lambda:InvokeFunction`** sobre `Api_V1_Email_Prepare-batch-template`. Env `PREPARE_BATCH_FUNCTION` (si el nombre AWS difiere). No lleva trigger propio: lo invoca EventBridge Scheduler.
 - [ ] `[J]` `Api_V1_Schedule_List` → ruta **`/Schedule/List`** (client). IAM: `Query` sobre `scheduledSend` (GSI).
-- [ ] `[J]` `Api_V1_Schedule_Cancel` → ruta **`/Schedule/Cancel`** (client). IAM: `GetItem`/`UpdateItem` sobre `scheduledSend`.
-- [ ] `[J]` `Api_V1_Schedule_Dispatch` **(sin ruta de API)** — disparada por una **regla EventBridge programada** (`rate(5 minutes)`). IAM: `Scan`/`UpdateItem` sobre `scheduledSend`; `GetItem` sobre `campaign`; **`lambda:InvokeFunction`** sobre `Api_V1_Email_Prepare-batch-template`. Env `PREPARE_BATCH_FUNCTION` (si el nombre AWS difiere del de la carpeta) y `SCHEDULE_MAX_BATCH` (opc).
+- [ ] `[J]` `Api_V1_Schedule_Cancel` → ruta **`/Schedule/Cancel`** (client). IAM: `GetItem`/`UpdateItem` sobre `scheduledSend`; **`scheduler:DeleteSchedule`**. Env `SCHEDULER_GROUP` (opc).
+- [ ] `[J]` (OPCIONAL) `Api_V1_Schedule_Dispatch` **(sin ruta)** — barrido de respaldo; conéctalo a una regla EventBridge de baja frecuencia (`rate(15 minutes)`) SOLO si quieres red de seguridad ante one-shots que no dispararon. IAM: `Scan`/`UpdateItem` sobre `scheduledSend`; `GetItem` sobre `campaign`; `lambda:InvokeFunction` sobre `Api_V1_Email_Prepare-batch-template`. Si confías en el one-shot, no lo despliegues.
 
 - [x] `[J]` Crear las 12 funciones vacías + sus rutas + permisos de la tabla.
 - [x] `[J]` Confirmar que el **Authorizer** está asignado a las 12 rutas.

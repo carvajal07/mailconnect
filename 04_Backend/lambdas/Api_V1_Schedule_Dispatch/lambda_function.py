@@ -1,17 +1,21 @@
 '''
-Lambda: DISPATCHER de envíos programados (cron).
+Lambda: BARRIDO de respaldo de envíos programados (cron) — OPCIONAL.
 
-La dispara un EventBridge (regla programada, p. ej. cada 5 min). Busca en `scheduledSend`
-los envíos `pending` cuya fecha ya llegó (`scheduledAt <= ahora`) y, por cada uno, dispara el
-ENVÍO REAL invocando la lambda Prepare-batch-template con el MISMO evento que usa el envío
-on-demand (ruta /Email/Send-batch-template + context del Authorizer). Así se REUTILIZAN todos
-los gates (aprobación, saldo, RBAC, lock de idempotencia) sin duplicar lógica.
+⚠️ El disparo PRINCIPAL es por HORA EXACTA: `Schedule_Create` crea un EventBridge Scheduler
+de una sola vez por campaña cuyo target es `Api_V1_Schedule_Fire`. ESTA lambda es un
+**barrido de respaldo OPCIONAL** (belt-and-suspenders): si se la conecta a una regla de baja
+frecuencia (p. ej. cada 15-30 min), recoge cualquier fila `pending` cuya hora ya pasó pero
+cuyo schedule one-shot no llegó a dispararse (create_schedule falló silenciosamente, se borró
+el schedule, etc.). Si confías solo en el one-shot, puedes NO desplegar este cron.
 
+Busca en `scheduledSend` los envíos `pending` cuya fecha ya llegó (`scheduledAt <= ahora`) y,
+por cada uno, dispara el ENVÍO REAL invocando Prepare-batch con el MISMO evento del envío
+on-demand → reutiliza todos los gates (aprobación, saldo, RBAC, lock) sin duplicar lógica.
 NO es una ruta de API Gateway (no lleva Authorizer): es un worker interno.
 
 Idempotencia: cada fila se "reclama" con una transición atómica `pending→firing` (condicional)
-antes de invocar; dos ejecuciones solapadas del cron no la disparan dos veces. Además, el lock
-de Prepare-batch (`try_start_real_send`) evita el doble envío aunque llegara a invocarse dos veces.
+antes de invocar; ni el one-shot Fire ni este barrido la disparan dos veces (la reclamación +
+el lock de Prepare-batch, `try_start_real_send`, lo garantizan aunque coincidan).
 
 Env:
   PREPARE_BATCH_FUNCTION — nombre de la función Prepare-batch (default Api_V1_Email_Prepare-batch-template).

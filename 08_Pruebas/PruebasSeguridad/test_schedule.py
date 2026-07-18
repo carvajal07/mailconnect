@@ -53,7 +53,7 @@ def _mk_pk(name, pk):
 
 
 @pytest.fixture
-def mods():
+def mods(monkeypatch):
     with mock_aws():
         _mk_schedule_table()
         _mk_pk('campaign', 'campaignId')
@@ -62,11 +62,21 @@ def mods():
         res.Table('campaign').put_item(Item={
             'campaignId': 'C1', 'customerId': 'CU1', 'campaignName': 'Promo',
             'campaignState': 'Pendiente', 'approvalStatus': 'approved', 'template': 'T'})
+        create = _load('sch_create', 'Api_V1_Schedule_Create')
+        cancel = _load('sch_cancel', 'Api_V1_Schedule_Cancel')
+        # El disparo one-shot usa EventBridge Scheduler; se MOCKEA para probar solo la lógica
+        # de DynamoDB (create_schedule/delete_schedule se cubren aparte por AWS).
+        created, deleted = [], []
+        monkeypatch.setattr(create, '_schedule_event', lambda sid, dt: created.append(sid))
+        monkeypatch.setattr(cancel, '_delete_schedule', lambda name: deleted.append(name))
         yield {
-            'create': _load('sch_create', 'Api_V1_Schedule_Create'),
+            'create': create,
             'list': _load('sch_list', 'Api_V1_Schedule_List'),
-            'cancel': _load('sch_cancel', 'Api_V1_Schedule_Cancel'),
+            'cancel': cancel,
+            'fire': _load('sch_fire', 'Api_V1_Schedule_Fire'),
             'dispatch': _load('sch_dispatch', 'Api_V1_Schedule_Dispatch'),
+            '_created': created,
+            '_deleted': deleted,
         }
 
 
@@ -84,6 +94,23 @@ def test_create_ok(mods):
     resp = mods['create'].lambda_handler(_ev({'campaignId': 'C1', 'scheduledAt': FUTURE}), None)
     assert resp['statusCode'] == 201
     assert resp['data']['status'] == 'pending' and resp['data']['scheduleId']
+
+
+def test_create_agenda_el_schedule_one_shot(mods):
+    # Crear un envío agenda su schedule de hora exacta (EventBridge Scheduler).
+    resp = mods['create'].lambda_handler(_ev({'campaignId': 'C1', 'scheduledAt': FUTURE}), None)
+    assert mods['_created'] == [resp['data']['scheduleId']]
+
+
+def test_create_rollback_si_el_schedule_falla(mods, monkeypatch):
+    # Si create_schedule falla, se revierte la fila (no queda un 'pending' que nunca dispara).
+    def boom(sid, dt):
+        raise RuntimeError('scheduler caído')
+    monkeypatch.setattr(mods['create'], '_schedule_event', boom)
+    resp = mods['create'].lambda_handler(_ev({'campaignId': 'C1', 'scheduledAt': FUTURE}), None)
+    assert resp['statusCode'] == 500
+    # No quedó ninguna fila.
+    assert _sched_table().scan()['Items'] == []
 
 
 def test_create_fecha_pasada_400(mods):
@@ -138,6 +165,8 @@ def test_cancel_ok_y_tenant(mods):
     assert mods['cancel'].lambda_handler(_ev({'scheduleId': sid}), None)['statusCode'] == 200
     item = _sched_table().get_item(Key={'scheduleId': sid})['Item']
     assert item['status'] == 'canceled'
+    # Se borró el schedule one-shot en EventBridge (por su nombre derivado del scheduleId).
+    assert mods['_deleted'] == ['mc-send-' + sid]
     # Cancelar de nuevo → 409 (ya no está pending).
     assert mods['cancel'].lambda_handler(_ev({'scheduleId': sid}), None)['statusCode'] == 409
 
@@ -198,3 +227,54 @@ def test_dispatch_ignora_cancelados(mods, monkeypatch):
     _put_schedule('S_cancel', PAST, status='canceled')
     disp.lambda_handler({}, None)
     assert calls == []
+
+
+# ── Fire (target one-shot del EventBridge Scheduler) ─────────────────────────
+def test_fire_dispara_pending(mods, monkeypatch):
+    fire = mods['fire']
+    calls = []
+    monkeypatch.setattr(fire, '_invoke_prepare_batch', lambda item: calls.append(item['scheduleId']) or (True, 'OK'))
+    _put_schedule('F1', FUTURE)   # el Fire no mira la hora: lo dispara EventBridge a la hora exacta
+    resp = fire.lambda_handler({'scheduleId': 'F1'}, None)
+    assert calls == ['F1']
+    assert _sched_table().get_item(Key={'scheduleId': 'F1'})['Item']['status'] == 'sent'
+    import json
+    assert json.loads(resp['body'])['status'] == 'sent'
+
+
+def test_fire_marca_failed(mods, monkeypatch):
+    fire = mods['fire']
+    monkeypatch.setattr(fire, '_invoke_prepare_batch', lambda item: (False, 'Saldo insuficiente'))
+    _put_schedule('F2', FUTURE)
+    fire.lambda_handler({'scheduleId': 'F2'}, None)
+    item = _sched_table().get_item(Key={'scheduleId': 'F2'})['Item']
+    assert item['status'] == 'failed' and 'Saldo' in item['error']
+
+
+def test_fire_omite_cancelado(mods, monkeypatch):
+    fire = mods['fire']
+    calls = []
+    monkeypatch.setattr(fire, '_invoke_prepare_batch', lambda item: calls.append(item['scheduleId']) or (True, 'OK'))
+    _put_schedule('F3', FUTURE, status='canceled')
+    fire.lambda_handler({'scheduleId': 'F3'}, None)
+    assert calls == []   # no se dispara un cancelado
+    assert _sched_table().get_item(Key={'scheduleId': 'F3'})['Item']['status'] == 'canceled'
+
+
+def test_fire_idempotente(mods, monkeypatch):
+    fire = mods['fire']
+    calls = []
+    monkeypatch.setattr(fire, '_invoke_prepare_batch', lambda item: calls.append(item['scheduleId']) or (True, 'OK'))
+    _put_schedule('F4', FUTURE)
+    fire.lambda_handler({'scheduleId': 'F4'}, None)   # dispara → sent
+    fire.lambda_handler({'scheduleId': 'F4'}, None)   # segunda vez: ya no está pending
+    assert calls == ['F4']
+
+
+def test_fire_scheduleid_inexistente(mods):
+    resp = mods['fire'].lambda_handler({'scheduleId': 'NOPE'}, None)
+    assert resp['statusCode'] == 404
+
+
+def test_fire_sin_scheduleid(mods):
+    assert mods['fire'].lambda_handler({}, None)['statusCode'] == 400
