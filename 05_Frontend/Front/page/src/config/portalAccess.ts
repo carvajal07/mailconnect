@@ -17,6 +17,8 @@ export const TAB_ACCESS: Record<string, TenantRole[]> = {
   aprobaciones: ['owner', 'approver'],
   listanegra: ['owner', 'approver'],
   saldo: ['owner'],
+  // Programar envíos es una acción de ENVÍO real → mismo criterio que aprobar/enviar.
+  programar: ['owner', 'approver'],
   // Configuración de dominios de envío (identidades SES): sensible → solo owner.
   dominios: ['owner'],
 };

@@ -176,3 +176,58 @@ def test_setrole_requiere_admin(ficha):
     _, setrole = ficha
     resp = setrole.lambda_handler({'requestContext': {'authorizer': {'role': 'client'}}, 'userId': 'U2', 'role': 'admin'}, None)
     assert resp['statusCode'] == 403
+
+
+# ───────────────────────── Customer/Delete ─────────────────────────
+
+@pytest.fixture
+def borrar():
+    with mock_aws():
+        _pk_table('customer', 'customerId')
+        _pk_table('user', 'userId')
+        _pk_table('userData', 'userDataId')
+        ddb = boto3.resource('dynamodb', region_name='us-east-1')
+        ddb.Table('customer').put_item(Item={'customerId': 'CU1', 'company': 'Acme', 'companyTin': '900'})
+        ddb.Table('customer').put_item(Item={'customerId': 'CU2', 'company': 'Otra', 'companyTin': '901'})
+        ddb.Table('userData').put_item(Item={'userDataId': 'D1', 'customerId': 'CU1', 'userName': 'Ana'})
+        ddb.Table('user').put_item(Item={'userId': 'U1', 'userDataId': 'D1', 'customerId': 'CU1', 'email': 'ana@acme.co', 'role': 'admin'})
+        ddb.Table('user').put_item(Item={'userId': 'U2', 'userDataId': 'D2', 'customerId': 'CU1', 'email': 'b@acme.co', 'role': 'client'})
+        ddb.Table('user').put_item(Item={'userId': 'U9', 'customerId': 'CU2', 'email': 'root@otra.co', 'role': 'admin'})
+        yield _load('Api_V1_Customer_Delete')
+
+
+def _tbl(name):
+    return boto3.resource('dynamodb', region_name='us-east-1').Table(name)
+
+
+def test_delete_requiere_admin(borrar):
+    resp = borrar.lambda_handler({'requestContext': {'authorizer': {'role': 'client'}}, 'customerId': 'CU1'}, None)
+    assert resp['statusCode'] == 403
+
+
+def test_delete_borra_cliente_y_sus_usuarios(borrar):
+    resp = borrar.lambda_handler(_admin({'customerId': 'CU1'}), None)
+    assert resp['statusCode'] == 200 and resp['data']['deletedUsers'] == 2
+    # El cliente y sus usuarios ya no están.
+    assert _tbl('customer').get_item(Key={'customerId': 'CU1'}).get('Item') is None
+    assert _tbl('user').get_item(Key={'userId': 'U1'}).get('Item') is None
+    assert _tbl('user').get_item(Key={'userId': 'U2'}).get('Item') is None
+    # El usuario de OTRA empresa (CU2) NO se toca.
+    assert _tbl('user').get_item(Key={'userId': 'U9'}).get('Item') is not None
+    assert _tbl('customer').get_item(Key={'customerId': 'CU2'}).get('Item') is not None
+
+
+def test_delete_404_si_no_existe(borrar):
+    assert borrar.lambda_handler(_admin({'customerId': 'NOPE'}), None)['statusCode'] == 404
+
+
+def test_delete_falta_id_400(borrar):
+    assert borrar.lambda_handler(_admin({}), None)['statusCode'] == 400
+
+
+def test_delete_no_permite_borrar_propia_empresa(borrar):
+    # El admin actúa desde CU1 y trata de borrar CU1 → 400 (evita auto-bloqueo).
+    event = {'customerId': 'CU1', 'requestContext': {'authorizer': {'role': 'admin', 'customerId': 'CU1'}}}
+    resp = borrar.lambda_handler(event, None)
+    assert resp['statusCode'] == 400
+    assert _tbl('customer').get_item(Key={'customerId': 'CU1'}).get('Item') is not None

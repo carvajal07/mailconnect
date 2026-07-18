@@ -108,6 +108,9 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Campaign/Request-approval` | `{ campaignId }` | 200 ok · 400 (sin muestras) · 403 · 404 · 409. Flujo maker-checker: `approvalStatus none/rejected→pending` (exige `samplesSentCount>0`). Audita `campaign.request-approval` |
 | `Campaign/Approve` | `{ campaignId }` | 200 ok · 403 · 404 · 409 (no pending). `pending→approved` (habilita el envío real). Audita `campaign.approve` |
 | `Campaign/Reject` | `{ campaignId, reason }` | 200 ok · 400 (sin motivo) · 403 · 404 · 409. `pending→rejected` + motivo. Audita `campaign.reject` |
+| `Schedule/Create` | `{ campaignId, scheduledAt (UTC ISO), templateVersion? }` | 201 `data:{scheduleId, scheduledAt, status:'pending'}` · 400 (fecha pasada/inválida) · 403 (otro cliente / no owner-approver) · 404 · 409 (ya enviando o aprobación pendiente). Programa el envío real a futuro (tabla `scheduledSend`) |
+| `Schedule/List` | `{}` | 200 `data:{schedules:[{scheduleId, campaignId, campaignName, scheduledAt, status, firedAt, processId, error}], count}` (del tenant, próximos primero) |
+| `Schedule/Cancel` | `{ scheduleId }` | 200 ok · 400 · 403 otro cliente · 404 · 409 (ya no está `pending`). `pending→canceled` |
 | `Template/List` | `{ customer }` o `{ customerId }` | 200 `data:{templates:[{name, created}], count}` (SES filtrado por prefijo `{customer}_`) |
 | `Email/Unsubscribe` | **GET/POST público (proxy, sin authorizer)** `?t=<token HMAC>` | 200 página HTML (confirmación / enlace inválido). El token lo firman las lambdas Send con `SECRET_KEY`; inserta en `{customer}_unsubscribe` (PK `email`) |
 | `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, duplicates?, allowDuplicates?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`). `allowDuplicates` = si el envío real NO filtra contactos repetidos |
@@ -127,6 +130,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Pricing/List` | `{ customerId? }` (**admin**) | 200 `data:{customerId, defaults, effective, overrides, currency}` (alcance `*` global o cliente) |
 | `Pricing/Update` | `{ customerId?, channel, fields }` (**admin**) | 200 ok · 400. `channel` ∈ EMAIL·SMS·WHATSAPP·VOICE·COMMON (COMMON escribe taxRate/minCampaign en los 4) |
 | `Customer/Detail` | `{ customerId }` (**admin**) | 200 `data:{customer, users:[{userId,email,name,phone,role,active}], count}` · 404 |
+| `Customer/Delete` | `{ customerId }` (**admin**) | 200 `data:{customerId, deletedUsers}` · 400 (falta id / es tu propia empresa) · 403 · 404. Borra `customer` + sus `user`/`userData` (best-effort); **no** purga el histórico (campañas/envíos/saldo). Audita `customer.delete` |
 | `User/SetRole` | `{ userId, role (admin\|client) }` (**admin**) | 200 ok · 400 · 404 · 409 (no degradar al último admin) |
 | `Billing/Summary` | `{ month?, customerId? }` (**admin**) | 200 `data:{customers:[{company, totalSent, subtotal, tax, total, byChannel[]}], totals, truncated}` |
 | `Admin/Dashboard` | `{ month? }` (**admin**) | 200 `data:{kpis, funnel[], byChannel[], health:[{company, sent, bounceRate, complaintRate, level}], truncated}` (panel global + reputación) |
@@ -230,7 +234,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   de rollout) que el `from` sea el dominio de la plataforma, un **dominio verificado** del cliente,
   **o un correo verificado exacto** del cliente (`senderDomain` por `customerId`), para que un
   tenant no envíe a nombre de otro.
-- ⚠️ `[J]`: la verificación SES debe estar en la **misma región del envío** (`us-east-1`); permisos
+- ⚠️ `[J]` ✅ (desplegado): la verificación SES debe estar en la **misma región del envío** (`us-east-1`); permisos
   `ses:VerifyDomainIdentity/VerifyDomainDkim/VerifyEmailIdentity/GetIdentityVerificationAttributes/GetIdentityDkimAttributes/DeleteIdentity`
   en las lambdas de dominio; tabla `senderDomain` (+ GSI) con el campo `kind` — la crea `Domain/Add`
   on-demand; rutas `/Domain/{Add,List,Delete}` (authorizer + CORS); permiso `Query senderDomain`
@@ -240,7 +244,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Remitente por defecto `notificaciones@mailconnect.com.co`:** el campo "De (From)" de crear
   campaña pasa de texto libre a **desplegable** (`DEFAULT_FROM` en `CampanasSection`); por ahora
   solo esa opción (+ ítem deshabilitado "Tu dominio propio (próximamente)"). Al editar conserva
-  el remitente previo si difiere. ⚠️ `[J]`: `notificaciones@mailconnect.com.co` debe estar
+  el remitente previo si difiere. ⚠️ `[J]` ✅ (desplegado): `notificaciones@mailconnect.com.co` debe estar
   **verificado en SES** como identidad de envío. Futuro: dominios verificados por cliente.
 - **Plantilla SES del payload (no recalculada):** `Prepare-batch` usa `campaign.template` (la
   plantilla que el cliente eligió al crear la campaña) como `st.template_name` para los canales
@@ -274,7 +278,20 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   comprobante en un **modal** (iframe, imagen/PDF) sin salir de la pestaña (+ enlace "abrir en
   pestaña nueva").
 - **Orden de tabs del portal:** **Bases de datos** primero · separador · **Plantillas** (HTML/DOCX/
-  SMS/WhatsApp) · separador · el resto (`PortalSidebar`, con `dividerAfter`).
+  **PDF**/SMS/WhatsApp) · separador · **Campañas** · **Programar envíos** · Muestras · el resto
+  (`PortalSidebar`, con `dividerAfter`).
+- **Plantillas PDF (jul 2026):** **Plantillas PDF** (`PdfTemplatesSection`) es un tablero **vacío**
+  (scaffold) reservado para las plantillas PDF del envío EAP-PDF (sin backend aún).
+- **Programar envíos (jul 2026, FUNCIONAL):** `ProgramarEnviosSection` (tab junto a Campañas, RBAC
+  **owner/approver**) permite **agendar el envío real** de una campaña aprobada a una fecha/hora
+  futura. Backend: tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`) + lambdas
+  `Api_V1_Schedule_{Create,List,Cancel}` (cliente) y **`Api_V1_Schedule_Dispatch`** (cron, NO es
+  ruta de API): cada ~5 min busca los `pending` cuya hora ya llegó (`scheduledAt<=now`), los
+  **reclama** (transición atómica `pending→firing`, idempotente) e **invoca Prepare-batch** con el
+  MISMO evento del envío on-demand (`/Email/Send-batch-template` + context) → reutiliza TODOS los
+  gates (aprobación, saldo, RBAC, lock) sin duplicar. Estados: `pending|firing|sent|canceled|failed`.
+  El front convierte el `datetime-local` a **UTC ISO** antes de enviar. Cubierto por
+  `08_Pruebas/PruebasSeguridad/test_schedule.py`.
 
 ### Portal: precarga y edición (jul 2026)
 - **Precarga al loguear:** `PortalDataProvider` (`context/PortalDataContext.tsx`) envuelve el
@@ -340,7 +357,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   `08_Pruebas/PruebasSeguridad/test_sms_channel.py`.
 - **Front:** el form de campaña (`CampanasSection`) tiene el canal **SMS** con campo de texto
   (contador de segmentos) en vez del selector de plantilla SES.
-- ⚠️ `[J]`: crear la cola `Sms_Send-batch` + trigger, y configurar origen en End User Messaging.
+- ⚠️ `[J]` ✅ (desplegado): crear la cola `Sms_Send-batch` + trigger, y configurar origen en End User Messaging.
 
 ### Canal WhatsApp (jul 2026, base)
 - **Envío:** `Api_V1_Wsp_Send-batch` (trigger cola `Wsp_Send-batch`) manda cada mensaje con
@@ -359,7 +376,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Front:** el form de campaña (`CampanasSection`) tiene el canal **WSP** con un campo para el
   **nombre de la plantilla HSM** en vez del selector de plantilla SES. El estimador de costo
   mapea `WSP → WHATSAPP` (y `VOZ → VOICE`).
-- ⚠️ `[J]`: crear la cola `Wsp_Send-batch` + trigger, registrar el número/WABA en End User
+- ⚠️ `[J]` ✅ (desplegado): crear la cola `Wsp_Send-batch` + trigger, registrar el número/WABA en End User
   Messaging Social y aprobar las plantillas HSM con Meta.
 
 ### Canal Voz (jul 2026, base)
@@ -374,7 +391,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   a leer). Admite variables `{{columna}}` del CSV. Columna 2 = celular E.164.
 - **Front:** el form de campaña tiene el canal **VOZ** con un campo de texto del mensaje; el
   estimador mapea `VOZ → VOICE`.
-- ⚠️ `[J]`: crear la cola `Voice_Send-batch` + trigger y habilitar el origen de voz en End User
+- ⚠️ `[J]` ✅ (desplegado): crear la cola `Voice_Send-batch` + trigger y habilitar el origen de voz en End User
   Messaging (número con capacidad de voz).
 
 ### Roles (admin/client) (jul 2026)
@@ -388,7 +405,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Front:** la sesión guarda `role`; `isAdmin(user)` en `authService`. `RequireAuth requireAdmin`
   protege `/admin` (un `client` autenticado se redirige a `/panel`).
 - **Provisión de admins:** `Register` siempre crea `client`. Un admin se crea cambiando el campo
-  `role` a `admin` en la tabla `user` (consola/script). ⚠️ `[J]`: promover el/los usuarios admin.
+  `role` a `admin` en la tabla `user` (consola/script). ⚠️ `[J]` ✅ (desplegado): promover el/los usuarios admin.
 - **Aceptación de términos:** `Register` guarda `termsAccepted` (bool) + `termsAcceptedAt` +
   `termsVersion` (evidencia Ley 1581); el front envía `acceptedTerms` desde la casilla del registro.
 
@@ -418,7 +435,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   el cliente/proceso y escribir el estado (`sent`→1, `delivered`→2, `read`→4, `failed`→3) en
   `{customer}_sendStatus` (+ `bump_send_summary`). Estadísticas de WhatsApp ahora reflejan
   entrega/lectura, no solo envío.
-- ⚠️ `[J]`: crear los **configuration sets** de SMS y Voz con **event destination → SNS**, y
+- ⚠️ `[J]` ✅ (desplegado): crear los **configuration sets** de SMS y Voz con **event destination → SNS**, y
   suscribir `Api_V1_Messaging_ReceptionStatus` a esa SNS. Env `SMS_CONFIGURATION_SET` /
   `VOICE_CONFIGURATION_SET` en los envíos para que emitan eventos.
 
@@ -427,6 +444,18 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   cuenta 1 en `campaign.samplesSentCount` (contador atómico); al llegar a `MAX_SAMPLE_SENDS`
   (5) Prepare-batch bloquea (429). `Create-campaign` inicializa el contador y `Campaign/List`
   lo devuelve. Front (`MuestrasSection`): chip "usados/quedan" y botón deshabilitado al límite.
+- **Muestras EXCLUIDAS de reportes/estadísticas/facturación (jul 2026):** como en el resto del
+  mercado (Mailchimp/HubSpot/SendGrid…), las **pruebas no cuentan** en las métricas de la
+  campaña ni en el consumo. `insert_process` marca el proceso de muestra con **`isSamples=true`**
+  (`st.is_samples` ya es True en `preparar_muestras`, False en el envío real). Los agregados
+  **saltan** los procesos de muestra con `_is_sample_process(p)` (marca `isSamples`, o *fallback*
+  `processState=='Muestras'` / nombre `-Samples` para procesos viejos): `Api_V1_Reports_Statistics`,
+  `Api_V1_Admin_Dashboard` (KPIs, embudo **y reputación** rebote/queja), `Api_V1_Billing_Summary`
+  (coherente: el monedero **no cobra** muestras) y `Api_V1_Agent_Reports`. Las muestras SÍ siguen
+  visibles, separadas, en el **tab Muestras** (`samplesSentCount` + `campaign.sampleBatches`), en
+  **Admin/Jobs** (procesos `processState='Muestras'`) y en el **reporte por proceso** (state-report,
+  bajo demanda). El filtro es a **nivel de proceso** → no cambia `sendStatus`/`sendSummary`.
+  Cubierto por `08_Pruebas/PruebasSeguridad/test_sample_exclusion.py`.
 - **Deshabilitar envíos reales por cliente:** campo `customer.realSendEnabled` (default `true`
   en `Register`; fail-open si falta). Prepare-batch, en el **envío real** (no muestras),
   lanza `RealSendDisabled` → 403 si está deshabilitado. `Login` devuelve `realSendEnabled` →
@@ -450,6 +479,14 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   con `userData`), toggle de envíos reales y **promover/degradar admin** vía
   `Api_V1_User_SetRole` (bloquea degradar al **último admin**, 409). Esto **cierra el `[J]` de
   promover admins a mano** en DynamoDB.
+  - **Eliminar cliente (jul 2026):** botón papelera por fila + `Api_V1_Customer_Delete`
+    (`/Customer/Delete`, admin). Borra `customer` + sus `user`/`userData` (best-effort → sin
+    logins huérfanos); **no** purga el histórico (campañas/envíos/saldo se conservan). Guard: un
+    admin **no** puede borrar su **propia empresa** (evita auto-bloqueo). Audita `customer.delete`.
+    Servicio `customerService.delete`. ⚠️ `[J]` (nuevo): desplegar `Api_V1_Customer_Delete` + ruta
+    `/Customer/Delete` (authorizer admin + CORS + mapping template de `role`/`customerId`) +
+    permisos `dynamodb:GetItem/DeleteItem/Scan` sobre `customer`/`user`/`userData` y `PutItem`
+    sobre `adminAudit`.
 - **Facturación** (`FacturacionSection`): `Api_V1_Billing_Summary` convierte los envíos reales
   (messageId en `{customer}_sendStatus`) en consumo por cliente y canal, aplica `pricingRate` +
   IVA + mínimo por campaña. Filtros por **mes** y **cliente**; tope de procesos con aviso de
@@ -864,10 +901,10 @@ overrides por cliente. (El peso del adjunto hoy lo declara el usuario en el esti
 se puede leer del objeto ya subido a S3.)
 
 ### Infraestructura / despliegue
-- [ ] Desplegar las lambdas nuevas y **crear sus rutas** en API Gateway
+- [x] Desplegar las lambdas nuevas y **crear sus rutas** en API Gateway
       (`/change-password`, `/logout`, `/create-otp`, `/validate-otp`, `/account-activation`).
-- [ ] **Habilitar CORS** en API Gateway para los endpoints que llama el navegador.
-- [ ] **Nuevas de esta sesión** `[J]`:
+- [x] **Habilitar CORS** en API Gateway para los endpoints que llama el navegador.
+- [x] **Nuevas de esta sesión** `[J]`:
       - Tabla DynamoDB **`messageTemplate`** (PK `messageTemplateId`) + permisos
         `PutItem/Scan/GetItem/DeleteItem`.
       - Campo **`realSendEnabled`** en la tabla `customer` (lo escriben Register/Customer_Update;
@@ -935,8 +972,8 @@ se puede leer del objeto ya subido a S3.)
         Para que el actor quede identificado, el Authorizer ya reenvía `user`/`userId` en el
         context (en no-proxy, inyectarlos en el mapping template junto con `role`).
 - [x] **SES en PRODUCCIÓN** (fuera del sandbox, remitente/dominio verificados).
-- [ ] Configurar las **variables de entorno** de §3 en cada lambda.
-- [ ] Definir `VITE_API_BASE_URL` de producción en el front.
+- [x] Configurar las **variables de entorno** de §3 en cada lambda.
+- [x] Definir `VITE_API_BASE_URL` de producción en el front.
 
 ### Calidad / CI-CD
 - [x] **CI con GitHub Actions:** `pytest` de `08_Pruebas/PruebasSeguridad` corre
@@ -953,7 +990,7 @@ se puede leer del objeto ya subido a S3.)
 - [x] **`SECRET_KEY` ROTADA** (32+ bytes) — la clave vieja del historial git ya no está en uso.
 - [x] **Aislamiento multi-tenant desplegado** — `API_ID`/`AUTHORIZER_ID`/`STAGE`/`PREFIX`
       configuradas + `deploy-api.yml` corrido (mapping template de context en todas las rutas).
-- [ ] Hacer el repo **privado** (o limpiar el historial con BFG/filter-repo).
+- [x] Hacer el repo **privado** (o limpiar el historial con BFG/filter-repo).
 - [ ] Mover `SECRET_KEY` a **AWS Secrets Manager** (ya rotada; hoy es env var).
 - [x] AWS access keys y `DatosTrabajo.txt` gestionados por Jhon (jul 2026).
 

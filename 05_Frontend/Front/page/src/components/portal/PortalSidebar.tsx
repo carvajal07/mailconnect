@@ -13,9 +13,11 @@ import {
 } from '@mui/material';
 import CodeIcon from '@mui/icons-material/Code';
 import DescriptionIcon from '@mui/icons-material/Description';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import SmsIcon from '@mui/icons-material/Sms';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import CampaignIcon from '@mui/icons-material/Campaign';
+import ScheduleSendIcon from '@mui/icons-material/ScheduleSend';
 import RateReviewIcon from '@mui/icons-material/RateReview';
 import HowToRegIcon from '@mui/icons-material/HowToReg';
 import StorageIcon from '@mui/icons-material/Storage';
@@ -42,9 +44,11 @@ export const PORTAL_TABS: PortalTab[] = [
   { id: 'basesdatos', label: 'Bases de datos', icon: <StorageIcon />, dividerAfter: true },
   { id: 'html', label: 'Plantillas HTML', icon: <CodeIcon /> },
   { id: 'docx', label: 'Plantillas DOCX', icon: <DescriptionIcon /> },
+  { id: 'pdf', label: 'Plantillas PDF', icon: <PictureAsPdfIcon /> },
   { id: 'sms', label: 'Plantillas SMS', icon: <SmsIcon /> },
   { id: 'whatsapp', label: 'Plantillas WhatsApp', icon: <WhatsAppIcon />, dividerAfter: true },
   { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },
+  { id: 'programar', label: 'Programar envíos', icon: <ScheduleSendIcon /> },
   { id: 'muestras', label: 'Muestras', icon: <RateReviewIcon /> },
   { id: 'aprobaciones', label: 'Aprobaciones', icon: <HowToRegIcon /> },
   { id: 'listanegra', label: 'Lista negra', icon: <BlockIcon /> },

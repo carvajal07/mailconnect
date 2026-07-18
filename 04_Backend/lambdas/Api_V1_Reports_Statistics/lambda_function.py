@@ -88,6 +88,18 @@ def _tenant_from_authorizer(event):
     return auth if isinstance(auth, dict) else {}
 
 
+def _is_sample_process(p):
+    """¿Es un proceso de MUESTRAS (envío de prueba)? Las muestras NO cuentan en las
+    estadísticas (el mercado excluye las pruebas de las métricas de la campaña y el monedero
+    no las cobra). Señal explícita `isSamples`; fallback por processState/nombre para los
+    procesos viejos sin la marca."""
+    if p.get('isSamples'):
+        return True
+    if str(p.get('processState', '')) == 'Muestras':
+        return True
+    return str(p.get('campaignName', '')).endswith('-Samples')
+
+
 def _to_int(value):
     if isinstance(value, Decimal):
         return int(value)
@@ -200,10 +212,13 @@ def lambda_handler(event, context):
         # 1) Campañas del cliente.
         campaigns = _scan_all(table_campaign, FilterExpression=Attr('customerId').eq(customer_id))
 
-        # 2) Procesos del cliente, agrupados por campaña.
+        # 2) Procesos del cliente, agrupados por campaña. Se EXCLUYEN los procesos de
+        #    muestra (envíos de prueba) para que no inflen las métricas de la campaña.
         processes = _scan_all(table_process, FilterExpression=Attr('customerName').eq(customer))
         procs_by_campaign = defaultdict(list)
         for p in processes:
+            if _is_sample_process(p):
+                continue
             procs_by_campaign[p.get('campaignId')].append(p)
 
         # 3) Agregación por campaña (con tope de procesos).

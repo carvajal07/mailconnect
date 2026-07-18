@@ -80,6 +80,17 @@ def _is_admin(event):
     return str(auth.get('role', '')).lower() == 'admin'
 
 
+def _is_sample_process(p):
+    """¿Es un proceso de MUESTRAS (envío de prueba)? Se EXCLUYE de las métricas globales y,
+    sobre todo, de la reputación (rebote/queja): una prueba a un correo malo no debe subir el
+    bounce rate del cliente. Señal explícita `isSamples`; fallback por processState/nombre."""
+    if p.get('isSamples'):
+        return True
+    if str(p.get('processState', '')) == 'Muestras':
+        return True
+    return str(p.get('campaignName', '')).endswith('-Samples')
+
+
 def _to_int(value):
     if isinstance(value, Decimal):
         return int(value)
@@ -212,9 +223,12 @@ def lambda_handler(event, context):
             if month:
                 campaigns = [c for c in campaigns if str(c.get('date', '')).startswith(month)]
 
+            # Se EXCLUYEN los procesos de muestra: no cuentan en KPIs, embudo ni reputación.
             processes = _scan_all(table_process, FilterExpression=Attr('customerName').eq(company))
             procs_by_campaign = defaultdict(list)
             for p in processes:
+                if _is_sample_process(p):
+                    continue
                 procs_by_campaign[p.get('campaignId')].append(p)
 
             cust_acc = {'sent': 0, 'delivered': 0, 'opened': 0, 'clicked': 0, 'bounces': 0, 'complaints': 0}
