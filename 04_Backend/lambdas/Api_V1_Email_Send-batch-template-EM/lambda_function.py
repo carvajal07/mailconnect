@@ -378,10 +378,23 @@ def lambda_handler(event:dict, context:dict):
         print(f"Encabezados de personalizacion ({headers})")
         #Realizar la asignacion de variables y datos para la personalizacion 
 
-        for start in range(0, registers, QUANTITY_BATCH):            
-            end = start + QUANTITY_BATCH
-            print(f"Procesando registros {start} a {end}")
-            send_bulk(data, headers, start, end, default_tags)
+        # Envío de los lotes de la parte. Antes iba SIN try: si send_bulk fallaba a mitad
+        # (plantilla inexistente, cuenta pausada, throttling, config set faltante…) la parte
+        # quedaba en 'Procesando' (parecía en curso para siempre) y sin señal clara. Ahora
+        # se marca 'Error' (traza honesta) y se RE-LANZA para que la invocación falle de
+        # forma visible (métrica de error / DLQ). NO se habilita el reenvío automático: el
+        # guard de estado descarta la redelivery, evitando duplicar los correos ya enviados
+        # (un envío duplicado dispara quejas y daña la reputación SES). La parte en 'Error'
+        # se reintenta manualmente (Trabajos → Reintentar).
+        try:
+            for start in range(0, registers, QUANTITY_BATCH):
+                end = start + QUANTITY_BATCH
+                print(f"Procesando registros {start} a {end}")
+                send_bulk(data, headers, start, end, default_tags)
+        except Exception as e:
+            print(f"Error enviando la parte {part} del proceso {process_id}: {e}")
+            insert_process_detail(registers, part, formatted_date, "Error")
+            raise
 
         print("Proceso de envios finalizado")
         insert_process_detail(registers,part,formatted_date,"Terminado")

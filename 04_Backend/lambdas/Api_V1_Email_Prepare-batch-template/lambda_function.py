@@ -502,23 +502,36 @@ def try_start_real_send(st:'ProcessState',process_id_value:str)->bool:
             return False
         raise
 
-def select_campaign(campaign_name:str)->dict:
+def select_campaign(campaign_name:str, customer_id:str=None)->dict:
     """
     Esta función obtiene los datos de la campaña.
 
     Args:
         campaign_name (str): Nombre de la campana
+        customer_id (str): Si se indica, la campaña DEBE pertenecer a este cliente
+            (aislamiento multi-tenant): se filtra por customerId además del nombre. Así un
+            tenant no puede disparar/cobrar la campaña de OTRO cliente, ni se resuelve por
+            accidente una campaña HOMÓNIMA de otro cliente (el scan por solo-nombre devolvía
+            un Items[0] arbitrario). Si es None (rollout/legado sin el context del Authorizer),
+            se busca solo por nombre (comportamiento previo).
 
     Returns:
         dict: Nombre de la campaña
     """
     projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, samplesSentCount, documentFormat, approvalStatus'  # Lista de campos a consultar
 
-    response_campaign = table_campaign.scan(
-        FilterExpression="campaignName = :value",
-        ExpressionAttributeValues={":value": campaign_name},
-        ProjectionExpression=projection_campaign_expression
-    )
+    if customer_id:
+        response_campaign = table_campaign.scan(
+            FilterExpression="campaignName = :value AND customerId = :cid",
+            ExpressionAttributeValues={":value": campaign_name, ":cid": customer_id},
+            ProjectionExpression=projection_campaign_expression
+        )
+    else:
+        response_campaign = table_campaign.scan(
+            FilterExpression="campaignName = :value",
+            ExpressionAttributeValues={":value": campaign_name},
+            ProjectionExpression=projection_campaign_expression
+        )
     return response_campaign
 
 
@@ -1662,21 +1675,25 @@ def lambda_handler(event, context):
 
         samples = "Send-batch-template-samples" in endpoint
         print("Samples: " + str(samples))
-        response_campaign = select_campaign(campaign_name)
+        # Aislamiento multi-tenant: el cliente del token (Authorizer) es la autoridad sobre a
+        # quién pertenece la campaña. Si el context lo trae, la búsqueda se ACOTA a ese
+        # customerId → un tenant no puede enviar/cobrar la campaña de otro, ni se resuelve por
+        # accidente una campaña homónima de otro cliente. Fail-open de rollout: sin customerId
+        # en el context (rutas aún sin el mapping template) se busca solo por nombre (legado).
+        auth_ctx = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
+        auth_customer_id = str(auth_ctx.get('customerId') or '').strip() or None
+        response_campaign = select_campaign(campaign_name, auth_customer_id)
         print(response_campaign)
         if response_campaign['Items']:
             print(f'La campaña "{campaign_name}" fue encontrada en la BD')
             state = response_campaign['Items'][0]["campaignState"]
 
-            #Solo realizo envio si el estado de la campaña se encuentra en estado "Pendiente" o "Muestras"
-            #Si el estado es "Enviando" o "Terminada" quiere decir que es una campaña que ya no se debe enviar
-            #El estado error se debe revisar como soporte
-
-            #Esta linea siguiente es la productiva
-            #if (state == "Pendiente" or state == "Muestras"):
-
-            #Esta linea siguiente es la de pruebas
-            if (state == "Pendiente" or state == "Muestras" or state == "Error"):
+            # Solo se procesa el envío si la campaña está en un estado enviable
+            # (REAL_SEND_ALLOWED_STATES = Pendiente/Muestras/Error). "Enviando"/"Terminada" ya
+            # no se reenvían; "Error" permite reintentar tras un fallo previo. Fuente única:
+            # la constante REAL_SEND_ALLOWED_STATES (antes había un toggle productiva/pruebas
+            # comentado a mano que era fácil de dejar en el estado equivocado).
+            if state in REAL_SEND_ALLOWED_STATES:
                 print(f'La campaña se encuentra en estado "{state}" y se puede realizar su envio')
                 st.process_id = str(uuid.uuid4())
                 # Ruta temporal para el archivo descargado de S3.
@@ -1785,11 +1802,15 @@ def lambda_handler(event, context):
                 try:
                     # Descarga el CSV desde S3 (bucket por NIT, con fallback al viejo por nombre).
                     download_base_csv(st.nit, st.customer_name, data_path, temp_file)
-                except:
+                except Exception as e:
                     update_campaign_status(st, "Error")
-                    description = f'No se pudo realizar la descarga del archivo "{temp_file}" del bucket "{bucket_name} - {data_path}"'
+                    # Antes el mensaje usaba `bucket_name`, variable NO definida en este scope
+                    # → NameError que caía al catch-all y respondía 500 en vez de este 404 útil
+                    # (el fallo más común es que la base no esté en S3). Se arma con datos definidos.
+                    description = f'No se pudo descargar la base "{data_path}" del cliente (NIT {st.nit}) desde S3.'
                     status = False
                     print(description)
+                    print(e)
                     status_code = 404
                 else:
                     # Detectar el delimitador del CSV (el cliente pudo subirlo con ; , tab o |).

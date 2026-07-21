@@ -101,14 +101,18 @@ def env(monkeypatch):
         yield module, channel_url, part_url
 
 
-def _api_event(resource='/Email/Send-batch-template'):
-    return {
+def _api_event(resource='/Email/Send-batch-template', auth_customer_id=None):
+    evt = {
         'resource': resource,
         'body': json.dumps({
             'customerName': 'empresa', 'campaignName': 'Promo', 'userId': 'U1',
             'template': 'T', 'templateVersion': 1,
         }),
     }
+    # Si se indica, simula el context del Authorizer con el customerId del token (multi-tenant).
+    if auth_customer_id is not None:
+        evt['requestContext'] = {'authorizer': {'customerId': auth_customer_id}}
+    return evt
 
 
 def _drain(sqs, url):
@@ -270,3 +274,26 @@ def test_split_deshabilitado_da_403(env):
     body = json.loads(resp['body'])
     assert body['status'] is False and body['status_code'] == 403
     assert _campaign()['campaignState'] == 'Pendiente'  # ni Error ni Enviando
+
+
+def test_split_respeta_tenant_del_token(env):
+    # Aislamiento multi-tenant: con el customerId correcto en el token (CU1, dueño de la
+    # campaña 'Promo') el envío procede normalmente.
+    pb, channel_url, part_url = env
+    resp = pb.lambda_handler(_api_event(auth_customer_id='CU1'), None)
+    assert json.loads(resp['body'])['status_code'] == 200
+    assert _campaign()['campaignState'] == 'Enviando'
+
+
+def test_split_rechaza_campana_de_otro_tenant(env):
+    # Un usuario de OTRO cliente (customerId distinto en el token) NO puede disparar el envío
+    # de esta campaña por su nombre: la búsqueda acotada por customerId no la encuentra → 404,
+    # la campaña NO se toca (sigue 'Pendiente') y no se encola nada (ni se cobra saldo).
+    pb, channel_url, part_url = env
+    resp = pb.lambda_handler(_api_event(auth_customer_id='CU_OTRO'), None)
+    body = json.loads(resp['body'])
+    assert body['status'] is False and body['status_code'] == 404
+    assert _campaign()['campaignState'] == 'Pendiente'
+    sqs = boto3.client('sqs', region_name='us-east-1')
+    assert _drain(sqs, part_url) == []
+    assert _drain(sqs, channel_url) == []
