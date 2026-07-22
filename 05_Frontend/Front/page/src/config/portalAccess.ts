@@ -19,6 +19,8 @@ export const TAB_ACCESS: Record<string, TenantRole[]> = {
   saldo: ['owner'],
   // Programar envíos es una acción de ENVÍO real → mismo criterio que aprobar/enviar.
   programar: ['owner', 'approver'],
+  // Cascada omnicanal (entrega garantizada): envía de verdad → owner/approver.
+  cascada: ['owner', 'approver'],
   // Configuración de dominios de envío (identidades SES): sensible → solo owner.
   dominios: ['owner'],
 };

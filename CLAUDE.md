@@ -484,6 +484,12 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Personalización:** el worker recibe `headers=['Identificacion','Contacto']+columns` y
   `row=[contactId, contacto]+filaCSV` → los `{{campo}}` de la base resolven en todos los canales (WSP toma
   `row[2:]` como params del HSM). Cubierto por `08_Pruebas/PruebasSeguridad/test_cascade.py` (9 pruebas).
+- **Front:** sección **"Entrega garantizada"** (`CascadaSection`, tab tras Programar envíos, RBAC
+  **owner/approver**): tabla de cascadas (canales en orden, estado, confirmados/total, costo) con
+  Iniciar/Cancelar/Ver; diálogo **Nueva cascada** (base + mapeo de columnas email/celular/nombre
+  autodetectado, **constructor del orden de canales** con contenido por paso + reordenar, confirmOn
+  entregado/leído, timeout, presupuesto) y **monitor** (embudo confirmados/en-curso/agotados, por canal,
+  muestra de contactos). `cascadeService.ts`.
 - ⚠️ `[J]` (despliegue): tablas `cascadeRun`/`cascadeContact` (las crea `Create` on-demand); crear las 6
   funciones vacías; **regla EventBridge `rate(5 minutes)` → `Api_V1_Cascade_Tick`**; rutas
   `/Cascade/{Create,Start,Status,List,Cancel}` (authorizer + CORS, ya en `routes.json`); IAM: DynamoDB sobre

@@ -18,6 +18,7 @@ import SmsIcon from '@mui/icons-material/Sms';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import ScheduleSendIcon from '@mui/icons-material/ScheduleSend';
+import AltRouteIcon from '@mui/icons-material/AltRoute';
 import RateReviewIcon from '@mui/icons-material/RateReview';
 import HowToRegIcon from '@mui/icons-material/HowToReg';
 import StorageIcon from '@mui/icons-material/Storage';
@@ -49,6 +50,7 @@ export const PORTAL_TABS: PortalTab[] = [
   { id: 'whatsapp', label: 'Plantillas WhatsApp', icon: <WhatsAppIcon />, dividerAfter: true },
   { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },
   { id: 'programar', label: 'Programar envíos', icon: <ScheduleSendIcon /> },
+  { id: 'cascada', label: 'Entrega garantizada', icon: <AltRouteIcon /> },
   { id: 'muestras', label: 'Muestras', icon: <RateReviewIcon /> },
   { id: 'aprobaciones', label: 'Aprobaciones', icon: <HowToRegIcon /> },
   { id: 'listanegra', label: 'Lista negra', icon: <BlockIcon /> },
