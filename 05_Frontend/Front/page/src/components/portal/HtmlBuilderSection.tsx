@@ -85,6 +85,8 @@ const BLOCK_ICONS: Record<BlockType, ReactNode> = {
   html: <CodeIcon fontSize="small" />,
   imageText: <ViewQuiltIcon fontSize="small" />,
   textImage: <ViewSidebarIcon fontSize="small" />,
+  textButton: <SmartButtonIcon fontSize="small" />,
+  buttonTextRow: <SmartButtonIcon fontSize="small" />,
   products: <GridViewIcon fontSize="small" />,
   divider: <HorizontalRuleIcon fontSize="small" />,
   spacer: <HeightIcon fontSize="small" />,
@@ -941,6 +943,24 @@ const BlockPreview = ({ block: b }: { block: Block }) => {
         </Stack>
       );
     }
+    case 'textButton':
+    case 'buttonTextRow': {
+      const btnEl = b.buttonText ? (
+        <Box component="span" sx={{ display: 'inline-block', px: 2.5, py: 1.1, borderRadius: 1.5, bgcolor: b.color || '#0075be', color: '#fff', fontSize: 14, whiteSpace: 'nowrap' }}>{b.buttonText}</Box>
+      ) : null;
+      const txtEl = (
+        <Box sx={{ flex: 1 }}>
+          {b.heading && <Typography sx={{ fontSize: 17, fontWeight: 700, color: '#16233f', mb: 0.25 }}>{b.heading}</Typography>}
+          <Typography sx={{ fontSize: 14, color: '#333', whiteSpace: 'pre-wrap' }}>{b.text}</Typography>
+        </Box>
+      );
+      const btnLeft = b.type === 'buttonTextRow';
+      return (
+        <Stack direction="row" spacing={2} alignItems="center">
+          {btnLeft ? <>{btnEl}{txtEl}</> : <>{txtEl}{btnEl}</>}
+        </Stack>
+      );
+    }
     case 'products': {
       const cols = Math.min(Math.max(b.columns || 3, 1), 4);
       return (
@@ -988,6 +1008,7 @@ const BlockEditor = ({
   const hasText = b.type === 'heading' || b.type === 'text' || b.type === 'button';
   const hasUrl = b.type === 'image' || b.type === 'button' || b.type === 'logo';
   const isCombo = b.type === 'imageText' || b.type === 'textImage';
+  const isCta = b.type === 'textButton' || b.type === 'buttonTextRow';
   const isProducts = b.type === 'products';
 
   const handleUpload = async (file: File | null) => {
@@ -1094,6 +1115,16 @@ const BlockEditor = ({
           </Button>
           <TextField label="Texto del botón (opcional)" value={b.buttonText ?? ''} onChange={(e) => onChange({ buttonText: e.target.value })} fullWidth size="small" placeholder="Ver más" />
           <TextField label="Enlace del botón" value={b.buttonUrl ?? ''} onChange={(e) => onChange({ buttonUrl: e.target.value })} fullWidth size="small" placeholder="https://" />
+        </>
+      )}
+
+      {isCta && (
+        <>
+          <TextField label="Título" value={b.heading ?? ''} onChange={(e) => onChange({ heading: e.target.value })} fullWidth size="small" />
+          <TextField label="Texto" value={b.text} onChange={(e) => onChange({ text: e.target.value })} fullWidth multiline minRows={2} size="small" />
+          <TextField label="Texto del botón" value={b.buttonText ?? ''} onChange={(e) => onChange({ buttonText: e.target.value })} fullWidth size="small" placeholder="Ver más" />
+          <TextField label="Enlace del botón" value={b.buttonUrl ?? ''} onChange={(e) => onChange({ buttonUrl: e.target.value })} fullWidth size="small" placeholder="https://" />
+          <TextField label="Color del botón" type="color" value={b.color || '#0075be'} onChange={(e) => onChange({ color: e.target.value })} fullWidth size="small" />
         </>
       )}
 

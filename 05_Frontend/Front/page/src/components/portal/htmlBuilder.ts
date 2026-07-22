@@ -18,6 +18,8 @@ export type BlockType =
   | 'html'
   | 'imageText'   // combo: imagen a la izquierda + texto a la derecha
   | 'textImage'   // combo: texto a la izquierda + imagen a la derecha
+  | 'textButton'  // combo: texto a la izquierda + botón a la derecha
+  | 'buttonTextRow' // combo: botón a la izquierda + texto a la derecha
   | 'products';   // grilla de productos (imagen + título + texto + enlace)
 
 export interface SocialLinks {
@@ -93,13 +95,15 @@ export const BLOCK_LABELS: Record<BlockType, string> = {
   html: 'HTML crudo',
   imageText: 'Imagen + Texto',
   textImage: 'Texto + Imagen',
+  textButton: 'Texto + Botón',
+  buttonTextRow: 'Botón + Texto',
   products: 'Productos',
 };
 
 /** Agrupación de la paleta (contenido / combinados / estructura), como Topol/MailPro. */
 export const PALETTE_GROUPS: { label: string; types: BlockType[] }[] = [
   { label: 'Contenido', types: ['heading', 'text', 'image', 'button', 'logo', 'social', 'html'] },
-  { label: 'Combinados', types: ['imageText', 'textImage', 'products'] },
+  { label: 'Combinados', types: ['imageText', 'textImage', 'textButton', 'buttonTextRow', 'products'] },
   { label: 'Estructura', types: ['columns', 'divider', 'spacer'] },
 ];
 
@@ -150,6 +154,17 @@ export const createBlock = (type: BlockType): Block => {
         text: 'Describe aquí tu producto, novedad u oferta. Edítalo en el panel derecho.',
         buttonText: '',
         buttonUrl: 'https://',
+        align: 'left',
+      };
+    case 'textButton':
+    case 'buttonTextRow':
+      return {
+        ...b,
+        heading: 'Título de la sección',
+        text: 'Texto que acompaña al botón. Edítalo en el panel derecho.',
+        buttonText: 'Ver más',
+        buttonUrl: 'https://',
+        color: '#0075be',
         align: 'left',
       };
     case 'products':
@@ -244,6 +259,22 @@ function productsHtml(b: Block, st: EmailSettings): string {
   return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">${trs}</table>`;
 }
 
+/** Combo texto+botón (o botón+texto). Botón vertical-centrado junto al texto; apilan en móvil. */
+function ctaHtml(b: Block, st: EmailSettings, buttonLeft: boolean): string {
+  const btn = b.buttonText
+    ? buttonHtml({ ...b, text: b.buttonText, url: b.buttonUrl || '#', align: buttonLeft ? 'left' : 'right', color: b.color }, st)
+    : '';
+  const txt = `${b.heading ? `<h3 style="margin:0 0 6px;font-family:${st.fontFamily};font-size:19px;line-height:1.3;color:#16233f;">${esc(b.heading)}</h3>` : ''}${paragraph(b.text, b.align || 'left', st)}`;
+  const first = buttonLeft ? btn : txt;
+  const second = buttonLeft ? txt : btn;
+  const firstW = buttonLeft ? 'width="38%" ' : '';
+  const secondW = buttonLeft ? '' : 'width="38%" ';
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"><tr>
+        <td class="mc-col" ${firstW}valign="middle" style="padding:0 12px 0 0;">${first}</td>
+        <td class="mc-col" ${secondW}valign="middle" style="padding:0 0 0 12px;">${second}</td>
+      </tr></table>`;
+}
+
 /** Serializa un bloque a HTML email-safe y responsive. */
 function renderBlock(b: Block, st: EmailSettings): string {
   const align = b.align || 'left';
@@ -272,6 +303,10 @@ function renderBlock(b: Block, st: EmailSettings): string {
       return comboHtml(b, st, true);
     case 'textImage':
       return comboHtml(b, st, false);
+    case 'textButton':
+      return ctaHtml(b, st, false); // texto izquierda, botón derecha
+    case 'buttonTextRow':
+      return ctaHtml(b, st, true); // botón izquierda, texto derecha
     case 'products':
       return productsHtml(b, st);
     case 'html':
