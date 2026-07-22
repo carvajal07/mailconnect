@@ -320,21 +320,26 @@ def advance_run(run, now):
     now_iso = now.strftime('%Y-%m-%d %H:%M:%S')
     tenant = tenant_key(run.get('nit'))
     steps = run.get('steps') or []
-    wait_min = int(_num(run.get('waitMinutes'), 60))
-    next_check_iso = (now + timedelta(minutes=wait_min)).strftime('%Y-%m-%d %H:%M:%S')
-    criterion = run.get('successCriterion', 'delivered')
+    # Defaults del run; cada paso puede sobreescribir waitMinutes y successCriterion (flujo de
+    # decisión por nodo). La espera aplica al paso en que está el contacto AHORA; el criterio
+    # define qué cuenta como confirmado en ese paso.
+    run_wait = int(_num(run.get('waitMinutes'), 60))
+    run_criterion = run.get('successCriterion', 'delivered')
     customer_id = run['customerId']
     summary = {'confirmed': 0, 'escalated': 0, 'exhausted': 0, 'budget': 0, 'waiting': 0}
 
     for c in _due_contacts(run['cascadeRunId'], now_iso):
         step_index = int(_num(c.get('stepIndex'), 0))
+        cur = steps[step_index] if 0 <= step_index < len(steps) else {}
+        step_wait = int(_num(cur.get('waitMinutes'), run_wait)) or run_wait
+        step_criterion = cur.get('successCriterion') or run_criterion
         state = read_contact_state(tenant, run['cascadeRunId'], c['cascadeContactId'])
-        outcome = classify_outcome(state, criterion)
+        outcome = classify_outcome(state, step_criterion)
         last_sent = c.get('lastSentAt') or now_iso
         try:
             elapsed = (now - datetime.strptime(last_sent, '%Y-%m-%d %H:%M:%S')).total_seconds() / 60.0
         except Exception:
-            elapsed = wait_min  # si no se puede parsear, trata como vencido
+            elapsed = step_wait  # si no se puede parsear, trata como vencido
 
         def cost_of(ch):
             return unit_cost(customer_id, ch)
@@ -343,7 +348,7 @@ def advance_run(run, now):
             return has_consent(tenant, ch, contact_value_for(ch, c.get('row') or []))
 
         remaining = 10 ** 12  # el tope real lo impone el débito atómico del monedero
-        decision = decide_next(steps, step_index, outcome, elapsed, wait_min, remaining, cost_of, consent_of)
+        decision = decide_next(steps, step_index, outcome, elapsed, step_wait, remaining, cost_of, consent_of)
         act = decision['action']
 
         if act == 'wait':
@@ -358,15 +363,19 @@ def advance_run(run, now):
             summary['exhausted'] += 1
             continue
         if act == 'send':
+            nxt = decision['stepIndex']
             channel = decision['channel']
-            content = steps[decision['stepIndex']].get('content', '')
+            content = steps[nxt].get('content', '')
             if not debit(customer_id, decision['cost'], run['cascadeRunId'],
                          'Cascada {} · escala a {}'.format(run.get('name', ''), channel)):
                 _finish_contact(c, 'budget')
                 summary['budget'] += 1
                 continue
             enqueue_send(run, c, channel, content)
-            _escalate_contact(c, decision['stepIndex'], channel, now_iso, next_check_iso)
+            # La próxima revisión usa la espera del paso al que se escala (por-nodo o del run).
+            next_wait = int(_num(steps[nxt].get('waitMinutes'), run_wait)) or run_wait
+            next_check_iso = (now + timedelta(minutes=max(1, next_wait))).strftime('%Y-%m-%d %H:%M:%S')
+            _escalate_contact(c, nxt, channel, now_iso, next_check_iso)
             summary['escalated'] += 1
 
     return summary

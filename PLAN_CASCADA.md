@@ -85,6 +85,14 @@ falló  ó (pendiente y venció)   -> siguiente canal permitido:
   (editor de nodos tipo React Flow — `@xyflow/react`: arrastrar-soltar desde la paleta, aristas
   animadas con dirección, nodos personalizados Inicio→canales→Confirmado). Ambos producen el mismo
   `steps[]` (`CascadaFlowBuilder.deriveSteps` sigue la cadena del grafo) → el backend no cambia.
+  Reglas del editor de flujo: **canal fijo por nodo** (se elige al arrastrar), **una conexión por
+  handle** (una salida/una entrada → cadena limpia), **sin ciclos** (`isValidConnection`),
+  **aristas eliminables** (✕ sobre la arista + tecla Supr), y **doble clic** en un nodo para
+  configurar **plantilla + tiempo de espera + criterio de confirmación POR PASO**.
+- **Espera y criterio por paso (flujo de decisión):** cada `steps[i]` puede traer `waitMinutes` y
+  `successCriterion`; el motor (`Cascade_Advance`) los usa (con fallback al valor del run) — así
+  cada canal decide cuánto esperar y qué cuenta como confirmado antes de escalar. La ramificación
+  multi-salida (distinto nodo según el resultado) queda para **Fase 3** (requiere extender el motor).
 
 **Pendiente de INTEGRACIÓN/DESPLIEGUE `[J]` (Fase 2 — no verificable sin AWS):**
 - Correlación fina `sendStatus`→`cascadeContact`: las lambdas Send-* deben propagar el

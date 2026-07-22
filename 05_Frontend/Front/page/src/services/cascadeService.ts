@@ -21,6 +21,10 @@ export interface CascadeStep {
   channel: CascadeChannel;
   /** Contenido listo para enviar: plantilla SES (EM), texto (SMS/VOZ) o nombre HSM (WSP). */
   content: string;
+  /** Espera (min) antes de escalar DESDE este paso. Si falta, usa la del run (flujo de decisión). */
+  waitMinutes?: number;
+  /** Qué cuenta como confirmado en este paso. Si falta, usa el del run. */
+  successCriterion?: SuccessCriterion;
 }
 
 export interface CascadeDispatchPayload {
