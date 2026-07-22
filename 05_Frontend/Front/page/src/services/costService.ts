@@ -21,7 +21,8 @@ export interface EstimatePayload {
   recipients: number;
   emailMode?: EmailMode;
   attachmentSizeMB?: number;
-  attachmentType?: 'pdf' | 'docx';
+  attachmentType?: 'pdf' | 'docx';                 // formato del documento (EAP)
+  attachmentDelivery?: 'ONFILE' | 'ONLINE';        // modo de entrega del adjunto (EAU/EAP)
   smsSegments?: number;
   voiceMinutes?: number;
 }

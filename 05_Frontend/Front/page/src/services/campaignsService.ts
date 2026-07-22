@@ -77,6 +77,8 @@ export interface CampaignSummary {
   samplesSentCount?: number;
   /** Formato del documento EAP (DOCX/PDF), si aplica. */
   documentFormat?: EapDocumentFormat;
+  /** Modo de entrega del adjunto (NONE/ONFILE/ONLINE), si aplica (EAU/EAP). Afecta la tarifa. */
+  attachmentType?: string;
   /** processId del envío real (lo fija Prepare-batch al enviar). Sirve para el reporte de estado. */
   sendProcessId?: string;
   /** Flujo de aprobación (maker-checker). Ver PLAN_APROBACIONES.md. */

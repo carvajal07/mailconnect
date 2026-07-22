@@ -60,12 +60,27 @@ MAX_PROCESSES = 500   # tope global de procesos agregados por llamada (evita bar
 
 # Debe reflejar DEFAULT_RATES de Api_V1_Cost_Estimate / Api_V1_Pricing_*.
 DEFAULT_RATES = {
-    'EMAIL': {'baseEM': 8, 'baseEAU': 15, 'baseEAP': 40, 'attachmentPerMB': 5, 'personalizedPdf': 25, 'personalizedDocx': 35},
-    'SMS': {'baseSms': 60},
-    'WHATSAPP': {'baseMarketing': 90},
-    'VOICE': {'basePerMinute': 120, 'avgMinutes': 0.5},
+    'EMAIL': {'baseEM': None, 'baseEAU': None, 'baseEAP': None, 'attachmentPerMB': 0, 'personalizedPdf': 0, 'personalizedDocx': 0},
+    'SMS': {'baseSms': None},
+    'WHATSAPP': {'baseMarketing': None},
+    'VOICE': {'basePerMinute': None, 'avgMinutes': 0.5},
     'COMMON': {'taxRate': 0.19, 'minCampaign': 5000},
 }
+# Precio unitario por TRAMO de volumen (COP). Réplica de Api_V1_Cost_Estimate.VOLUME_TIERS
+# (mantener en sync). El tramo se elige por el total de envíos y es "todo incluido".
+VOLUME_TIERS = {
+    'EM':       [(1, 30), (2000, 28), (5000, 27), (10000, 25), (20000, 21), (50000, 19), (100000, 14), (200000, 9), (500000, 5), (1000000, 4)],
+    'EAU':      [(1, 45), (2000, 42), (5000, 40), (10000, 37), (20000, 31), (50000, 28), (100000, 21), (200000, 14), (500000, 8), (1000000, 6)],
+    'EAP':      [(1, 60), (2000, 55), (5000, 50), (10000, 46), (20000, 38), (50000, 33), (100000, 24), (200000, 16), (500000, 10), (1000000, 8)],
+    'SMS':      [(1, 55), (2000, 50), (5000, 45), (10000, 40), (20000, 35), (50000, 28), (100000, 22), (200000, 18), (500000, 14), (1000000, 10)],
+    'WHATSAPP': [(1, 130), (2000, 125), (5000, 118), (10000, 110), (20000, 100), (50000, 90), (100000, 82), (200000, 76), (500000, 70), (1000000, 65)],
+    'VOICE':    [(1, 150), (2000, 140), (5000, 130), (10000, 120), (20000, 110), (50000, 95), (100000, 80), (200000, 70), (500000, 60), (1000000, 48)],
+}
+CAMPAIGN_TIER = {
+    'EM': ('baseEM', 'EM'), 'EAU': ('baseEAU', 'EAU'), 'EAP': ('baseEAP', 'EAP'),
+    'SMS': ('baseSms', 'SMS'), 'WSP': ('baseMarketing', 'WHATSAPP'), 'VOZ': ('basePerMinute', 'VOICE'),
+}
+ONLINE_FACTOR = 1.0   # hook ONLINE (enlace) vs ONFILE (adjunto); hoy mismo precio
 
 # channel de la campaña -> (canal de tarifa, etiqueta legible).
 CHANNEL_MAP = {
@@ -137,6 +152,28 @@ def _scan_all(table, **kwargs):
     return items
 
 
+def _tier_unit(tier_key, recipients):
+    """Precio unitario del TRAMO por volumen. Réplica de Api_V1_Cost_Estimate._tier_unit."""
+    tiers = VOLUME_TIERS.get(tier_key) or []
+    if not tiers:
+        return 0
+    unit = tiers[0][1]
+    for min_qty, price in tiers:
+        if recipients >= min_qty:
+            unit = price
+        else:
+            break
+    return unit
+
+
+def _base_unit(rate, override_key, tier_key, recipients):
+    """Base del canal: override plano de pricingRate si existe; si no, el tramo por volumen."""
+    v = rate.get(override_key)
+    if v is not None:
+        return _num(v)
+    return _tier_unit(tier_key, recipients)
+
+
 def _load_rate(customer_id, channel):
     """DEFAULT_RATES[channel]+COMMON, sobreescrito por pricingRate ('*' luego cliente)."""
     rate = dict(DEFAULT_RATES.get(channel, {}))
@@ -159,22 +196,20 @@ def _load_rate(customer_id, channel):
     return rate
 
 
-def _campaign_unit(rate, channel_name, document_format):
-    """Tarifa unitaria por destinatario según el canal de la campaña."""
-    if channel_name == 'EM':
-        return rate['baseEM']
-    if channel_name == 'EAU':
-        return rate['baseEAU']
-    if channel_name == 'EAP':
-        pers = rate['personalizedPdf'] if str(document_format).upper() == 'PDF' else rate['personalizedDocx']
-        return rate['baseEAP'] + pers
-    if channel_name == 'SMS':
-        return rate['baseSms']
-    if channel_name == 'WSP':
-        return rate['baseMarketing']
+def _campaign_unit(rate, channel_name, recipients, document_format=None, delivery='ONFILE'):
+    """Tarifa unitaria por destinatario, ESCALONADA por volumen (tramo por `recipients`).
+    Réplica de Api_V1_Cost_Estimate (mantener en sync). Un override plano de pricingRate gana
+    sobre el tramo. ONLINE vs ONFILE: hook de precio en EAU/EAP (hoy factor 1.0)."""
+    mapping = CAMPAIGN_TIER.get(channel_name)
+    if not mapping:
+        return 0.0
+    override_key, tier_key = mapping
+    unit = _base_unit(rate, override_key, tier_key, recipients)
     if channel_name == 'VOZ':
-        return rate['basePerMinute'] * rate.get('avgMinutes', 0.5)
-    return 0.0
+        unit = unit * rate.get('avgMinutes', 0.5)
+    if channel_name in ('EAU', 'EAP') and str(delivery).upper() == 'ONLINE' and ONLINE_FACTOR != 1.0:
+        unit = unit * ONLINE_FACTOR
+    return unit
 
 
 def _count_sent(tenant, process_id):
@@ -248,7 +283,6 @@ def _bill_customer(cust, camps_by_customer, procs_by_campaign, rate_cache, budge
             rate_cache[cache_key] = _load_rate(customer_id, billing_channel)
         rate = rate_cache[cache_key]
         tax_rate = rate.get('taxRate', tax_rate)
-        unit = _campaign_unit(rate, channel_name, c.get('documentFormat'))
 
         sent = 0
         for proc in procs_by_campaign.get(c.get('campaignId'), []):
@@ -263,6 +297,9 @@ def _bill_customer(cust, camps_by_customer, procs_by_campaign, rate_cache, budge
 
         if sent <= 0:
             continue
+        # Unitario ESCALONADO por volumen: usa `sent` (envíos reales) como recipients del
+        # tramo. Modo de entrega (ONFILE/ONLINE) desde la campaña (hook de precio).
+        unit = _campaign_unit(rate, channel_name, sent, c.get('documentFormat'), c.get('attachmentType') or 'ONFILE')
         camp_subtotal = max(sent * unit, rate.get('minCampaign', 0))
         subtotal += camp_subtotal
         agg = by_channel[channel_name]
@@ -318,7 +355,7 @@ def lambda_handler(event, context):
         # 2) UN scan de `campaign` (toda la tabla) agrupado por cliente en memoria.
         #    (Antes se escaneaba por cada cliente -> 1 + 2·C scans -> timeout.)
         campaigns = _scan_all(table_campaign,
-                              ProjectionExpression='campaignId, customerId, channel, documentFormat, #d',
+                              ProjectionExpression='campaignId, customerId, channel, documentFormat, attachmentType, #d',
                               ExpressionAttributeNames={'#d': 'date'})
         if month:
             campaigns = [c for c in campaigns if str(c.get('date', '')).startswith(month)]

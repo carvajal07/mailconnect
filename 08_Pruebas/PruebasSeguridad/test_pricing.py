@@ -70,10 +70,12 @@ def test_list_defaults_sin_overrides(pr):
     resp = lst.lambda_handler(_admin({'customerId': '*'}), None)
     assert resp['statusCode'] == 200
     data = resp['data']
-    # Sin nada guardado, effective == defaults y overrides vacío.
-    assert data['effective']['SMS']['baseSms'] == 60
-    assert data['effective']['EMAIL']['baseEM'] == 8
+    # Sin overrides, los base* quedan en None (se cobra por TRAMOS de volumen); overrides vacío.
+    assert data['effective']['SMS']['baseSms'] is None
+    assert data['effective']['EMAIL']['baseEM'] is None
     assert data['overrides']['SMS'] == {}
+    # Los tramos por volumen se exponen para la UI (EM arranca en $30 a 1k).
+    assert data['tiers']['EM'][0] == {'min': 1, 'unit': 30}
 
 
 def test_update_global_y_list_lo_refleja(pr):
