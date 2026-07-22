@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Box, Paper, Stack, Typography, Button, TextField, MenuItem, IconButton, Chip, Alert,
   Divider, CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Tooltip, FormControl, InputLabel, Select,
+  Tooltip, FormControl, InputLabel, Select, ToggleButton, ToggleButtonGroup,
 } from '@mui/material';
 import AltRouteIcon from '@mui/icons-material/AltRoute';
 import AddIcon from '@mui/icons-material/Add';
@@ -11,11 +11,14 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import SendIcon from '@mui/icons-material/Send';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import ViewListIcon from '@mui/icons-material/ViewList';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import { usePortalData } from '../../context/PortalDataContext';
 import { useFeedback } from '../../hooks/useFeedback';
 import { isOk } from '../../services/apiClient';
 import { cascadeService } from '../../services/cascadeService';
 import type { CascadeChannel, CascadeStep, CascadeRun, SuccessCriterion } from '../../services/cascadeService';
+import { CascadaFlowBuilder } from './CascadaFlowBuilder';
 import { formatDateTime } from '../../utils/datetime';
 
 const CHANNEL_LABEL: Record<CascadeChannel, string> = { EM: 'Correo', SMS: 'SMS', WSP: 'WhatsApp', VOZ: 'Voz' };
@@ -43,6 +46,8 @@ export const CascadaSection = () => {
     { channel: 'WSP', content: '' },
     { channel: 'SMS', content: '' },
   ]);
+  // Modo de definición: 'basico' (lista ordenada) o 'flujo' (editor de nodos tipo React Flow).
+  const [mode, setMode] = useState<'basico' | 'flujo'>('basico');
   const [submitting, setSubmitting] = useState(false);
 
   const [runs, setRuns] = useState<CascadeRun[]>([]);
@@ -153,23 +158,37 @@ export const CascadaSection = () => {
             </FormControl>
           </Stack>
 
-          <Divider textAlign="left"><Typography variant="caption" color="text.secondary">Orden de canales (prioridad)</Typography></Divider>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
+            <Typography variant="caption" color="text.secondary" fontWeight={800} sx={{ letterSpacing: 0.4 }}>
+              ORDEN DE CANALES (PRIORIDAD)
+            </Typography>
+            <ToggleButtonGroup size="small" exclusive value={mode} onChange={(_, m) => m && setMode(m)}>
+              <ToggleButton value="basico"><ViewListIcon fontSize="small" sx={{ mr: 0.5 }} />Básico</ToggleButton>
+              <ToggleButton value="flujo"><AccountTreeIcon fontSize="small" sx={{ mr: 0.5 }} />Flujo</ToggleButton>
+            </ToggleButtonGroup>
+          </Stack>
 
-          {steps.map((st, i) => (
-            <Stack key={i} direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
-              <Chip label={i + 1} size="small" color="primary" sx={{ fontWeight: 700 }} />
-              <TextField select size="small" label="Canal" value={st.channel} onChange={(e) => setStep(i, { channel: e.target.value as CascadeChannel, content: '' })} sx={{ minWidth: 130 }}>
-                {CHANNELS.map((ch) => <MenuItem key={ch} value={ch}>{CHANNEL_LABEL[ch]}</MenuItem>)}
-              </TextField>
-              <Box sx={{ flex: 1, width: '100%' }}>{contentControl(st, i)}</Box>
-              <Stack direction="row">
-                <Tooltip title="Subir"><span><IconButton size="small" onClick={() => move(i, -1)} disabled={i === 0}><ArrowUpwardIcon fontSize="small" /></IconButton></span></Tooltip>
-                <Tooltip title="Bajar"><span><IconButton size="small" onClick={() => move(i, 1)} disabled={i === steps.length - 1}><ArrowDownwardIcon fontSize="small" /></IconButton></span></Tooltip>
-                <Tooltip title="Quitar"><span><IconButton size="small" color="error" onClick={() => removeStep(i)} disabled={steps.length <= 2}><DeleteIcon fontSize="small" /></IconButton></span></Tooltip>
-              </Stack>
-            </Stack>
-          ))}
-          <Box><Button size="small" startIcon={<AddIcon />} onClick={addStep}>Agregar canal</Button></Box>
+          {mode === 'basico' ? (
+            <>
+              {steps.map((st, i) => (
+                <Stack key={i} direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
+                  <Chip label={i + 1} size="small" color="primary" sx={{ fontWeight: 700 }} />
+                  <TextField select size="small" label="Canal" value={st.channel} onChange={(e) => setStep(i, { channel: e.target.value as CascadeChannel, content: '' })} sx={{ minWidth: 130 }}>
+                    {CHANNELS.map((ch) => <MenuItem key={ch} value={ch}>{CHANNEL_LABEL[ch]}</MenuItem>)}
+                  </TextField>
+                  <Box sx={{ flex: 1, width: '100%' }}>{contentControl(st, i)}</Box>
+                  <Stack direction="row">
+                    <Tooltip title="Subir"><span><IconButton size="small" onClick={() => move(i, -1)} disabled={i === 0}><ArrowUpwardIcon fontSize="small" /></IconButton></span></Tooltip>
+                    <Tooltip title="Bajar"><span><IconButton size="small" onClick={() => move(i, 1)} disabled={i === steps.length - 1}><ArrowDownwardIcon fontSize="small" /></IconButton></span></Tooltip>
+                    <Tooltip title="Quitar"><span><IconButton size="small" color="error" onClick={() => removeStep(i)} disabled={steps.length <= 2}><DeleteIcon fontSize="small" /></IconButton></span></Tooltip>
+                  </Stack>
+                </Stack>
+              ))}
+              <Box><Button size="small" startIcon={<AddIcon />} onClick={addStep}>Agregar canal</Button></Box>
+            </>
+          ) : (
+            <CascadaFlowBuilder initialSteps={steps} onStepsChange={setSteps} smsTemplates={smsTemplates} wspTemplates={wspTemplates} />
+          )}
 
           <Divider />
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
@@ -181,9 +200,9 @@ export const CascadaSection = () => {
           </Stack>
 
           <Alert severity="info" sx={{ py: 0.5 }}>
-            Se cobra el <strong>{CHANNEL_LABEL[steps[0].channel]}</strong> (primer canal) al lanzar; cada
-            escalamiento se cobra <strong>solo por los contactos que realmente escalan</strong>. Los canales
-            con adjunto (EAU/EAP) no aplican en la cascada por ahora.
+            Se cobra el <strong>{steps[0] ? CHANNEL_LABEL[steps[0].channel] : 'primer canal'}</strong> (primer
+            canal del flujo) al lanzar; cada escalamiento se cobra <strong>solo por los contactos que realmente
+            escalan</strong>. Los canales con adjunto (EAU/EAP) no aplican en la cascada por ahora.
           </Alert>
 
           <Box>
