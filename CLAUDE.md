@@ -149,6 +149,9 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Balance/Topup-init` | `{ amount (COP≥20000) }` (tenant del token) | 200 `data:{reference, amountInCents, currency, publicKey, signatureIntegrity, redirectUrl?}` · 400. Firma de integridad Wompi; crea el intento `pending` en el ledger |
 | `Wallet/Wompi-webhook` | **público/proxy sin authorizer** (evento Wompi firmado) | 200 ack. Verifica la firma del evento y acredita **idempotente** por `reference` (pending→approved, `TransactWriteItems`); nunca acredita desde el redirect del navegador |
 | `Assistant/Ask` | **público/proxy sin authorizer** `{ question }` | 200 `{answer}` · 400 vacía · 502 modelo no disponible. Asistente de IA (AWS Bedrock Converse, modelo Claude) con prompt de sistema aterrizado en MailConnect; responde en español, solo sobre la plataforma. Lo usan los botones flotantes de la landing |
+| `Cascade/Dispatch` | `{ name, dataPath, waitMinutes?, successCriterion?, steps:[{channel(EM\|SMS\|WSP\|VOZ), content}] }` | 201 `data:{cascadeRunId, contacts, debited}` · 400 · 402 saldo · 403. Lanza la **cascada omnicanal** (Opción A): crea el run + un contacto por fila, filtra consentimiento del canal 0, encola el paso 0 y debita su costo. Ver `PLAN_CASCADA.md` |
+| `Cascade/List` | `{}` (tenant del token) | 200 `data:{runs:[{cascadeRunId, name, steps, status, counts{total,confirmed,exhausted,inFlight,budget}, createdAt}], count}` |
+| `Cascade/Advance` | (EventBridge cron; sin body) | Tick del motor: por cada contacto vencido lee el estado en `sendStatus`, y confirma/escala/agota/frena por saldo (`decide_next`). Escala encolando el siguiente canal + debitando |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida

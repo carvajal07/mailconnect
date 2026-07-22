@@ -29,6 +29,7 @@ import { ReportesSection } from '../../components/portal/ReportesSection';
 import { SaldoSection } from '../../components/portal/SaldoSection';
 import { MiCuentaSection } from '../../components/portal/MiCuentaSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
+import { CascadaSection } from '../../components/portal/CascadaSection';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
 import { authService, clearSession, getUser, getTenantRole } from '../../services/authService';
@@ -71,6 +72,8 @@ export const PortalPage = () => {
         return <MessageTemplatesSection channel="WSP" />;
       case 'campanas':
         return <CampanasSection />;
+      case 'cascada':
+        return <CascadaSection />;
       case 'programar':
         return <ProgramarEnviosSection />;
       case 'muestras':
