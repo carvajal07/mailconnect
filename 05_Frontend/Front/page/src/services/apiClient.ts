@@ -86,13 +86,18 @@ async function request<T = unknown>(
 
   // Envelope estándar del backend. Soporta 'statusCode' (no-proxy) y 'status_code'
   // (snake_case, como devuelve Prepare-batch-template), normalizando a ApiResponse.
+  // Se PRESERVAN los campos extra del cuerpo (p. ej. get-template devuelve `template`
+  // a nivel raíz, no en `data`): antes se descartaban y el consumidor los veía como
+  // undefined (la carga de plantilla SES mostraba el éxito como error y no aplicaba nada).
   if (isEnvelope) {
     const j = json as Record<string, unknown>;
+    const { status, statusCode, status_code, description, data, ...rest } = j;
     return {
-      status: Boolean(j.status),
-      statusCode: Number(j.statusCode ?? j.status_code),
-      description: typeof j.description === 'string' ? j.description : '',
-      data: j.data as T,
+      ...rest,
+      status: Boolean(status),
+      statusCode: Number(statusCode ?? status_code),
+      description: typeof description === 'string' ? description : '',
+      data: data as T,
     };
   }
 

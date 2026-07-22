@@ -42,6 +42,32 @@ const DND_MIME = 'application/mc-cascade-channel';
 
 interface CanalData { channel: CascadeChannel; content: string; waitMinutes?: number; successCriterion?: SuccessCriterion }
 
+/* --------------------------- Tiempo de espera con unidad (item 1) ---------------------------
+ * El backend siempre recibe MINUTOS (waitMinutes); en la UI el usuario elige la unidad
+ * (minutos/horas/días) y escribe el número. Convertimos en ambos sentidos. */
+export type WaitUnit = 'min' | 'hora' | 'dia';
+const UNIT_FACTOR: Record<WaitUnit, number> = { min: 1, hora: 60, dia: 1440 };
+/** minutos -> {valor, unidad} eligiendo la unidad "entera" más grande (1440→1 día, 60→1 h). */
+export function splitWait(mins?: number): { value: string; unit: WaitUnit } {
+  if (!mins || mins <= 0) return { value: '', unit: 'hora' };
+  if (mins % 1440 === 0) return { value: String(mins / 1440), unit: 'dia' };
+  if (mins % 60 === 0) return { value: String(mins / 60), unit: 'hora' };
+  return { value: String(mins), unit: 'min' };
+}
+/** {valor, unidad} -> minutos (o undefined si está vacío/ inválido → usa la espera del run). */
+export function toMinutes(value: string, unit: WaitUnit): number | undefined {
+  const n = parseFloat(value);
+  if (!value || isNaN(n) || n <= 0) return undefined;
+  return Math.max(1, Math.round(n * UNIT_FACTOR[unit]));
+}
+/** Etiqueta corta para el nodo (2 días · 1 h · 30 min · espera del run). */
+function waitLabel(mins?: number): string {
+  if (!mins || mins <= 0) return 'espera del run';
+  if (mins % 1440 === 0) { const d = mins / 1440; return `${d} día${d === 1 ? '' : 's'}`; }
+  if (mins % 60 === 0) { const h = mins / 60; return `${h} h`; }
+  return `${mins} min`;
+}
+
 const TemplatesCtx = createContext<{ sms: MessageTemplate[]; wsp: MessageTemplate[] }>({ sms: [], wsp: [] });
 const ActionsCtx = createContext<{ remove: (id: string) => void; removeEdge: (id: string) => void }>({
   remove: () => {}, removeEdge: () => {},
@@ -108,7 +134,7 @@ const CanalNode = ({ id, data }: { id: string; data: CanalData }) => {
       </Typography>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5, color: 'text.secondary' }}>
         <ScheduleIcon sx={{ fontSize: 13 }} />
-        <Typography variant="caption">{data.waitMinutes ? `${data.waitMinutes} min` : 'espera del run'} · {data.successCriterion ? CRITERION_LABEL[data.successCriterion] : 'criterio del run'}</Typography>
+        <Typography variant="caption">{waitLabel(data.waitMinutes)} · {data.successCriterion ? CRITERION_LABEL[data.successCriterion] : 'criterio del run'}</Typography>
       </Stack>
       <Stack direction="row" spacing={0.3} alignItems="center" sx={{ mt: 0.5, color: 'primary.main' }}>
         <SettingsIcon sx={{ fontSize: 12 }} /><Typography variant="caption" sx={{ fontSize: 10 }}>doble clic para configurar</Typography>
@@ -190,9 +216,15 @@ const NodeConfigDialog = ({ node, onClose, onSave }: { node: Node | null; onClos
   const data = (node?.data ?? {}) as unknown as CanalData;
   const [content, setContent] = useState('');
   const [wait, setWait] = useState('');
+  const [waitUnit, setWaitUnit] = useState<WaitUnit>('hora');
   const [criterion, setCriterion] = useState<SuccessCriterion | ''>('');
   useEffect(() => {
-    if (node) { setContent(data.content || ''); setWait(data.waitMinutes ? String(data.waitMinutes) : ''); setCriterion(data.successCriterion || ''); }
+    if (node) {
+      setContent(data.content || '');
+      const s = splitWait(data.waitMinutes);
+      setWait(s.value); setWaitUnit(s.unit);
+      setCriterion(data.successCriterion || '');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node]);
   if (!node) return null;
@@ -201,7 +233,7 @@ const NodeConfigDialog = ({ node, onClose, onSave }: { node: Node | null; onClos
   const save = () => {
     onSave(node.id, {
       content,
-      waitMinutes: wait ? Math.max(1, parseInt(wait, 10) || 0) || undefined : undefined,
+      waitMinutes: toMinutes(wait, waitUnit),
       successCriterion: criterion || undefined,
     });
     onClose();
@@ -226,7 +258,22 @@ const NodeConfigDialog = ({ node, onClose, onSave }: { node: Node | null; onClos
           ) : (
             <TextField fullWidth size="small" multiline minRows={2} label="Mensaje de voz (texto a voz)" value={content} onChange={(e) => setContent(e.target.value)} placeholder="Hola {{Nombre}}…" />
           )}
-          <TextField fullWidth size="small" type="number" label="Tiempo de espera (min) antes de escalar" value={wait} onChange={(e) => setWait(e.target.value)} placeholder="Usa la del run si lo dejas vacío" inputProps={{ min: 1 }} />
+          <Box>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+              Tiempo de espera antes de escalar
+            </Typography>
+            <Stack direction="row" spacing={1}>
+              <TextField size="small" type="number" label="Cantidad" value={wait} onChange={(e) => setWait(e.target.value)} placeholder="Run" inputProps={{ min: 1, step: 1 }} sx={{ flex: 1 }} />
+              <TextField select size="small" label="Unidad" value={waitUnit} onChange={(e) => setWaitUnit(e.target.value as WaitUnit)} sx={{ width: 130 }}>
+                <MenuItem value="min">Minutos</MenuItem>
+                <MenuItem value="hora">Horas</MenuItem>
+                <MenuItem value="dia">Días</MenuItem>
+              </TextField>
+            </Stack>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+              Vacío = usa la espera del run.
+            </Typography>
+          </Box>
           <TextField select fullWidth size="small" label="Confirmar cuando esté" value={criterion} onChange={(e) => setCriterion(e.target.value as SuccessCriterion | '')}>
             <MenuItem value="">Usar el criterio del run</MenuItem>
             <MenuItem value="sent">Enviado</MenuItem>

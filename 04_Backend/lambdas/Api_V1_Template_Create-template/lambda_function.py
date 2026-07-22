@@ -1,8 +1,16 @@
+import re
 import boto3
 import uuid
 from datetime import datetime
 
 REGION = 'us-east-1'
+
+
+def _ses_safe(s):
+    """SES exige que TemplateName solo tenga [A-Za-z0-9_-]. Reemplaza cualquier
+    otro caracter (espacios, acentos, signos) por '_' para que create_template no
+    falle (p. ej. un nombre con espacios). Idempotente sobre nombres ya válidos."""
+    return re.sub(r'[^A-Za-z0-9_-]+', '_', str(s)).strip('_') or 'plantilla'
 
 # Inicializar el cliente SES
 ses_client = boto3.client('ses', region_name=REGION)
@@ -205,7 +213,9 @@ def lambda_handler(event, context):
                     # El nombre de la plantilla SES NO lleva el canal: una misma plantilla HTML
                     # puede usarse en varios canales de email (EM/EAU/EAP). Convención:
                     # {customer}_{consecutivo}_{nombre} (coincide con el lookup de Prepare-batch).
-                    templateName = f'{customerName}_{consecutive}_{templateName}'
+                    # Se sanean el cliente y el nombre del usuario porque SES rechaza
+                    # espacios/acentos/signos en TemplateName (antes → 500 al crear).
+                    templateName = '{}_{}_{}'.format(_ses_safe(customerName), consecutive, _ses_safe(templateName))
                     response = create_template(templateName,subject,htmlBody,textBody)
                 except Exception as e:
                     status = False
