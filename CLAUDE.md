@@ -280,8 +280,16 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Orden de tabs del portal:** **Bases de datos** primero · separador · **Plantillas** (HTML/DOCX/
   **PDF**/SMS/WhatsApp) · separador · **Campañas** · **Programar envíos** · Muestras · el resto
   (`PortalSidebar`, con `dividerAfter`).
-- **Plantillas PDF (jul 2026):** **Plantillas PDF** (`PdfTemplatesSection`) es un tablero **vacío**
-  (scaffold) reservado para las plantillas PDF del envío EAP-PDF (sin backend aún).
+- **Plantillas PDF (jul 2026, EDITOR TIPO WORD):** **Plantillas PDF** (`PdfTemplatesSection`) es un
+  **editor de documento tipo Word** (WYSIWYG). Usa un `contentEditable` + `document.execCommand`
+  (sin librerías extra): barra de formato **arriba** (bloque Normal/Título/Cita, fuente, tamaño,
+  negrita/cursiva/subrayado, color, alineación, listas, enlace, quitar formato, deshacer/rehacer),
+  **herramientas a la izquierda** (insertar **Imagen** →S3 `resources`, **Variable** `{{campo}}`,
+  **Tabla**, y selector de hoja **A4/Carta**) y un **lienzo con reglas** en cm (`HRuler`/`VRuler`)
+  que dibuja la hoja blanca centrada. **Borradores** en localStorage (`mc_pdf_drafts`: Guardar/
+  Cargar por nombre), **Ver HTML** (diálogo + copiar) y **Descargar** (.html). Es el editor visual
+  de la plantilla; el **envío EAP-PDF** que la consuma (combinación + render a PDF) queda para una
+  fase posterior (sin backend aún).
 - **Programar envíos (jul 2026, FUNCIONAL — HORA EXACTA):** `ProgramarEnviosSection` (tab junto a
   Campañas, RBAC **owner/approver**) permite **agendar el envío real** de una campaña aprobada a una
   fecha/hora futura. Backend: tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`).
