@@ -779,6 +779,11 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
             (encabezado, texto, imagen, botón, logo, 2 columnas, redes sociales, HTML crudo,
             divisor, espaciador) en paleta agrupada (Contenido/Estructura), reorden por
             arrastre + flechas, duplicar/eliminar, panel de propiedades, variables `{{nombre}}`.
+            **Arrastrar del panel al lienzo (jul 2026, tipo MailPro):** los bloques de la paleta
+            son `draggable` y se **sueltan en una posición exacta** del lienzo con una **línea
+            indicadora** de inserción (mitad superior/inferior de cada bloque); el lienzo vacío es
+            zona de drop. Sigue el clic-para-agregar y el reorden por arrastre (DnD unificado
+            `dragSource` = paleta|bloque + `insertAt(index)`).
             **Ajustes globales** (ancho de contenido, fondos, color de texto/enlaces, fuente,
             esquinas, preheader), **vista previa** escritorio/móvil (iframe), "Ver HTML",
             **borradores** en localStorage (bloques + ajustes), **cargar de SES**

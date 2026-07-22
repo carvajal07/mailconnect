@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { Fragment, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Paper,
@@ -83,6 +83,11 @@ const BLOCK_ICONS: Record<BlockType, ReactNode> = {
   spacer: <HeightIcon fontSize="small" />,
 };
 
+/** Línea indicadora de dónde caerá el bloque al arrastrarlo (tipo MailPro/Topol). */
+const DropLine = () => (
+  <Box sx={{ height: 4, mx: 2, my: 0.5, borderRadius: 2, bgcolor: 'primary.main', boxShadow: '0 0 0 3px rgba(0,117,190,.18)' }} />
+);
+
 export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePreset?: boolean } = {}) => {
   const sessionUserId = getUser()?.userId ?? '';
   const sessionCustomer = getUser()?.customer ?? '';
@@ -99,7 +104,11 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [draftName, setDraftName] = useState('');
   // Campos de la base seleccionada (para las variables {{campo}}). Vacío = usa las por defecto.
   const [dbFields, setDbFields] = useState<string[]>([]);
-  const dragIndex = useRef<number | null>(null);
+  // DnD unificado tipo MailPro/Topol: arrastrar DESDE la paleta (inserta un bloque nuevo) o
+  // REORDENAR un bloque existente, soltando en una posición del lienzo con línea indicadora.
+  const dragSource = useRef<{ kind: 'palette'; type: BlockType } | { kind: 'block'; index: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
 
   const [draftsAnchor, setDraftsAnchor] = useState<null | HTMLElement>(null);
   const [showHtml, setShowHtml] = useState(false);
@@ -172,16 +181,45 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     });
   };
 
-  const onDrop = (targetIndex: number) => {
-    const from = dragIndex.current;
-    dragIndex.current = null;
-    if (from === null || from === targetIndex) return;
-    setBlocks((prev) => {
-      const next = [...prev];
-      const [moved] = next.splice(from, 1);
-      next.splice(targetIndex, 0, moved);
-      return next;
-    });
+  /** Inserta (paleta) o mueve (bloque existente) en la posición `index` del lienzo. */
+  const insertAt = (index: number) => {
+    const src = dragSource.current;
+    endDrag();
+    if (!src) return;
+    if (src.kind === 'palette') {
+      const nb = createBlock(src.type);
+      setBlocks((prev) => {
+        const next = [...prev];
+        next.splice(Math.max(0, Math.min(index, next.length)), 0, nb);
+        return next;
+      });
+      setSelectedId(nb.id);
+    } else {
+      setBlocks((prev) => {
+        const from = src.index;
+        if (from < 0 || from >= prev.length) return prev;
+        const next = [...prev];
+        const [moved] = next.splice(from, 1);
+        const target = from < index ? index - 1 : index; // ajusta por el hueco que dejó
+        next.splice(Math.max(0, Math.min(target, next.length)), 0, moved);
+        return next;
+      });
+    }
+  };
+
+  const endDrag = () => {
+    dragSource.current = null;
+    setDragging(false);
+    setDropIndex(null);
+  };
+
+  /** Actualiza el índice de inserción según si el cursor está en la mitad superior/inferior. */
+  const onBlockDragOver = (e: React.DragEvent, index: number) => {
+    if (!dragSource.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    setDropIndex(e.clientY < r.top + r.height / 2 ? index : index + 1);
   };
 
   const insertVariable = (v: string) => {
@@ -453,7 +491,11 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                     <Button
                       key={type}
                       variant="outlined"
+                      draggable
+                      onDragStart={() => { dragSource.current = { kind: 'palette', type }; setDragging(true); }}
+                      onDragEnd={endDrag}
                       onClick={() => addBlock(type)}
+                      title="Arrástralo al lienzo o haz clic para agregarlo"
                       sx={{
                         flexDirection: 'column',
                         gap: 0.25,
@@ -461,8 +503,10 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                         textTransform: 'none',
                         fontSize: 11,
                         lineHeight: 1.2,
+                        cursor: 'grab',
                         color: 'text.primary',
                         borderColor: 'divider',
+                        '&:active': { cursor: 'grabbing' },
                         '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover' },
                       }}
                     >
@@ -501,20 +545,35 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               }}
             >
               {blocks.length === 0 ? (
-                <Box sx={{ textAlign: 'center', py: 10, px: 3 }}>
-                  <Typography sx={{ color: '#334155', fontWeight: 700 }}>Tu correo está vacío</Typography>
+                <Box
+                  onDragOver={(e) => { if (dragSource.current) { e.preventDefault(); setDropIndex(0); } }}
+                  onDrop={(e) => { e.preventDefault(); insertAt(0); }}
+                  sx={{
+                    textAlign: 'center', py: 10, px: 3, transition: 'background .15s',
+                    ...(dragging && { bgcolor: 'rgba(0,117,190,.06)', outline: '2px dashed rgba(0,117,190,.5)', outlineOffset: '-10px' }),
+                  }}
+                >
+                  <Typography sx={{ color: '#334155', fontWeight: 700 }}>
+                    {dragging ? 'Suelta aquí para agregarlo' : 'Tu correo está vacío'}
+                  </Typography>
                   <Typography variant="body2" sx={{ color: '#94a3b8' }}>
-                    Agrega bloques desde la paleta. Arrástralos o usa las flechas para ordenarlos.
+                    Arrastra bloques desde la paleta hasta aquí, o haz clic en un bloque para agregarlo.
                   </Typography>
                 </Box>
               ) : (
-                blocks.map((b, index) => (
+                <Box
+                  onDragOver={(e) => { if (dragSource.current) { e.preventDefault(); setDropIndex(blocks.length); } }}
+                  onDrop={(e) => { e.preventDefault(); insertAt(dropIndex ?? blocks.length); }}
+                >
+                {blocks.map((b, index) => (
+                  <Fragment key={b.id}>
+                    {dragging && dropIndex === index && <DropLine />}
                   <Box
-                    key={b.id}
                     draggable
-                    onDragStart={() => (dragIndex.current = index)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={() => onDrop(index)}
+                    onDragStart={() => { dragSource.current = { kind: 'block', index }; setDragging(true); }}
+                    onDragEnd={endDrag}
+                    onDragOver={(e) => onBlockDragOver(e, index)}
+                    onDrop={(e) => { e.preventDefault(); e.stopPropagation(); insertAt(dropIndex ?? index); }}
                     onClick={() => setSelectedId(b.id)}
                     sx={{
                       position: 'relative',
@@ -566,7 +625,10 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                       <BlockPreview block={b} />
                     </Box>
                   </Box>
-                ))
+                  </Fragment>
+                ))}
+                {dragging && dropIndex === blocks.length && <DropLine />}
+                </Box>
               )}
             </Box>
           </Box>
