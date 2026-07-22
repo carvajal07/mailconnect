@@ -1,4 +1,5 @@
 import os
+import re
 import boto3
 import uuid
 from datetime import datetime
@@ -11,6 +12,12 @@ dynamodb = boto3.resource('dynamodb')
 table_templateAudit = dynamodb.Table('templateAudit')
 
 
+def _ses_safe(s):
+    """SES exige que TemplateName solo tenga [A-Za-z0-9_-]. Create-template sanea el
+    nombre así al crearlo, por lo que la verificación de propiedad usa el MISMO saneo
+    sobre el prefijo del cliente para que siga coincidiendo."""
+    return re.sub(r'[^A-Za-z0-9_-]+', '_', str(s)).strip('_') or 'plantilla'
+
 
 def _authorizer(event):
     if not isinstance(event, dict):
@@ -20,12 +27,12 @@ def _authorizer(event):
 
 def _owns_template(event, template_name):
     """Verifica que la plantilla pertenezca al tenant del token.
-    Convención de nombre: '{customer}_{consecutivo}_{canal}_{nombre}'.
-    Si el Authorizer trae 'customer', se exige el prefijo '{customer}_'.
+    Convención de nombre: '{customer}_{consecutivo}_{nombre}' (cliente saneado).
+    Si el Authorizer trae 'customer', se exige el prefijo saneado '{customer}_'.
     Sin contexto del Authorizer (token) se DENIEGA (multi-tenant obligatorio)."""
     customer = str(_authorizer(event).get('customer', '')).strip()
     if customer:
-        return str(template_name).startswith('{}_'.format(customer))
+        return str(template_name).startswith('{}_'.format(_ses_safe(customer)))
     return False  # sin context del token: denegar
 
 

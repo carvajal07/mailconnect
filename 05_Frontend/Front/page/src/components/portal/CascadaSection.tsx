@@ -18,7 +18,8 @@ import { useFeedback } from '../../hooks/useFeedback';
 import { isOk } from '../../services/apiClient';
 import { cascadeService } from '../../services/cascadeService';
 import type { CascadeChannel, CascadeStep, CascadeRun, SuccessCriterion } from '../../services/cascadeService';
-import { CascadaFlowBuilder } from './CascadaFlowBuilder';
+import { CascadaFlowBuilder, toMinutes } from './CascadaFlowBuilder';
+import type { WaitUnit } from './CascadaFlowBuilder';
 import { formatDateTime } from '../../utils/datetime';
 
 const CHANNEL_LABEL: Record<CascadeChannel, string> = { EM: 'Correo', SMS: 'SMS', WSP: 'WhatsApp', VOZ: 'Voz' };
@@ -40,7 +41,11 @@ export const CascadaSection = () => {
 
   const [name, setName] = useState('');
   const [dataPath, setDataPath] = useState('');
-  const [waitMinutes, setWaitMinutes] = useState(60);
+  // Ventana de espera del run: el usuario elige unidad (min/horas/días) + número;
+  // al backend siempre va en minutos (waitMinutes). Default 1 hora.
+  const [waitValue, setWaitValue] = useState('1');
+  const [waitUnit, setWaitUnit] = useState<WaitUnit>('hora');
+  const waitMinutes = toMinutes(waitValue, waitUnit) ?? 60;
   const [criterion, setCriterion] = useState<SuccessCriterion>('delivered');
   const [steps, setSteps] = useState<CascadeStep[]>([
     { channel: 'WSP', content: '' },
@@ -195,7 +200,14 @@ export const CascadaSection = () => {
             <TextField select size="small" label="Confirmar cuando esté" value={criterion} onChange={(e) => setCriterion(e.target.value as SuccessCriterion)} sx={{ minWidth: 200 }} helperText="Si no se cumple, escala">
               {(Object.keys(CRITERION_LABEL) as SuccessCriterion[]).map((c) => <MenuItem key={c} value={c}>{CRITERION_LABEL[c]}</MenuItem>)}
             </TextField>
-            <TextField size="small" type="number" label="Ventana de espera (min)" value={waitMinutes} onChange={(e) => setWaitMinutes(Math.max(1, parseInt(e.target.value, 10) || 1))} sx={{ minWidth: 190 }} helperText="Antes de escalar al siguiente" inputProps={{ min: 1 }} />
+            <Stack direction="row" spacing={1} alignItems="flex-start">
+              <TextField size="small" type="number" label="Ventana de espera" value={waitValue} onChange={(e) => setWaitValue(e.target.value)} sx={{ width: 130 }} helperText="Antes de escalar" inputProps={{ min: 1, step: 1 }} />
+              <TextField select size="small" label="Unidad" value={waitUnit} onChange={(e) => setWaitUnit(e.target.value as WaitUnit)} sx={{ width: 120 }}>
+                <MenuItem value="min">Minutos</MenuItem>
+                <MenuItem value="hora">Horas</MenuItem>
+                <MenuItem value="dia">Días</MenuItem>
+              </TextField>
+            </Stack>
             {selectedBase && <Chip variant="outlined" label={`${contacts.toLocaleString('es-CO')} contactos`} />}
           </Stack>
 
@@ -218,7 +230,7 @@ export const CascadaSection = () => {
         <Button size="small" startIcon={<RefreshIcon />} onClick={loadRuns} disabled={loadingRuns}>Refrescar</Button>
       </Stack>
       <TableContainer component={Paper} variant="outlined">
-        <Table size="small" sx={{ '& tbody tr:nth-of-type(odd)': { backgroundColor: (t) => (t.palette.mode === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(15,45,90,0.035)') } }}>
+        <Table>
           <TableHead>
             <TableRow>
               <TableCell>Cascada</TableCell>
