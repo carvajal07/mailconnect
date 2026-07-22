@@ -134,9 +134,17 @@ export const EstadisticasSection = () => {
         </Paper>
       </Box>
 
-      {/* Tabla de campañas (también sirve como "vista de tabla" accesible) */}
+      {/* Tabla de campañas (también sirve como "vista de tabla" accesible). Densa (size=small,
+          como Movimientos) y con filas cebra para separar visualmente cada campaña. */}
       <TableContainer component={Paper} variant="outlined">
-        <Table>
+        <Table
+          size="small"
+          sx={{
+            '& tbody tr:nth-of-type(odd)': {
+              backgroundColor: (t) => (t.palette.mode === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(15,45,90,0.035)'),
+            },
+          }}
+        >
           <TableHead>
             <TableRow>
               <TableCell>Campaña</TableCell>

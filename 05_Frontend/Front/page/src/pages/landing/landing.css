@@ -233,6 +233,15 @@
 @media (max-width:640px){
   .mc-landing .nav-links{ display:none; } .mc-landing .g4,.mc-landing .g3,.mc-landing .g2{ grid-template-columns:1fr; } .mc-landing .steps{ grid-template-columns:1fr; }
   .mc-landing .doc-list{ grid-template-columns:1fr; } .mc-landing .foot-grid{ grid-template-columns:1fr 1fr; }
-  .mc-landing .nav-hide{ display:none; }
+  /* El botón de login DEBE seguir visible en móvil (antes se ocultaba con .nav-hide y
+     "desaparecía"). Se compacta el nav para que Iniciar sesión + Crear cuenta quepan. */
+  .mc-landing .nav-inner{ gap:10px; }
+  .mc-landing .nav-cta{ gap:6px; }
+  .mc-landing .nav-cta .btn-sm{ padding:8px 12px; font-size:.82rem; }
   .mc-landing .pricetable{ overflow-x:auto; }
+}
+/* Pantallas muy angostas: el nav sigue mostrando ambos botones (más compactos). */
+@media (max-width:380px){
+  .mc-landing .brand-logo{ height:28px; }
+  .mc-landing .nav-cta .btn-sm{ padding:7px 10px; font-size:.78rem; }
 }

@@ -497,7 +497,15 @@ export const CampanasSection = () => {
       </Stack>
 
       <TableContainer component={Paper}>
-        <Table>
+        {/* Densa (size=small) + filas cebra para separar cada campaña visualmente. */}
+        <Table
+          size="small"
+          sx={{
+            '& tbody tr:nth-of-type(odd)': {
+              backgroundColor: (t) => (t.palette.mode === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(15,45,90,0.035)'),
+            },
+          }}
+        >
           <TableHead>
             <TableRow>
               <TableCell>Canal</TableCell>
