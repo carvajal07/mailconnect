@@ -17,10 +17,17 @@
 > (auto-detectado de los `boto3.client/resource` del código; override opcional en
 > `04_Backend/lambdas/role-map.json`; si el rol no existe en IAM, el CD también lo crea con
 > sus políticas full por servicio). Donde este documento diga "crear la función vacía",
-> basta con correr el CD (push o manual). **Siguen siendo manuales:** variables de entorno,
-> layers, triggers (SQS/SNS/Scheduler) y rutas de API Gateway. El usuario IAM de CI necesita
-> los permisos extra listados en la cabecera del workflow (`lambda:CreateFunction`,
-> `iam:CreateRole/AttachRolePolicy/PutRolePolicy/PassRole`, …).
+> basta con correr el CD (push o manual). **También asegura los TRIGGERS** declarados en
+> `04_Backend/lambdas/trigger-map.json` (pre-llenado con las 9 colas del pipeline): crea la
+> **cola SQS** si no existe + el **event source mapping** cola→lambda (y fuerza el token
+> `_SQS` en el rol), y opcionalmente tópicos **SNS** (tópico + permiso + suscripción) y
+> reglas **EventBridge** (`schedule`). Donde este documento diga "crear la cola + trigger",
+> basta con desplegar esa carpeta por el CD. **Siguen siendo manuales:** variables de
+> entorno, layers, rutas de API Gateway y apuntar los config sets (SES/EUM) a los tópicos
+> SNS. El usuario IAM de CI necesita los permisos extra listados en la cabecera del workflow
+> (`lambda:CreateFunction/CreateEventSourceMapping/AddPermission`, `iam:CreateRole/
+> AttachRolePolicy/PutRolePolicy/PassRole`, `sqs:CreateQueue`, …) — agregarlos ANTES del
+> próximo push que toque lambdas con trigger.
 
 ---
 

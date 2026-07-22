@@ -32,18 +32,43 @@ name: Desplegar Lambdas
 #   Ejemplos: Lambda_DynFull_SES_SQS_S3 · Lambda_DynFull_SQS · Lambda_S3
 #   Si el rol YA existe en IAM se usa tal cual (no se le tocan las políticas).
 #
+# ── Triggers y colas SQS (04_Backend/lambdas/trigger-map.json) ──────────────
+# En CADA despliegue de una carpeta, el workflow asegura (idempotente) los
+# triggers declarados para ella en trigger-map.json:
+#   { "NombreCarpeta": { "sqs": "NombreCola", "batchSize": 1 } }
+#     · Crea la cola SQS si no existe (VisibilityTimeout 360 s + long polling)
+#       y el event source mapping cola→lambda si falta. batchSize default 10.
+#     · Una lambda disparada por SQS LEE la cola con su PROPIO rol, así que el
+#       trigger fuerza el token _SQS en el rol auto-detectado al crearla.
+#   { "NombreCarpeta": { "sns": "NombreTopico" } }
+#     · Crea el tópico SNS si no existe, da permiso a SNS de invocar la lambda
+#       y la suscribe. OJO: apuntar el config set (SES/EUM) al tópico sigue
+#       siendo manual — por eso no viene pre-llenado.
+#   { "NombreCarpeta": { "schedule": "rate(5 minutes)" } }
+#     · Crea/actualiza una regla de EventBridge (`{funcion}-cron`) con esa
+#       expresión rate()/cron() y permiso + target hacia la lambda.
+#   (Se pueden combinar varias llaves en la misma entrada.)
+# Si la cola/tópico/regla o el trigger ya existen, no se tocan (solo se crea
+# lo que falte). Lo que ya está en AWS queda igual.
+#
 # ── Requisitos (una sola vez) ────────────────────────────────────────────────
 # En Settings → Secrets and variables → Actions:
 #   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (+ AWS_REGION opcional; default us-east-1)
 # El usuario IAM de CI necesita ahora:
 #   lambda:GetFunctionConfiguration, lambda:UpdateFunctionCode,
 #   lambda:UpdateFunctionConfiguration, lambda:CreateFunction,
+#   lambda:ListEventSourceMappings, lambda:CreateEventSourceMapping,
+#   lambda:AddPermission,
 #   iam:GetRole, iam:CreateRole, iam:AttachRolePolicy, iam:PutRolePolicy,
-#   iam:PassRole (sobre los roles Lambda_*) y sts:GetCallerIdentity.
+#   iam:PassRole (sobre los roles Lambda_*), sts:GetCallerIdentity,
+#   sqs:GetQueueUrl, sqs:CreateQueue, sqs:GetQueueAttributes,
+#   (si usas triggers SNS)  sns:CreateTopic, sns:Subscribe, sns:ListSubscriptionsByTopic,
+#   (si usas 'schedule')    events:PutRule, events:PutTargets.
 # Alternativa más segura: rol OIDC (ver nota al final del archivo).
 #
-# ⚠️ Al CREAR una función esta nace SIN variables de entorno, SIN layers y SIN
-# triggers (SQS/SNS/EventBridge) — eso sigue configurándose aparte (DESPLIEGUE.md).
+# ⚠️ Al CREAR una función esta nace SIN variables de entorno y SIN layers — eso
+# sigue configurándose aparte (DESPLIEGUE.md). Los triggers SÍ se crean si están
+# declarados en trigger-map.json (ver arriba).
 #
 # Nombre de la función en AWS = nombre de la carpeta, salvo que exista un mapeo en
 # 04_Backend/lambdas/deploy-map.json  ->  { "NombreCarpeta": "NombreFuncionAWS" }
@@ -143,12 +168,13 @@ jobs:
           DIR="$LAMBDAS_DIR"
           MAP="$DIR/deploy-map.json"
           ROLE_MAP="$DIR/role-map.json"
+          TRIGGER_MAP="$DIR/trigger-map.json"
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
           echo "### Despliegue de lambdas" >> "$SUMMARY"
           echo "" >> "$SUMMARY"
-          echo "| Carpeta | Función AWS | Acción | Runtime | Rol |" >> "$SUMMARY"
-          echo "|---|---|---|---|---|" >> "$SUMMARY"
+          echo "| Carpeta | Función AWS | Acción | Runtime | Rol | Triggers |" >> "$SUMMARY"
+          echo "|---|---|---|---|---|---|" >> "$SUMMARY"
 
           resolve_name() {
             local folder="$1"
@@ -184,13 +210,15 @@ jobs:
           }
 
           detect_role() {  # deduce el rol de los boto3.client|resource() del código
-            local src="$1" svcs name="Lambda"
+            # $2 = 1 si la lambda es disparada por SQS (el poller lee la cola con el
+            #      rol de la FUNCIÓN, así que necesita _SQS aunque su código no lo use)
+            local src="$1" force_sqs="${2:-0}" svcs name="Lambda"
             svcs=$(grep -rhoaE "boto3\.(client|resource)\(\s*[\"'][a-z0-9-]+[\"']" "$src" --include='*.py' 2>/dev/null \
                      | sed -E "s/.*[\"']([a-z0-9-]+)[\"']\$/\1/" | sort -u || true)
             has() { printf '%s\n' "$svcs" | grep -qx "$1"; }
             if has dynamodb; then name="${name}_DynFull"; fi
             if has ses || has sesv2; then name="${name}_SES"; fi
-            if has sqs; then name="${name}_SQS"; fi
+            if has sqs || [ "$force_sqs" = "1" ]; then name="${name}_SQS"; fi
             if has s3; then name="${name}_S3"; fi
             if has sns; then name="${name}_SNS"; fi
             if has scheduler; then name="${name}_Scheduler"; fi
@@ -203,11 +231,112 @@ jobs:
           }
 
           role_for() {  # override en role-map.json > auto-detección
-            local folder="$1" src="$2" mapped=""
+            local folder="$1" src="$2" mapped="" force_sqs=0
             if [ -f "$ROLE_MAP" ]; then
               mapped=$(jq -r --arg k "$folder" '.[$k] // empty' "$ROLE_MAP")
             fi
-            if [ -n "$mapped" ]; then echo "$mapped"; else detect_role "$src"; fi
+            if [ -n "$mapped" ]; then echo "$mapped"; return; fi
+            if [ -f "$TRIGGER_MAP" ] && [ -n "$(jq -r --arg k "$folder" '.[$k].sqs // empty' "$TRIGGER_MAP" 2>/dev/null)" ]; then
+              force_sqs=1
+            fi
+            detect_role "$src" "$force_sqs"
+          }
+
+          add_perm() {  # permiso de invocación sobre la lambda (idempotente)
+            # $1=función $2=statement-id $3=principal $4=source-arn
+            local out
+            if out=$(aws lambda add-permission --function-name "$1" --statement-id "$2" \
+                       --action lambda:InvokeFunction --principal "$3" --source-arn "$4" 2>&1); then
+              return 0
+            fi
+            echo "$out" | grep -q "ResourceConflictException" && return 0
+            echo "❌ add-permission a $1 falló: $out"; return 1
+          }
+
+          TRIGGER_NOTE="-"
+          ensure_triggers() {  # crea colas/tópicos/reglas + triggers declarados en trigger-map.json
+            local folder="$1" fn="$2" cfg
+            TRIGGER_NOTE="-"
+            [ -f "$TRIGGER_MAP" ] || return 0
+            cfg=$(jq -c --arg k "$folder" '.[$k] // empty' "$TRIGGER_MAP" 2>/dev/null || true)
+            [ -n "$cfg" ] || return 0
+            local fn_arn="arn:aws:lambda:${AWS_REGION}:${ACCOUNT_ID}:function:${fn}"
+            TRIGGER_NOTE=""
+
+            # ── SQS: cola + event source mapping ──
+            local qname
+            qname=$(echo "$cfg" | jq -r '.sqs // empty')
+            if [ -n "$qname" ]; then
+              local batch vis qurl qarn uuid out
+              batch=$(echo "$cfg" | jq -r '.batchSize // 10')
+              vis=$(echo "$cfg" | jq -r '.visibilityTimeout // 360')
+              if ! qurl=$(aws sqs get-queue-url --queue-name "$qname" --query QueueUrl --output text 2>/tmp/qerr); then
+                if grep -qi "NonExistentQueue\|does not exist" /tmp/qerr; then
+                  echo "   📮 Creando cola SQS $qname (VisibilityTimeout=${vis}s, long polling 20s)"
+                  qurl=$(aws sqs create-queue --queue-name "$qname" \
+                           --attributes "VisibilityTimeout=${vis},ReceiveMessageWaitTimeSeconds=20" \
+                           --query QueueUrl --output text)
+                  sleep 2
+                else
+                  echo "❌ Error consultando la cola $qname:"; cat /tmp/qerr
+                  echo "   💡 ¿El usuario de CI tiene sqs:GetQueueUrl/CreateQueue/GetQueueAttributes?"
+                  exit 1
+                fi
+              fi
+              qarn=$(aws sqs get-queue-attributes --queue-url "$qurl" \
+                       --attribute-names QueueArn --query 'Attributes.QueueArn' --output text)
+              uuid=$(aws lambda list-event-source-mappings --function-name "$fn" \
+                       --event-source-arn "$qarn" --query 'EventSourceMappings[0].UUID' --output text)
+              if [ "$uuid" = "None" ] || [ -z "$uuid" ]; then
+                echo "   🔗 Creando trigger SQS $qname → $fn (batch $batch)"
+                if ! out=$(aws lambda create-event-source-mapping --function-name "$fn" \
+                             --event-source-arn "$qarn" --batch-size "$batch" 2>&1); then
+                  echo "❌ No se pudo crear el trigger SQS $qname → $fn:"
+                  echo "$out"
+                  echo "   💡 Si es un error de permisos, el ROL de la función necesita el token _SQS"
+                  echo "      (sqs:ReceiveMessage/DeleteMessage/GetQueueAttributes). Ajusta role-map.json"
+                  echo "      o agrega las políticas al rol actual y relanza."
+                  exit 1
+                fi
+              else
+                echo "   🔗 Trigger SQS $qname → $fn ya existe"
+              fi
+              TRIGGER_NOTE="SQS:$qname"
+            fi
+
+            # ── SNS: tópico + permiso + suscripción ──
+            local topic
+            topic=$(echo "$cfg" | jq -r '.sns // empty')
+            if [ -n "$topic" ]; then
+              local tarn sub
+              tarn=$(aws sns create-topic --name "$topic" --query TopicArn --output text)  # idempotente
+              add_perm "$fn" "sns-${topic}" sns.amazonaws.com "$tarn"
+              sub=$(aws sns list-subscriptions-by-topic --topic-arn "$tarn" \
+                      --query "Subscriptions[?Endpoint=='${fn_arn}'] | [0].SubscriptionArn" --output text)
+              if [ "$sub" = "None" ] || [ -z "$sub" ]; then
+                echo "   🔗 Suscribiendo $fn al tópico SNS $topic"
+                aws sns subscribe --topic-arn "$tarn" --protocol lambda \
+                  --notification-endpoint "$fn_arn" >/dev/null
+              else
+                echo "   🔗 Suscripción SNS $topic → $fn ya existe"
+              fi
+              TRIGGER_NOTE="${TRIGGER_NOTE:+$TRIGGER_NOTE }SNS:$topic"
+            fi
+
+            # ── EventBridge: regla rate()/cron() → lambda ──
+            local sched
+            sched=$(echo "$cfg" | jq -r '.schedule // empty')
+            if [ -n "$sched" ]; then
+              local rule="${fn}-cron" rule_arn
+              echo "   🔗 Asegurando regla EventBridge $rule ($sched) → $fn"
+              rule_arn=$(aws events put-rule --name "$rule" --schedule-expression "$sched" \
+                           --query RuleArn --output text)
+              add_perm "$fn" "events-${rule}" events.amazonaws.com "$rule_arn"
+              aws events put-targets --rule "$rule" \
+                --targets "Id"="1","Arn"="$fn_arn" >/dev/null
+              TRIGGER_NOTE="${TRIGGER_NOTE:+$TRIGGER_NOTE }cron:$sched"
+            fi
+            [ -n "$TRIGGER_NOTE" ] || TRIGGER_NOTE="-"
           }
 
           ROLE_JUST_CREATED=0
@@ -309,7 +438,8 @@ jobs:
                 --zip-file fileb:///tmp/lambda.zip \
                 --publish >/dev/null
               echo "✅  $fn actualizada."
-              echo "| $folder | $fn | actualizada | $runtime | (el actual) |" >> "$SUMMARY"
+              ensure_triggers "$folder" "$fn"
+              echo "| $folder | $fn | actualizada | $runtime | (el actual) | $TRIGGER_NOTE |" >> "$SUMMARY"
             else
               if ! echo "$cfg" | grep -q "ResourceNotFoundException"; then
                 echo "❌  Error consultando $fn:"; echo "$cfg"; exit 1
@@ -350,8 +480,9 @@ jobs:
               fi
               aws lambda wait function-active-v2 --function-name "$fn"
               echo "✅  $fn CREADA ($LAMBDA_RUNTIME, rol $role)."
-              echo "   ⚠️  Recuerda configurar aparte: variables de entorno, layers y triggers (ver DESPLIEGUE.md)."
-              echo "| $folder | $fn | 🆕 creada | $LAMBDA_RUNTIME | $role |" >> "$SUMMARY"
+              ensure_triggers "$folder" "$fn"
+              echo "   ⚠️  Recuerda configurar aparte: variables de entorno y layers (ver DESPLIEGUE.md)."
+              echo "| $folder | $fn | 🆕 creada | $LAMBDA_RUNTIME | $role | $TRIGGER_NOTE |" >> "$SUMMARY"
             fi
             rm -rf "$work" /tmp/lambda.zip
           done < folders.txt

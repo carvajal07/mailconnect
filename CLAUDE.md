@@ -1157,6 +1157,25 @@ se puede leer del objeto ya subido a S3.)
       El usuario IAM de CI necesita además `lambda:CreateFunction/GetFunctionConfiguration/
       UpdateFunctionConfiguration` e `iam:GetRole/CreateRole/AttachRolePolicy/PutRolePolicy/
       PassRole` (sobre los roles `Lambda_*`).
+- [x] **CD de lambdas — triggers y colas SQS (jul 2026):** en cada despliegue de una carpeta el
+      workflow asegura (idempotente: solo crea lo que falte, lo existente no se toca) los
+      triggers declarados en **`04_Backend/lambdas/trigger-map.json`**:
+      - `sqs`: crea la **cola** si no existe (VisibilityTimeout 360 s + long polling; override
+        `visibilityTimeout`) y el **event source mapping** cola→lambda (`batchSize` default 10).
+        La lambda con trigger `sqs` recibe además el token **`_SQS`** en su rol auto-detectado
+        (el poller de Lambda lee la cola con el rol de la FUNCIÓN, aunque su código no use SQS).
+      - `sns`: crea el **tópico** + permiso de invocación + suscripción (apuntar el config set
+        SES/EUM al tópico sigue siendo manual, por eso no viene pre-llenado).
+      - `schedule`: regla **EventBridge** `{funcion}-cron` con `rate()`/`cron()` + permiso + target.
+      Pre-llenado con las **9 colas reales del pipeline** (batchSize 1 — cada mensaje ya es un
+      lote): `Email_Prepare-batch-part`→Prepare-batch (worker de partes),
+      `Email_Send-batch-template-EM`→Send-EM, `Email_Send-batch-raw-EAU/-EAP`→Send-EAU/EAP,
+      `Template_Combination-EAP`→Template_Combination, `Template_Combination-EAP-PDF`→ídem-PDF,
+      `Sms/Wsp/Voice_Send-batch`→sus workers. El usuario de CI necesita además
+      `sqs:GetQueueUrl/CreateQueue/GetQueueAttributes` y `lambda:ListEventSourceMappings/
+      CreateEventSourceMapping/AddPermission` (+ `sns:CreateTopic/Subscribe/
+      ListSubscriptionsByTopic` y `events:PutRule/PutTargets` si se usan esas llaves) —
+      **agregar esos permisos ANTES del próximo push** que toque lambdas con trigger.
 
 ### Seguridad (URGENTE)
 - [x] Scripts `prueba genera JWT.py` / `prueba jwt.py` limpios: leen `SECRET_KEY` de env (jul 2026).
