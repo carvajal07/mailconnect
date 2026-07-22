@@ -18,6 +18,9 @@ import { useFeedback } from '../../hooks/useFeedback';
 import { isOk } from '../../services/apiClient';
 import { cascadeService } from '../../services/cascadeService';
 import type { CascadeChannel, CascadeStep, CascadeRun, SuccessCriterion } from '../../services/cascadeService';
+import { templatesService } from '../../services/templatesService';
+import type { TemplateSummary } from '../../services/templatesService';
+import { getUser } from '../../services/authService';
 import { CascadaFlowBuilder, toMinutes } from './CascadaFlowBuilder';
 import type { WaitUnit } from './CascadaFlowBuilder';
 import { formatDateTime } from '../../utils/datetime';
@@ -38,6 +41,10 @@ export const CascadaSection = () => {
   const { databases, messageTemplates } = usePortalData();
   const smsTemplates = messageTemplates.items.filter((t) => t.channel === 'SMS');
   const wspTemplates = messageTemplates.items.filter((t) => t.channel === 'WSP');
+  // Las plantillas de CORREO viven en SES (no en la tabla messageTemplate), así que se
+  // cargan aparte con templatesService.list (mismo patrón que el form de campaña).
+  const sessionCustomer = getUser()?.customer ?? '';
+  const sessionCustomerId = getUser()?.customerId ?? '';
 
   const [name, setName] = useState('');
   const [dataPath, setDataPath] = useState('');
@@ -57,6 +64,8 @@ export const CascadaSection = () => {
 
   const [runs, setRuns] = useState<CascadeRun[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(false);
+  const [sesTemplates, setSesTemplates] = useState<TemplateSummary[]>([]);
+  const [loadingSes, setLoadingSes] = useState(false);
 
   const selectedBase = databases.items.find((d) => d.s3Path === dataPath);
   const contacts = selectedBase?.totalRecords ?? 0;
@@ -68,6 +77,20 @@ export const CascadaSection = () => {
     if (isOk(res) && res.data?.runs) setRuns(res.data.runs);
   };
   useEffect(() => { loadRuns(); }, []);
+
+  // Plantillas de correo (SES) del cliente: para el selector del canal EM (antes era
+  // un campo de texto libre "nombre SES" → el cliente no las veía cargadas).
+  useEffect(() => {
+    if (!sessionCustomer && !sessionCustomerId) return;
+    let alive = true;
+    setLoadingSes(true);
+    templatesService.list(sessionCustomer, sessionCustomerId).then((res) => {
+      if (!alive) return;
+      setLoadingSes(false);
+      if (isOk(res) && res.data?.templates) setSesTemplates(res.data.templates);
+    });
+    return () => { alive = false; };
+  }, [sessionCustomer, sessionCustomerId]);
 
   const setStep = (i: number, patch: Partial<CascadeStep>) =>
     setSteps((s) => s.map((st, idx) => (idx === i ? { ...st, ...patch } : st)));
@@ -104,8 +127,15 @@ export const CascadaSection = () => {
     }
     if (st.channel === 'EM') {
       return (
-        <TextField size="small" fullWidth label="Plantilla de correo (nombre SES)" value={st.content}
-          onChange={(e) => setStep(i, { content: e.target.value })} placeholder="empresa_0001_bienvenida" />
+        <TextField select size="small" fullWidth label="Plantilla de correo (SES)" value={st.content}
+          onChange={(e) => setStep(i, { content: e.target.value })}
+          helperText={loadingSes ? 'Cargando plantillas…' : (sesTemplates.length === 0 ? 'No hay plantillas; créalas en "Plantillas HTML"' : undefined)}>
+          {st.content && !sesTemplates.some((t) => t.name === st.content) && (
+            <MenuItem value={st.content}>{st.content}</MenuItem>
+          )}
+          {sesTemplates.length === 0 && !st.content && <MenuItem value="" disabled>No hay plantillas de correo</MenuItem>}
+          {sesTemplates.map((t) => <MenuItem key={t.name} value={t.name}>{t.name}</MenuItem>)}
+        </TextField>
       );
     }
     return (
@@ -192,7 +222,7 @@ export const CascadaSection = () => {
               <Box><Button size="small" startIcon={<AddIcon />} onClick={addStep}>Agregar canal</Button></Box>
             </>
           ) : (
-            <CascadaFlowBuilder initialSteps={steps} onStepsChange={setSteps} smsTemplates={smsTemplates} wspTemplates={wspTemplates} />
+            <CascadaFlowBuilder initialSteps={steps} onStepsChange={setSteps} smsTemplates={smsTemplates} wspTemplates={wspTemplates} emailTemplates={sesTemplates} />
           )}
 
           <Divider />

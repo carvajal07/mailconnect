@@ -19,6 +19,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import type { CascadeChannel, CascadeStep, SuccessCriterion } from '../../services/cascadeService';
 import type { MessageTemplate } from '../../services/messageTemplatesService';
+import type { TemplateSummary } from '../../services/templatesService';
 
 /**
  * Editor de la CASCADA como FLUJO (React Flow). Reglas del grafo:
@@ -68,7 +69,7 @@ function waitLabel(mins?: number): string {
   return `${mins} min`;
 }
 
-const TemplatesCtx = createContext<{ sms: MessageTemplate[]; wsp: MessageTemplate[] }>({ sms: [], wsp: [] });
+const TemplatesCtx = createContext<{ sms: MessageTemplate[]; wsp: MessageTemplate[]; email: TemplateSummary[] }>({ sms: [], wsp: [], email: [] });
 const ActionsCtx = createContext<{ remove: (id: string) => void; removeEdge: (id: string) => void }>({
   remove: () => {}, removeEdge: () => {},
 });
@@ -212,7 +213,7 @@ function buildInitial(initialSteps: CascadeStep[]): { nodes: Node[]; edges: Edge
 
 /* --------------------------- Diálogo de configuración (item 6) --------------------------- */
 const NodeConfigDialog = ({ node, onClose, onSave }: { node: Node | null; onClose: () => void; onSave: (id: string, patch: Partial<CanalData>) => void }) => {
-  const { sms, wsp } = useContext(TemplatesCtx);
+  const { sms, wsp, email } = useContext(TemplatesCtx);
   const data = (node?.data ?? {}) as unknown as CanalData;
   const [content, setContent] = useState('');
   const [wait, setWait] = useState('');
@@ -254,7 +255,12 @@ const NodeConfigDialog = ({ node, onClose, onSave }: { node: Node | null; onClos
               {wsp.map((t) => <MenuItem key={t.messageTemplateId} value={t.hsmName ?? ''}>{t.name} · {t.hsmName}</MenuItem>)}
             </TextField>
           ) : ch === 'EM' ? (
-            <TextField fullWidth size="small" label="Plantilla de correo (nombre SES)" value={content} onChange={(e) => setContent(e.target.value)} placeholder="empresa_0001_bienvenida" />
+            <TextField select fullWidth size="small" label="Plantilla de correo (SES)" value={content} onChange={(e) => setContent(e.target.value)}
+              helperText={email.length === 0 ? 'No hay plantillas; créalas en "Plantillas HTML"' : undefined}>
+              <MenuItem value="">— Elige una —</MenuItem>
+              {content && !email.some((t) => t.name === content) && <MenuItem value={content}>{content}</MenuItem>}
+              {email.map((t) => <MenuItem key={t.name} value={t.name}>{t.name}</MenuItem>)}
+            </TextField>
           ) : (
             <TextField fullWidth size="small" multiline minRows={2} label="Mensaje de voz (texto a voz)" value={content} onChange={(e) => setContent(e.target.value)} placeholder="Hola {{Nombre}}…" />
           )}
@@ -388,13 +394,14 @@ const Inner = ({ initialSteps, onStepsChange }: { initialSteps: CascadeStep[]; o
   );
 };
 
-export const CascadaFlowBuilder = ({ initialSteps, onStepsChange, smsTemplates, wspTemplates }: {
+export const CascadaFlowBuilder = ({ initialSteps, onStepsChange, smsTemplates, wspTemplates, emailTemplates }: {
   initialSteps: CascadeStep[];
   onStepsChange: (s: CascadeStep[]) => void;
   smsTemplates: MessageTemplate[];
   wspTemplates: MessageTemplate[];
+  emailTemplates: TemplateSummary[];
 }) => (
-  <TemplatesCtx.Provider value={{ sms: smsTemplates, wsp: wspTemplates }}>
+  <TemplatesCtx.Provider value={{ sms: smsTemplates, wsp: wspTemplates, email: emailTemplates }}>
     <ReactFlowProvider>
       <Inner initialSteps={initialSteps} onStepsChange={onStepsChange} />
     </ReactFlowProvider>
