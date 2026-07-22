@@ -6,7 +6,7 @@ Request:  { customerId }
 Respuesta: 200 { data: { campaigns: [...], count } } ordenadas por fecha (desc)
 
 Cada campaña incluye: campaignId, campaignName, consecutive, channel,
-campaignState, dataPath, template, originEmail, date.
+campaignState, dataPath, template, messageTemplateId (SMS/WSP), originEmail, date.
 '''
 import json
 import os

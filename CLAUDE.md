@@ -102,8 +102,8 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `change-password` | `{ user (email), password (nueva), otp? }` + header `Authorization: Bearer` (alternativo) | 200 ok · 401 sin auth/OTP · 400 débil · 404 no existe |
 | `forgot-password` | `{ user (email), ip? }` | 200 siempre (genérico, no revela si el correo existe; envía OTP por correo) |
 | `logout` | `{ user (email) }` | 200 (idempotente) |
-| `Campaign/List` | `{ customerId }` | 200 `data:{campaigns[], count}` (orden desc por fecha; incluye `campaignState`) |
-| `Campaign/Update` | `{ campaignId, campaignName?, channelName?, attachmentType?, dataPath?, template?, from? }` | 200 ok · 409 no-Pendiente · 403 otro cliente · 404 no existe. Solo edita campañas en estado `Pendiente`; toma el cliente del context del Authorizer |
+| `Campaign/List` | `{ customerId }` | 200 `data:{campaigns[], count}` (orden desc por fecha; incluye `campaignState` y `messageTemplateId` de SMS/WSP) |
+| `Campaign/Update` | `{ campaignId, campaignName?, channelName?, attachmentType?, dataPath?, template?, messageTemplateId?, from? }` | 200 ok · 409 no-Pendiente · 403 otro cliente · 404 no existe. Solo edita campañas en estado `Pendiente`; toma el cliente del context del Authorizer. `messageTemplateId` = referencia a la plantilla SMS/WSP (contenido en vivo al enviar) |
 | `Campaign/Delete` | `{ campaignId }` | 200 ok · 400 falta id · 403 otro cliente · 404 no existe. Borra el registro de `campaign` (+ sus `document` best-effort); no borra el CSV ni el historial de procesos. Audita `campaign.delete` |
 | `Campaign/Request-approval` | `{ campaignId }` | 200 ok · 400 (sin muestras) · 403 · 404 · 409. Flujo maker-checker: `approvalStatus none/rejected→pending` (exige `samplesSentCount>0`). Audita `campaign.request-approval` |
 | `Campaign/Approve` | `{ campaignId }` | 200 ok · 403 · 404 · 409 (no pending). `pending→approved` (habilita el envío real). Audita `campaign.approve` |
@@ -175,6 +175,43 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 4. Prepare-batch filtra contra esa tabla en el envío real (chequeo reparado: antes nunca corría).
    ✅ EAP ya reemplaza `{{unsubscribeUrl}}` por destinatario (mismo patrón que EAU; jul 2026).
    Requiere la env `SECRET_KEY` (y `UNSUBSCRIBE_URL`) también en `Send-batch-template-EAP`.
+
+### Ajustes de plantillas, tarifas y modal de campaña (jul 2026)
+- **SMS/WSP: la plantilla se usa EN VIVO (no snapshot).** Antes, al crear una campaña SMS/WSP
+  se copiaba el TEXTO de la plantilla en `campaign.template` (snapshot); si el cliente editaba
+  luego la plantilla, la campaña seguía enviando el texto viejo. **Ahora la campaña guarda una
+  REFERENCIA** `campaign.messageTemplateId` y `Prepare-batch` resuelve el `body` (SMS) / `hsmName`
+  (WSP) **en vivo** desde la tabla `messageTemplate` al enviar (muestras y real) — igual que el
+  email referencia la plantilla SES por nombre. Helper `resolve_live_message_content(id, customerId,
+  channel)` (fail-safe: sin id / plantilla borrada / de otro tenant → `None` → cae al snapshot
+  `campaign.template`). **Voz** no tiene plantilla referenciada (texto libre) → sigue por snapshot.
+  - Contrato: `Campaign/Create-campaign` y `Campaign/Update` aceptan `messageTemplateId?`;
+    `Campaign/List` lo devuelve. El front (`CampanasSection`) guarda la referencia al elegir la
+    plantilla y muestra la vista previa con el contenido **vigente** (`smsPreview`/`wspPreview`).
+  - ⚠️ `[J]`: `Api_V1_Email_Prepare-batch-template` necesita `dynamodb:GetItem` sobre
+    `messageTemplate`. Sin el permiso NO rompe (fail-safe → usa el snapshot), pero no reflejaría
+    ediciones. Cubierto por `08_Pruebas/PruebasSeguridad/test_message_template_live.py`.
+- **Variables como fichas azules en el editor SMS** (`VariableTextEditor.tsx`): el texto del SMS
+  pasa de un `<TextField multiline>` a un `contentEditable` controlado donde las variables
+  `{{Columna}}` se pintan como **ficha azul NO editable**. Se insertan **en la posición del
+  cursor** (no al final) y **Backspace/Delete pegado a la ficha la borra completa** (no carácter a
+  carácter). El `value` sigue siendo texto plano con tokens `{{Columna}}` (el backend no cambia);
+  el componente serializa (chips→`{{}}`) y parsea (`{{}}`→chips) internamente.
+- **Tarifas por VOLUMEN visibles en el admin (fix "todo en 0"):** al pasar el precio base a
+  escalonado por volumen (`baseX=None`), `TarifasSection` mostraba `?? 0` → todo en 0. Ahora los
+  campos vacíos se ven **vacíos** con placeholder "Por volumen", cada tarjeta de canal muestra la
+  **tabla de tramos** (COP/u por rango de envíos/mes que devuelve `Pricing/List` en `tiers`), y
+  escribir un valor fija un **precio plano (override)**. `ChannelRates = Record<string, number|null>`.
+- **Modal de crear/editar campaña:** más ancho (`maxWidth="lg"`) y **compacto en vertical**
+  (spacing reducido). La nota superior solo explica el **Canal** (se quitó la guía de "Entrega del
+  adjunto"). En **EAU/EAP** el selector "Entrega del adjunto" ya **no ofrece "Sin adjunto"** (solo
+  `ONFILE`/`ONLINE`; el canal exige adjunto).
+- **Plantillas PDF:** al guardar se pide el nombre en un **diálogo** (antes `window.prompt` feo);
+  se quitaron el título "Plantillas PDF" y la descripción para **agrandar el lienzo** del editor.
+- **Calculadora de precios** (`CalculadoraPrecios.xlsx`, raíz): reconstruida completa (11 hojas:
+  Leyenda, Supuestos, EM/EAU/EAP/SMS/WhatsApp/Voz por tramos, Cotizador, "Adjunto URL vs archivo",
+  Resumen). Tarifas calibradas con Mailpro, arrancando en **30 COP** (EM 1er tramo). Es la fuente
+  de los `VOLUME_TIERS` embebidos en `Cost_Estimate`/`Pricing_List`/`Prepare-batch`/`Billing_Summary`.
 
 ### Ajustes de campañas, fechas y duplicados (jul 2026)
 - **Lista de campañas tipo tabla:** `CampanasSection` reordena columnas a

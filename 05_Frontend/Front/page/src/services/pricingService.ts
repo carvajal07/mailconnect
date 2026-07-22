@@ -21,8 +21,8 @@ export const PRICING_ENDPOINTS = {
 export type PricingChannel = 'EMAIL' | 'SMS' | 'WHATSAPP' | 'VOICE';
 export type PricingUpdateChannel = PricingChannel | 'COMMON';
 
-/** Mapa campo -> valor por canal. */
-export type ChannelRates = Record<string, number>;
+/** Mapa campo -> valor por canal. `null` = sin override plano (se cobra por tramos). */
+export type ChannelRates = Record<string, number | null>;
 export type RatesByChannel = Record<PricingChannel, ChannelRates>;
 
 export interface PricingListData {
@@ -34,6 +34,9 @@ export interface PricingListData {
   effective: RatesByChannel;
   /** Solo lo guardado explícitamente en ESTE alcance. */
   overrides: RatesByChannel;
+  /** Precios por TRAMO de volumen (todo incluido). Si un canal no tiene override plano, se
+   *  cobra por estos tramos. Claves: EM/EAU/EAP/SMS/WHATSAPP/VOICE. */
+  tiers?: Record<string, { min: number; unit: number }[]>;
 }
 
 export const pricingService = {
