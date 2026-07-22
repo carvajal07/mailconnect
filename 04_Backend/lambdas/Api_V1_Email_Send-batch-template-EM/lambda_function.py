@@ -114,6 +114,47 @@ def insert_process_detail(registers:int,part:int,date:str,state:str)->None:
         }
     )
 
+def _claim_part(tenant_key_value:str, process_id_value:str, part:int, registers:int, date:str, stage:str='send')->bool:
+    """Reclama ATÓMICAMENTE el derecho a enviar (processId, part) para esta ETAPA.
+
+    Reemplaza el patrón anterior validate_process_detail(scan) + insert_process_detail(put con
+    uuid ALEATORIO), que NO era atómico: dos entregas concurrentes del mismo mensaje SQS
+    (entrega at-least-once, o vencimiento del visibility timeout en un lote grande) hacían el
+    scan (ninguna veía nada) y ambas hacían put con uuid distinto → el lote se enviaba DOS
+    veces. Además el scan leía solo la primera página de 1 MB y a escala podía no encontrar la
+    fila. Aquí la clave es DETERMINISTA (`processId#part#stage`) y la escritura condicional
+    `attribute_not_exists`: solo la PRIMERA invocación gana (True → envía); la redelivery pierde
+    la condición (False → NO reenvía). Fail-open SOLO si falta la llave de tenant/proceso."""
+    if not tenant_key_value or not process_id_value or part is None:
+        return True
+    table = dynamodb.Table(f'{tenant_key_value}_processDetail')
+    detail_id = f'{process_id_value}#{part}#{stage}'
+    try:
+        table.put_item(
+            Item={'processDetailId': detail_id, 'processId': process_id_value, 'part': part,
+                  'registers': registers, 'date': date, 'stateProcess': 'Procesando', 'stage': stage},
+            ConditionExpression='attribute_not_exists(processDetailId)')
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return False
+        raise
+
+
+def _mark_part(tenant_key_value:str, process_id_value:str, part:int, state:str, stage:str='send')->None:
+    """Marca el estado final de (processId, part, stage) sobre la MISMA fila determinista que
+    reclamó _claim_part. Best-effort (el envío ya se hizo; no se revierte por esto)."""
+    if not tenant_key_value or not process_id_value or part is None:
+        return
+    try:
+        dynamodb.Table(f'{tenant_key_value}_processDetail').update_item(
+            Key={'processDetailId': f'{process_id_value}#{part}#{stage}'},
+            UpdateExpression='SET stateProcess = :s',
+            ExpressionAttributeValues={':s': state})
+    except Exception as e:
+        print(f'No se pudo marcar la parte {part} como {state}: {e}')
+
+
 def count_sample_send(campaign_id:str)->None:
     """Cuenta 1 envío de MUESTRA (atómico) en la campaña, SOLO cuando el envío salió bien.
     Se llama desde el worker tras un envío exitoso (no en Prepare-batch), para que una
@@ -341,16 +382,14 @@ def lambda_handler(event:dict, context:dict):
         registers = len(data)
         print(f"Cantidad registros a procesar: {registers}")
         
-        #Validar el estado de la parte a procesar (Si se encuentra procesando o terminada puede ser un error de mensajes duplicados)
-        #Debo generar error para evitar realizar envios duplicados
-        response_process_detail = validate_process_detail(part)
-        if response_process_detail['Items']:
-            state = response_process_detail['Items'][0]["stateProcess"]
-            print(f"La parte {part} del proceso {process_id} ya se encuentra procesando o ha finalizado")
-            print(f"El id: {process_detail_id} se encuentra en estado {state}")
+        # IDEMPOTENCIA: reclamo ATÓMICO de (processId, part) para evitar envíos duplicados por
+        # redelivery de SQS. Reemplaza el scan+put (no atómico) anterior: la condición
+        # attribute_not_exists garantiza que solo la PRIMERA entrega envíe; la duplicada se
+        # descarta (raise → se traga abajo → SQS borra el mensaje, no se reenvía el lote).
+        if not _claim_part(tenant, process_id, part, registers, formatted_date):
+            print(f"La parte {part} del proceso {process_id} ya fue reclamada; se omite (duplicado SQS).")
             raise ValueError("La parte ya ha sido procesada")
-        print("Inicia actualización del estado a procesando")
-        insert_process_detail(registers,part,formatted_date,"Procesando")
+        print("Parte reclamada; inicia el envío")
     except Exception as e:
         print(e)
         print("Error en la lectura de los datos de entrada")
@@ -393,11 +432,11 @@ def lambda_handler(event:dict, context:dict):
                 send_bulk(data, headers, start, end, default_tags)
         except Exception as e:
             print(f"Error enviando la parte {part} del proceso {process_id}: {e}")
-            insert_process_detail(registers, part, formatted_date, "Error")
+            _mark_part(tenant, process_id, part, "Error")
             raise
 
         print("Proceso de envios finalizado")
-        insert_process_detail(registers,part,formatted_date,"Terminado")
+        _mark_part(tenant, process_id, part, "Terminado")
         # Envío de MUESTRAS terminado OK → contar 1 en la campaña (no cuenta si falla antes).
         if is_samples and campaign_id:
             count_sample_send(campaign_id)

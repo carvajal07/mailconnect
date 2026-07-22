@@ -78,6 +78,50 @@ def _count_sample_send(campaign_id):
         print('No se pudo contar el envío de muestra SMS: {}'.format(e))
 
 
+def _claim_part(tenant, process_id, part, registers, date, stage='send'):
+    """Reclama ATÓMICAMENTE el derecho a procesar (processId, part) en esta ETAPA.
+
+    Clave DETERMINISTA `processId#part#stage` + escritura condicional
+    `attribute_not_exists`: la PRIMERA invocación gana (True → debe enviar); una
+    redelivery/duplicado de SQS (entrega at-least-once, o vencimiento del visibility
+    timeout en un lote lento) pierde la condición (False → NO reenviar). Cierra la
+    ventana de carrera que permitía enviar dos veces el mismo lote de SMS (que cuesta
+    dinero real por mensaje). `stage` separa la etapa de combinación de la de envío en
+    el flujo EAP; aquí siempre 'send'.
+
+    Fail-open SOLO si falta tenant/processId (no se puede deduplicar): procesa, como
+    antes. La tabla {tenant}_processDetail la crea Prepare-batch en el setup del proceso."""
+    if not tenant or not process_id or part is None:
+        return True
+    table = dynamodb.Table(f'{tenant}_processDetail')
+    detail_id = f'{process_id}#{part}#{stage}'
+    try:
+        table.put_item(
+            Item={'processDetailId': detail_id, 'processId': process_id, 'part': part,
+                  'registers': registers, 'date': date, 'stateProcess': 'Procesando', 'stage': stage},
+            ConditionExpression='attribute_not_exists(processDetailId)')
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            print(f'Parte {part} del proceso {process_id} ya reclamada ({stage}); se omite (duplicado SQS).')
+            return False
+        raise
+
+
+def _mark_part(tenant, process_id, part, state, stage='send'):
+    """Marca el estado final de (processId, part, stage) sobre la MISMA fila determinista
+    que reclamó _claim_part. Best-effort (no rompe el envío ya realizado)."""
+    if not tenant or not process_id or part is None:
+        return
+    try:
+        dynamodb.Table(f'{tenant}_processDetail').update_item(
+            Key={'processDetailId': f'{process_id}#{part}#{stage}'},
+            UpdateExpression='SET stateProcess = :s',
+            ExpressionAttributeValues={':s': state})
+    except Exception as e:
+        print(f'No se pudo marcar la parte {part} como {state}: {e}')
+
+
 def _record_status(tenant, process_id, rows):
     """Inserta los estados de envío en la tabla ÚNICA {tenant}_sendStatus por lotes
     (tenant=tenant_key(NIT)). processId es la PK (una partición por proceso) y sendStatusId la SK."""
@@ -108,11 +152,18 @@ def lambda_handler(event, context):
         tenant = tenant_key(body.get('nit', ''))   # llave de {tenant}_sendStatus
         process_id = body.get('processId', '')
         campaign_id = body.get('campaignId', '')
+        part = body.get('part')                    # id de sub-lote ÚNICO en el proceso (idempotencia)
         is_samples = bool(body.get('samples', False))  # muestras → contar si sale bien
         headers = body.get('headers', [])
         sms_body = body.get('smsBody', '') or ''
         data = body.get('data', [])
-        print(f'SMS lote: cliente={customer_name} nit={tenant} proceso={process_id} registros={len(data)}')
+        print(f'SMS lote: cliente={customer_name} nit={tenant} proceso={process_id} parte={part} registros={len(data)}')
+
+        # IDEMPOTENCIA: reclama (processId, part) de forma atómica ANTES de enviar. Si otra
+        # entrega del mismo mensaje ya lo reclamó (redelivery de SQS), se omite el lote → no
+        # se reenvían SMS (cada SMS cuesta y un duplicado llega al celular de una persona real).
+        if not _claim_part(tenant, process_id, part, len(data), now):
+            continue
 
         status_rows = []
         for row in data:
@@ -161,6 +212,9 @@ def lambda_handler(event, context):
                 _record_status(tenant, process_id, status_rows)
             except Exception as e:
                 print('No se pudieron registrar los estados SMS: {}'.format(e))
+
+        # Parte completada: marca 'Terminado' sobre la fila reclamada (observabilidad).
+        _mark_part(tenant, process_id, part, 'Terminado')
 
         # Muestras: si al menos un SMS del lote se envió OK, contar 1 en la campaña.
         if is_samples and any(r.get('state') == STATE_SENT for r in status_rows):

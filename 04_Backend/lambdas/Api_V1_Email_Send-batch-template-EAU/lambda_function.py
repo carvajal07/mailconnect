@@ -10,6 +10,7 @@ import hashlib
 import boto3
 import json
 import uuid
+from botocore.exceptions import ClientError
 from concurrent.futures import ThreadPoolExecutor
 import copy
 from string import Template
@@ -123,7 +124,7 @@ dynamo = boto3.client('dynamodb')
 def insert_processDetail(processDetailId,tenant,processId,registers,part,date,state):
     #cuenta los registros para el campo total de la tabla {tenant}_processDetail (tenant=tenant_key(NIT))
     table_processDetail = dynamodb.Table(f'{tenant}_processDetail')
-    
+
     # Insertar datos en la tabla de detalle de procesos
     table_processDetail.put_item(
         Item={
@@ -135,6 +136,42 @@ def insert_processDetail(processDetailId,tenant,processId,registers,part,date,st
             'state': state
         }
     )
+
+
+def _claim_part(tenant_key_value, process_id_value, part, registers, date, stage='send'):
+    """Reclama ATÓMICAMENTE el derecho a enviar (processId, part) en esta ETAPA. EAU antes NO
+    tenía ninguna guarda: una redelivery de SQS reenviaba TODO el lote (adjunto único) por
+    duplicado. Clave DETERMINISTA `processId#part#stage` + escritura condicional
+    `attribute_not_exists`: solo la PRIMERA entrega gana (True → envía); la duplicada pierde la
+    condición (False → NO reenvía). Fail-open SOLO si falta la llave de tenant/proceso."""
+    if not tenant_key_value or not process_id_value or part is None:
+        return True
+    table = dynamodb.Table(f'{tenant_key_value}_processDetail')
+    detail_id = f'{process_id_value}#{part}#{stage}'
+    try:
+        table.put_item(
+            Item={'processDetailId': detail_id, 'processId': process_id_value, 'part': part,
+                  'registers': registers, 'date': date, 'stateProcess': 'Procesando', 'stage': stage},
+            ConditionExpression='attribute_not_exists(processDetailId)')
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return False
+        raise
+
+
+def _mark_part(tenant_key_value, process_id_value, part, state, stage='send'):
+    """Marca el estado final de (processId, part, stage) sobre la MISMA fila determinista que
+    reclamó _claim_part. Best-effort."""
+    if not tenant_key_value or not process_id_value or part is None:
+        return
+    try:
+        dynamodb.Table(f'{tenant_key_value}_processDetail').update_item(
+            Key={'processDetailId': f'{process_id_value}#{part}#{stage}'},
+            UpdateExpression='SET stateProcess = :s',
+            ExpressionAttributeValues={':s': state})
+    except Exception as e:
+        print(f'No se pudo marcar la parte {part} como {state}: {e}')
 
 def insert_send_detail(data:dict)->None:
     """
@@ -543,7 +580,12 @@ def lambda_handler(event, context):
         #Al crear la campa;a, el front debe validar que si exista la cantidad X de adjuntos segun los datos cargados a S3
         #Consultar la informacion de la plantilla
 
-        
+        # IDEMPOTENCIA: reclama (processId, part) atómicamente ANTES de enviar. Si otra entrega
+        # del mismo mensaje ya lo reclamó (redelivery de SQS), se omite → no se reenvía el lote.
+        if not _claim_part(tenant, process_id, part, registers, formattedDate):
+            print(f"La parte {part} del proceso {process_id} ya fue reclamada; se omite (duplicado SQS).")
+            return
+
         tags = [{
                 "Name":"customer",
                 "Value":customer_name
@@ -636,25 +678,21 @@ def lambda_handler(event, context):
                     sys.exit(1)
 
         print("Antes del for")
-        for start in range(0, registers, QUANTITY_BATCH):
-            print("En el for")
-            end = min(start + QUANTITY_BATCH, registers)
-            print(f"Procesando registros {start} a {end}")
-            send_bulk(data, header_list, start, end, tags)
-            #send_bulk(data, header_list, from_email, subject, file_content, personalized_text, personalized_subject, personalized_body, personalized_body_list, html, text, start, end, tags)
+        try:
+            for start in range(0, registers, QUANTITY_BATCH):
+                print("En el for")
+                end = min(start + QUANTITY_BATCH, registers)
+                print(f"Procesando registros {start} a {end}")
+                send_bulk(data, header_list, start, end, tags)
+        except Exception as e:
+            # Falla a mitad del envío: marca la parte 'Error' y RE-LANZA. El guard de _claim_part
+            # descarta la redelivery (no reenvía lo ya enviado); se reintenta manualmente.
+            print(f"Error enviando la parte {part} del proceso {process_id}: {e}")
+            _mark_part(tenant, process_id, part, "Error")
+            raise
 
-        
-        
-        #Consultar informacon de los adjuntos
-        
-
-        insert_processDetail(process_detail_id,tenant,"asd",999,1,formattedDate,"Estado")
-        table_sendDetail = dynamodb.Table(f'{tenant}_sendDetail')
-        
-        
-    
         print("Proceso de envios finalizado")
-        #insert_process_detail(registers,part,formatted_date,"Terminado")
+        _mark_part(tenant, process_id, part, "Terminado")
         # Envío de MUESTRAS terminado OK → contar 1 en la campaña (no cuenta si falla antes).
         if is_samples and campaign_id:
             count_sample_send(campaign_id)

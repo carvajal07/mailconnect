@@ -129,6 +129,47 @@ def validate_process_detail(part:int)->dict:
     )
     return response_process_detail
 
+
+def _claim_part(tenant_key_value, process_id_value, part, registers, date, stage='send'):
+    """Reclama ATÓMICAMENTE el derecho a procesar (processId, part) en esta ETAPA.
+
+    La guarda anterior de EAP era CÓDIGO MUERTO: chequeaba el estado "Realizando envios",
+    pero la línea que lo escribía estaba comentada → EAP reenviaba ante cualquier redelivery de
+    SQS. Aquí la clave es DETERMINISTA (`processId#part#stage`) con escritura condicional
+    `attribute_not_exists`: solo la PRIMERA entrega gana (True → envía); la duplicada pierde la
+    condición (False → NO reenvía). El sufijo `stage` separa la etapa de COMBINACIÓN ('combine',
+    la del combinador de adjuntos) de la de ENVÍO ('send'): ambas comparten (processId, part) en
+    la misma tabla {tenant}_processDetail, por eso NO pueden usar la misma clave. Fail-open SOLO
+    si falta la llave de tenant/proceso (p. ej. mensaje viejo en vuelo sin nit)."""
+    if not tenant_key_value or not process_id_value or part is None:
+        return True
+    table = dynamodb.Table(f'{tenant_key_value}_processDetail')
+    detail_id = f'{process_id_value}#{part}#{stage}'
+    try:
+        table.put_item(
+            Item={'processDetailId': detail_id, 'processId': process_id_value, 'part': part,
+                  'registers': registers, 'date': date, 'stateProcess': 'Procesando', 'stage': stage},
+            ConditionExpression='attribute_not_exists(processDetailId)')
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return False
+        raise
+
+
+def _mark_part(tenant_key_value, process_id_value, part, state, stage='send'):
+    """Marca el estado final de (processId, part, stage) sobre la MISMA fila determinista que
+    reclamó _claim_part. Best-effort."""
+    if not tenant_key_value or not process_id_value or part is None:
+        return
+    try:
+        dynamodb.Table(f'{tenant_key_value}_processDetail').update_item(
+            Key={'processDetailId': f'{process_id_value}#{part}#{stage}'},
+            UpdateExpression='SET stateProcess = :s',
+            ExpressionAttributeValues={':s': state})
+    except Exception as e:
+        print(f'No se pudo marcar la parte {part} como {state}: {e}')
+
 def insert_sendDetail(processDetailId,customerName,registers,part,date,state):
     #cuenta los registros para el campo total de la tabla {tenant}_processDetail (tenant=tenant_key(NIT))
     tableName = f'{tenant}_processDetail'
@@ -303,17 +344,14 @@ def lambda_handler(event, context):
         print(f"Parte: {part}")
         print(f"Cantidad registros a procesar: {registers}")
         
-        #Validar el estado de la parte a procesar (Si se encuentra "Realizando envios" puede ser un error de mensajes duplicados)
-        #Debo generar error para evitar realizar envios duplicados
-        response_process_detail = validate_process_detail(part)
-        if response_process_detail['Items']:
-            state = response_process_detail['Items'][0]["stateProcess"]
-            if (state == "Realizando envios"):
-                print(f"La parte {part} del proceso {process_id} ya se encuentra realizando los envios")
-                print(f"El id: {process_id} se encuentra en estado {state}")
-                raise ValueError("La parte ya ha sido procesada")
-        print("Inicia actualización del estado a Realizando envios")
-        #insert_processDetail(process_detail_id,customer_name,registers,part,formatted_date,"Realizando envios")
+        # IDEMPOTENCIA: reclamo ATÓMICO de (processId, part) para la etapa de ENVÍO ('send').
+        # Reemplaza la guarda anterior, que era CÓDIGO MUERTO (chequeaba "Realizando envios",
+        # estado que la línea de escritura comentada NUNCA producía) → EAP reenviaba ante
+        # cualquier redelivery. El combinador ya reclamó la etapa 'combine' de esta misma parte;
+        # por eso la clave lleva el sufijo de etapa. Si esta parte ya se reclamó para envío
+        # (duplicado SQS), part_claimed=False → se omite el envío en el bloque else.
+        part_claimed = _claim_part(tenant, process_id, part, registers, formatted_date, stage='send')
+        print(f"Parte {part}: claim de envío = {part_claimed}")
 
         #Consultar la informacion de la plantilla
         response_template = get_template(template_name)
@@ -344,6 +382,11 @@ def lambda_handler(event, context):
         #Al crear la campa;a, el front debe validar que si exista la cantidad X de adjuntos segun los datos cargados a S3
         #Si son varios adjuntos no pueden ser de diferente tipo (ONLINE; ONFILE)
         #Por aca solo debrian pasar los email con adjunto ONFILE, los ONLINE deben ir en email marketing
+
+        # IDEMPOTENCIA: si la parte ya se reclamó para envío (redelivery de SQS), NO se reenvía.
+        if not part_claimed:
+            print(f"La parte {part} del proceso {process_id} ya fue reclamada (send); se omite (duplicado SQS).")
+            return
 
         default_tags = [{
                 "Name":"customer",
@@ -609,6 +652,9 @@ def lambda_handler(event, context):
                 
 
         
+
+        # Parte completada: marca 'Terminado' sobre la fila reclamada para envío (observabilidad).
+        _mark_part(tenant, process_id, part, "Terminado", stage='send')
 
         # Envío de MUESTRAS terminado sin error → contar 1 en la campaña (no cuenta si falló).
         if status and is_samples and campaign_id:

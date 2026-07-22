@@ -323,6 +323,34 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   deshabilitaba sin explicar). Sugiere "Registrar transferencia" (manual, sin mínimo) para montos
   menores. El backend `Topup-init` ya devolvía el 400 con el mensaje del mínimo.
 
+### Idempotencia atómica de los workers de envío (anti-duplicado) (jul 2026)
+- **Problema:** la garantía anti-duplicado del pipeline dependía de que cada worker de envío
+  deduplicara por `(processId, part)`, pero en la práctica NO se cumplía: **SMS/Voz/WhatsApp/EAU
+  no tenían guarda** (una redelivery de SQS reenviaba todo el lote — y en los telefónicos eso
+  cuesta dinero real y llama/escribe a una persona), **EM/EAP y los combinadores** usaban un
+  `scan` + `put` con **uuid ALEATORIO** que NO es atómico (dos entregas concurrentes pasaban ambas
+  la validación → doble envío) y a escala el `scan` de 1 página de 1 MB ni encontraba la fila.
+  **Send-EAP** tenía la guarda en CÓDIGO MUERTO (chequeaba un estado que la escritura comentada
+  nunca producía).
+- **Fix — claim ATÓMICO por etapa:** los 6 workers de envío (`Send-EM/EAU/EAP`, `Sms/Wsp/Voice_
+  Send-batch`) y los 2 combinadores (`Template_Combination` DOCX, `Template_Combination-EAP-PDF`)
+  usan ahora `_claim_part(tenant, processId, part, ..., stage)`: una escritura **condicional
+  `attribute_not_exists`** sobre la clave **DETERMINISTA** `processId#part#stage` en
+  `{tenant}_processDetail`. Solo la PRIMERA entrega gana (envía); la redelivery pierde la condición
+  y se OMITE. `stage` separa `combine` (combinador) de `send` (worker), que comparten
+  `(processId, part)` en la misma tabla. Reemplaza el patrón `scan`+`put(uuid)`. Fail-open solo si
+  falta la llave de tenant/proceso (mensaje viejo en vuelo). El helper está **copiado** en cada
+  lambda (convención del repo, sin imports compartidos).
+- **Fix del combinador DOCX (mis-tenanting):** `Template_Combination` PERDÍA `nit`/`samples`/
+  `documentFormat` al re-emitir a `Send-EAP` → Send-EAP corría con `tenant=''` (escribía en la
+  tabla equivocada) y no contaba muestras ni distinguía el formato. Ahora los **preserva** en la
+  re-emisión (el combinador PDF ya lo hacía).
+- **Cobertura:** `08_Pruebas/PruebasSeguridad/test_idempotencia_envio.py` (claim atómico en los 6
+  workers + dedup a nivel handler de SMS/Voz/WhatsApp). Suite completo en verde. Los mensajes al
+  canal SIEMPRE llevan `part` único en el proceso (`prepare_message`, `part_offset = part*PART_SIZE`).
+  ⚠️ Pendiente relacionado (no en esta tanda): conciliación de fallos parciales de lote y DLQ en
+  las colas creadas por el CD.
+
 ### Ajustes operativos de envío y UX (jul 2026)
 - **Fix `ResourceNotFoundException` en el primer envío:** `Prepare-batch` ahora ESPERA a que
   las tablas por cliente (`{tenant}_processDetail/_sendDetail/_sendStatus/_unsubscribe/_blackList`)
