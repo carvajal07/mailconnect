@@ -114,8 +114,8 @@ export const EstadisticasSection = () => {
         <StatTile label="Pendientes" value={kpis.pendientes} color={status.pendiente} icon={<HourglassEmptyIcon />} sublabel="por aprobar" />
         <StatTile label="Creadas" value={kpis.creadas} color={status.creada} icon={<DraftsIcon />} sublabel="borradores" />
         <StatTile label="Enviadas" value={kpis.enviadas} color={status.enviada} icon={<SendIcon />} />
-        <StatTile label="Total envíos" value={kpis.totalEnvios.toLocaleString('es-CO')} icon={<MarkEmailReadIcon />} />
-        <StatTile label="Apertura prom." value={`${kpis.aperturaProm}%`} icon={<VisibilityIcon />} sublabel="de entregados" />
+        <StatTile label="Total envíos" value={kpis.totalEnvios} icon={<MarkEmailReadIcon />} />
+        <StatTile label="Apertura prom." value={kpis.aperturaProm} suffix="%" icon={<VisibilityIcon />} sublabel="de entregados" />
       </Box>
 
       {/* Gráficos */}
