@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import {
   Box,
   Button,
@@ -27,6 +27,7 @@ import {
   IconButton,
   Tooltip,
 } from '@mui/material';
+import { ThemeProvider, useTheme, createTheme } from '@mui/material/styles';
 import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ApartmentIcon from '@mui/icons-material/Apartment';
@@ -103,6 +104,18 @@ const APPROVAL_META: Record<string, { label: string; color: 'info' | 'warning' |
 };
 
 export const CampanasSection = () => {
+  // Tema COMPACTO para el modal de campaña: fuerza size="small" en todos los campos/listas
+  // (menor alto) sin tener que anotarlo campo por campo. Se aplica solo dentro del diálogo.
+  const baseTheme = useTheme();
+  const compactTheme = useMemo(() => createTheme(baseTheme, {
+    components: {
+      MuiTextField: { defaultProps: { size: 'small' } },
+      MuiFormControl: { defaultProps: { size: 'small' } },
+      MuiSelect: { defaultProps: { size: 'small' } },
+      MuiInputLabel: { defaultProps: { size: 'small' } },
+    },
+  }), [baseTheme]);
+
   // El cliente (empresa) se toma de la sesión, no se captura en formularios.
   const customer = getUser()?.customer ?? '';
   const customerId = getUser()?.customerId ?? '';
@@ -137,8 +150,10 @@ export const CampanasSection = () => {
   const [attachmentPath, setAttachmentPath] = useState('');
   const [attachmentName, setAttachmentName] = useState('');
   const [attachmentUploading, setAttachmentUploading] = useState(false);
-  // EAP-PDF: nombre de la plantilla del editor (mc_pdf_drafts) elegida como adjunto.
+  // EAP-PDF: clave de la plantilla elegida y su HTML. El HTML se guarda SOLO en memoria al
+  // seleccionar (no se sube a S3); la subida se hace al CREAR la campaña (handleSubmit).
   const [pdfTemplateName, setPdfTemplateName] = useState('');
+  const [pdfTemplateHtml, setPdfTemplateHtml] = useState('');
 
   const loadCampaigns = refreshCampaigns;
 
@@ -172,6 +187,7 @@ export const CampanasSection = () => {
     setAttachmentPath('');
     setAttachmentName('');
     setPdfTemplateName('');
+    setPdfTemplateHtml('');
   };
 
   const handleOpenDialog = () => {
@@ -330,17 +346,16 @@ export const CampanasSection = () => {
 
   /**
    * EAP-PDF: elige una plantilla PDF (del BACKEND `messageTemplate` canal PDF, o un borrador
-   * local de respaldo) y sube su HTML a S3 como el adjunto de la campaña. El combinador
-   * EAP-PDF baja ese HTML y renderiza un PDF por destinatario. Reutiliza attachmentPath/Name
-   * (y su validación) igual que el .docx. La `key` codifica la fuente: `c:{id}` backend, `l:{name}` local.
+   * local de respaldo). SOLO guarda la selección + su HTML en memoria — NO sube nada a S3.
+   * La subida del HTML se hace al CREAR la campaña (uploadPdfTemplateHtml en handleSubmit);
+   * el combinador EAP-PDF lo baja y renderiza un PDF por destinatario al enviar (muestras/real).
+   * La `key` codifica la fuente: `c:{id}` backend, `l:{name}` local.
    */
-  const selectPdfTemplate = async (key: string) => {
+  const selectPdfTemplate = (key: string) => {
     setPdfTemplateName(key);
-    if (!key) { resetAttachment(); setPdfTemplateName(''); return; }
-    if (!customer) {
-      notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
-      return;
-    }
+    // Cambiar de plantilla invalida cualquier HTML/ruta ya resuelto.
+    setAttachmentPath('');
+    if (!key) { setPdfTemplateHtml(''); setAttachmentName(''); return; }
     let html = '';
     let label = 'plantilla';
     if (key.startsWith('c:')) {
@@ -351,27 +366,35 @@ export const CampanasSection = () => {
       label = key.slice(2);
       html = readPdfDrafts()[label] ?? '';
     }
-    if (!html) { notify('No se encontró la plantilla PDF seleccionada.', 'error'); return; }
-    setAttachmentUploading(true);
+    if (!html) {
+      notify('No se encontró la plantilla PDF seleccionada.', 'error');
+      setPdfTemplateName(''); setPdfTemplateHtml(''); setAttachmentName('');
+      return;
+    }
+    setPdfTemplateHtml(html);
+    setAttachmentName(`${label} (plantilla PDF)`);
+  };
+
+  /** Sube a S3 el HTML de la plantilla PDF seleccionada y devuelve su ruta (o null si falla).
+   *  Se llama al CREAR la campaña, no al seleccionar. */
+  const uploadPdfTemplateHtml = async (): Promise<string | null> => {
+    if (!pdfTemplateHtml) return null;
+    if (!customer) { notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning'); return null; }
+    const label = (attachmentName || 'plantilla').replace(/\s*\(plantilla PDF\)\s*$/, '');
     const safe = label.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'plantilla';
     const fileName = `plantilla-pdf-${safe}-${Date.now()}.html`;
-    const file = new File([html], fileName, { type: 'text/html' });
+    const file = new File([pdfTemplateHtml], fileName, { type: 'text/html' });
+    setAttachmentUploading(true);
     const presign = await campaignsService.presignUrl({ customer, nit: getUser()?.nit ?? '', documentName: fileName, documentType: 'attachment' });
     if (!isOk(presign) || !presign.data?.url || !presign.data?.path) {
       setAttachmentUploading(false);
-      setPdfTemplateName('');
-      return notify(presign.description || 'No se pudo crear la URL para la plantilla PDF.', 'error');
+      notify(presign.description || 'No se pudo crear la URL para la plantilla PDF.', 'error');
+      return null;
     }
     const ok = await campaignsService.uploadToS3(presign.data.url, file);
     setAttachmentUploading(false);
-    if (ok) {
-      setAttachmentPath(presign.data.path);
-      setAttachmentName(`${label} (plantilla PDF)`);
-      notify('Plantilla PDF lista para la campaña.', 'success');
-    } else {
-      setPdfTemplateName('');
-      notify('No se pudo subir la plantilla PDF a S3.', 'error');
-    }
+    if (!ok) { notify('No se pudo subir la plantilla PDF a S3.', 'error'); return null; }
+    return presign.data.path;
   };
 
   const handleSubmit = async () => {
@@ -389,13 +412,27 @@ export const CampanasSection = () => {
       return;
     }
     // EAU/EAP exigen un documento adjunto (el backend lo valida y devuelve 400 sin él).
-    if (!editingId && isAttachment && !attachmentPath) {
-      notify(isEapPdf
-        ? 'Selecciona una plantilla PDF del editor antes de crear la campaña.'
-        : 'Para EAU/EAP debes subir el documento adjunto antes de crear la campaña.', 'warning');
-      return;
+    // EAP-PDF: basta con haber SELECCIONADO la plantilla (su HTML está en memoria); el
+    // resto de canales de adjunto exigen el archivo ya subido.
+    if (!editingId && isAttachment) {
+      if (isEapPdf && !pdfTemplateHtml) {
+        notify('Selecciona una plantilla PDF del editor antes de crear la campaña.', 'warning');
+        return;
+      }
+      if (!isEapPdf && !attachmentPath) {
+        notify('Para EAU/EAP debes subir el documento adjunto antes de crear la campaña.', 'warning');
+        return;
+      }
     }
     setSubmitting(true);
+    // EAP-PDF: la subida del HTML se hace AHORA (al crear), no al seleccionar la plantilla.
+    let pdfPath = attachmentPath;
+    if (!editingId && isEapPdf && !attachmentPath) {
+      const uploaded = await uploadPdfTemplateHtml();
+      if (!uploaded) { setSubmitting(false); return; } // el helper ya notificó el error
+      pdfPath = uploaded;
+      setAttachmentPath(uploaded);
+    }
     const res = editingId
       ? await campaignsService.update({
           campaignId: editingId,
@@ -420,7 +457,8 @@ export const CampanasSection = () => {
           messageTemplateId: (isSms || isWsp) ? formData.messageTemplateId || undefined : undefined,
           from: formData.from,
           // Documento adjunto (solo EAU/EAP): el backend espera una lista de { path }.
-          attachment: isAttachment && attachmentPath ? [{ path: attachmentPath }] : undefined,
+          // Para EAP-PDF, pdfPath es la ruta recién subida en este submit.
+          attachment: isAttachment && pdfPath ? [{ path: pdfPath }] : undefined,
           // Formato del documento EAP (DOCX combinación Word / PDF campos personalizados).
           documentFormat: isEap ? formData.documentFormat : undefined,
           // EAP siempre es personalizado por destinatario.
@@ -544,8 +582,9 @@ export const CampanasSection = () => {
       <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="lg" fullWidth>
         <DialogTitle>{editingId ? 'Editar Campaña' : 'Crear Campaña'}</DialogTitle>
         <DialogContent>
+          <ThemeProvider theme={compactTheme}>
           <Box sx={{ mt: 1 }}>
-            <Stack spacing={1.5}>
+            <Stack spacing={1.25}>
               <Alert severity="info" icon={<InfoOutlinedIcon />} sx={{ py: 0.5 }}>
                 <Typography variant="body2" component="div">
                   <strong>Canal</strong> — cómo se envía:
@@ -627,8 +666,8 @@ export const CampanasSection = () => {
               )}
 
               {/* Documento adjunto (solo EAU/EAP). El backend exige el adjunto para estos canales.
-                  EAP-PDF: se elige una plantilla del editor (mc_pdf_drafts) y se sube su HTML.
-                  EAU / EAP-DOCX: se sube el archivo (docx/pdf). */}
+                  EAP-PDF: se ELIGE una plantilla (backend o borrador local); su HTML se sube a S3
+                  al CREAR la campaña, no al seleccionar. EAU / EAP-DOCX: se sube el archivo. */}
               {isAttachment && !editingId && isEapPdf && (
                 <Box sx={{ p: 1.5, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
                   <FormControl fullWidth disabled={attachmentUploading}>
@@ -650,8 +689,9 @@ export const CampanasSection = () => {
                       <Chip color="success" label={attachmentName} onDelete={resetAttachment} />
                     ) : (
                       <Typography variant="caption" color="text.secondary">
-                        Diseña y guarda tu plantilla en la pestaña <strong>Plantillas PDF</strong>; aquí se
-                        renderiza un PDF por destinatario sustituyendo las variables <code>{'{{campo}}'}</code>.
+                        Elige una plantilla ya guardada en <strong>Plantillas PDF</strong> (se seleccionan al
+                        instante; el PDF se genera por destinatario al enviar, sustituyendo las variables
+                        <code>{'{{campo}}'}</code>).
                       </Typography>
                     )}
                   </Stack>
@@ -808,7 +848,9 @@ export const CampanasSection = () => {
                                 // Correo verificado completo: fija la dirección exacta como remitente.
                                 handleInputChange('from', v.slice(6));
                               } else {
-                                const mailbox = formData.from.split('@')[0] || DEFAULT_MAILBOX;
+                                // Al pasar a un DOMINIO: si venías de un correo verificado (nombre fijo,
+                                // p. ej. tu nombre), se resetea al nombre por defecto en vez de arrastrarlo.
+                                const mailbox = fromIsEmail ? DEFAULT_MAILBOX : (formData.from.split('@')[0] || DEFAULT_MAILBOX);
                                 handleInputChange('from', `${mailbox}@${v}`);
                               }
                             }}
@@ -868,6 +910,7 @@ export const CampanasSection = () => {
               </FormControl>
             </Stack>
           </Box>
+          </ThemeProvider>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseDialog} disabled={submitting}>

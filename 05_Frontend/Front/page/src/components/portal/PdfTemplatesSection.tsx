@@ -34,6 +34,7 @@ import { pdfTemplatesService, base64ToPdfBlob, readPdfDrafts, writePdfDrafts } f
 import { messageTemplatesService } from '../../services/messageTemplatesService';
 import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { useFeedback } from '../../hooks/useFeedback';
+import { usePortalData } from '../../context/PortalDataContext';
 
 /**
  * Editor de PLANTILLAS PDF tipo "documento" (a lo Word): barra de formato de texto arriba,
@@ -94,6 +95,9 @@ const TB = ({ title, icon, onClick }: { title: string; icon: ReactNode; onClick:
 
 export const PdfTemplatesSection = () => {
   const { notify, FeedbackSnackbar } = useFeedback();
+  // Al guardar una plantilla PDF se refresca el contexto del portal para que aparezca de
+  // inmediato en el selector de "crear campaña" (canal EAP-PDF) sin recargar.
+  const { refreshMessageTemplates } = usePortalData();
   const pageRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<'A4' | 'Carta'>('A4');
   const [font, setFont] = useState('Arial');
@@ -170,8 +174,13 @@ export const PdfTemplatesSection = () => {
     setSaving(false);
     // Espejo local (respaldo/offline + el form de campaña lo tiene aunque no recargue).
     const d = readPdfDrafts(); d[clean] = html; writePdfDrafts(d);
-    if (isOk(res)) notify(`Plantilla "${clean}" guardada en el sistema.`, 'success');
-    else notify(res.description || 'Se guardó localmente; el guardado en el sistema falló.', 'warning');
+    if (isOk(res)) {
+      notify(`Plantilla "${clean}" guardada en el sistema.`, 'success');
+      // Refresca la lista compartida del portal → aparece ya en "crear campaña" (EAP-PDF).
+      refreshMessageTemplates();
+    } else {
+      notify(res.description || 'Se guardó localmente; el guardado en el sistema falló.', 'warning');
+    }
   };
 
   /** Abre el menú "Cargar" y trae las plantillas PDF del backend (compartidas). */
