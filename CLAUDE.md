@@ -300,8 +300,9 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   `documentFormat=PDF` a la cola **`Template_Combination-EAP-PDF`**, cuyo consumidor es la nueva
   lambda **`Api_V1_Template_Combination-EAP-PDF`** (análoga al combinador DOCX): baja el HTML de la
   plantilla (del `documentPath` del registro `document` de la campaña), por cada destinatario sustituye
-  `{{campo}}` con su fila del CSV, **renderiza el PDF** (mismo `html_to_pdf`), lo sube a
-  `attachment/{campaignId}/{nombre}.pdf` y **re-emite a `Email_Send-batch-raw-EAP` preservando `nit`
+  `{{campo}}` con su fila del CSV, **renderiza el PDF** (mismo `html_to_pdf`), lo sube al prefijo
+  **PRIVADO** `personalized/{campaignId}/{nombre}.pdf` (ver "Personalizados privados" abajo) y
+  **re-emite a `Email_Send-batch-raw-EAP` preservando `nit`
   + `samples` + `documentFormat`** (el combinador DOCX los pierde — bug latente que este NO copia).
   **`Send-batch-template-EAP`** ahora usa `.pdf` (subtype `application/pdf`) cuando el mensaje trae
   `documentFormat=PDF`; la ruta DOCX queda intacta. El render es idéntico en ambas lambdas (copiado,
@@ -687,9 +688,16 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   devuelve como `path` (`s3Path`). Tipos válidos: `database|document|resources|attachment`.
 - **Provisión en `Register`:** al registrar la empresa se crea el bucket único + **CORS**
   (GET/PUT/HEAD) + **política de lectura pública** SOLO para `attachment/*` y `resources/*`
-  (con `put_public_access_block` que permite la política pero bloquea ACLs). `database/` y
-  `document/` quedan privados.
-- **Internos:** el docx **combinado** (Combination→Send-EAP) va bajo `attachment/{campaignId}/…`;
+  (con `put_public_access_block` que permite la política pero bloquea ACLs). `database/`,
+  `document/` y `personalized/` quedan privados.
+- **Personalizados privados (jul 2026):** los adjuntos **personalizados por destinatario** (docx
+  combinado y **pdf** personalizado, que traen **datos personales**) NO van a `attachment/` (público)
+  sino al prefijo **PRIVADO** `personalized/{campaignId}/{nombre}.{docx|pdf}`. `Send-EAP` los adjunta
+  por `get_object` (IAM) — EAP siempre adjunta (ONFILE), nunca sirve el personalizado por URL pública,
+  así que el cambio no afecta el envío. Escriben ahí `Template_Combination` (docx) y
+  `Template_Combination-EAP-PDF` (pdf); lee `Send-batch-template-EAP`. El adjunto **único** de EAU y
+  las **imágenes** siguen en `attachment/`/`resources/` (públicos, los usa ONLINE / el cliente de correo).
+- **Internos:** el adjunto **personalizado** (Combination→Send-EAP) va bajo `personalized/{campaignId}/…`;
   los **part-files** del troceo siguen en `_parts/{processId}/N.json` (privados, raíz del bucket).
   Los lectores que sacan el basename del `documentPath` usan `split('/')[-1]` (la key tiene 3
   segmentos ahora). Los readers construyen `tenant_bucket(nit)` (único) + la key **almacenada**

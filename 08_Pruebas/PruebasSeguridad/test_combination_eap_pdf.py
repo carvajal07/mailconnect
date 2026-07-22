@@ -18,6 +18,7 @@ os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'testing')
 
 import pytest  # noqa: E402
 import boto3  # noqa: E402
+import botocore  # noqa: E402
 from moto import mock_aws  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -87,10 +88,13 @@ def test_renderiza_por_destinatario_y_reemite(combiner):
     res = mod.lambda_handler(_event(data, samples=True), None)
     assert res['statusCode'] == 200
 
-    # Un PDF por destinatario, con las variables sustituidas.
-    ana = s3.get_object(Bucket=BUCKET, Key=f'attachment/{CAMP}/Ana.pdf')['Body'].read().decode()
+    # Un PDF por destinatario, con las variables sustituidas, en el prefijo PRIVADO personalized/.
+    ana = s3.get_object(Bucket=BUCKET, Key=f'personalized/{CAMP}/Ana.pdf')['Body'].read().decode()
     assert 'Hola Ana' in ana and 'Bogotá' in ana and '{{nombre}}' not in ana
-    s3.get_object(Bucket=BUCKET, Key=f'attachment/{CAMP}/Beto.pdf')  # existe
+    s3.get_object(Bucket=BUCKET, Key=f'personalized/{CAMP}/Beto.pdf')  # existe
+    # Y NO debe quedar en el prefijo público attachment/.
+    with pytest.raises(botocore.exceptions.ClientError):
+        s3.get_object(Bucket=BUCKET, Key=f'attachment/{CAMP}/Ana.pdf')
 
     # Re-emite a Send-EAP preservando nit + samples + documentFormat.
     msgs = sqs.receive_message(QueueUrl=q, MaxNumberOfMessages=10).get('Messages', [])

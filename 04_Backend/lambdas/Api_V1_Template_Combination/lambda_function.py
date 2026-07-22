@@ -14,6 +14,9 @@ URL_SQS_EAP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch
 
 # Bucket por cliente por NIT: {prefix}-{nit}-document (DNS-safe). Fallback al viejo por nombre.
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
+# Prefijo PRIVADO para los documentos personalizados por destinatario (traen datos
+# personales). NO es público como attachment/ — Send-EAP los adjunta por get_object (IAM).
+PERSONALIZED_PREFIX = 'personalized'
 
 
 def tenant_key(nit):
@@ -274,9 +277,10 @@ def lambda_handler(event, context):
             doc.save(buffer)
             buffer.seek(0)
 
-            # El docx COMBINADO va bajo el prefijo attachment/ del bucket único del cliente
-            # (lo lee Send-EAP con la misma key). Prefijo público → sirve como adjunto/enlace.
-            s3.upload_fileobj(buffer, Bucket=bucket_name, Key=f'attachment/{campaign_id}/{doc_name}')
+            # El docx COMBINADO (personalizado por destinatario → datos personales) va bajo el
+            # prefijo PRIVADO `personalized/` del bucket único del cliente (lo lee Send-EAP por
+            # get_object con IAM; NO se sirve por URL pública).
+            s3.upload_fileobj(buffer, Bucket=bucket_name, Key=f'{PERSONALIZED_PREFIX}/{campaign_id}/{doc_name}')
 
         body = {
             "customerId":customer_id,

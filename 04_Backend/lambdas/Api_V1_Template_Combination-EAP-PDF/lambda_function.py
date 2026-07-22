@@ -12,7 +12,7 @@ Flujo por mensaje (build_ctx + part + data, ver Prepare-batch):
   2. Baja la plantilla HTML del cliente desde S3 (documentPath del registro `document`
      de la campaña; el editor sube ese HTML con el prefijo attachment/).
   3. Por cada destinatario: reemplaza `{{campo}}` con su fila del CSV, renderiza el PDF
-     y lo sube a `attachment/{campaignId}/{nombre}.pdf` del bucket único del cliente.
+     y lo sube a `personalized/{campaignId}/{nombre}.pdf` (prefijo PRIVADO) del bucket del cliente.
   4. Re-emite el mensaje a `Email_Send-batch-raw-EAP` PRESERVANDO nit + samples +
      documentFormat (para que Send-EAP resuelva el bucket por NIT, adjunte el .pdf y
      cuente las muestras correctamente).
@@ -38,6 +38,9 @@ URL_SQS_EAP = os.environ.get(
     'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-raw-EAP',
 )
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
+# Prefijo PRIVADO para los documentos personalizados por destinatario (traen datos
+# personales). NO es público como attachment/ — Send-EAP los adjunta por get_object (IAM).
+PERSONALIZED_PREFIX = 'personalized'
 IMG_MAX_BYTES = int(os.environ.get('PDF_IMG_MAX_BYTES', str(8 * 1024 * 1024)))
 IMG_TIMEOUT = int(os.environ.get('PDF_IMG_TIMEOUT', '10'))
 
@@ -246,7 +249,9 @@ def lambda_handler(event, context):
         rendered = render_variables(template_html, mapping)
         pdf_bytes = html_to_pdf(rendered, page_size)
         doc_name = '{}.pdf'.format(register[2] if len(register) > 2 else register[0])
-        key = 'attachment/{}/{}'.format(campaign_id, doc_name)
+        # PRIVADO: los personalizados por destinatario traen datos personales → van al prefijo
+        # `personalized/` (NO público como attachment/). Send-EAP los adjunta por get_object (IAM).
+        key = '{}/{}/{}'.format(PERSONALIZED_PREFIX, campaign_id, doc_name)
         s3.put_object(Bucket=bucket_name, Key=key, Body=pdf_bytes, ContentType='application/pdf')
 
     # Re-emite a Send-EAP PRESERVANDO nit + samples + documentFormat (a diferencia del

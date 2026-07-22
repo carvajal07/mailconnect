@@ -209,6 +209,14 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 - [ ] `[J]` **Redesplegar `Api_V1_Email_Send-batch-template-EAP`**: ahora usa `.pdf` (subtype
   `application/pdf`) cuando el mensaje trae `documentFormat=PDF`. La ruta DOCX no cambia — no requiere
   permisos nuevos.
+- [ ] `[J]` **Adjuntos personalizados PRIVADOS** (seguridad): los combinadores DOCX/PDF ahora escriben
+  el adjunto por destinatario en `personalized/{campaignId}/…` (privado) en vez de `attachment/` (público),
+  y `Send-EAP` lee de ahí. **Redesplegar los 4**: `Template_Combination`, `Template_Combination-EAP-PDF`,
+  `Send-batch-template-EAP`, `Security_Register` (se hace solo al push). **Sin IAM ni política nuevos**:
+  la política pública solo cubre `attachment/*` y `resources/*`, así que `personalized/*` queda privado
+  también en los **buckets existentes** (no hay migración). `Register` agrega el marcador `personalized/`
+  solo a buckets nuevos (cosmético). Nota: un envío EAP en vuelo justo durante el redeploy podría no hallar
+  el adjunto (combinador viejo→attachment, send nuevo→personalized); reintentar/reenviar lo resuelve.
 - [x] `[C]` **Form de crear campaña** — hecho: `CampanasSection` con EAP + "Tipo de documento = PDF"
   muestra un selector de plantillas PDF (del backend + borradores locales), sube su HTML a S3
   (`attachment/`) y crea la campaña con `documentFormat=PDF` + ese adjunto. El combinador EAP-PDF lo consume.

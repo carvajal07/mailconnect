@@ -20,6 +20,9 @@ REGION = 'us-east-1'
 
 # Bucket por cliente por NIT: {prefix}-{nit}-document (DNS-safe). Fallback al viejo por nombre.
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
+# Prefijo PRIVADO donde los combinadores dejan el adjunto personalizado por destinatario
+# (docx/pdf con datos personales). Se lee por get_object (IAM); no se sirve por URL pública.
+PERSONALIZED_PREFIX = 'personalized'
 
 
 def tenant_key(nit):
@@ -459,7 +462,7 @@ def lambda_handler(event, context):
                 #Productivo
                 #doc_name = register[2] + ".docx"
                 print(f"Email: {email} - Pdf: {doc_name}")
-                attachmentPath = f'attachment/{campaign_id}/{doc_name}'
+                attachmentPath = f'{PERSONALIZED_PREFIX}/{campaign_id}/{doc_name}'
                 s3_object = s3.get_object(Bucket=bucket_name, Key=attachmentPath)
                 file_content = s3_object['Body'].read()
                 #file_object = file_content.decode('ISO-8859-1')
@@ -537,7 +540,7 @@ def lambda_handler(event, context):
                 unique_id = register[0]
                 email = register[1]
                 doc_name = register[2] + attachment_ext
-                attachmentPath = f'attachment/{campaign_id}/{doc_name}'
+                attachmentPath = f'{PERSONALIZED_PREFIX}/{campaign_id}/{doc_name}'
                 s3_object = s3.get_object(Bucket=bucket_name, Key=attachmentPath)
                 print("consulta adjunto ejecutada correctamente")
                 file_content = s3_object['Body'].read()
