@@ -112,13 +112,14 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Schedule/List` | `{}` | 200 `data:{schedules:[{scheduleId, campaignId, campaignName, scheduledAt, status, firedAt, processId, error}], count}` (del tenant, próximos primero) |
 | `Schedule/Cancel` | `{ scheduleId }` | 200 ok · 400 · 403 otro cliente · 404 · 409 (ya no está `pending`). `pending→canceled` |
 | `Template/List` | `{ customer }` o `{ customerId }` | 200 `data:{templates:[{name, created}], count}` (SES filtrado por prefijo `{customer}_`) |
+| `Template/Render-pdf` | `{ html o messageTemplateId, variables?, pageSize?, store?, filename? }` | 200 `data:{pdfBase64, filename}` (store=false) · `data:{path, url}` (store=true) · 400 · 403 · 500 (falta layer). Renderiza a PDF el HTML del editor sustituyendo `{{campo}}` (xhtml2pdf). Lo llama el botón "Vista previa PDF" del editor |
 | `Email/Unsubscribe` | **GET/POST público (proxy, sin authorizer)** `?t=<token HMAC>` | 200 página HTML (confirmación / enlace inválido). El token lo firman las lambdas Send con `SECRET_KEY`; inserta en `{customer}_unsubscribe` (PK `email`) |
 | `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, duplicates?, allowDuplicates?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`). `allowDuplicates` = si el envío real NO filtra contactos repetidos |
 | `Database/List` | `{ customerId }` | 200 `data:{files[], count}` (incluye `columns`, `validEmails`, `invalidEmails`) |
 | `Database/Delete` | `{ databaseFileId }` | 200 ok · 403 otro cliente · 404 no existe. Borra el registro (no el CSV en S3) |
 | `Customer/List` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, realSendEnabled}], count}` |
 | `Customer/Update` | `{ customerId, realSendEnabled (bool) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales |
-| `MessageTemplate/Create` | `{ channel:SMS\|WSP\|DOCX, name, body?/hsmName?+language?+params?/s3Path?+params? }` | 201 `data:{messageTemplateId}` · 400 datos. SMS necesita `body`, WSP `hsmName`, DOCX `s3Path` |
+| `MessageTemplate/Create` | `{ channel:SMS\|WSP\|DOCX\|PDF, name, body?/hsmName?+language?+params?/s3Path?+params?/html? }` | 201 `data:{messageTemplateId}` · 400 datos. SMS necesita `body`, WSP `hsmName`, DOCX `s3Path`, **PDF `html`** (el HTML del editor) |
 | `MessageTemplate/List` | `{ customerId, channel? }` | 200 `data:{templates[], count}` (desc por fecha; filtra por canal si se envía) |
 | `MessageTemplate/Delete` | `{ messageTemplateId }` | 200 ok · 403 otro cliente · 404 no existe |
 | `Blacklist/List` | `{ customerId }` o `{ customer }` | 200 `data:{items:[{email, rejectionType, description, date}], count}` (tabla `{customer}_blackList`) |
@@ -280,18 +281,74 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - **Orden de tabs del portal:** **Bases de datos** primero · separador · **Plantillas** (HTML/DOCX/
   **PDF**/SMS/WhatsApp) · separador · **Campañas** · **Programar envíos** · Muestras · el resto
   (`PortalSidebar`, con `dividerAfter`).
-- **Plantillas PDF (jul 2026):** **Plantillas PDF** (`PdfTemplatesSection`) es un tablero **vacío**
-  (scaffold) reservado para las plantillas PDF del envío EAP-PDF (sin backend aún).
-- **Programar envíos (jul 2026, FUNCIONAL):** `ProgramarEnviosSection` (tab junto a Campañas, RBAC
-  **owner/approver**) permite **agendar el envío real** de una campaña aprobada a una fecha/hora
-  futura. Backend: tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`) + lambdas
-  `Api_V1_Schedule_{Create,List,Cancel}` (cliente) y **`Api_V1_Schedule_Dispatch`** (cron, NO es
-  ruta de API): cada ~5 min busca los `pending` cuya hora ya llegó (`scheduledAt<=now`), los
-  **reclama** (transición atómica `pending→firing`, idempotente) e **invoca Prepare-batch** con el
-  MISMO evento del envío on-demand (`/Email/Send-batch-template` + context) → reutiliza TODOS los
-  gates (aprobación, saldo, RBAC, lock) sin duplicar. Estados: `pending|firing|sent|canceled|failed`.
-  El front convierte el `datetime-local` a **UTC ISO** antes de enviar. Cubierto por
-  `08_Pruebas/PruebasSeguridad/test_schedule.py`.
+- **Plantillas PDF (jul 2026, EDITOR TIPO WORD):** **Plantillas PDF** (`PdfTemplatesSection`) es un
+  **editor de documento tipo Word** (WYSIWYG). Usa un `contentEditable` + `document.execCommand`
+  (sin librerías extra): barra de formato **arriba** (bloque Normal/Título/Cita, fuente, tamaño,
+  negrita/cursiva/subrayado, color, alineación, listas, enlace, quitar formato, deshacer/rehacer),
+  **herramientas a la izquierda** (insertar **Imagen** →S3 `resources`, **Variable** `{{campo}}`,
+  **Tabla**, y selector de hoja **A4/Carta**) y un **lienzo con reglas** en cm (`HRuler`/`VRuler`)
+  que dibuja la hoja blanca centrada. **Borradores** en localStorage (`mc_pdf_drafts`: Guardar/
+  Cargar por nombre), **Ver HTML** (diálogo + copiar) y **Descargar** (.html).
+- **Generador de PDF conectado al editor (jul 2026):** el editor "habla" con el backend que
+  RENDERIZA el PDF. **Botón "Vista previa PDF"** (`PdfTemplatesSection`) → `pdfTemplatesService.render`
+  → `POST /Template/Render-pdf` (lambda **`Api_V1_Template_Render-pdf`**): toma el HTML del editor +
+  **valores de muestra** de las `{{variables}}` detectadas y devuelve el PDF real (base64) que se
+  muestra en un diálogo con `<iframe>` + descargar. La lambda envuelve el HTML en una hoja (A4/Carta),
+  sustituye `{{campo}}` y renderiza con **xhtml2pdf** (`html_to_pdf`); `store=true` lo sube a S3
+  (`attachment/pdf-preview/…`) en vez de base64.
+- **Envío real EAP-PDF (jul 2026):** el hook ya existía stubbeado — `Prepare-batch` enruta `EAP` con
+  `documentFormat=PDF` a la cola **`Template_Combination-EAP-PDF`**, cuyo consumidor es la nueva
+  lambda **`Api_V1_Template_Combination-EAP-PDF`** (análoga al combinador DOCX): baja el HTML de la
+  plantilla (del `documentPath` del registro `document` de la campaña), por cada destinatario sustituye
+  `{{campo}}` con su fila del CSV, **renderiza el PDF** (mismo `html_to_pdf`), lo sube al prefijo
+  **PRIVADO** `personalized/{campaignId}/{nombre}.pdf` (ver "Personalizados privados" abajo) y
+  **re-emite a `Email_Send-batch-raw-EAP` preservando `nit`
+  + `samples` + `documentFormat`** (el combinador DOCX los pierde — bug latente que este NO copia).
+  **`Send-batch-template-EAP`** ahora usa `.pdf` (subtype `application/pdf`) cuando el mensaje trae
+  `documentFormat=PDF`; la ruta DOCX queda intacta. El render es idéntico en ambas lambdas (copiado,
+  sin imports compartidos, como `tenant_key`). Cubierto por `08_Pruebas/PruebasSeguridad/test_render_pdf.py`
+  y `test_combination_eap_pdf.py`.
+  - ⚠️ `[J]` (despliegue): crear la función `Api_V1_Template_Render-pdf` + ruta `/Template/Render-pdf`
+    (authorizer + CORS); crear la función `Api_V1_Template_Combination-EAP-PDF` + la cola SQS
+    `Template_Combination-EAP-PDF` + trigger; **layer con `xhtml2pdf` (+ reportlab, Pillow)** en ambas
+    (como PyJWT en los Authorizers); IAM: S3 `GetObject/PutObject` (bucket del cliente), DynamoDB
+    `Scan document`/`Scan+PutItem {tenant}_processDetail` y `GetItem messageTemplate` (Render-pdf),
+    SQS `SendMessage` a `Email_Send-batch-raw-EAP` (combiner).
+- **Plantillas PDF PERSISTIDAS en backend (jul 2026):** las plantillas del editor ya no viven solo
+  en localStorage — se guardan en la tabla **`messageTemplate` con `channel=PDF`** (campo `html`),
+  así se **comparten** entre usuarios/equipos. `MessageTemplate_Create` acepta `PDF` (exige `html`);
+  `List` las devuelve (canal `PDF`); la lambda `Render-pdf` puede leerlas por `messageTemplateId`.
+  El editor (`PdfTemplatesSection`): **Guardar** → `messageTemplatesService.create({channel:'PDF',
+  name, html})` (+ espejo en localStorage como respaldo/offline); **Cargar** → lista del backend
+  (`list(customerId,'PDF')`) y carga el `html`. El portal ya precarga `messageTemplate` (todos los
+  canales) en `PortalDataContext`, así que aparecen sin recargar.
+- **Form de campaña cableado a la plantilla del editor (jul 2026):** al crear una campaña **EAP**
+  con **Tipo de documento = PDF**, `CampanasSection` ya no sube un `.pdf` estático: muestra un
+  **selector de plantillas PDF** = las del **backend** (canal PDF, `c:{id}`) + borradores locales de
+  respaldo (`l:{name}`). Al elegir una, sube su **HTML** a S3 (`documentType=attachment`, como
+  `.html`) y usa esa ruta como `attachment:[{path}]` + `documentFormat:'PDF'`. Create-campaign guarda
+  el `document.documentPath` (ese HTML) y el combinador EAP-PDF lo baja y renderiza por destinatario.
+  EAU y EAP-DOCX siguen con la subida de archivo de siempre. Con esto el flujo EAP-PDF queda **de
+  punta a punta** en el front (falta solo el despliegue `[J]` de abajo).
+- **Programar envíos (jul 2026, FUNCIONAL — HORA EXACTA):** `ProgramarEnviosSection` (tab junto a
+  Campañas, RBAC **owner/approver**) permite **agendar el envío real** de una campaña aprobada a una
+  fecha/hora futura. Backend: tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`).
+  - **Disparo por HORA EXACTA (EventBridge Scheduler one-shot):** `Api_V1_Schedule_Create` valida
+    (tenant, RBAC owner/approver, fecha futura, campaña aprobable) y crea (a) la fila `pending` con
+    todo el contexto para refirir y (b) un **schedule de una sola vez** `at(fecha exacta UTC)`
+    (`FlexibleTimeWindow OFF`, `ActionAfterCompletion DELETE`) cuyo target es **`Api_V1_Schedule_Fire`**
+    con `Input={scheduleId}`. Si `create_schedule` falla → **rollback** de la fila (no queda un
+    `pending` que nunca dispara). El nombre del schedule = `mc-send-{scheduleId}`.
+  - **`Api_V1_Schedule_Fire`** (target, sin ruta): a la hora exacta EventBridge lo invoca; carga esa
+    fila, la **reclama** (`pending→firing`, condicional/idempotente) e **invoca Prepare-batch** con el
+    MISMO evento del envío on-demand (`/Email/Send-batch-template` + context) → reutiliza TODOS los
+    gates (aprobación, saldo, RBAC, lock). Marca `sent`/`failed`. El schedule se autoelimina.
+  - **`Api_V1_Schedule_Cancel`:** `pending→canceled` (atómico) + **`delete_schedule`** del one-shot.
+    **`Api_V1_Schedule_List`:** los del tenant (GSI). El front convierte `datetime-local`→UTC ISO.
+  - **`Api_V1_Schedule_Dispatch`** queda como **barrido de respaldo OPCIONAL** (cron de baja
+    frecuencia): recoge `pending` vencidos cuyo one-shot no disparó. La reclamación + el lock de
+    Prepare-batch evitan doble envío aunque coincida con el Fire. Estados:
+    `pending|firing|sent|canceled|failed`. Cubierto por `08_Pruebas/PruebasSeguridad/test_schedule.py`.
 
 ### Portal: precarga y edición (jul 2026)
 - **Precarga al loguear:** `PortalDataProvider` (`context/PortalDataContext.tsx`) envuelve el
@@ -631,9 +688,16 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   devuelve como `path` (`s3Path`). Tipos válidos: `database|document|resources|attachment`.
 - **Provisión en `Register`:** al registrar la empresa se crea el bucket único + **CORS**
   (GET/PUT/HEAD) + **política de lectura pública** SOLO para `attachment/*` y `resources/*`
-  (con `put_public_access_block` que permite la política pero bloquea ACLs). `database/` y
-  `document/` quedan privados.
-- **Internos:** el docx **combinado** (Combination→Send-EAP) va bajo `attachment/{campaignId}/…`;
+  (con `put_public_access_block` que permite la política pero bloquea ACLs). `database/`,
+  `document/` y `personalized/` quedan privados.
+- **Personalizados privados (jul 2026):** los adjuntos **personalizados por destinatario** (docx
+  combinado y **pdf** personalizado, que traen **datos personales**) NO van a `attachment/` (público)
+  sino al prefijo **PRIVADO** `personalized/{campaignId}/{nombre}.{docx|pdf}`. `Send-EAP` los adjunta
+  por `get_object` (IAM) — EAP siempre adjunta (ONFILE), nunca sirve el personalizado por URL pública,
+  así que el cambio no afecta el envío. Escriben ahí `Template_Combination` (docx) y
+  `Template_Combination-EAP-PDF` (pdf); lee `Send-batch-template-EAP`. El adjunto **único** de EAU y
+  las **imágenes** siguen en `attachment/`/`resources/` (públicos, los usa ONLINE / el cliente de correo).
+- **Internos:** el adjunto **personalizado** (Combination→Send-EAP) va bajo `personalized/{campaignId}/…`;
   los **part-files** del troceo siguen en `_parts/{processId}/N.json` (privados, raíz del bucket).
   Los lectores que sacan el basename del `documentPath` usan `split('/')[-1]` (la key tiene 3
   segmentos ahora). Los readers construyen `tenant_bucket(nit)` (único) + la key **almacenada**
@@ -766,10 +830,22 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
       secciones para uso interno). Sidebar **colapsable** (riel de solo iconos con tooltips,
       toggle en el AppBar) con tabs: Plantillas HTML, Plantillas PDF, Campañas, Bases de datos,
       Reportes, Estadísticas, Mi cuenta.
-      - [x] **Plantillas HTML** → constructor drag-and-drop "pro" (tipo Topol): 10 bloques
+      - [x] **Plantillas HTML** → constructor drag-and-drop "pro" (tipo Topol/MailPro): 15 bloques
             (encabezado, texto, imagen, botón, logo, 2 columnas, redes sociales, HTML crudo,
-            divisor, espaciador) en paleta agrupada (Contenido/Estructura), reorden por
+            divisor, espaciador, **Imagen+Texto**, **Texto+Imagen**, **Texto+Botón**,
+            **Botón+Texto**, **Productos**) en paleta agrupada (Contenido/**Combinados**/Estructura),
+            reorden por
             arrastre + flechas, duplicar/eliminar, panel de propiedades, variables `{{nombre}}`.
+            **Combos Imagen/Texto (jul 2026):** 2 celdas que apilan en móvil (`mc-col`) con imagen +
+            título + texto + botón opcional. **Grilla de Productos (jul 2026):** N columnas (2/3)
+            de {imagen, título, texto, enlace} con editor de items (agregar/quitar, subir imagen a
+            S3 por producto); genera filas `mc-col` que apilan en móvil (como el "Nuestros últimos
+            productos" de MailPro).
+            **Arrastrar del panel al lienzo (jul 2026, tipo MailPro):** los bloques de la paleta
+            son `draggable` y se **sueltan en una posición exacta** del lienzo con una **línea
+            indicadora** de inserción (mitad superior/inferior de cada bloque); el lienzo vacío es
+            zona de drop. Sigue el clic-para-agregar y el reorden por arrastre (DnD unificado
+            `dragSource` = paleta|bloque + `insertAt(index)`).
             **Ajustes globales** (ancho de contenido, fondos, color de texto/enlaces, fuente,
             esquinas, preheader), **vista previa** escritorio/móvil (iframe), "Ver HTML",
             **borradores** en localStorage (bloques + ajustes), **cargar de SES**

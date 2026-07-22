@@ -62,7 +62,9 @@ def tenant_bucket(nit, doc_type=None):
 
 
 # Prefijos "de carpeta" del bucket del cliente (S3 no tiene carpetas; son prefijos de key).
-BUCKET_PREFIXES = ('database/', 'document/', 'resources/', 'attachment/')
+# `personalized/` guarda los adjuntos personalizados por destinatario (docx/pdf con datos
+# personales) y queda PRIVADO: la política pública solo cubre attachment/ y resources/.
+BUCKET_PREFIXES = ('database/', 'document/', 'resources/', 'attachment/', 'personalized/')
 
 # CORS del bucket del cliente: el front necesita leer/subir objetos (p. ej. el comprobante
 # de transferencia que ve el admin en la bandeja de aprobación, o subir bases/adjuntos).
@@ -80,7 +82,8 @@ _CORS_RULES = {
 def _public_read_policy(bucket):
     """Política que hace PÚBLICOS de lectura solo los prefijos attachment/ y resources/
     (imágenes de plantillas y adjuntos que deben verse en los clientes de correo). Los
-    prefijos database/ y document/ quedan PRIVADOS (se acceden con URL prefirmada)."""
+    prefijos database/, document/ y personalized/ quedan PRIVADOS (los personalizados por
+    destinatario se adjuntan por get_object/IAM; los demás con URL prefirmada)."""
     return json.dumps({
         'Version': '2012-10-17',
         'Statement': [{

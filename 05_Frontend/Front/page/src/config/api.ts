@@ -48,6 +48,7 @@ export const API_CONFIG = {
     CREATE: '/Template/Create-template',  // ✅ real
     GET: '/Template/Get-template',        // ✅ real
     DELETE: '/Template/Delete-template',  // ✅ real
+    RENDER_PDF: '/Template/Render-pdf',   // ✅ real (genera el PDF desde el editor)
     LIST: '/templates/list',              // ⚠️ no existe aún
     UPDATE: '/templates/update',          // ⚠️ no existe aún
     SEARCH: '/templates/search',          // ⚠️ no existe aún

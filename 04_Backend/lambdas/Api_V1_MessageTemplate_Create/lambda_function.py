@@ -28,7 +28,7 @@ dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('messageTemplate')
 _audit_table = dynamodb.Table('adminAudit')
 
-VALID_CHANNELS = ('SMS', 'WSP', 'DOCX')
+VALID_CHANNELS = ('SMS', 'WSP', 'DOCX', 'PDF')
 
 
 def _audit_event(event, action, target, detail):
@@ -99,7 +99,7 @@ def lambda_handler(event, context):
         return {'status': False, 'statusCode': 400, 'description': 'Falta el customerId.'}
     if channel not in VALID_CHANNELS:
         return {'status': False, 'statusCode': 400,
-                'description': 'channel inválido. Usa SMS, WSP o DOCX.'}
+                'description': 'channel inválido. Usa SMS, WSP, DOCX o PDF.'}
     if not name:
         return {'status': False, 'statusCode': 400, 'description': 'Indica el nombre de la plantilla.'}
 
@@ -108,6 +108,7 @@ def lambda_handler(event, context):
     hsm_name = str(payload.get('hsmName', '')).strip()
     language = str(payload.get('language', 'es')).strip() or 'es'
     s3_path = str(payload.get('s3Path', '')).strip()
+    html = str(payload.get('html', ''))  # PDF: HTML del editor (con {{variables}})
     params = payload.get('params', [])
     if not isinstance(params, list):
         params = []
@@ -119,6 +120,8 @@ def lambda_handler(event, context):
         return {'status': False, 'statusCode': 400, 'description': 'La plantilla WhatsApp necesita el nombre HSM.'}
     if channel == 'DOCX' and not s3_path:
         return {'status': False, 'statusCode': 400, 'description': 'La plantilla DOCX necesita el s3Path del archivo.'}
+    if channel == 'PDF' and not html.strip():
+        return {'status': False, 'statusCode': 400, 'description': 'La plantilla PDF necesita el HTML del editor.'}
 
     now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -154,6 +157,7 @@ def lambda_handler(event, context):
         'hsmName': hsm_name,
         'language': language,
         's3Path': s3_path,
+        'html': html,
         'params': params,
         'created': created,
         'updated': now,

@@ -169,13 +169,62 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 | `Api_V1_Admin_Campaigns` | `/Admin/Campaigns` | `Scan` sobre `campaign`/`customer` |
 | `Api_V1_Admin_Requeue` | `/Admin/Requeue` | `GetItem` sobre `process`; **`sqs:SendMessage`** sobre `Email_Prepare-batch-part`; `PutItem` sobre `adminAudit` |
 
-### 3b. Programar envíos **🆕 (nuevo, post-2026-07-17)** — tabla + 4 lambdas + cron
+### 3b. Programar envíos **🆕 (nuevo, post-2026-07-17)** — HORA EXACTA (EventBridge Scheduler one-shot)
+
+> Disparo por **hora exacta**: `Schedule/Create` crea un **EventBridge Scheduler** de una sola vez
+> por campaña (`at(...)`) cuyo target es `Api_V1_Schedule_Fire`. El schedule se autoelimina al
+> dispararse. Requiere **un rol IAM que EventBridge Scheduler asuma** para invocar el Fire.
 
 - [ ] `[J]` Tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`, On-Demand) — la crea `Schedule/Create` on-demand, o créala a mano.
-- [ ] `[J]` `Api_V1_Schedule_Create` → ruta **`/Schedule/Create`** (client, authorizer + CORS + mapping template con `customerId`/`customer`/`nit`/`userId`/`tenantRole`). IAM: `Put/DescribeTable/CreateTable` sobre `scheduledSend`; `GetItem` sobre `campaign`.
+- [ ] `[J]` **Rol IAM `MailConnectSchedulerInvokeRole`** (nuevo): trust policy con principal `scheduler.amazonaws.com`; permiso `lambda:InvokeFunction` sobre `Api_V1_Schedule_Fire`. Su ARN va en la env `SCHEDULER_ROLE_ARN` de `Schedule_Create`.
+- [ ] `[J]` `Api_V1_Schedule_Create` → ruta **`/Schedule/Create`** (client, authorizer + CORS + mapping template con `customerId`/`customer`/`nit`/`userId`/`tenantRole`). IAM: `Put/DescribeTable/CreateTable` sobre `scheduledSend`; `GetItem` sobre `campaign`; **`scheduler:CreateSchedule`** + **`iam:PassRole`** (sobre `MailConnectSchedulerInvokeRole`). Env: `SCHEDULER_FIRE_LAMBDA_ARN` (ARN de `Api_V1_Schedule_Fire`), `SCHEDULER_ROLE_ARN`, `SCHEDULER_GROUP` (opc, default `default`).
+- [ ] `[J]` `Api_V1_Schedule_Fire` **(sin ruta de API)** — target del schedule. IAM: `GetItem`/`UpdateItem` sobre `scheduledSend`; `GetItem` sobre `campaign`; **`lambda:InvokeFunction`** sobre `Api_V1_Email_Prepare-batch-template`. Env `PREPARE_BATCH_FUNCTION` (si el nombre AWS difiere). No lleva trigger propio: lo invoca EventBridge Scheduler.
 - [ ] `[J]` `Api_V1_Schedule_List` → ruta **`/Schedule/List`** (client). IAM: `Query` sobre `scheduledSend` (GSI).
-- [ ] `[J]` `Api_V1_Schedule_Cancel` → ruta **`/Schedule/Cancel`** (client). IAM: `GetItem`/`UpdateItem` sobre `scheduledSend`.
-- [ ] `[J]` `Api_V1_Schedule_Dispatch` **(sin ruta de API)** — disparada por una **regla EventBridge programada** (`rate(5 minutes)`). IAM: `Scan`/`UpdateItem` sobre `scheduledSend`; `GetItem` sobre `campaign`; **`lambda:InvokeFunction`** sobre `Api_V1_Email_Prepare-batch-template`. Env `PREPARE_BATCH_FUNCTION` (si el nombre AWS difiere del de la carpeta) y `SCHEDULE_MAX_BATCH` (opc).
+- [ ] `[J]` `Api_V1_Schedule_Cancel` → ruta **`/Schedule/Cancel`** (client). IAM: `GetItem`/`UpdateItem` sobre `scheduledSend`; **`scheduler:DeleteSchedule`**. Env `SCHEDULER_GROUP` (opc).
+- [ ] `[J]` (OPCIONAL) `Api_V1_Schedule_Dispatch` **(sin ruta)** — barrido de respaldo; conéctalo a una regla EventBridge de baja frecuencia (`rate(15 minutes)`) SOLO si quieres red de seguridad ante one-shots que no dispararon. IAM: `Scan`/`UpdateItem` sobre `scheduledSend`; `GetItem` sobre `campaign`; `lambda:InvokeFunction` sobre `Api_V1_Email_Prepare-batch-template`. Si confías en el one-shot, no lo despliegues.
+
+### 3c. Plantillas PDF — generador + envío EAP-PDF **🆕 (nuevo, post-2026-07-17)**
+
+> El editor de Plantillas PDF (HTML tipo Word) ya "habla" con el backend que **renderiza el PDF**.
+> Dos lambdas comparten el mismo render `html_to_pdf` (xhtml2pdf); el código del render está
+> **copiado** en ambas (convención del repo: sin imports compartidos entre lambdas).
+> **Requisito común:** ambas necesitan un **Lambda layer con `xhtml2pdf` (+ reportlab, Pillow)**
+> construido para el runtime de la función (igual que el layer de PyJWT en los Authorizers). Sin el
+> layer, la lambda responde 500 "Falta la librería de render de PDF" (diagnosticable, no rompe).
+
+- [ ] `[J]` **Layer PDF**: `xhtml2pdf==0.2.16` (+ `reportlab`, `Pillow`) empaquetado como layer para el
+  runtime de las dos funciones. Alternativa: descomentar el `requirements.txt` de cada carpeta para
+  bundlear en el zip — pero el Python de CI (deploy-lambdas) debe coincidir con el runtime (reportlab/
+  Pillow traen wheels por versión de CPython).
+- [ ] `[J]` `Api_V1_Template_Render-pdf` → ruta **`/Template/Render-pdf`** (client, authorizer + CORS +
+  mapping template con `customerId`/`customer`/`nit`). Ya está en `infra/api/routes.json` → `deploy-api.yml`
+  la crea. Crea la **función vacía** antes del primer CD. IAM: `GetItem` sobre `messageTemplate`;
+  (si se usa `store=true`) S3 `PutObject`/`CreateBucket`/`HeadBucket` sobre el bucket del cliente.
+  Es el endpoint del botón "Vista previa PDF" del editor.
+- [ ] `[J]` `Api_V1_Template_Combination-EAP-PDF` **(sin ruta de API — trigger SQS)** — crea la función
+  vacía + la **cola `Template_Combination-EAP-PDF`** (el nombre que ya usa Prepare-batch en `URL_SQS_EAP_PDF`)
+  + el **trigger** cola→lambda. IAM: DynamoDB `Scan document`, `Scan`/`PutItem` sobre `{tenant}_processDetail`;
+  S3 `GetObject` (plantilla) + `PutObject` (`attachment/{campaña}/{nombre}.pdf`) sobre el bucket del cliente;
+  **`sqs:SendMessage`** a `Email_Send-batch-raw-EAP`. Env `URL_SQS_EAP` (opc; default apunta a esa cola).
+- [ ] `[J]` **Redesplegar `Api_V1_Email_Send-batch-template-EAP`**: ahora usa `.pdf` (subtype
+  `application/pdf`) cuando el mensaje trae `documentFormat=PDF`. La ruta DOCX no cambia — no requiere
+  permisos nuevos.
+- [ ] `[J]` **Adjuntos personalizados PRIVADOS** (seguridad): los combinadores DOCX/PDF ahora escriben
+  el adjunto por destinatario en `personalized/{campaignId}/…` (privado) en vez de `attachment/` (público),
+  y `Send-EAP` lee de ahí. **Redesplegar los 4**: `Template_Combination`, `Template_Combination-EAP-PDF`,
+  `Send-batch-template-EAP`, `Security_Register` (se hace solo al push). **Sin IAM ni política nuevos**:
+  la política pública solo cubre `attachment/*` y `resources/*`, así que `personalized/*` queda privado
+  también en los **buckets existentes** (no hay migración). `Register` agrega el marcador `personalized/`
+  solo a buckets nuevos (cosmético). Nota: un envío EAP en vuelo justo durante el redeploy podría no hallar
+  el adjunto (combinador viejo→attachment, send nuevo→personalized); reintentar/reenviar lo resuelve.
+- [x] `[C]` **Form de crear campaña** — hecho: `CampanasSection` con EAP + "Tipo de documento = PDF"
+  muestra un selector de plantillas PDF (del backend + borradores locales), sube su HTML a S3
+  (`attachment/`) y crea la campaña con `documentFormat=PDF` + ese adjunto. El combinador EAP-PDF lo consume.
+- [x] `[C]` **Plantillas PDF persistidas** — hecho: `Api_V1_MessageTemplate_Create` acepta `channel=PDF`
+  (guarda `html`); `List` las devuelve. El editor guarda/carga desde el backend (`messageTemplate`), así
+  se comparten entre equipos. **No requiere infra nueva** (la tabla `messageTemplate` ya existe); las
+  lambdas `MessageTemplate_Create/List` se redepliegan solas al hacer push (deploy-lambdas). El editor
+  además espeja en localStorage como respaldo/offline.
 
 - [x] `[J]` Crear las 12 funciones vacías + sus rutas + permisos de la tabla.
 - [x] `[J]` Confirmar que el **Authorizer** está asignado a las 12 rutas.

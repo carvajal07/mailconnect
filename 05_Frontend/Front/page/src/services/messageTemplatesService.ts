@@ -18,7 +18,7 @@ export const MESSAGE_TEMPLATE_ENDPOINTS = {
   DELETE: '/MessageTemplate/Delete',
 };
 
-export type MessageChannel = 'SMS' | 'WSP' | 'DOCX';
+export type MessageChannel = 'SMS' | 'WSP' | 'DOCX' | 'PDF';
 
 export interface MessageTemplate {
   messageTemplateId: string;
@@ -34,6 +34,8 @@ export interface MessageTemplate {
   language?: string;
   /** DOCX: ruta del .docx ya subido a S3. */
   s3Path?: string;
+  /** PDF: HTML del editor (con {{variables}}), que se renderiza por destinatario. */
+  html?: string;
   /** WSP: etiquetas de los parámetros {{1}},{{2}}… · DOCX: campos de combinación. */
   params?: string[];
   created?: string;
@@ -48,6 +50,7 @@ export interface CreateMessageTemplatePayload {
   hsmName?: string;
   language?: string;
   s3Path?: string;
+  html?: string;
   params?: string[];
   /** Si se envía, la ruta Create ACTUALIZA esa plantilla (upsert) en vez de crear una nueva. */
   messageTemplateId?: string;

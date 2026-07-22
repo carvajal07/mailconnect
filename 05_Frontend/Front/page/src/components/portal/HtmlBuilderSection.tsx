@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { Fragment, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Paper,
@@ -46,6 +46,9 @@ import ShareIcon from '@mui/icons-material/Share';
 import HorizontalRuleIcon from '@mui/icons-material/HorizontalRule';
 import HeightIcon from '@mui/icons-material/Height';
 import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
+import ViewSidebarIcon from '@mui/icons-material/ViewSidebar';
+import GridViewIcon from '@mui/icons-material/GridView';
+import AddIcon from '@mui/icons-material/Add';
 import BookmarkAddIcon from '@mui/icons-material/BookmarkAdd';
 import AddPhotoAlternateIcon from '@mui/icons-material/AddPhotoAlternate';
 import type { ReactNode } from 'react';
@@ -68,6 +71,7 @@ import {
   type Block,
   type BlockType,
   type EmailSettings,
+  type ProductItem,
 } from './htmlBuilder';
 
 const BLOCK_ICONS: Record<BlockType, ReactNode> = {
@@ -79,9 +83,19 @@ const BLOCK_ICONS: Record<BlockType, ReactNode> = {
   columns: <ViewColumnIcon fontSize="small" />,
   social: <ShareIcon fontSize="small" />,
   html: <CodeIcon fontSize="small" />,
+  imageText: <ViewQuiltIcon fontSize="small" />,
+  textImage: <ViewSidebarIcon fontSize="small" />,
+  textButton: <SmartButtonIcon fontSize="small" />,
+  buttonTextRow: <SmartButtonIcon fontSize="small" />,
+  products: <GridViewIcon fontSize="small" />,
   divider: <HorizontalRuleIcon fontSize="small" />,
   spacer: <HeightIcon fontSize="small" />,
 };
+
+/** Línea indicadora de dónde caerá el bloque al arrastrarlo (tipo MailPro/Topol). */
+const DropLine = () => (
+  <Box sx={{ height: 4, mx: 2, my: 0.5, borderRadius: 2, bgcolor: 'primary.main', boxShadow: '0 0 0 3px rgba(0,117,190,.18)' }} />
+);
 
 export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePreset?: boolean } = {}) => {
   const sessionUserId = getUser()?.userId ?? '';
@@ -99,7 +113,11 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [draftName, setDraftName] = useState('');
   // Campos de la base seleccionada (para las variables {{campo}}). Vacío = usa las por defecto.
   const [dbFields, setDbFields] = useState<string[]>([]);
-  const dragIndex = useRef<number | null>(null);
+  // DnD unificado tipo MailPro/Topol: arrastrar DESDE la paleta (inserta un bloque nuevo) o
+  // REORDENAR un bloque existente, soltando en una posición del lienzo con línea indicadora.
+  const dragSource = useRef<{ kind: 'palette'; type: BlockType } | { kind: 'block'; index: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
 
   const [draftsAnchor, setDraftsAnchor] = useState<null | HTMLElement>(null);
   const [showHtml, setShowHtml] = useState(false);
@@ -155,7 +173,14 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     setBlocks((prev) => {
       const i = prev.findIndex((b) => b.id === id);
       if (i < 0) return prev;
-      const copy = { ...prev[i], id: createBlock('text').id };
+      // Copia PROFUNDA de items/links para que el duplicado no comparta referencias.
+      const src = prev[i];
+      const copy: Block = {
+        ...src,
+        id: createBlock('text').id,
+        links: { ...src.links },
+        items: src.items ? src.items.map((it) => ({ ...it })) : undefined,
+      };
       const next = [...prev];
       next.splice(i + 1, 0, copy);
       return next;
@@ -172,16 +197,45 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     });
   };
 
-  const onDrop = (targetIndex: number) => {
-    const from = dragIndex.current;
-    dragIndex.current = null;
-    if (from === null || from === targetIndex) return;
-    setBlocks((prev) => {
-      const next = [...prev];
-      const [moved] = next.splice(from, 1);
-      next.splice(targetIndex, 0, moved);
-      return next;
-    });
+  /** Inserta (paleta) o mueve (bloque existente) en la posición `index` del lienzo. */
+  const insertAt = (index: number) => {
+    const src = dragSource.current;
+    endDrag();
+    if (!src) return;
+    if (src.kind === 'palette') {
+      const nb = createBlock(src.type);
+      setBlocks((prev) => {
+        const next = [...prev];
+        next.splice(Math.max(0, Math.min(index, next.length)), 0, nb);
+        return next;
+      });
+      setSelectedId(nb.id);
+    } else {
+      setBlocks((prev) => {
+        const from = src.index;
+        if (from < 0 || from >= prev.length) return prev;
+        const next = [...prev];
+        const [moved] = next.splice(from, 1);
+        const target = from < index ? index - 1 : index; // ajusta por el hueco que dejó
+        next.splice(Math.max(0, Math.min(target, next.length)), 0, moved);
+        return next;
+      });
+    }
+  };
+
+  const endDrag = () => {
+    dragSource.current = null;
+    setDragging(false);
+    setDropIndex(null);
+  };
+
+  /** Actualiza el índice de inserción según si el cursor está en la mitad superior/inferior. */
+  const onBlockDragOver = (e: React.DragEvent, index: number) => {
+    if (!dragSource.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    setDropIndex(e.clientY < r.top + r.height / 2 ? index : index + 1);
   };
 
   const insertVariable = (v: string) => {
@@ -453,7 +507,11 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                     <Button
                       key={type}
                       variant="outlined"
+                      draggable
+                      onDragStart={() => { dragSource.current = { kind: 'palette', type }; setDragging(true); }}
+                      onDragEnd={endDrag}
                       onClick={() => addBlock(type)}
+                      title="Arrástralo al lienzo o haz clic para agregarlo"
                       sx={{
                         flexDirection: 'column',
                         gap: 0.25,
@@ -461,8 +519,10 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                         textTransform: 'none',
                         fontSize: 11,
                         lineHeight: 1.2,
+                        cursor: 'grab',
                         color: 'text.primary',
                         borderColor: 'divider',
+                        '&:active': { cursor: 'grabbing' },
                         '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover' },
                       }}
                     >
@@ -501,20 +561,35 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               }}
             >
               {blocks.length === 0 ? (
-                <Box sx={{ textAlign: 'center', py: 10, px: 3 }}>
-                  <Typography sx={{ color: '#334155', fontWeight: 700 }}>Tu correo está vacío</Typography>
+                <Box
+                  onDragOver={(e) => { if (dragSource.current) { e.preventDefault(); setDropIndex(0); } }}
+                  onDrop={(e) => { e.preventDefault(); insertAt(0); }}
+                  sx={{
+                    textAlign: 'center', py: 10, px: 3, transition: 'background .15s',
+                    ...(dragging && { bgcolor: 'rgba(0,117,190,.06)', outline: '2px dashed rgba(0,117,190,.5)', outlineOffset: '-10px' }),
+                  }}
+                >
+                  <Typography sx={{ color: '#334155', fontWeight: 700 }}>
+                    {dragging ? 'Suelta aquí para agregarlo' : 'Tu correo está vacío'}
+                  </Typography>
                   <Typography variant="body2" sx={{ color: '#94a3b8' }}>
-                    Agrega bloques desde la paleta. Arrástralos o usa las flechas para ordenarlos.
+                    Arrastra bloques desde la paleta hasta aquí, o haz clic en un bloque para agregarlo.
                   </Typography>
                 </Box>
               ) : (
-                blocks.map((b, index) => (
+                <Box
+                  onDragOver={(e) => { if (dragSource.current) { e.preventDefault(); setDropIndex(blocks.length); } }}
+                  onDrop={(e) => { e.preventDefault(); insertAt(dropIndex ?? blocks.length); }}
+                >
+                {blocks.map((b, index) => (
+                  <Fragment key={b.id}>
+                    {dragging && dropIndex === index && <DropLine />}
                   <Box
-                    key={b.id}
                     draggable
-                    onDragStart={() => (dragIndex.current = index)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={() => onDrop(index)}
+                    onDragStart={() => { dragSource.current = { kind: 'block', index }; setDragging(true); }}
+                    onDragEnd={endDrag}
+                    onDragOver={(e) => onBlockDragOver(e, index)}
+                    onDrop={(e) => { e.preventDefault(); e.stopPropagation(); insertAt(dropIndex ?? index); }}
                     onClick={() => setSelectedId(b.id)}
                     sx={{
                       position: 'relative',
@@ -566,7 +641,10 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                       <BlockPreview block={b} />
                     </Box>
                   </Box>
-                ))
+                  </Fragment>
+                ))}
+                {dragging && dropIndex === blocks.length && <DropLine />}
+                </Box>
               )}
             </Box>
           </Box>
@@ -847,6 +925,56 @@ const BlockPreview = ({ block: b }: { block: Block }) => {
         </Typography>
       );
     }
+    case 'imageText':
+    case 'textImage': {
+      const img = <Box component="img" src={b.imageUrl} alt={b.heading || ''} sx={{ width: '42%', maxWidth: 220, borderRadius: 1, display: 'block' }} />;
+      const txt = (
+        <Box sx={{ flex: 1 }}>
+          {b.heading && <Typography sx={{ fontSize: 17, fontWeight: 700, color: '#16233f', mb: 0.5 }}>{b.heading}</Typography>}
+          <Typography sx={{ fontSize: 14, color: '#333', whiteSpace: 'pre-wrap' }}>{b.text}</Typography>
+          {b.buttonText && (
+            <Box component="span" sx={{ display: 'inline-block', mt: 1, px: 2, py: 0.75, borderRadius: 1.5, bgcolor: '#0075be', color: '#fff', fontSize: 13 }}>{b.buttonText}</Box>
+          )}
+        </Box>
+      );
+      return (
+        <Stack direction="row" spacing={2} alignItems="flex-start">
+          {b.type === 'imageText' ? <>{img}{txt}</> : <>{txt}{img}</>}
+        </Stack>
+      );
+    }
+    case 'textButton':
+    case 'buttonTextRow': {
+      const btnEl = b.buttonText ? (
+        <Box component="span" sx={{ display: 'inline-block', px: 2.5, py: 1.1, borderRadius: 1.5, bgcolor: b.color || '#0075be', color: '#fff', fontSize: 14, whiteSpace: 'nowrap' }}>{b.buttonText}</Box>
+      ) : null;
+      const txtEl = (
+        <Box sx={{ flex: 1 }}>
+          {b.heading && <Typography sx={{ fontSize: 17, fontWeight: 700, color: '#16233f', mb: 0.25 }}>{b.heading}</Typography>}
+          <Typography sx={{ fontSize: 14, color: '#333', whiteSpace: 'pre-wrap' }}>{b.text}</Typography>
+        </Box>
+      );
+      const btnLeft = b.type === 'buttonTextRow';
+      return (
+        <Stack direction="row" spacing={2} alignItems="center">
+          {btnLeft ? <>{btnEl}{txtEl}</> : <>{txtEl}{btnEl}</>}
+        </Stack>
+      );
+    }
+    case 'products': {
+      const cols = Math.min(Math.max(b.columns || 3, 1), 4);
+      return (
+        <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 1.5 }}>
+          {(b.items || []).map((it, i) => (
+            <Box key={i} sx={{ textAlign: 'center' }}>
+              {it.image && <Box component="img" src={it.image} alt={it.title} sx={{ width: '100%', borderRadius: 1, display: 'block', mb: 0.5 }} />}
+              <Typography sx={{ fontSize: 14, fontWeight: 700, color: '#16233f' }}>{it.title}</Typography>
+              <Typography sx={{ fontSize: 12, color: '#555' }}>{it.text}</Typography>
+            </Box>
+          ))}
+        </Box>
+      );
+    }
     case 'html':
       return <Box sx={{ fontSize: 13, color: '#555555' }} dangerouslySetInnerHTML={{ __html: b.text }} />;
     case 'divider':
@@ -875,19 +1003,38 @@ const BlockEditor = ({
 }) => {
   const [varAnchor, setVarAnchor] = useState<null | HTMLElement>(null);
   const [uploadingImg, setUploadingImg] = useState(false);
+  const [uploadingItem, setUploadingItem] = useState<number | null>(null);
   const isImage = b.type === 'image' || b.type === 'logo';
   const hasText = b.type === 'heading' || b.type === 'text' || b.type === 'button';
   const hasUrl = b.type === 'image' || b.type === 'button' || b.type === 'logo';
+  const isCombo = b.type === 'imageText' || b.type === 'textImage';
+  const isCta = b.type === 'textButton' || b.type === 'buttonTextRow';
+  const isProducts = b.type === 'products';
 
   const handleUpload = async (file: File | null) => {
     if (!file) return;
     setUploadingImg(true);
     const url = await onUploadImage(file);
     setUploadingImg(false);
-    if (url) onChange({ url });
+    if (url) onChange(isCombo ? { imageUrl: url } : { url });
   };
-  const hasAlign = b.type !== 'divider' && b.type !== 'spacer' && b.type !== 'html';
+  const hasAlign = !['divider', 'spacer', 'html', 'products'].includes(b.type);
   const hasColor = b.type === 'heading' || b.type === 'button';
+
+  /* --- Productos (items) --- */
+  const items: ProductItem[] = b.items ?? [];
+  const updateItem = (i: number, patch: Partial<ProductItem>) =>
+    onChange({ items: items.map((it, j) => (j === i ? { ...it, ...patch } : it)) });
+  const addItem = () =>
+    onChange({ items: [...items, { image: 'https://via.placeholder.com/200x200?text=Producto', title: 'Producto', text: 'Descripción breve', url: '' }] });
+  const removeItem = (i: number) => onChange({ items: items.filter((_, j) => j !== i) });
+  const uploadItemImage = async (i: number, file: File | null) => {
+    if (!file) return;
+    setUploadingItem(i);
+    const url = await onUploadImage(file);
+    setUploadingItem(null);
+    if (url) updateItem(i, { image: url });
+  };
 
   return (
     <Stack spacing={2}>
@@ -954,6 +1101,60 @@ const BlockEditor = ({
               placeholder="https://"
             />
           ))}
+        </>
+      )}
+
+      {isCombo && (
+        <>
+          <TextField label="Título" value={b.heading ?? ''} onChange={(e) => onChange({ heading: e.target.value })} fullWidth size="small" />
+          <TextField label="Texto" value={b.text} onChange={(e) => onChange({ text: e.target.value })} fullWidth multiline minRows={3} size="small" />
+          <TextField label="URL de la imagen" value={b.imageUrl ?? ''} onChange={(e) => onChange({ imageUrl: e.target.value })} fullWidth size="small" />
+          <Button component="label" size="small" variant="outlined" disabled={uploadingImg} startIcon={uploadingImg ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}>
+            {uploadingImg ? 'Subiendo…' : 'Subir imagen a S3'}
+            <input type="file" accept="image/*" hidden onChange={(e) => handleUpload(e.target.files?.[0] ?? null)} />
+          </Button>
+          <TextField label="Texto del botón (opcional)" value={b.buttonText ?? ''} onChange={(e) => onChange({ buttonText: e.target.value })} fullWidth size="small" placeholder="Ver más" />
+          <TextField label="Enlace del botón" value={b.buttonUrl ?? ''} onChange={(e) => onChange({ buttonUrl: e.target.value })} fullWidth size="small" placeholder="https://" />
+        </>
+      )}
+
+      {isCta && (
+        <>
+          <TextField label="Título" value={b.heading ?? ''} onChange={(e) => onChange({ heading: e.target.value })} fullWidth size="small" />
+          <TextField label="Texto" value={b.text} onChange={(e) => onChange({ text: e.target.value })} fullWidth multiline minRows={2} size="small" />
+          <TextField label="Texto del botón" value={b.buttonText ?? ''} onChange={(e) => onChange({ buttonText: e.target.value })} fullWidth size="small" placeholder="Ver más" />
+          <TextField label="Enlace del botón" value={b.buttonUrl ?? ''} onChange={(e) => onChange({ buttonUrl: e.target.value })} fullWidth size="small" placeholder="https://" />
+          <TextField label="Color del botón" type="color" value={b.color || '#0075be'} onChange={(e) => onChange({ color: e.target.value })} fullWidth size="small" />
+        </>
+      )}
+
+      {isProducts && (
+        <>
+          <TextField select label="Columnas" value={b.columns ?? 3} onChange={(e) => onChange({ columns: parseInt(e.target.value) || 3 })} fullWidth size="small">
+            <MenuItem value={2}>2 columnas</MenuItem>
+            <MenuItem value={3}>3 columnas</MenuItem>
+          </TextField>
+          {items.map((it, i) => (
+            <Paper key={i} variant="outlined" sx={{ p: 1.5 }}>
+              <Stack spacing={1}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Typography variant="caption" color="text.secondary" fontWeight={700}>Producto {i + 1}</Typography>
+                  <IconButton size="small" color="error" onClick={() => removeItem(i)} disabled={items.length <= 1}>
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </Stack>
+                <TextField label="Título" size="small" value={it.title} onChange={(e) => updateItem(i, { title: e.target.value })} fullWidth />
+                <TextField label="Texto" size="small" value={it.text} onChange={(e) => updateItem(i, { text: e.target.value })} fullWidth multiline minRows={2} />
+                <TextField label="Imagen (URL)" size="small" value={it.image} onChange={(e) => updateItem(i, { image: e.target.value })} fullWidth />
+                <TextField label="Enlace (opcional)" size="small" value={it.url ?? ''} onChange={(e) => updateItem(i, { url: e.target.value })} fullWidth placeholder="https://" />
+                <Button component="label" size="small" variant="outlined" disabled={uploadingItem === i} startIcon={uploadingItem === i ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}>
+                  {uploadingItem === i ? 'Subiendo…' : 'Subir imagen'}
+                  <input type="file" accept="image/*" hidden onChange={(e) => uploadItemImage(i, e.target.files?.[0] ?? null)} />
+                </Button>
+              </Stack>
+            </Paper>
+          ))}
+          <Button size="small" startIcon={<AddIcon />} onClick={addItem}>Agregar producto</Button>
         </>
       )}
 
