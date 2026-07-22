@@ -81,6 +81,10 @@ falló  ó (pendiente y venció)   -> siguiente canal permitido:
   `{tenant}_sendStatus`. Probado con moto (transiciones de estado + escalamiento + débito).
 - ✅ **`Api_V1_Cascade_List`**: runs del tenant + progreso agregado.
 - ✅ **Front**: `CascadaSection` (definir + costo estimado + lanzar + ver progreso) + `cascadeService`.
+  Dos MODOS de definición (selector arriba): **Básico** (lista ordenada de canales) y **Flujo**
+  (editor de nodos tipo React Flow — `@xyflow/react`: arrastrar-soltar desde la paleta, aristas
+  animadas con dirección, nodos personalizados Inicio→canales→Confirmado). Ambos producen el mismo
+  `steps[]` (`CascadaFlowBuilder.deriveSteps` sigue la cadena del grafo) → el backend no cambia.
 
 **Pendiente de INTEGRACIÓN/DESPLIEGUE `[J]` (Fase 2 — no verificable sin AWS):**
 - Correlación fina `sendStatus`→`cascadeContact`: las lambdas Send-* deben propagar el
