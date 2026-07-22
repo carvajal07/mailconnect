@@ -234,6 +234,15 @@ export const CampanasSection = () => {
   // Plantillas disponibles por canal (SMS/WSP se eligen de estas; sin texto libre).
   const smsTemplates = msgTemplates.filter((t) => t.channel === 'SMS');
   const wspTemplates = msgTemplates.filter((t) => t.channel === 'WSP');
+  const pdfTemplates = msgTemplates.filter((t) => t.channel === 'PDF');
+  // EAP-PDF: opciones del selector = plantillas del backend (c:{id}) + borradores locales
+  // que aún no están en el backend (l:{name}), como respaldo.
+  const pdfTemplateChoices = [
+    ...pdfTemplates.map((t) => ({ key: `c:${t.messageTemplateId}`, label: t.name })),
+    ...Object.keys(readPdfDrafts())
+      .filter((n) => !pdfTemplates.some((t) => t.name === n))
+      .map((n) => ({ key: `l:${n}`, label: `${n} (local)` })),
+  ];
 
   /** Id de la plantilla que corresponde al contenido actual de la campaña (para el selector).
    *  Se deriva del template guardado: SMS compara por texto (body), WSP por nombre HSM.
@@ -300,21 +309,31 @@ export const CampanasSection = () => {
   };
 
   /**
-   * EAP-PDF: elige una plantilla del editor (localStorage) y sube su HTML a S3 como el
-   * adjunto de la campaña. El combinador EAP-PDF baja ese HTML y renderiza un PDF por
-   * destinatario. Reutiliza attachmentPath/Name (y su validación) igual que el .docx.
+   * EAP-PDF: elige una plantilla PDF (del BACKEND `messageTemplate` canal PDF, o un borrador
+   * local de respaldo) y sube su HTML a S3 como el adjunto de la campaña. El combinador
+   * EAP-PDF baja ese HTML y renderiza un PDF por destinatario. Reutiliza attachmentPath/Name
+   * (y su validación) igual que el .docx. La `key` codifica la fuente: `c:{id}` backend, `l:{name}` local.
    */
-  const selectPdfTemplate = async (name: string) => {
-    setPdfTemplateName(name);
-    if (!name) { resetAttachment(); return; }
+  const selectPdfTemplate = async (key: string) => {
+    setPdfTemplateName(key);
+    if (!key) { resetAttachment(); setPdfTemplateName(''); return; }
     if (!customer) {
       notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
       return;
     }
-    const html = readPdfDrafts()[name];
+    let html = '';
+    let label = 'plantilla';
+    if (key.startsWith('c:')) {
+      const tpl = msgTemplates.find((t) => t.messageTemplateId === key.slice(2));
+      html = tpl?.html ?? '';
+      label = tpl?.name ?? 'plantilla';
+    } else if (key.startsWith('l:')) {
+      label = key.slice(2);
+      html = readPdfDrafts()[label] ?? '';
+    }
     if (!html) { notify('No se encontró la plantilla PDF seleccionada.', 'error'); return; }
     setAttachmentUploading(true);
-    const safe = name.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'plantilla';
+    const safe = label.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'plantilla';
     const fileName = `plantilla-pdf-${safe}-${Date.now()}.html`;
     const file = new File([html], fileName, { type: 'text/html' });
     const presign = await campaignsService.presignUrl({ customer, nit: getUser()?.nit ?? '', documentName: fileName, documentType: 'attachment' });
@@ -327,7 +346,7 @@ export const CampanasSection = () => {
     setAttachmentUploading(false);
     if (ok) {
       setAttachmentPath(presign.data.path);
-      setAttachmentName(`${name} (plantilla PDF)`);
+      setAttachmentName(`${label} (plantilla PDF)`);
       notify('Plantilla PDF lista para la campaña.', 'success');
     } else {
       setPdfTemplateName('');
@@ -603,8 +622,8 @@ export const CampanasSection = () => {
                       onChange={(e) => selectPdfTemplate(e.target.value)}
                     >
                       <MenuItem value=""><em>— Selecciona una plantilla —</em></MenuItem>
-                      {Object.keys(readPdfDrafts()).sort().map((n) => (
-                        <MenuItem key={n} value={n}>{n}</MenuItem>
+                      {pdfTemplateChoices.map((c) => (
+                        <MenuItem key={c.key} value={c.key}>{c.label}</MenuItem>
                       ))}
                     </Select>
                   </FormControl>

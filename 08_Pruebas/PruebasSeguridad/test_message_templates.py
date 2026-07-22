@@ -73,6 +73,22 @@ def test_create_docx_requiere_s3path(mt):
     assert ok['statusCode'] == 201
 
 
+def test_create_pdf_requiere_html(mt):
+    create, _, _ = mt
+    assert create.lambda_handler(_ctx({'channel': 'PDF', 'name': 'X'}), None)['statusCode'] == 400
+    ok = create.lambda_handler(_ctx({'channel': 'PDF', 'name': 'Certificado', 'html': '<h1>Hola {{nombre}}</h1>'}), None)
+    assert ok['statusCode'] == 201
+    assert ok['data']['messageTemplateId']
+
+
+def test_list_pdf_devuelve_html(mt):
+    create, lst, _ = mt
+    create.lambda_handler(_ctx({'channel': 'PDF', 'name': 'Cert', 'html': '<p>{{ciudad}}</p>'}), None)
+    resp = lst.lambda_handler(_ctx({'channel': 'PDF'}), None)
+    assert resp['data']['count'] == 1
+    assert resp['data']['templates'][0]['html'] == '<p>{{ciudad}}</p>'
+
+
 def test_create_channel_invalido_400(mt):
     create, _, _ = mt
     assert create.lambda_handler(_ctx({'channel': 'EMAIL', 'name': 'X'}), None)['statusCode'] == 400

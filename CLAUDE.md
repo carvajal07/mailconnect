@@ -119,7 +119,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Database/Delete` | `{ databaseFileId }` | 200 ok · 403 otro cliente · 404 no existe. Borra el registro (no el CSV en S3) |
 | `Customer/List` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, realSendEnabled}], count}` |
 | `Customer/Update` | `{ customerId, realSendEnabled (bool) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales |
-| `MessageTemplate/Create` | `{ channel:SMS\|WSP\|DOCX, name, body?/hsmName?+language?+params?/s3Path?+params? }` | 201 `data:{messageTemplateId}` · 400 datos. SMS necesita `body`, WSP `hsmName`, DOCX `s3Path` |
+| `MessageTemplate/Create` | `{ channel:SMS\|WSP\|DOCX\|PDF, name, body?/hsmName?+language?+params?/s3Path?+params?/html? }` | 201 `data:{messageTemplateId}` · 400 datos. SMS necesita `body`, WSP `hsmName`, DOCX `s3Path`, **PDF `html`** (el HTML del editor) |
 | `MessageTemplate/List` | `{ customerId, channel? }` | 200 `data:{templates[], count}` (desc por fecha; filtra por canal si se envía) |
 | `MessageTemplate/Delete` | `{ messageTemplateId }` | 200 ok · 403 otro cliente · 404 no existe |
 | `Blacklist/List` | `{ customerId }` o `{ customer }` | 200 `data:{items:[{email, rejectionType, description, date}], count}` (tabla `{customer}_blackList`) |
@@ -313,15 +313,22 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
     (como PyJWT en los Authorizers); IAM: S3 `GetObject/PutObject` (bucket del cliente), DynamoDB
     `Scan document`/`Scan+PutItem {tenant}_processDetail` y `GetItem messageTemplate` (Render-pdf),
     SQS `SendMessage` a `Email_Send-batch-raw-EAP` (combiner).
+- **Plantillas PDF PERSISTIDAS en backend (jul 2026):** las plantillas del editor ya no viven solo
+  en localStorage — se guardan en la tabla **`messageTemplate` con `channel=PDF`** (campo `html`),
+  así se **comparten** entre usuarios/equipos. `MessageTemplate_Create` acepta `PDF` (exige `html`);
+  `List` las devuelve (canal `PDF`); la lambda `Render-pdf` puede leerlas por `messageTemplateId`.
+  El editor (`PdfTemplatesSection`): **Guardar** → `messageTemplatesService.create({channel:'PDF',
+  name, html})` (+ espejo en localStorage como respaldo/offline); **Cargar** → lista del backend
+  (`list(customerId,'PDF')`) y carga el `html`. El portal ya precarga `messageTemplate` (todos los
+  canales) en `PortalDataContext`, así que aparecen sin recargar.
 - **Form de campaña cableado a la plantilla del editor (jul 2026):** al crear una campaña **EAP**
   con **Tipo de documento = PDF**, `CampanasSection` ya no sube un `.pdf` estático: muestra un
-  **selector de plantillas PDF guardadas en el editor** (`mc_pdf_drafts` en localStorage, key
-  compartida vía `pdfTemplatesService.readPdfDrafts`). Al elegir una, sube su **HTML** a S3
-  (`documentType=attachment`, como `.html`) y usa esa ruta como `attachment:[{path}]` +
-  `documentFormat:'PDF'`. Create-campaign guarda el `document.documentPath` (ese HTML) y el
-  combinador EAP-PDF lo baja y renderiza por destinatario. EAU y EAP-DOCX siguen con la subida de
-  archivo de siempre. Con esto el flujo EAP-PDF queda **de punta a punta** en el front (falta solo
-  el despliegue `[J]` de abajo).
+  **selector de plantillas PDF** = las del **backend** (canal PDF, `c:{id}`) + borradores locales de
+  respaldo (`l:{name}`). Al elegir una, sube su **HTML** a S3 (`documentType=attachment`, como
+  `.html`) y usa esa ruta como `attachment:[{path}]` + `documentFormat:'PDF'`. Create-campaign guarda
+  el `document.documentPath` (ese HTML) y el combinador EAP-PDF lo baja y renderiza por destinatario.
+  EAU y EAP-DOCX siguen con la subida de archivo de siempre. Con esto el flujo EAP-PDF queda **de
+  punta a punta** en el front (falta solo el despliegue `[J]` de abajo).
 - **Programar envíos (jul 2026, FUNCIONAL — HORA EXACTA):** `ProgramarEnviosSection` (tab junto a
   Campañas, RBAC **owner/approver**) permite **agendar el envío real** de una campaña aprobada a una
   fecha/hora futura. Backend: tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`).

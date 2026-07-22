@@ -31,6 +31,8 @@ import { getUser } from '../../services/authService';
 import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { pdfTemplatesService, base64ToPdfBlob, readPdfDrafts, writePdfDrafts } from '../../services/pdfTemplatesService';
+import { messageTemplatesService } from '../../services/messageTemplatesService';
+import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { useFeedback } from '../../hooks/useFeedback';
 
 /**
@@ -104,6 +106,9 @@ export const PdfTemplatesSection = () => {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfOpen, setPdfOpen] = useState(false);
   const [pdfUrl, setPdfUrl] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [cloudTemplates, setCloudTemplates] = useState<MessageTemplate[]>([]);
+  const [cloudLoading, setCloudLoading] = useState(false);
   const dims = PAGE_SIZES[size];
 
   useEffect(() => {
@@ -142,19 +147,42 @@ export const PdfTemplatesSection = () => {
     '</table><p></p>',
   );
 
-  const saveDraft = () => {
+  /** Guarda la plantilla EN EL SISTEMA (backend, compartida) y la refleja en localStorage. */
+  const saveTemplate = async () => {
+    const html = pageRef.current?.innerHTML || '';
+    if (!html.trim()) { notify('El documento está vacío.', 'warning'); return; }
     const name = window.prompt('Nombre de la plantilla:');
     if (!name || !name.trim()) return;
-    const d = readPdfDrafts();
-    d[name.trim()] = pageRef.current?.innerHTML || '';
-    writePdfDrafts(d);
-    notify(`Plantilla "${name.trim()}" guardada.`, 'success');
+    const clean = name.trim();
+    setSaving(true);
+    const res = await messageTemplatesService.create({
+      customerId: getUser()?.customerId ?? '', channel: 'PDF', name: clean, html,
+    });
+    setSaving(false);
+    // Espejo local (respaldo/offline + el form de campaña lo tiene aunque no recargue).
+    const d = readPdfDrafts(); d[clean] = html; writePdfDrafts(d);
+    if (isOk(res)) notify(`Plantilla "${clean}" guardada en el sistema.`, 'success');
+    else notify(res.description || 'Se guardó localmente; el guardado en el sistema falló.', 'warning');
+  };
+
+  /** Abre el menú "Cargar" y trae las plantillas PDF del backend (compartidas). */
+  const openLoad = async (el: HTMLElement) => {
+    setLoadAnchor(el);
+    setCloudLoading(true);
+    const res = await messageTemplatesService.list(getUser()?.customerId ?? '', 'PDF');
+    setCloudLoading(false);
+    setCloudTemplates(isOk(res) && res.data?.templates ? res.data.templates : []);
+  };
+  const loadTemplate = (t: MessageTemplate) => {
+    if (pageRef.current) pageRef.current.innerHTML = t.html || '';
+    setLoadAnchor(null);
+    notify(`Plantilla "${t.name}" cargada.`, 'info');
   };
   const loadDraft = (name: string) => {
     const d = readPdfDrafts();
     if (pageRef.current) pageRef.current.innerHTML = d[name] || '';
     setLoadAnchor(null);
-    notify(`Plantilla "${name}" cargada.`, 'info');
+    notify(`Plantilla "${name}" cargada (local).`, 'info');
   };
   const newDoc = () => { if (pageRef.current) pageRef.current.innerHTML = '<p><br></p>'; };
   const showHtml = () => { setHtmlView(pageRef.current?.innerHTML || ''); setHtmlOpen(true); };
@@ -202,7 +230,7 @@ export const PdfTemplatesSection = () => {
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
           <Button size="small" startIcon={<NoteAddIcon />} onClick={newDoc}>Nueva</Button>
-          <Button size="small" startIcon={<FolderOpenIcon />} onClick={(e) => setLoadAnchor(e.currentTarget)}>Cargar</Button>
+          <Button size="small" startIcon={<FolderOpenIcon />} onClick={(e) => openLoad(e.currentTarget)}>Cargar</Button>
           <Button size="small" startIcon={<CodeIcon />} onClick={showHtml}>Ver HTML</Button>
           <Button
             size="small"
@@ -215,7 +243,9 @@ export const PdfTemplatesSection = () => {
             {pdfLoading ? 'Generando…' : 'Vista previa PDF'}
           </Button>
           <Button size="small" variant="outlined" startIcon={<DownloadIcon />} onClick={download}>Descargar HTML</Button>
-          <Button size="small" variant="contained" startIcon={<SaveIcon />} onClick={saveDraft}>Guardar</Button>
+          <Button size="small" variant="contained" disabled={saving} startIcon={saving ? <CircularProgress size={16} /> : <SaveIcon />} onClick={saveTemplate}>
+            {saving ? 'Guardando…' : 'Guardar'}
+          </Button>
         </Stack>
       </Stack>
 
@@ -316,9 +346,16 @@ export const PdfTemplatesSection = () => {
       </Menu>
 
       <Menu anchorEl={loadAnchor} open={Boolean(loadAnchor)} onClose={() => setLoadAnchor(null)}>
-        {Object.keys(drafts).length === 0
-          ? <MenuItem disabled>No hay plantillas guardadas</MenuItem>
-          : Object.keys(drafts).sort().map((n) => <MenuItem key={n} onClick={() => loadDraft(n)}>{n}</MenuItem>)}
+        {cloudLoading && <MenuItem disabled>Cargando del sistema…</MenuItem>}
+        {!cloudLoading && cloudTemplates.map((t) => (
+          <MenuItem key={t.messageTemplateId} onClick={() => loadTemplate(t)}>{t.name}</MenuItem>
+        ))}
+        {!cloudLoading && Object.keys(drafts).sort()
+          .filter((n) => !cloudTemplates.some((t) => t.name === n))
+          .map((n) => <MenuItem key={`local-${n}`} onClick={() => loadDraft(n)}>{n} (local)</MenuItem>)}
+        {!cloudLoading && cloudTemplates.length === 0 && Object.keys(drafts).length === 0 && (
+          <MenuItem disabled>No hay plantillas guardadas</MenuItem>
+        )}
       </Menu>
 
       <Dialog open={pdfOpen} onClose={closePdf} maxWidth="md" fullWidth>
