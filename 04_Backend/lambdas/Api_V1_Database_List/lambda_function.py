@@ -5,6 +5,8 @@ Lee la metadata de la tabla 'databaseFile' (ver Api_V1_Database_Register-file).
 Ruta: POST /Database/List  (integración no-proxy, envelope estándar)
 Request:  { customerId }  (o { customer } como alternativa)
 Respuesta: 200 { data: { files: [...], count } }  ordenadas por fecha (desc)
+Cada archivo incluye `columns` (encabezados) y `previewRows` (primeras filas de datos)
+para la vista previa persistente del "ver detalle".
 '''
 import json
 import os

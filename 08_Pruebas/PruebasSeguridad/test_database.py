@@ -84,6 +84,31 @@ def test_columns_por_defecto_lista_vacia(db):
     assert resp['data']['files'][0]['columns'] == []
 
 
+def test_guarda_y_lista_preview_rows(db):
+    # Las primeras filas se persisten para la vista previa del "ver detalle".
+    reg, lst, _ = db
+    rows = [['1', 'ana@test.com', 'Ana'], ['2', 'luis@test.com', 'Luis']]
+    _register(reg, columns=['Id', 'Correo', 'Nombre'], previewRows=rows)
+    resp = lst.lambda_handler(_ctx({}), None)
+    assert resp['data']['files'][0]['previewRows'] == rows
+
+
+def test_preview_rows_se_acota_a_5(db):
+    # Se guardan máximo 5 filas (no inflar el ítem de DynamoDB).
+    reg, lst, _ = db
+    rows = [[str(i), f'u{i}@t.com', f'N{i}'] for i in range(20)]
+    _register(reg, previewRows=rows)
+    resp = lst.lambda_handler(_ctx({}), None)
+    assert len(resp['data']['files'][0]['previewRows']) == 5
+
+
+def test_preview_rows_por_defecto_lista_vacia(db):
+    reg, lst, _ = db
+    _register(reg)  # sin previewRows
+    resp = lst.lambda_handler(_ctx({}), None)
+    assert resp['data']['files'][0]['previewRows'] == []
+
+
 def test_fallback_por_empresa_cuando_customerid_no_coincide(db):
     # Registrada con CU1; se lista con un customerId distinto (desalineado) pero MISMA
     # empresa en el token → el fallback por nombre de empresa la encuentra.
