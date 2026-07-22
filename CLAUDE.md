@@ -451,6 +451,46 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - ⚠️ `[J]` ✅ (desplegado): crear la cola `Voice_Send-batch` + trigger y habilitar el origen de voz en End User
   Messaging (número con capacidad de voz).
 
+### Cascada omnicanal — "entrega garantizada al menor costo" (jul 2026, MVP)
+> El **diferenciador killer**: el cliente define UN mensaje lógico (no un canal) — una base,
+> un **orden de canales** (Correo → WhatsApp → SMS → Voz, o el que elija) con el contenido por
+> canal, un **criterio de éxito** (entregado/leído), un **timeout** por paso y un **tope de
+> presupuesto**. La plataforma intenta el canal preferido/más barato y **escala sola** hasta
+> **confirmar entrega/lectura**, respetando **saldo** y **consentimiento**. Reutiliza TODO el
+> plumbing existente (workers de los 4 canales, recibos `sendStatus`/`ReceptionStatus`, monedero,
+> tarifas, blacklist/unsubscribe) — la cascada es solo la capa de reglas encima.
+- **Tablas:** `cascadeRun` (PK `cascadeRunId` + GSI `customerId-index`: definición + contadores +
+  status `draft|running|paused|done|canceled`) y `cascadeContact` (PK `cascadeContactId` + GSI
+  `cascadeRunId-index`: estado por persona). Se crean on-demand.
+- **Máquina de estados por contacto:** `pending → awaiting → (confirmed | escalar→pending… | exhausted)`.
+- **Lambdas:** `Api_V1_Cascade_{Create,Start,Status,List,Cancel}` (rutas cliente) + **`Api_V1_Cascade_Tick`**
+  (SIN ruta; lo dispara un **cron EventBridge** cada ~5 min y `Start` con un `invoke` para arranque
+  inmediato).
+  - `Create`: valida + **materializa los contactos** desde el CSV de la base (`emailCol`/`phoneCol`/
+    `nameCol` mapean columnas; dedup por email|celular; tope `CASCADE_MAX_CONTACTS`=5000). Estado `draft`.
+  - `Tick` (motor): por contacto `pending` → resuelve el canal del paso (salta canales sin dirección o
+    suprimidos), verifica presupuesto, **reserva saldo** (débito atómico), **encola 1 fila** al queue del
+    canal (`Email_Send-batch-template-EM` / `Sms_Send-batch` / `Wsp_Send-batch` / `Voice_Send-batch`) con
+    `uniqueId = cascadeContactId` y `processId = csc-{contactId}-{step}`, y pasa a `awaiting`. Por contacto
+    `awaiting` → **lee el resultado** de `{tenant}_sendStatus` (email: 2 saltos vía `{tenant}_sendDetail`):
+    entregado/leído (según `confirmOn`) → `confirmed`; falló o venció el timeout → **escala** al siguiente
+    canal (o `exhausted`). Claim con `UpdateItem` condicional (idempotente: sin doble envío entre ticks).
+    Saldo insuficiente → run `paused` (reintenta al recargar). Costo por mensaje = tarifa unitaria del canal
+    + IVA (misma `DEFAULT_RATES` de Cost_Estimate, replicada — **si cambian allá, replicar aquí**).
+  - `Status`: recalcula contadores desde los contactos (fuente de verdad) + `byChannel` + muestra.
+- **Confirmación:** estados 1 enviado · 2 entregado · 3 rechazado · 4 abierto/leído (WSP) · 5 clic · 6 rebote.
+  `confirmOn='delivered'` → éxito si estado ∈ {2,4,5,7}; `='read'` → {4,5} (SMS/Voz no tienen "leído" →
+  entregado cuenta). Falla → {3,6}.
+- **Personalización:** el worker recibe `headers=['Identificacion','Contacto']+columns` y
+  `row=[contactId, contacto]+filaCSV` → los `{{campo}}` de la base resolven en todos los canales (WSP toma
+  `row[2:]` como params del HSM). Cubierto por `08_Pruebas/PruebasSeguridad/test_cascade.py` (9 pruebas).
+- ⚠️ `[J]` (despliegue): tablas `cascadeRun`/`cascadeContact` (las crea `Create` on-demand); crear las 6
+  funciones vacías; **regla EventBridge `rate(5 minutes)` → `Api_V1_Cascade_Tick`**; rutas
+  `/Cascade/{Create,Start,Status,List,Cancel}` (authorizer + CORS, ya en `routes.json`); IAM: DynamoDB sobre
+  `cascadeRun`/`cascadeContact`/`databaseFile`/`customerBalance`/`walletTransaction`/`pricingRate`/
+  `{tenant}_sendStatus`/`_sendDetail`/`_processDetail`/`_blackList`/`_unsubscribe`, S3 `GetObject` (base),
+  SQS `SendMessage` a las 4 colas de envío, y `lambda:InvokeFunction` sobre `Api_V1_Cascade_Tick` (para `Start`).
+
 ### Roles (admin/client) (jul 2026)
 - **Modelo:** dos roles — **`admin`** (personal interno de MailConnect: gestiona clientes,
   tarifas, config global) y **`client`** (default, usuario de una empresa). Dentro de un cliente

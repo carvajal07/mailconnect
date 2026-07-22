@@ -226,6 +226,35 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
   lambdas `MessageTemplate_Create/List` se redepliegan solas al hacer push (deploy-lambdas). El editor
   además espeja en localStorage como respaldo/offline.
 
+### 3d. Cascada omnicanal — "entrega garantizada al menor costo" **🆕 (nuevo)**
+
+> Orquestación por contacto: intenta el canal preferido/más barato y escala (correo→WhatsApp→SMS→voz)
+> hasta confirmar entrega/lectura. Reutiliza los workers de envío, `sendStatus`/recibos, monedero y
+> tarifas ya desplegados — solo agrega la capa de reglas. **El motor lo mueve un cron.**
+
+- [ ] `[J]` Tablas **`cascadeRun`** (PK `cascadeRunId` + GSI `customerId-index`) y **`cascadeContact`**
+  (PK `cascadeContactId` + GSI `cascadeRunId-index`), On-Demand — las crea `Cascade_Create` on-demand, o
+  créalas a mano.
+- [ ] `[J]` Crear las **6 funciones vacías** antes del primer CD: `Api_V1_Cascade_Create`, `_Start`,
+  `_Status`, `_List`, `_Cancel`, `_Tick`.
+- [ ] `[J]` **Regla EventBridge `rate(5 minutes)` → `Api_V1_Cascade_Tick`** (el motor). Es lo que hace
+  avanzar los envíos/escalamientos. `Cascade_Start` además invoca el Tick una vez para arranque inmediato
+  (`lambda:InvokeFunction` sobre `Api_V1_Cascade_Tick`; env `CASCADE_TICK_FUNCTION` si el nombre AWS difiere).
+- [ ] `[J]` Rutas `/Cascade/{Create,Start,Status,List,Cancel}` (client, authorizer + CORS + mapping de
+  `customerId`/`customer`/`nit`). Ya están en `infra/api/routes.json` → `deploy-api.yml` las crea. El `Tick`
+  **no** lleva ruta.
+- [ ] `[J]` IAM del `Tick` (el que más permisos necesita): DynamoDB `Query`/`UpdateItem`/`Scan` sobre
+  `cascadeRun`/`cascadeContact`; `UpdateItem` sobre `customerBalance` + `PutItem` sobre `walletTransaction`
+  (débito/reembolso); `GetItem` sobre `pricingRate`; `Query`/`GetItem` sobre `{tenant}_sendStatus`,
+  `{tenant}_sendDetail`, `{tenant}_blackList`, `{tenant}_unsubscribe` (patrón `*_sendStatus`, etc.);
+  `CreateTable/DescribeTable` sobre `{tenant}_*` (los crea si faltan); **`sqs:SendMessage`** a las 4 colas
+  de envío (`Email_Send-batch-template-EM`, `Sms_Send-batch`, `Wsp_Send-batch`, `Voice_Send-batch`).
+  `Cascade_Create` además: `GetItem databaseFile`, S3 `GetObject` (la base CSV), `Put/BatchWrite` sobre
+  `cascadeContact`/`cascadeRun`. `Status`/`List`/`Cancel`: `Query`/`GetItem`/`UpdateItem` sobre las 2 tablas.
+- [ ] `[J]` Los envíos de la cascada escriben en las tablas por tenant que ya usan los workers
+  (`{tenant}_sendStatus`, y para correo `{tenant}_processDetail`/`_sendDetail`); el `Tick` las crea si no
+  existen, pero si un tenant nunca ha enviado, el primer arranque puede tardar un tick en quedar `ACTIVE`.
+
 - [x] `[J]` Crear las 12 funciones vacías + sus rutas + permisos de la tabla.
 - [x] `[J]` Confirmar que el **Authorizer** está asignado a las 12 rutas.
 - [x] `[J]` `Api_V1_Admin_Requeue` reencola las partes pendientes de un envío atascado
