@@ -44,25 +44,28 @@ CURRENCY = 'COP'
 DEFAULT_TAX_RATE = 0.19          # IVA Colombia
 DEFAULT_MIN_CAMPAIGN = 5000      # mínimo por campaña (COP)
 
-# Tarifas por defecto (COP). INDICATIVAS: calibrar con costos reales de AWS/Meta.
-# Se pueden sobreescribir por cliente/canal en la tabla pricingRate.
+# Tarifas por defecto (COP). El precio unitario base de cada canal es ESCALONADO por
+# volumen (VOLUME_TIERS, abajo). Los `base*` aquí quedan en None = "usar el tramo por
+# volumen"; si en pricingRate se guarda un valor PLANO para un canal, ese override gana
+# sobre el tramo. Los recargos (attachmentPerMB / personalized*) son OPCIONALES y van en 0
+# por defecto: el precio del tramo ya es "todo incluido" (coincide con la calculadora comercial).
 DEFAULT_RATES = {
     'EMAIL': {
-        'baseEM': 8,             # correo sin adjunto (EM)
-        'baseEAU': 15,           # correo con adjunto único (EAU)
-        'baseEAP': 40,           # correo con adjunto personalizado (EAP), base
-        'attachmentPerMB': 5,    # recargo por MB de adjunto (EAU/EAP)
-        'personalizedPdf': 25,   # recargo por documento personalizado PDF (EAP)
-        'personalizedDocx': 35,  # recargo por documento personalizado Word (EAP)
+        'baseEM': None,          # None = precio por tramo (VOLUME_TIERS['EM'])
+        'baseEAU': None,         # None = precio por tramo (VOLUME_TIERS['EAU'])
+        'baseEAP': None,         # None = precio por tramo (VOLUME_TIERS['EAP'])
+        'attachmentPerMB': 0,    # recargo OPCIONAL por MB de adjunto (default 0)
+        'personalizedPdf': 0,    # recargo OPCIONAL por documento personalizado PDF (default 0)
+        'personalizedDocx': 0,   # recargo OPCIONAL por documento personalizado Word (default 0)
     },
     'SMS': {
-        'baseSms': 60,           # por SMS y por segmento (160 GSM-7 / 70 unicode)
+        'baseSms': None,         # None = precio por tramo (VOLUME_TIERS['SMS']), por segmento
     },
     'WHATSAPP': {
-        'baseMarketing': 90,     # por mensaje de plantilla de marketing
+        'baseMarketing': None,   # None = precio por tramo (VOLUME_TIERS['WHATSAPP'])
     },
     'VOICE': {
-        'basePerMinute': 120,    # por minuto de llamada
+        'basePerMinute': None,   # None = precio por tramo (VOLUME_TIERS['VOICE']), por minuto
         'avgMinutes': 0.5,       # minutos promedio por llamada (si no lo mandan)
     },
     'COMMON': {
@@ -70,6 +73,25 @@ DEFAULT_RATES = {
         'minCampaign': DEFAULT_MIN_CAMPAIGN,
     },
 }
+
+# Precio unitario por TRAMO de volumen (COP). Lista (min_destinatarios, precio_unitario).
+# El precio del tramo se elige por el TOTAL de destinatarios del envío y aplica a TODO el
+# envío (no marginal). Debe coincidir con la calculadora comercial (CalculadoraPrecios).
+# ⚠️ SINCRONÍA: si cambian estos tramos, replicarlos en Prepare-batch, Billing_Summary y
+# Pricing_List (no hay import compartido entre lambdas).
+VOLUME_TIERS = {
+    'EM':       [(1, 30), (2000, 28), (5000, 27), (10000, 25), (20000, 21), (50000, 19), (100000, 14), (200000, 9), (500000, 5), (1000000, 4)],
+    'EAU':      [(1, 45), (2000, 42), (5000, 40), (10000, 37), (20000, 31), (50000, 28), (100000, 21), (200000, 14), (500000, 8), (1000000, 6)],
+    'EAP':      [(1, 60), (2000, 55), (5000, 50), (10000, 46), (20000, 38), (50000, 33), (100000, 24), (200000, 16), (500000, 10), (1000000, 8)],
+    'SMS':      [(1, 55), (2000, 50), (5000, 45), (10000, 40), (20000, 35), (50000, 28), (100000, 22), (200000, 18), (500000, 14), (1000000, 10)],
+    'WHATSAPP': [(1, 130), (2000, 125), (5000, 118), (10000, 110), (20000, 100), (50000, 90), (100000, 82), (200000, 76), (500000, 70), (1000000, 65)],
+    'VOICE':    [(1, 150), (2000, 140), (5000, 130), (10000, 120), (20000, 110), (50000, 95), (100000, 80), (200000, 70), (500000, 60), (1000000, 48)],
+}
+
+# Modo de entrega del documento (EAU/EAP): ONFILE (adjunto en el correo) vs ONLINE (enlace/
+# botón de descarga). HOOK de precio: hoy el ONLINE se cobra IGUAL que el ONFILE (factor 1.0);
+# para hacerlo más barato (refleja que S3 solo cobra a quien descarga) bajá este factor (<1.0).
+ONLINE_FACTOR = 1.0
 
 VALID_CHANNELS = ('EMAIL', 'SMS', 'WHATSAPP', 'VOICE')
 
@@ -105,6 +127,30 @@ def _num(value, default=0.0):
         return default
 
 
+def _tier_unit(tier_key, recipients):
+    """Precio unitario del TRAMO por volumen: el mayor tramo cuyo mínimo no supere a
+    `recipients`. Aplica a todo el envío (no marginal)."""
+    tiers = VOLUME_TIERS.get(tier_key) or []
+    if not tiers:
+        return 0
+    unit = tiers[0][1]
+    for min_qty, price in tiers:
+        if recipients >= min_qty:
+            unit = price
+        else:
+            break
+    return unit
+
+
+def _base_unit(rate, override_key, tier_key, recipients):
+    """Precio unitario base del canal: si pricingRate trae un valor PLANO (override) para el
+    canal, se usa ese; si no (None), el precio del TRAMO por volumen (VOLUME_TIERS)."""
+    v = rate.get(override_key)
+    if v is not None:
+        return _num(v)
+    return _tier_unit(tier_key, recipients)
+
+
 def _load_rate(customer_id, channel):
     """Tarifa efectiva: DEFAULT_RATES[channel] + COMMON, sobreescrito por la tabla
     (primero la global '*', luego la del cliente). Nunca falla: si no hay tabla,
@@ -135,50 +181,63 @@ def _load_rate(customer_id, channel):
 def _estimate_email(rate, recipients, payload):
     mode = str(payload.get('emailMode', 'EM')).upper()
     size_mb = max(0.0, _num(payload.get('attachmentSizeMB'), 0))
-    att_type = str(payload.get('attachmentType', 'pdf')).lower()
-    breakdown = []
+    att_type = str(payload.get('attachmentType', 'pdf')).lower()          # formato pdf/docx
+    delivery = str(payload.get('attachmentDelivery', 'ONFILE')).upper()   # ONFILE / ONLINE
 
     if mode == 'EAU':
-        base = rate['baseEAU']
-        breakdown.append(('Base correo con adjunto (EAU)', f'{recipients} × ${base:.0f}', base * recipients))
-        surcharge = size_mb * rate['attachmentPerMB']
-        if surcharge:
-            breakdown.append(('Recargo por peso del adjunto', f'{size_mb:.1f} MB × ${rate["attachmentPerMB"]:.0f} × {recipients}', surcharge * recipients))
-        unit = base + surcharge
+        base = _base_unit(rate, 'baseEAU', 'EAU', recipients)
+        label = 'Base correo con adjunto (EAU)'
     elif mode == 'EAP':
-        base = rate['baseEAP']
-        breakdown.append(('Base correo con adjunto personalizado (EAP)', f'{recipients} × ${base:.0f}', base * recipients))
-        surcharge = size_mb * rate['attachmentPerMB']
+        base = _base_unit(rate, 'baseEAP', 'EAP', recipients)
+        label = 'Base correo con adjunto personalizado (EAP)'
+    else:
+        mode = 'EM'
+        base = _base_unit(rate, 'baseEM', 'EM', recipients)
+        label = 'Base correo sin adjunto (EM)'
+
+    breakdown = [(label, f'{recipients} × ${base:.0f}', base * recipients)]
+    unit = base
+
+    # Recargos OPCIONALES (default 0; el precio del tramo ya es "todo incluido").
+    if mode in ('EAU', 'EAP'):
+        per_mb = _num(rate.get('attachmentPerMB'), 0)
+        surcharge = size_mb * per_mb
         if surcharge:
-            breakdown.append(('Recargo por peso del adjunto', f'{size_mb:.1f} MB × ${rate["attachmentPerMB"]:.0f} × {recipients}', surcharge * recipients))
-        pers = rate['personalizedPdf'] if att_type == 'pdf' else rate['personalizedDocx']
-        breakdown.append((f'Personalización por destinatario ({att_type.upper()})', f'{recipients} × ${pers:.0f}', pers * recipients))
-        unit = base + surcharge + pers
-    else:  # EM
-        base = rate['baseEM']
-        breakdown.append(('Base correo sin adjunto (EM)', f'{recipients} × ${base:.0f}', base * recipients))
-        unit = base
+            breakdown.append(('Recargo por peso del adjunto', f'{size_mb:.1f} MB × ${per_mb:.0f} × {recipients}', surcharge * recipients))
+            unit += surcharge
+    if mode == 'EAP':
+        pers = _num(rate.get('personalizedPdf'), 0) if att_type == 'pdf' else _num(rate.get('personalizedDocx'), 0)
+        if pers:
+            breakdown.append((f'Personalización por destinatario ({att_type.upper()})', f'{recipients} × ${pers:.0f}', pers * recipients))
+            unit += pers
+
+    # Modo de entrega ONLINE (enlace) vs ONFILE (adjunto): hook de precio (hoy factor 1.0,
+    # o sea mismo precio). Al bajar ONLINE_FACTOR (<1.0) el envío por enlace cuesta menos.
+    if mode in ('EAU', 'EAP') and delivery == 'ONLINE' and ONLINE_FACTOR != 1.0:
+        unit *= ONLINE_FACTOR
+        breakdown = [(c, d + ' (entrega por enlace)', a * ONLINE_FACTOR) for c, d, a in breakdown]
 
     return unit, breakdown
 
 
 def _estimate_sms(rate, recipients, payload):
     segments = max(1, int(_num(payload.get('smsSegments'), 1)))
-    unit = rate['baseSms'] * segments
-    detail = f'{recipients} × ${rate["baseSms"]:.0f}' + (f' × {segments} segmentos' if segments > 1 else '')
+    base = _base_unit(rate, 'baseSms', 'SMS', recipients)
+    unit = base * segments
+    detail = f'{recipients} × ${base:.0f}' + (f' × {segments} segmentos' if segments > 1 else '')
     return unit, [('Envío SMS', detail, unit * recipients)]
 
 
 def _estimate_whatsapp(rate, recipients, payload):
-    unit = rate['baseMarketing']
+    unit = _base_unit(rate, 'baseMarketing', 'WHATSAPP', recipients)
     return unit, [('Mensaje WhatsApp (plantilla marketing)', f'{recipients} × ${unit:.0f}', unit * recipients)]
 
 
 def _estimate_voice(rate, recipients, payload):
-    minutes = _num(payload.get('voiceMinutes'), rate.get('avgMinutes', 0.5))
-    minutes = max(0.1, minutes)
-    unit = rate['basePerMinute'] * minutes
-    return unit, [('Llamada de voz', f'{recipients} × ${rate["basePerMinute"]:.0f}/min × {minutes:.2f} min', unit * recipients)]
+    minutes = max(0.1, _num(payload.get('voiceMinutes'), rate.get('avgMinutes', 0.5)))
+    base = _base_unit(rate, 'basePerMinute', 'VOICE', recipients)
+    unit = base * minutes
+    return unit, [('Llamada de voz', f'{recipients} × ${base:.0f}/min × {minutes:.2f} min', unit * recipients)]
 
 
 ESTIMATORS = {

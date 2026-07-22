@@ -176,12 +176,30 @@ table_rates = dynamodb.Table('pricingRate')
 DEFAULT_TAX_RATE = 0.19          # IVA Colombia
 DEFAULT_MIN_CAMPAIGN = 5000      # mínimo por campaña (COP)
 DEFAULT_RATES = {
-    'EMAIL': {'baseEM': 8, 'baseEAU': 15, 'baseEAP': 40, 'attachmentPerMB': 5, 'personalizedPdf': 25, 'personalizedDocx': 35},
-    'SMS': {'baseSms': 60},
-    'WHATSAPP': {'baseMarketing': 90},
-    'VOICE': {'basePerMinute': 120, 'avgMinutes': 0.5},
+    'EMAIL': {'baseEM': None, 'baseEAU': None, 'baseEAP': None, 'attachmentPerMB': 0, 'personalizedPdf': 0, 'personalizedDocx': 0},
+    'SMS': {'baseSms': None},
+    'WHATSAPP': {'baseMarketing': None},
+    'VOICE': {'basePerMinute': None, 'avgMinutes': 0.5},
     'COMMON': {'taxRate': DEFAULT_TAX_RATE, 'minCampaign': DEFAULT_MIN_CAMPAIGN},
 }
+# Precio unitario por TRAMO de volumen (COP). Réplica de Api_V1_Cost_Estimate.VOLUME_TIERS
+# (mantener en sync). El precio del tramo aplica a TODO el envío (se elige por el total de
+# destinatarios) y es "todo incluido". Si pricingRate trae un valor plano, ese override gana.
+VOLUME_TIERS = {
+    'EM':       [(1, 30), (2000, 28), (5000, 27), (10000, 25), (20000, 21), (50000, 19), (100000, 14), (200000, 9), (500000, 5), (1000000, 4)],
+    'EAU':      [(1, 45), (2000, 42), (5000, 40), (10000, 37), (20000, 31), (50000, 28), (100000, 21), (200000, 14), (500000, 8), (1000000, 6)],
+    'EAP':      [(1, 60), (2000, 55), (5000, 50), (10000, 46), (20000, 38), (50000, 33), (100000, 24), (200000, 16), (500000, 10), (1000000, 8)],
+    'SMS':      [(1, 55), (2000, 50), (5000, 45), (10000, 40), (20000, 35), (50000, 28), (100000, 22), (200000, 18), (500000, 14), (1000000, 10)],
+    'WHATSAPP': [(1, 130), (2000, 125), (5000, 118), (10000, 110), (20000, 100), (50000, 90), (100000, 82), (200000, 76), (500000, 70), (1000000, 65)],
+    'VOICE':    [(1, 150), (2000, 140), (5000, 130), (10000, 120), (20000, 110), (50000, 95), (100000, 80), (200000, 70), (500000, 60), (1000000, 48)],
+}
+# channel de la campaña -> (clave de override plano en la tarifa, clave del tramo por volumen).
+CAMPAIGN_TIER = {
+    'EM': ('baseEM', 'EM'), 'EAU': ('baseEAU', 'EAU'), 'EAP': ('baseEAP', 'EAP'),
+    'SMS': ('baseSms', 'SMS'), 'WSP': ('baseMarketing', 'WHATSAPP'), 'VOZ': ('basePerMinute', 'VOICE'),
+}
+# Hook de precio ONLINE (enlace) vs ONFILE (adjunto). Hoy 1.0 = mismo precio. Réplica.
+ONLINE_FACTOR = 1.0
 # channel de la campaña (EM/EAU/EAP/SMS/WSP/VOZ) -> canal de tarifa del estimador.
 CHANNEL_MAP = {
     'EM': 'EMAIL', 'EAU': 'EMAIL', 'EAP': 'EMAIL',
@@ -196,6 +214,29 @@ def _num(value, default=0.0):
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _tier_unit(tier_key, recipients):
+    """Precio unitario del TRAMO por volumen (el mayor tramo cuyo mínimo no supere a
+    `recipients`). Réplica de Api_V1_Cost_Estimate._tier_unit."""
+    tiers = VOLUME_TIERS.get(tier_key) or []
+    if not tiers:
+        return 0
+    unit = tiers[0][1]
+    for min_qty, price in tiers:
+        if recipients >= min_qty:
+            unit = price
+        else:
+            break
+    return unit
+
+
+def _base_unit(rate, override_key, tier_key, recipients):
+    """Base del canal: override plano de pricingRate si existe; si no, el tramo por volumen."""
+    v = rate.get(override_key)
+    if v is not None:
+        return _num(v)
+    return _tier_unit(tier_key, recipients)
 
 
 def _load_rate(customer_id, channel):
@@ -222,37 +263,33 @@ def _load_rate(customer_id, channel):
     return rate
 
 
-def _campaign_unit(rate, channel_name, document_format):
-    """Tarifa unitaria por destinatario según el canal de la campaña (misma lógica que
-    Billing_Summary/Cost_Estimate). NO incluye el recargo por MB del adjunto (EAU/EAP):
-    misma aproximación que Billing_Summary; la conciliación fina queda para otra fase.
-    Como el estimador del front SÍ suma el adjunto, su total es >= al débito → el gate de
-    saldo del front nunca queda por debajo del cobro real (dirección segura)."""
-    if channel_name == 'EM':
-        return rate['baseEM']
-    if channel_name == 'EAU':
-        return rate['baseEAU']
-    if channel_name == 'EAP':
-        pers = rate['personalizedPdf'] if str(document_format).upper() == 'PDF' else rate['personalizedDocx']
-        return rate['baseEAP'] + pers
-    if channel_name == 'SMS':
-        return rate['baseSms']
-    if channel_name == 'WSP':
-        return rate['baseMarketing']
+def _campaign_unit(rate, channel_name, recipients, document_format=None, delivery='ONFILE'):
+    """Tarifa unitaria por destinatario según el canal y el VOLUMEN (tramo por `recipients`).
+    El precio del tramo es "todo incluido" (misma lógica que Cost_Estimate). Réplica —
+    mantener en sync. Si pricingRate trae un valor plano para el canal, ese override gana.
+    ONLINE (enlace) vs ONFILE (adjunto): hook de precio en EAU/EAP (hoy factor 1.0)."""
+    mapping = CAMPAIGN_TIER.get(channel_name)
+    if not mapping:
+        return 0.0
+    override_key, tier_key = mapping
+    unit = _base_unit(rate, override_key, tier_key, recipients)
     if channel_name == 'VOZ':
-        return rate['basePerMinute'] * rate.get('avgMinutes', 0.5)
-    return 0.0
+        unit = unit * rate.get('avgMinutes', 0.5)
+    if channel_name in ('EAU', 'EAP') and str(delivery).upper() == 'ONLINE' and ONLINE_FACTOR != 1.0:
+        unit = unit * ONLINE_FACTOR
+    return unit
 
 
-def _campaign_cost(customer_id, channel_name, recipients, document_format=None):
+def _campaign_cost(customer_id, channel_name, recipients, document_format=None, delivery='ONFILE'):
     """Costo TOTAL (COP entero, con IVA y mínimo por campaña) de enviar `recipients`
     mensajes del canal dado. Misma fórmula que Api_V1_Cost_Estimate para UNA campaña:
-    subtotal = max(unit × recipients, minCampaign); total = subtotal + IVA."""
+    subtotal = max(unit × recipients, minCampaign); total = subtotal + IVA. El unitario es
+    ESCALONADO por volumen (tramo elegido por `recipients`)."""
     channel = CHANNEL_MAP.get(channel_name)
     if not channel or recipients <= 0:
         return 0
     rate = _load_rate(customer_id, channel)
-    unit = _campaign_unit(rate, channel_name, document_format)
+    unit = _campaign_unit(rate, channel_name, recipients, document_format, delivery)
     subtotal = max(unit * recipients, rate.get('minCampaign', DEFAULT_MIN_CAMPAIGN))
     total = subtotal * (1 + rate.get('taxRate', DEFAULT_TAX_RATE))
     return int(round(total))
@@ -518,7 +555,7 @@ def select_campaign(campaign_name:str, customer_id:str=None)->dict:
     Returns:
         dict: Nombre de la campaña
     """
-    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, samplesSentCount, documentFormat, approvalStatus'  # Lista de campos a consultar
+    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, samplesSentCount, documentFormat, attachmentType, approvalStatus'  # Lista de campos a consultar
 
     if customer_id:
         response_campaign = table_campaign.scan(
@@ -1405,6 +1442,8 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
     # debitado se guarda para reembolsar si el troceo falla después (compensación).
     previous_state = response_campaign['Items'][0].get('campaignState', 'Pendiente')
     document_format = response_campaign['Items'][0].get('documentFormat')
+    # Modo de entrega del adjunto (ONFILE=adjunto / ONLINE=enlace). Hoy cobra igual (hook).
+    delivery_mode = response_campaign['Items'][0].get('attachmentType') or 'ONFILE'
     data_path = response_campaign['Items'][0].get('dataPath')
     # ¿La base permite duplicados? Si NO (default), se filtran los contactos repetidos en
     # el envío real (y el cobro se dimensiona sobre contactos distintos).
@@ -1413,7 +1452,7 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
     debited = 0
     try:
         recipients_count = count_base_rows(temp_file, delimiter, allow_duplicates)
-        cost = _campaign_cost(st.customer_id, channel_name, recipients_count, document_format)
+        cost = _campaign_cost(st.customer_id, channel_name, recipients_count, document_format, delivery_mode)
         if cost > 0:
             new_balance = reserve_balance(st, cost, data["campaignName"])
             if new_balance is not None:  # None = tabla de saldos no desplegada (rollout)

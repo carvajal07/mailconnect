@@ -564,7 +564,7 @@ export const MuestrasSection = () => {
             <Chip size="small" color="error" label="Saldo insuficiente para el envío estimado" />
           )}
         </Stack>
-        <CostEstimate channel={estimatorChannel} emailMode={estimatorMode} balance={balance.value} onResult={setEstimate} />
+        <CostEstimate channel={estimatorChannel} emailMode={estimatorMode} attachmentDelivery={selectedCampaign?.attachmentType === 'ONLINE' ? 'ONLINE' : 'ONFILE'} balance={balance.value} onResult={setEstimate} />
       </Box>
 
       {/* Estado de aprobación de la campaña seleccionada (PERSISTIDO) */}

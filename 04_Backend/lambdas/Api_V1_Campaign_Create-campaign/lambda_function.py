@@ -202,7 +202,7 @@ def next_consecutive(customerId):
         raise
 
 
-def insert_campaign(customerId,campaignName,numeration,channel,dataPath,template,source,date,documentFormat=None):
+def insert_campaign(customerId,campaignName,numeration,channel,dataPath,template,source,date,documentFormat=None,attachmentType=None):
     campaignId = str(uuid.uuid4())
     item = {
         'campaignId': campaignId,
@@ -225,6 +225,9 @@ def insert_campaign(customerId,campaignName,numeration,channel,dataPath,template
     # Se guarda en la campaña para que Prepare-batch pueda enrutar al armador correcto.
     if documentFormat:
         item['documentFormat'] = documentFormat
+    # Modo de entrega del adjunto (NONE/ONFILE/ONLINE). Se guarda TAMBIÉN en la campaña
+    # (además de en `document`) para que el débito y la facturación puedan tarifar por modo.
+    item['attachmentType'] = attachmentType or 'NONE'
     # Insertar datos en la tabla de campañas
     table_campaign.put_item(Item=item)
     return campaignId
@@ -389,7 +392,7 @@ def lambda_handler(event, context):
                 try:
                     #Voy a omitir el campo del consecutivo en el nombre de la campaña debido a que este consecutivo ya se guarda en un campo de la BD
                     #campaignName = consecutive + "_" + campaignName
-                    campaignId = insert_campaign(customerId,campaignName,consecutive,channelName,dataPath,template,source,formattedDate,documentFormat)
+                    campaignId = insert_campaign(customerId,campaignName,consecutive,channelName,dataPath,template,source,formattedDate,documentFormat,attachment_type)
                 except:
                     status = False
                     statusCode = 404
