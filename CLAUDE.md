@@ -152,6 +152,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Cascade/Dispatch` | `{ name, dataPath, waitMinutes?, successCriterion?, steps:[{channel(EM\|SMS\|WSP\|VOZ), content}] }` | 201 `data:{cascadeRunId, contacts, debited}` · 400 · 402 saldo · 403. Lanza la **cascada omnicanal** (Opción A): crea el run + un contacto por fila, filtra consentimiento del canal 0, encola el paso 0 y debita su costo. Ver `PLAN_CASCADA.md` |
 | `Cascade/List` | `{}` (tenant del token) | 200 `data:{runs:[{cascadeRunId, name, steps, status, counts{total,confirmed,exhausted,inFlight,budget}, createdAt}], count}` |
 | `Cascade/Advance` | (EventBridge cron; sin body) | Tick del motor: por cada contacto vencido lee el estado en `sendStatus`, y confirma/escala/agota/frena por saldo (`decide_next`). Escala encolando el siguiente canal + debitando |
+| `Assistant/Copilot` | `{ action:analyze\|draft\|rewrite, ... }` (portal, tras Authorizer) | **Copiloto de campañas (Opción B).** `analyze` (DETERMINISTA, sin IA): `data:{score, level, issues[], suggestions[], habeasData{ok,present,missing,requiredMissing}, sendTime}` — spam/entregabilidad + checklist Ley 1581 + hora óptima. `draft`/`rewrite` (Bedrock): redacta/mejora copy. Ver `PLAN_COPILOTO.md` |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
