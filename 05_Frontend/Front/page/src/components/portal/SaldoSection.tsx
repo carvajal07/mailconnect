@@ -39,14 +39,11 @@ export const SaldoSection = () => {
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={1} flexWrap="wrap" useFlexGap>
         <Typography variant="h4">Saldo y recargas</Typography>
-        <Stack direction="row" spacing={1}>
-          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={refreshBalance} disabled={balance.loading}>
-            Refrescar
-          </Button>
-          <Button variant="contained" startIcon={<AddCardIcon />} onClick={() => setRechargeOpen(true)}>
-            Recargar
-          </Button>
-        </Stack>
+        {/* Solo "Refrescar" en el header: el botón "Recargar" era redundante con
+            "Recargar con Wompi" / "Registrar transferencia" de la tarjeta de saldo. */}
+        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={refreshBalance} disabled={balance.loading}>
+          Refrescar
+        </Button>
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Tu plataforma funciona con <strong>saldo prepago</strong> en pesos. Cada envío real descuenta

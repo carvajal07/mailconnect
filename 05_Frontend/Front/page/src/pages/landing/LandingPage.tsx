@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { MailConnectLogo } from '../../components/MailConnectLogo';
+import { LandingFloating } from '../../components/LandingFloating';
 import './landing.css';
 
 /* Resultado de la activación de cuenta. La lambda Acount-activation redirige a
@@ -69,7 +70,7 @@ export const LandingPage = () => {
             <a href="#precios">Precios</a>
           </nav>
           <div className="nav-cta">
-            <Link to="/login" className="btn btn-ghost btn-sm nav-hide">Iniciar sesión</Link>
+            <Link to="/login" className="btn btn-ghost btn-sm">Iniciar sesión</Link>
             <Link to="/register" className="btn btn-primary btn-sm">Crear cuenta</Link>
           </div>
         </div>
@@ -367,6 +368,9 @@ export const LandingPage = () => {
           </div>
         </div>
       </footer>
+
+      {/* Botones flotantes: WhatsApp + Asistente de IA (abajo-derecha). */}
+      <LandingFloating whatsappUrl={whatsappUrl()} />
     </div>
   );
 };

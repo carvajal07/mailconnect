@@ -148,6 +148,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Admin/Balances` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, balance, updatedAt}], totals:{balance}, recentTransactions[], count}` (saldo de todos, menor primero + ledger global) |
 | `Balance/Topup-init` | `{ amount (COP≥20000) }` (tenant del token) | 200 `data:{reference, amountInCents, currency, publicKey, signatureIntegrity, redirectUrl?}` · 400. Firma de integridad Wompi; crea el intento `pending` en el ledger |
 | `Wallet/Wompi-webhook` | **público/proxy sin authorizer** (evento Wompi firmado) | 200 ack. Verifica la firma del evento y acredita **idempotente** por `reference` (pending→approved, `TransactWriteItems`); nunca acredita desde el redirect del navegador |
+| `Assistant/Ask` | **público/proxy sin authorizer** `{ question }` | 200 `{answer}` · 400 vacía · 502 modelo no disponible. Asistente de IA (AWS Bedrock Converse, modelo Claude) con prompt de sistema aterrizado en MailConnect; responde en español, solo sobre la plataforma. Lo usan los botones flotantes de la landing |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -175,6 +176,30 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 4. Prepare-batch filtra contra esa tabla en el envío real (chequeo reparado: antes nunca corría).
    ✅ EAP ya reemplaza `{{unsubscribeUrl}}` por destinatario (mismo patrón que EAU; jul 2026).
    Requiere la env `SECRET_KEY` (y `UNSUBSCRIBE_URL`) también en `Send-batch-template-EAP`.
+
+### Landing: login responsive, botones flotantes y asistente IA (jul 2026)
+- **Fix login en móvil:** en la landing el botón "Iniciar sesión" se ocultaba en pantallas
+  ≤640px (clase `nav-hide` → `display:none`) y "desaparecía". Se quitó ese ocultamiento y se
+  compactó el nav (gaps y padding de botones) para que **ambos** botones quepan hasta ~320px.
+- **Botones flotantes (abajo-derecha):** componente `LandingFloating.tsx` (autocontenido, estilos
+  en línea → portable): FAB de **WhatsApp** (enlace `wa.me`) + FAB de **Asistente IA**. Se ocultan
+  mientras el chat está abierto (se cierra con la × del encabezado).
+- **Asistente de IA (AWS Bedrock):** `Api_V1_Assistant_Ask` (pública/proxy + CORS) llama a Bedrock
+  (**Converse API**, modelo Claude) con un **prompt de sistema aterrizado en MailConnect** (qué es,
+  canales, precios, saldo, cumplimiento) y responde en español, SOLO sobre la plataforma; si no
+  sabe, remite a WhatsApp. El chat del front (`LandingFloating` + `assistantService.ts`) degrada con
+  gracia si la lambda no está desplegada (muestra fallback a WhatsApp). Env: `BEDROCK_MODEL_ID`
+  (default `anthropic.claude-3-5-haiku-...`; ⚠️ Bedrock on-demand suele exigir un **inference
+  profile** regional, p. ej. `us.anthropic.claude-3-5-haiku-...`), `BEDROCK_REGION`,
+  `ASSISTANT_MAX_TOKENS`. Cubierto por `08_Pruebas/PruebasSeguridad/test_assistant.py` (Bedrock
+  stubeado). ⚠️ `[J]` (despliegue): habilitar acceso al modelo en Bedrock; IAM `bedrock:InvokeModel`
+  (+ ARN del inference profile si aplica); ruta **pública** `/Assistant/Ask` (proxy, sin authorizer,
+  CORS) + **throttling/WAF** (endpoint público → posible abuso/costo).
+- **Tablas cebra + compactas:** las tablas de **Estadísticas** y **Campañas** pasan a `size="small"`
+  (alto de fila como el de "Movimientos" en Saldos) y filas **cebra** (fondo alterno sutil) para
+  separar cada campaña.
+- **Saldo y recargas:** se quitó el botón **"Recargar"** del header (redundante con "Recargar con
+  Wompi" / "Registrar transferencia" de la tarjeta de saldo). Queda solo "Refrescar".
 
 ### Ajustes de plantillas, tarifas y modal de campaña (jul 2026)
 - **SMS/WSP: la plantilla se usa EN VIVO (no snapshot).** Antes, al crear una campaña SMS/WSP
