@@ -88,6 +88,12 @@ export const RechargeDialog = ({ open, onClose, onDone, notify }: Props) => {
         redirectUrl: data.redirectUrl || undefined,
       });
       setLoading(false);
+      // Cerrar ESTE diálogo (MUI) ANTES de abrir el widget de Wompi. El diálogo de MUI atrapa
+      // el foco (focus-trap) y bloquea el scroll del body; si sigue abierto, el iframe de Wompi
+      // no deja hacer scroll ni interactuar y se ve "cortado" sin barra. Al cerrarlo, el widget
+      // (overlay propio de Wompi) queda libre en la página. El componente NO se desmonta (el
+      // padre lo renderiza siempre con open=false), así que el callback puede resetear su estado.
+      onClose();
       // 3. Abrir el widget. El saldo lo acredita el webhook, no este callback.
       checkout.open((result) => {
         const status = result?.transaction?.status;
