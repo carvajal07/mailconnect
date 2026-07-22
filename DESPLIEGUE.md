@@ -11,6 +11,17 @@
 
 > **✅ Despliegue e infraestructura COMPLETADOS (2026-07-17):** todas las tareas [J] (tablas, GSIs, lambdas, rutas, IAM, mapping templates, provisión de admins) están desplegadas en AWS. Quedan solo, si acaso, tareas de código [C] (§8).
 
+> **🆕 (jul 2026) Ya NO hace falta "crear la función vacía" antes del CD:** `deploy-lambdas.yml`
+> ahora **crea la función si no existe** en AWS — siempre **Python 3.13** (handler
+> `lambda_function.lambda_handler`) y con el **rol por convención** `Lambda_DynFull_...`
+> (auto-detectado de los `boto3.client/resource` del código; override opcional en
+> `04_Backend/lambdas/role-map.json`; si el rol no existe en IAM, el CD también lo crea con
+> sus políticas full por servicio). Donde este documento diga "crear la función vacía",
+> basta con correr el CD (push o manual). **Siguen siendo manuales:** variables de entorno,
+> layers, triggers (SQS/SNS/Scheduler) y rutas de API Gateway. El usuario IAM de CI necesita
+> los permisos extra listados en la cabecera del workflow (`lambda:CreateFunction`,
+> `iam:CreateRole/AttachRolePolicy/PutRolePolicy/PassRole`, …).
+
 ---
 
 ## 0. TL;DR — el orden correcto

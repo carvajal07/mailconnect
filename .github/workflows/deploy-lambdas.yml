@@ -4,11 +4,46 @@ name: Desplegar Lambdas
 # - En cada push a main: detecta las carpetas modificadas bajo 04_Backend/lambdas
 #   y actualiza el código de esas funciones.
 # - Manual (workflow_dispatch): puedes desplegar una función puntual o todas.
+# - Si la función NO existe en AWS, el workflow la CREA:
+#     · Runtime SIEMPRE python3.13 (handler lambda_function.lambda_handler).
+#     · Rol de ejecución según la convención de abajo. Si el rol tampoco existe
+#       en IAM, también lo crea con sus políticas.
 #
-# Requisitos (una sola vez), en Settings → Secrets and variables → Actions:
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (usuario IAM con lambda:UpdateFunctionCode)
-#   AWS_REGION (opcional; por defecto us-east-1)
+# ── Convención de roles ──────────────────────────────────────────────────────
+# El nombre del rol se AUTO-DETECTA de los clientes boto3 del código de cada
+# lambda (o se fija a mano en 04_Backend/lambdas/role-map.json:
+# { "NombreCarpeta": "NombreRol" }).
+#   · Siempre inicia con "Lambda" → política AWSLambdaBasicExecutionRole
+#     (permisos de ejecución + logs en CloudWatch).
+#   · Después, tokens separados por "_"; cada token = acceso FULL a un servicio:
+#       DynFull   → AmazonDynamoDBFullAccess
+#       SES       → AmazonSESFullAccess
+#       SQS       → AmazonSQSFullAccess
+#       S3        → AmazonS3FullAccess
+#       SNS       → AmazonSNSFullAccess
+#       Scheduler → AmazonEventBridgeSchedulerFullAccess (EventBridge Scheduler)
+#       Bedrock   → AmazonBedrockFullAccess (asistente IA)
+#       EUM       → inline sms-voice:* (End User Messaging: SMS y Voz)
+#       Social    → inline social-messaging:* (End User Messaging Social: WhatsApp)
+#       Invoke    → inline lambda:InvokeFunction (invocar otras lambdas)
+#       Basic     → ninguna extra (solo ejecución/logs; lambdas sin AWS, ej. Authorizer)
+#   · Orden fijo de tokens: DynFull, SES, SQS, S3, SNS, Scheduler, Bedrock,
+#     EUM, Social, Invoke.
+#   Ejemplos: Lambda_DynFull_SES_SQS_S3 · Lambda_DynFull_SQS · Lambda_S3
+#   Si el rol YA existe en IAM se usa tal cual (no se le tocan las políticas).
+#
+# ── Requisitos (una sola vez) ────────────────────────────────────────────────
+# En Settings → Secrets and variables → Actions:
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (+ AWS_REGION opcional; default us-east-1)
+# El usuario IAM de CI necesita ahora:
+#   lambda:GetFunctionConfiguration, lambda:UpdateFunctionCode,
+#   lambda:UpdateFunctionConfiguration, lambda:CreateFunction,
+#   iam:GetRole, iam:CreateRole, iam:AttachRolePolicy, iam:PutRolePolicy,
+#   iam:PassRole (sobre los roles Lambda_*) y sts:GetCallerIdentity.
 # Alternativa más segura: rol OIDC (ver nota al final del archivo).
+#
+# ⚠️ Al CREAR una función esta nace SIN variables de entorno, SIN layers y SIN
+# triggers (SQS/SNS/EventBridge) — eso sigue configurándose aparte (DESPLIEGUE.md).
 #
 # Nombre de la función en AWS = nombre de la carpeta, salvo que exista un mapeo en
 # 04_Backend/lambdas/deploy-map.json  ->  { "NombreCarpeta": "NombreFuncionAWS" }
@@ -29,20 +64,36 @@ on:
         type: boolean
         required: false
         default: false
+      force_runtime313:
+        description: 'Migrar también las funciones EXISTENTES a python3.13 (⚠️ layers con binarios de otra versión de Python dejarían de funcionar)'
+        type: boolean
+        required: false
+        default: false
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
   LAMBDAS_DIR: 04_Backend/lambdas
+  LAMBDA_RUNTIME: python3.13
+  NEW_FN_TIMEOUT: '60'   # segundos (solo funciones nuevas)
+  NEW_FN_MEMORY: '256'   # MB (solo funciones nuevas)
 
 jobs:
   deploy:
-    name: Actualizar código de Lambdas
+    name: Actualizar/crear Lambdas
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 2 # para poder comparar con el commit anterior en push
+
+      # Mismo Python que el runtime de las lambdas: si algún requirements.txt
+      # bundlea dependencias con binarios (reportlab/Pillow…), los wheels
+      # instalados deben ser de la MISMA versión de CPython que la función.
+      - name: Python 3.13 (igual al runtime de las lambdas)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
 
       - name: Configurar credenciales de AWS
         uses: aws-actions/configure-aws-credentials@v4
@@ -85,10 +136,19 @@ jobs:
 
       - name: Desplegar
         if: steps.targets.outputs.count != '0'
+        env:
+          FORCE313: ${{ github.event.inputs.force_runtime313 || 'false' }}
         run: |
           set -euo pipefail
           DIR="$LAMBDAS_DIR"
           MAP="$DIR/deploy-map.json"
+          ROLE_MAP="$DIR/role-map.json"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          echo "### Despliegue de lambdas" >> "$SUMMARY"
+          echo "" >> "$SUMMARY"
+          echo "| Carpeta | Función AWS | Acción | Runtime | Rol |" >> "$SUMMARY"
+          echo "|---|---|---|---|---|" >> "$SUMMARY"
 
           resolve_name() {
             local folder="$1"
@@ -98,6 +158,108 @@ jobs:
               [ -n "$mapped" ] && { echo "$mapped"; return; }
             fi
             echo "$folder"
+          }
+
+          # ── Convención de roles (ver cabecera del archivo) ──────────────
+          managed_arn() {  # token → política administrada de AWS (vacío si es inline)
+            case "$1" in
+              DynFull)   echo "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess" ;;
+              SES)       echo "arn:aws:iam::aws:policy/AmazonSESFullAccess" ;;
+              SQS)       echo "arn:aws:iam::aws:policy/AmazonSQSFullAccess" ;;
+              S3)        echo "arn:aws:iam::aws:policy/AmazonS3FullAccess" ;;
+              SNS)       echo "arn:aws:iam::aws:policy/AmazonSNSFullAccess" ;;
+              Scheduler) echo "arn:aws:iam::aws:policy/AmazonEventBridgeSchedulerFullAccess" ;;
+              Bedrock)   echo "arn:aws:iam::aws:policy/AmazonBedrockFullAccess" ;;
+              *)         echo "" ;;
+            esac
+          }
+
+          inline_actions() {  # tokens sin política administrada → acciones inline
+            case "$1" in
+              EUM)    echo "sms-voice:*" ;;
+              Social) echo "social-messaging:*" ;;
+              Invoke) echo "lambda:InvokeFunction" ;;
+              *)      echo "" ;;
+            esac
+          }
+
+          detect_role() {  # deduce el rol de los boto3.client|resource() del código
+            local src="$1" svcs name="Lambda"
+            svcs=$(grep -rhoaE "boto3\.(client|resource)\(\s*[\"'][a-z0-9-]+[\"']" "$src" --include='*.py' 2>/dev/null \
+                     | sed -E "s/.*[\"']([a-z0-9-]+)[\"']\$/\1/" | sort -u || true)
+            has() { printf '%s\n' "$svcs" | grep -qx "$1"; }
+            if has dynamodb; then name="${name}_DynFull"; fi
+            if has ses || has sesv2; then name="${name}_SES"; fi
+            if has sqs; then name="${name}_SQS"; fi
+            if has s3; then name="${name}_S3"; fi
+            if has sns; then name="${name}_SNS"; fi
+            if has scheduler; then name="${name}_Scheduler"; fi
+            if has bedrock-runtime || has bedrock; then name="${name}_Bedrock"; fi
+            if has pinpoint-sms-voice-v2 || has sms-voice; then name="${name}_EUM"; fi
+            if has socialmessaging; then name="${name}_Social"; fi
+            if has lambda; then name="${name}_Invoke"; fi
+            if [ "$name" = "Lambda" ]; then name="Lambda_Basic"; fi
+            echo "$name"
+          }
+
+          role_for() {  # override en role-map.json > auto-detección
+            local folder="$1" src="$2" mapped=""
+            if [ -f "$ROLE_MAP" ]; then
+              mapped=$(jq -r --arg k "$folder" '.[$k] // empty' "$ROLE_MAP")
+            fi
+            if [ -n "$mapped" ]; then echo "$mapped"; else detect_role "$src"; fi
+          }
+
+          ROLE_JUST_CREATED=0
+          ensure_role() {  # crea el rol si no existe, con las políticas que dicta su nombre
+            local role="$1"
+            ROLE_JUST_CREATED=0
+            if aws iam get-role --role-name "$role" >/dev/null 2>&1; then
+              echo "   🔑 Rol existente: $role (se usa tal cual)"
+              return 0
+            fi
+            case "$role" in
+              Lambda_*) ;;
+              *) echo "❌ El rol '$role' no cumple la convención (debe iniciar con 'Lambda_')."; return 1 ;;
+            esac
+            echo "   🔑 Creando rol $role"
+            cat > /tmp/trust.json <<'TRUST'
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": { "Service": "lambda.amazonaws.com" },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          }
+          TRUST
+            aws iam create-role --role-name "$role" \
+              --assume-role-policy-document file:///tmp/trust.json \
+              --description "Ejecucion de Lambdas MailConnect (auto-creado por deploy-lambdas). Cada token del nombre = acceso full a ese servicio." >/dev/null
+            aws iam attach-role-policy --role-name "$role" \
+              --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            echo "      + AWSLambdaBasicExecutionRole (ejecución + logs)"
+            local t arn actions
+            for t in $(echo "${role#Lambda_}" | tr '_' ' '); do
+              if [ "$t" = "Basic" ]; then continue; fi
+              arn=$(managed_arn "$t")
+              actions=$(inline_actions "$t")
+              if [ -n "$arn" ]; then
+                aws iam attach-role-policy --role-name "$role" --policy-arn "$arn"
+                echo "      + ${arn##*/}"
+              elif [ -n "$actions" ]; then
+                printf '{ "Version": "2012-10-17", "Statement": [ { "Effect": "Allow", "Action": [ "%s" ], "Resource": "*" } ] }' "$actions" > /tmp/inline.json
+                aws iam put-role-policy --role-name "$role" --policy-name "${t}Full" \
+                  --policy-document file:///tmp/inline.json
+                echo "      + inline ${t}Full ($actions)"
+              else
+                echo "❌ Token de rol desconocido: '$t'. Válidos: DynFull SES SQS S3 SNS Scheduler Bedrock EUM Social Invoke Basic"
+                return 1
+              fi
+            done
+            ROLE_JUST_CREATED=1
           }
 
           while read -r folder; do
@@ -128,15 +290,68 @@ jobs:
             fi
             ( cd "$work" && zip -qr /tmp/lambda.zip . -x '*.pyc' '__pycache__/*' 'requirements.txt' )
 
-            echo "🚀  Actualizando $fn"
-            if aws lambda update-function-code \
-                 --function-name "$fn" \
-                 --zip-file fileb:///tmp/lambda.zip \
-                 --publish >/dev/null; then
+            if cfg=$(aws lambda get-function-configuration --function-name "$fn" \
+                       --query Runtime --output text 2>&1); then
+              # ── La función existe → actualizar código (y runtime si se pidió) ──
+              runtime="$cfg"
+              if [ "$FORCE313" = "true" ] && [ "$runtime" != "$LAMBDA_RUNTIME" ]; then
+                echo "♻️   Migrando runtime de $fn: $runtime → $LAMBDA_RUNTIME"
+                aws lambda update-function-configuration --function-name "$fn" \
+                  --runtime "$LAMBDA_RUNTIME" >/dev/null
+                aws lambda wait function-updated-v2 --function-name "$fn"
+                runtime="$LAMBDA_RUNTIME"
+              elif [ "$runtime" != "$LAMBDA_RUNTIME" ]; then
+                echo "ℹ️   $fn corre en $runtime; para migrarla a $LAMBDA_RUNTIME ejecuta el workflow manual con 'force_runtime313'."
+              fi
+              echo "🚀  Actualizando código de $fn"
+              aws lambda update-function-code \
+                --function-name "$fn" \
+                --zip-file fileb:///tmp/lambda.zip \
+                --publish >/dev/null
               echo "✅  $fn actualizada."
+              echo "| $folder | $fn | actualizada | $runtime | (el actual) |" >> "$SUMMARY"
             else
-              echo "❌  Falló $fn (¿existe la función? ¿nombre correcto en deploy-map.json?)"
-              exit 1
+              if ! echo "$cfg" | grep -q "ResourceNotFoundException"; then
+                echo "❌  Error consultando $fn:"; echo "$cfg"; exit 1
+              fi
+              # ── La función NO existe → crearla (python3.13 + rol por convención) ──
+              role=$(role_for "$folder" "$src")
+              echo "🆕  $fn no existe en AWS. Se crea en $LAMBDA_RUNTIME con rol $role"
+              ensure_role "$role"
+              role_arn="arn:aws:iam::${ACCOUNT_ID}:role/${role}"
+              if [ "$ROLE_JUST_CREATED" = "1" ]; then
+                echo "   ⏳ Esperando propagación del rol IAM recién creado..."
+                sleep 10
+              fi
+              created=0
+              for i in 1 2 3 4 5 6 7 8; do
+                if out=$(aws lambda create-function \
+                           --function-name "$fn" \
+                           --runtime "$LAMBDA_RUNTIME" \
+                           --handler lambda_function.lambda_handler \
+                           --role "$role_arn" \
+                           --timeout "$NEW_FN_TIMEOUT" \
+                           --memory-size "$NEW_FN_MEMORY" \
+                           --description "MailConnect (auto-creada por deploy-lambdas)" \
+                           --zip-file fileb:///tmp/lambda.zip \
+                           --publish 2>&1); then
+                  created=1
+                  break
+                fi
+                if echo "$out" | grep -qi "cannot be assumed"; then
+                  echo "   ⏳ El rol aún se está propagando (intento $i); reintento en 8s..."
+                  sleep 8
+                else
+                  echo "❌  Falló la creación de $fn:"; echo "$out"; exit 1
+                fi
+              done
+              if [ "$created" != "1" ]; then
+                echo "❌  No se pudo crear $fn: el rol nunca terminó de propagarse."; exit 1
+              fi
+              aws lambda wait function-active-v2 --function-name "$fn"
+              echo "✅  $fn CREADA ($LAMBDA_RUNTIME, rol $role)."
+              echo "   ⚠️  Recuerda configurar aparte: variables de entorno, layers y triggers (ver DESPLIEGUE.md)."
+              echo "| $folder | $fn | 🆕 creada | $LAMBDA_RUNTIME | $role |" >> "$SUMMARY"
             fi
             rm -rf "$work" /tmp/lambda.zip
           done < folders.txt
