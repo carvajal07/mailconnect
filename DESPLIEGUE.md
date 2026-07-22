@@ -209,9 +209,11 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 - [ ] `[J]` **Redesplegar `Api_V1_Email_Send-batch-template-EAP`**: ahora usa `.pdf` (subtype
   `application/pdf`) cuando el mensaje trae `documentFormat=PDF`. La ruta DOCX no cambia — no requiere
   permisos nuevos.
-- [ ] `[C]` (pendiente) **Form de crear campaña**: opción "PDF personalizado" que fije `documentFormat=PDF`
-  y suba el HTML del editor como el adjunto de la campaña (registro `document.documentPath`). El backend ya
-  consume la campaña si llega así; falta ese cableado en el front (`CampanasSection`).
+- [x] `[C]` **Form de crear campaña** — hecho: `CampanasSection` con EAP + "Tipo de documento = PDF"
+  muestra un selector de plantillas del editor (`mc_pdf_drafts`), sube su HTML a S3 (`attachment/`) y
+  crea la campaña con `documentFormat=PDF` + ese adjunto. El combinador EAP-PDF lo consume.
+  ⚠️ Recordatorio: las plantillas del editor viven en **localStorage** (por navegador) — si el cliente
+  diseña en otro equipo/navegador no las verá en el selector. Persistirlas en backend queda como mejora.
 
 - [x] `[J]` Crear las 12 funciones vacías + sus rutas + permisos de la tabla.
 - [x] `[J]` Confirmar que el **Authorizer** está asignado a las 12 rutas.

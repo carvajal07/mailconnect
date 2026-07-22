@@ -30,14 +30,15 @@ import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
 import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
-import { pdfTemplatesService, base64ToPdfBlob } from '../../services/pdfTemplatesService';
+import { pdfTemplatesService, base64ToPdfBlob, readPdfDrafts, writePdfDrafts } from '../../services/pdfTemplatesService';
 import { useFeedback } from '../../hooks/useFeedback';
 
 /**
  * Editor de PLANTILLAS PDF tipo "documento" (a lo Word): barra de formato de texto arriba,
  * herramientas a la izquierda, y un lienzo con REGLAS (hoja A4/Carta). Muy sencillo: usa un
  * `contentEditable` + document.execCommand (sin librerías extra). El contenido se guarda como
- * borrador en localStorage; el envío EAP-PDF que lo consuma queda para una fase posterior.
+ * borrador en localStorage (compartido con el form de campaña para elegir la plantilla del
+ * envío EAP-PDF) y el botón "Vista previa PDF" lo renderiza vía la lambda Render-pdf.
  */
 
 const CM = 37.8; // 1 cm ≈ 37.8 px a 96 dpi
@@ -45,12 +46,6 @@ const RULER = 22; // grosor de la regla (px)
 const PAGE_SIZES = { A4: { w: 794, h: 1123 }, Carta: { w: 816, h: 1056 } } as const;
 const FONTS = ['Arial', 'Georgia', 'Times New Roman', 'Courier New', 'Verdana', 'Tahoma'];
 const VARIABLES = ['nombre', 'email', 'empresa', 'ciudad'];
-const DRAFTS_KEY = 'mc_pdf_drafts';
-
-const readDrafts = (): Record<string, string> => {
-  try { return JSON.parse(localStorage.getItem(DRAFTS_KEY) || '{}'); } catch { return {}; }
-};
-const writeDrafts = (d: Record<string, string>) => localStorage.setItem(DRAFTS_KEY, JSON.stringify(d));
 
 /** Valores de MUESTRA para la vista previa (reemplazan {{campo}}). */
 const SAMPLE_VALUES: Record<string, string> = {
@@ -150,13 +145,13 @@ export const PdfTemplatesSection = () => {
   const saveDraft = () => {
     const name = window.prompt('Nombre de la plantilla:');
     if (!name || !name.trim()) return;
-    const d = readDrafts();
+    const d = readPdfDrafts();
     d[name.trim()] = pageRef.current?.innerHTML || '';
-    writeDrafts(d);
+    writePdfDrafts(d);
     notify(`Plantilla "${name.trim()}" guardada.`, 'success');
   };
   const loadDraft = (name: string) => {
-    const d = readDrafts();
+    const d = readPdfDrafts();
     if (pageRef.current) pageRef.current.innerHTML = d[name] || '';
     setLoadAnchor(null);
     notify(`Plantilla "${name}" cargada.`, 'info');
@@ -194,7 +189,7 @@ export const PdfTemplatesSection = () => {
     URL.revokeObjectURL(a.href);
   };
 
-  const drafts = readDrafts();
+  const drafts = readPdfDrafts();
 
   return (
     <Box>

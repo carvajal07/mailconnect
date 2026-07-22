@@ -38,6 +38,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import { getUser } from '../../services/authService';
 import { campaignsService } from '../../services/campaignsService';
 import type { CampaignSummary } from '../../services/campaignsService';
+import { readPdfDrafts } from '../../services/pdfTemplatesService';
 import { templatesService } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
 import { domainsService, senderKindOf } from '../../services/domainsService';
@@ -131,6 +132,8 @@ export const CampanasSection = () => {
   const [attachmentPath, setAttachmentPath] = useState('');
   const [attachmentName, setAttachmentName] = useState('');
   const [attachmentUploading, setAttachmentUploading] = useState(false);
+  // EAP-PDF: nombre de la plantilla del editor (mc_pdf_drafts) elegida como adjunto.
+  const [pdfTemplateName, setPdfTemplateName] = useState('');
 
   const loadCampaigns = refreshCampaigns;
 
@@ -163,6 +166,7 @@ export const CampanasSection = () => {
   const resetAttachment = () => {
     setAttachmentPath('');
     setAttachmentName('');
+    setPdfTemplateName('');
   };
 
   const handleOpenDialog = () => {
@@ -224,9 +228,9 @@ export const CampanasSection = () => {
   const isEap = formData.channelName === 'EAP';
   // Solo EAU/EAP llevan documento adjunto (el resto no).
   const isAttachment = formData.channelName === 'EAU' || formData.channelName === 'EAP';
-  // EAP con PDF acepta .pdf; EAP con DOCX (o EAU) acepta documentos ofimáticos.
+  // EAP con PDF usa una plantilla del editor (no archivo); EAP-DOCX acepta Word, EAU ofimáticos.
   const isEapPdf = isEap && formData.documentFormat === 'PDF';
-  const attachmentAccept = isEapPdf ? '.pdf' : isEap ? '.docx,.doc' : '.pdf,.docx,.doc,.xlsx';
+  const attachmentAccept = isEap ? '.docx,.doc' : '.pdf,.docx,.doc,.xlsx';
   // Plantillas disponibles por canal (SMS/WSP se eligen de estas; sin texto libre).
   const smsTemplates = msgTemplates.filter((t) => t.channel === 'SMS');
   const wspTemplates = msgTemplates.filter((t) => t.channel === 'WSP');
@@ -295,6 +299,42 @@ export const CampanasSection = () => {
     }
   };
 
+  /**
+   * EAP-PDF: elige una plantilla del editor (localStorage) y sube su HTML a S3 como el
+   * adjunto de la campaña. El combinador EAP-PDF baja ese HTML y renderiza un PDF por
+   * destinatario. Reutiliza attachmentPath/Name (y su validación) igual que el .docx.
+   */
+  const selectPdfTemplate = async (name: string) => {
+    setPdfTemplateName(name);
+    if (!name) { resetAttachment(); return; }
+    if (!customer) {
+      notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
+      return;
+    }
+    const html = readPdfDrafts()[name];
+    if (!html) { notify('No se encontró la plantilla PDF seleccionada.', 'error'); return; }
+    setAttachmentUploading(true);
+    const safe = name.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'plantilla';
+    const fileName = `plantilla-pdf-${safe}-${Date.now()}.html`;
+    const file = new File([html], fileName, { type: 'text/html' });
+    const presign = await campaignsService.presignUrl({ customer, nit: getUser()?.nit ?? '', documentName: fileName, documentType: 'attachment' });
+    if (!isOk(presign) || !presign.data?.url || !presign.data?.path) {
+      setAttachmentUploading(false);
+      setPdfTemplateName('');
+      return notify(presign.description || 'No se pudo crear la URL para la plantilla PDF.', 'error');
+    }
+    const ok = await campaignsService.uploadToS3(presign.data.url, file);
+    setAttachmentUploading(false);
+    if (ok) {
+      setAttachmentPath(presign.data.path);
+      setAttachmentName(`${name} (plantilla PDF)`);
+      notify('Plantilla PDF lista para la campaña.', 'success');
+    } else {
+      setPdfTemplateName('');
+      notify('No se pudo subir la plantilla PDF a S3.', 'error');
+    }
+  };
+
   const handleSubmit = async () => {
     if (!customerId) {
       notify('Tu sesión no tiene un cliente asociado. Vuelve a iniciar sesión.', 'warning');
@@ -311,7 +351,9 @@ export const CampanasSection = () => {
     }
     // EAU/EAP exigen un documento adjunto (el backend lo valida y devuelve 400 sin él).
     if (!editingId && isAttachment && !attachmentPath) {
-      notify('Para EAU/EAP debes subir el documento adjunto antes de crear la campaña.', 'warning');
+      notify(isEapPdf
+        ? 'Selecciona una plantilla PDF del editor antes de crear la campaña.'
+        : 'Para EAU/EAP debes subir el documento adjunto antes de crear la campaña.', 'warning');
       return;
     }
     setSubmitting(true);
@@ -548,8 +590,38 @@ export const CampanasSection = () => {
                 </Alert>
               )}
 
-              {/* Documento adjunto (solo EAU/EAP). El backend exige el adjunto para estos canales. */}
-              {isAttachment && !editingId && (
+              {/* Documento adjunto (solo EAU/EAP). El backend exige el adjunto para estos canales.
+                  EAP-PDF: se elige una plantilla del editor (mc_pdf_drafts) y se sube su HTML.
+                  EAU / EAP-DOCX: se sube el archivo (docx/pdf). */}
+              {isAttachment && !editingId && isEapPdf && (
+                <Box sx={{ p: 1.5, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
+                  <FormControl fullWidth disabled={attachmentUploading}>
+                    <InputLabel>Plantilla PDF (del editor)</InputLabel>
+                    <Select
+                      value={pdfTemplateName}
+                      label="Plantilla PDF (del editor)"
+                      onChange={(e) => selectPdfTemplate(e.target.value)}
+                    >
+                      <MenuItem value=""><em>— Selecciona una plantilla —</em></MenuItem>
+                      {Object.keys(readPdfDrafts()).sort().map((n) => (
+                        <MenuItem key={n} value={n}>{n}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+                    {attachmentUploading && <CircularProgress size={16} />}
+                    {attachmentName ? (
+                      <Chip color="success" label={attachmentName} onDelete={resetAttachment} />
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">
+                        Diseña y guarda tu plantilla en la pestaña <strong>Plantillas PDF</strong>; aquí se
+                        renderiza un PDF por destinatario sustituyendo las variables <code>{'{{campo}}'}</code>.
+                      </Typography>
+                    )}
+                  </Stack>
+                </Box>
+              )}
+              {isAttachment && !editingId && !isEapPdf && (
                 <Box sx={{ p: 1.5, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
                   <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
                     <Button
@@ -558,18 +630,16 @@ export const CampanasSection = () => {
                       startIcon={attachmentUploading ? <CircularProgress size={16} /> : <UploadFileIcon />}
                       disabled={attachmentUploading}
                     >
-                      {attachmentName ? 'Cambiar documento' : (isEapPdf ? 'Subir PDF plantilla' : 'Subir documento adjunto')}
+                      {attachmentName ? 'Cambiar documento' : 'Subir documento adjunto'}
                       <input hidden type="file" accept={attachmentAccept} onChange={handleUploadAttachment} />
                     </Button>
                     {attachmentName ? (
                       <Chip color="success" label={attachmentName} onDelete={resetAttachment} />
                     ) : (
                       <Typography variant="caption" color="text.secondary">
-                        {isEapPdf
-                          ? 'Sube el PDF plantilla con los campos a personalizar por destinatario.'
-                          : isEap
-                            ? 'Sube el .docx de combinación (adjunto personalizado por destinatario).'
-                            : 'Sube el documento que se adjuntará a todos (PDF/Word).'}
+                        {isEap
+                          ? 'Sube el .docx de combinación (adjunto personalizado por destinatario).'
+                          : 'Sube el documento que se adjuntará a todos (PDF/Word).'}
                       </Typography>
                     )}
                   </Stack>

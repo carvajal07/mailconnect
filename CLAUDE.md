@@ -312,9 +312,16 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
     `Template_Combination-EAP-PDF` + trigger; **layer con `xhtml2pdf` (+ reportlab, Pillow)** en ambas
     (como PyJWT en los Authorizers); IAM: S3 `GetObject/PutObject` (bucket del cliente), DynamoDB
     `Scan document`/`Scan+PutItem {tenant}_processDetail` y `GetItem messageTemplate` (Render-pdf),
-    SQS `SendMessage` a `Email_Send-batch-raw-EAP` (combiner). Falta la parte del **form de crear
-    campaña** que elija "PDF personalizado" (documentFormat=PDF) y suba el HTML del editor como el
-    adjunto de la campaña — hoy el backend ya lo consume si la campaña llega así.
+    SQS `SendMessage` a `Email_Send-batch-raw-EAP` (combiner).
+- **Form de campaña cableado a la plantilla del editor (jul 2026):** al crear una campaña **EAP**
+  con **Tipo de documento = PDF**, `CampanasSection` ya no sube un `.pdf` estático: muestra un
+  **selector de plantillas PDF guardadas en el editor** (`mc_pdf_drafts` en localStorage, key
+  compartida vía `pdfTemplatesService.readPdfDrafts`). Al elegir una, sube su **HTML** a S3
+  (`documentType=attachment`, como `.html`) y usa esa ruta como `attachment:[{path}]` +
+  `documentFormat:'PDF'`. Create-campaign guarda el `document.documentPath` (ese HTML) y el
+  combinador EAP-PDF lo baja y renderiza por destinatario. EAU y EAP-DOCX siguen con la subida de
+  archivo de siempre. Con esto el flujo EAP-PDF queda **de punta a punta** en el front (falta solo
+  el despliegue `[J]` de abajo).
 - **Programar envíos (jul 2026, FUNCIONAL — HORA EXACTA):** `ProgramarEnviosSection` (tab junto a
   Campañas, RBAC **owner/approver**) permite **agendar el envío real** de una campaña aprobada a una
   fecha/hora futura. Backend: tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`).

@@ -33,6 +33,18 @@ export interface RenderPdfResult {
   url?: string;
 }
 
+/**
+ * Borradores de plantillas PDF del editor (PdfTemplatesSection), en localStorage.
+ * Fuente única de la key para que el editor y el form de campaña compartan el mismo
+ * almacén (name → HTML).
+ */
+export const PDF_DRAFTS_KEY = 'mc_pdf_drafts';
+export const readPdfDrafts = (): Record<string, string> => {
+  try { return JSON.parse(localStorage.getItem(PDF_DRAFTS_KEY) || '{}'); } catch { return {}; }
+};
+export const writePdfDrafts = (drafts: Record<string, string>): void =>
+  localStorage.setItem(PDF_DRAFTS_KEY, JSON.stringify(drafts));
+
 /** Convierte el base64 del backend en un Blob PDF para previsualizar/descargar. */
 export const base64ToPdfBlob = (base64: string): Blob => {
   const binary = atob(base64);
