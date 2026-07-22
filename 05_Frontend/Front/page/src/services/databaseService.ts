@@ -35,6 +35,8 @@ export interface RegisterFilePayload {
   channel?: string;
   /** Encabezados del CSV: campos usables como {{variables}} en las plantillas. */
   columns?: string[];
+  /** Primeras filas de datos (sin encabezado) para la vista previa persistente del "ver detalle". */
+  previewRows?: string[][];
   uploadedBy?: string;
 }
 
@@ -54,6 +56,8 @@ export interface DatabaseFile {
   channel?: string;
   /** Encabezados del CSV (campos usables como {{variables}} en las plantillas). */
   columns?: string[];
+  /** Primeras filas de datos (sin encabezado) para la vista previa persistente. */
+  previewRows?: string[][];
   uploadedBy: string;
   uploadDate: string;
   status: string;

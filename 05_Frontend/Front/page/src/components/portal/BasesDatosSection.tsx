@@ -58,7 +58,11 @@ interface BaseDatos {
   channel: string;
   uploadDate: string;
   delimiter: string;
-  // Solo presente para las bases cargadas en esta sesión (para la vista previa).
+  // Encabezados + primeras filas persistidos en el backend (vista previa aunque la base
+  // no se haya cargado en esta sesión).
+  columns?: string[];
+  previewRows?: string[][];
+  // Solo presente para las bases cargadas en esta sesión (para la vista previa completa).
   analysis?: CsvAnalysis;
 }
 
@@ -75,6 +79,8 @@ const fromApi = (f: DatabaseFile): BaseDatos => ({
   channel: f.channel ?? 'EMAIL',
   uploadDate: f.uploadDate ?? '',
   delimiter: f.delimiter ?? ';',
+  columns: f.columns,
+  previewRows: f.previewRows,
 });
 
 /** Texto del tooltip de duplicados según el canal de la base (correo o celular). */
@@ -278,6 +284,8 @@ export const BasesDatosSection = () => {
       channel,
       // Encabezados del CSV → campos usables como {{variables}} en las plantillas.
       columns: analysis.headers,
+      // Primeras filas → vista previa persistente del "ver detalle" (aunque no sea esta sesión).
+      previewRows: analysis.sample.slice(0, 5),
       uploadedBy: userId,
     });
     setUploading(false);
@@ -334,7 +342,8 @@ export const BasesDatosSection = () => {
         correcto y sin duplicar) e <strong>Inválidos</strong> (contacto vacío o con formato
         inválido para el canal: correo mal escrito, o celular que no es E.164). La subida va a S3
         vía URL prefirmada y su <strong>metadata queda registrada</strong> para verla en el
-        historial. La vista previa solo está disponible para las bases cargadas en esta sesión.
+        historial. Se guarda una <strong>vista previa</strong> (encabezado y primeras filas) para
+        consultarla en "ver detalle" cuando quieras.
       </Alert>
 
       <TableContainer component={Paper}>
@@ -573,10 +582,30 @@ export const BasesDatosSection = () => {
               <Divider />
               {viewBase.analysis ? (
                 <PreviewTable analysis={viewBase.analysis} />
+              ) : (viewBase.previewRows && viewBase.previewRows.length && viewBase.columns && viewBase.columns.length) ? (
+                <>
+                  <Typography variant="subtitle2" color="text.secondary">
+                    Vista previa (primeras filas)
+                  </Typography>
+                  <SimplePreviewTable headers={viewBase.columns} rows={viewBase.previewRows} />
+                </>
+              ) : (viewBase.columns && viewBase.columns.length) ? (
+                <>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Columnas de la base
+                  </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    {viewBase.columns.map((c, i) => <Chip key={i} label={c || `col ${i + 1}`} size="small" variant="outlined" />)}
+                  </Stack>
+                  <Alert severity="info" variant="outlined" sx={{ mt: 1 }}>
+                    Esta base se registró antes de guardar la muestra de filas. Vuelve a subirla para
+                    ver las primeras filas aquí; su archivo sigue en S3.
+                  </Alert>
+                </>
               ) : (
                 <Alert severity="info" variant="outlined">
-                  La vista previa del contenido solo está disponible para las bases cargadas en
-                  esta sesión. Esta base se registró previamente; su archivo está en S3.
+                  La vista previa del contenido no está disponible para esta base (se registró
+                  previamente). Su archivo está en S3.
                 </Alert>
               )}
             </Stack>
@@ -659,6 +688,30 @@ const PreviewTable = ({ analysis }: { analysis: CsvAnalysis }) => (
               <TableCell key={c} sx={{ whiteSpace: 'nowrap' }}>
                 {row[c] ?? ''}
               </TableCell>
+            ))}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  </Box>
+);
+
+/* Vista previa persistida (encabezados + filas guardadas en el backend), sin análisis en vivo. */
+const SimplePreviewTable = ({ headers, rows }: { headers: string[]; rows: string[][] }) => (
+  <Box sx={{ overflowX: 'auto' }}>
+    <Table size="small">
+      <TableHead>
+        <TableRow>
+          {headers.map((h, i) => (
+            <TableCell key={i} sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{h || `col ${i + 1}`}</TableCell>
+          ))}
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {rows.map((row, r) => (
+          <TableRow key={r}>
+            {headers.map((_, c) => (
+              <TableCell key={c} sx={{ whiteSpace: 'nowrap' }}>{row[c] ?? ''}</TableCell>
             ))}
           </TableRow>
         ))}

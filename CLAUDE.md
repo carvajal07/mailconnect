@@ -114,8 +114,8 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Template/List` | `{ customer }` o `{ customerId }` | 200 `data:{templates:[{name, created}], count}` (SES filtrado por prefijo `{customer}_`) |
 | `Template/Render-pdf` | `{ html o messageTemplateId, variables?, pageSize?, store?, filename? }` | 200 `data:{pdfBase64, filename}` (store=false) · `data:{path, url}` (store=true) · 400 · 403 · 500 (falta layer). Renderiza a PDF el HTML del editor sustituyendo `{{campo}}` (xhtml2pdf). Lo llama el botón "Vista previa PDF" del editor |
 | `Email/Unsubscribe` | **GET/POST público (proxy, sin authorizer)** `?t=<token HMAC>` | 200 página HTML (confirmación / enlace inválido). El token lo firman las lambdas Send con `SECRET_KEY`; inserta en `{customer}_unsubscribe` (PK `email`) |
-| `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, duplicates?, allowDuplicates?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`). `allowDuplicates` = si el envío real NO filtra contactos repetidos |
-| `Database/List` | `{ customerId }` | 200 `data:{files[], count}` (incluye `columns`, `validEmails`, `invalidEmails`) |
+| `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, previewRows?, duplicates?, allowDuplicates?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`). `previewRows` = primeras filas (máx. 5) para la vista previa persistente. `allowDuplicates` = si el envío real NO filtra contactos repetidos |
+| `Database/List` | `{ customerId }` | 200 `data:{files[], count}` (incluye `columns`, `previewRows`, `validEmails`, `invalidEmails`) |
 | `Database/Delete` | `{ databaseFileId }` | 200 ok · 403 otro cliente · 404 no existe. Borra el registro (no el CSV en S3) |
 | `Customer/List` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, realSendEnabled}], count}` |
 | `Customer/Update` | `{ customerId, realSendEnabled (bool) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales |
@@ -696,6 +696,20 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   **Plantillas WhatsApp** (componente genérico `MessageTemplatesSection`) y **Plantillas DOCX**
   (`DocxTemplatesSection`, sube el .docx y registra la metadata) — reemplazan el placeholder PDF.
   Al crear campaña SMS/WSP hay un selector "Usar plantilla guardada" que prellena el campo.
+
+### Bases de datos: vista previa persistente + fix de carga Excel (jul 2026)
+- **Vista previa persistente ("ver detalle"):** al registrar una base, el front envía
+  **`previewRows`** (las primeras 5 filas de datos) junto a `columns` (encabezados);
+  `Database/Register-file` las guarda (acotadas: máx. 5 filas × 40 cols, celdas a 500 chars) y
+  `Database/List` las devuelve. Así "ver detalle" muestra **encabezado + primeras filas** aunque
+  la base NO se haya cargado en esta sesión (antes la vista previa solo existía en memoria de la
+  sesión). Bases viejas sin `previewRows` muestran solo las columnas (o el aviso). Cubierto por
+  `test_database.py`.
+- **Fix carga de Excel (.xlsx):** `read-excel-file` v9 devuelve `[{sheet, data:[[...]]}]` (array
+  de hojas), NO un array plano de filas; `readSpreadsheet` (`csv.ts`) asumía filas planas → el
+  `.map` producía filas vacías → "faltan las columnas obligatorias" al subir cualquier Excel.
+  Ahora `readSpreadsheet` soporta ambas formas y toma la 1ª hoja. (Reproducido y verificado con
+  la lib real.)
 
 ### Variables de plantilla desde la base (jul 2026)
 - Al subir una base, `Database/Register-file` guarda ahora **`columns`** (los encabezados del

@@ -288,11 +288,27 @@ function cellToString(v: unknown): string {
   return String(v);
 }
 
-/** Lee la PRIMERA hoja de un Excel y devuelve las filas como string[][]. */
+/** Lee la PRIMERA hoja de un Excel y devuelve las filas como string[][].
+ *
+ *  ⚠️ `read-excel-file` (v9.x) por defecto devuelve un ARRAY DE HOJAS
+ *  `[{ sheet, data: [[...]] }]`, NO un array plano de filas. (Versiones/paths antiguos
+ *  devolvían filas planas `[[...], [...]]`.) Antes esto rompía la carga de Excel: el
+ *  `.map` trataba cada objeto-hoja como fila → filas vacías → "faltan las columnas
+ *  obligatorias". Aquí se soportan AMBAS formas y se toma la 1ª hoja. */
 export async function readSpreadsheet(file: File): Promise<string[][]> {
-  // La lib devuelve filas de celdas tipadas (string/number/Date/boolean/null) para la 1ª hoja.
-  const rows = (await readXlsxFile(file)) as unknown as unknown[][];
-  return rows.map((r) => (Array.isArray(r) ? r.map(cellToString) : []));
+  const result = (await readXlsxFile(file)) as unknown;
+  let rawRows: unknown[] = [];
+  if (Array.isArray(result)) {
+    const first = result[0];
+    if (first && !Array.isArray(first) && typeof first === 'object' && 'data' in (first as object)) {
+      // Forma [{ sheet, data }]: se usa la data de la PRIMERA hoja.
+      rawRows = ((first as { data?: unknown[] }).data) ?? [];
+    } else {
+      // Forma plana [[...], [...]].
+      rawRows = result;
+    }
+  }
+  return rawRows.map((r) => (Array.isArray(r) ? r.map(cellToString) : []));
 }
 
 /** Serializa filas a texto CSV (comillas donde el valor contenga el delimitador, comillas o
