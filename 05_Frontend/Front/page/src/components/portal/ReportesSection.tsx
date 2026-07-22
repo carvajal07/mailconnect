@@ -27,10 +27,7 @@ import AssessmentIcon from '@mui/icons-material/Assessment';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import MailIcon from '@mui/icons-material/Mail';
-import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead';
-import UnsubscribeIcon from '@mui/icons-material/Unsubscribe';
-import ReportGmailerrorredIcon from '@mui/icons-material/ReportGmailerrorred';
+import MailOutlineIcon from '@mui/icons-material/MailOutline';
 import { isOk } from '../../services/apiClient';
 import { getUser } from '../../services/authService';
 import { useFeedback } from '../../hooks/useFeedback';
@@ -42,9 +39,12 @@ import { CampaignOption, campaignOptionText } from './campaignOption';
 import { ESTADO_LABEL, rate } from './campaignData';
 
 /**
- * Estado de cada envío (número del backend) → etiqueta ES + color (verde/amarillo/rojo) +
- * icono de "carta". Verde = entregado/abierto/clic; amarillo = enviado/en tránsito;
- * rojo = rechazado/rebote/queja/filtrado.
+ * Estado de cada envío (número del backend) → etiqueta ES + uno de SOLO 3 colores.
+ * Todos usan el MISMO icono: un sobre de solo líneas (alineado con el logo de MailConnect),
+ * pintado según el color del estado:
+ *   - amarillo (warning) = enviado / en tránsito
+ *   - verde   (success) = entregado, abierto, clic (y otros positivos)
+ *   - rojo    (error)   = errores (rechazado, rebote, queja, inválido, desuscrito, lista negra…)
  */
 type Sev = 'success' | 'warning' | 'error';
 const ESTADO_ENVIO: Record<string, { label: string; sev: Sev }> = {
@@ -65,14 +65,13 @@ const ESTADO_ENVIO: Record<string, { label: string; sev: Sev }> = {
 
 const estadoInfo = (state: string) => ESTADO_ENVIO[String(state).trim()] ?? { label: state || '—', sev: 'warning' as Sev };
 
-/** Icono de "carta" por severidad del estado. */
+/** Sobre de solo líneas (como el logo) pintado en el color del estado: amarillo (enviado),
+ *  verde (entregado/abierto/clic) o rojo (errores). Un único icono, 3 colores. */
 const EstadoIcon = ({ state }: { state: string }) => {
   const { label, sev } = estadoInfo(state);
-  const color = `${sev}.main`;
-  const Icon = sev === 'success' ? MarkEmailReadIcon : sev === 'error' ? (['12', '13'].includes(String(state).trim()) ? UnsubscribeIcon : ReportGmailerrorredIcon) : MailIcon;
   return (
     <Tooltip title={label}>
-      <Icon sx={{ color, verticalAlign: 'middle' }} />
+      <MailOutlineIcon sx={{ color: `${sev}.main`, verticalAlign: 'middle' }} />
     </Tooltip>
   );
 };
@@ -229,8 +228,8 @@ export const ReportesSection = () => {
 
       <Alert severity="info" sx={{ mb: 2 }}>
         Selecciona una campaña y genera el <strong>detalle de envíos</strong>: una fila por
-        destinatario con su estado (la primera columna es una <strong>carta de color</strong> —
-        verde entregado/abierto, amarillo enviado, rojo rechazado/rebote/filtrado).
+        destinatario con su estado (la primera columna es un <strong>sobre de color</strong> —
+        verde entregado/abierto/clic, amarillo enviado, rojo errores).
       </Alert>
 
       {/* Selector de campaña + generar */}
