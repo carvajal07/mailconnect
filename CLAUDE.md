@@ -1140,6 +1140,42 @@ se puede leer del objeto ya subido a S3.)
       lambdas cambiadas en cada push a `main` (o manual). Requiere los secrets
       `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (+ `AWS_REGION`) y opcional
       `04_Backend/lambdas/deploy-map.json` si el nombre AWS difiere del de la carpeta.
+- [x] **CD de lambdas — crea la función si NO existe (jul 2026):** ya no hace falta "crear la
+      función vacía" antes del CD. Si la función no está en AWS, el workflow la **crea en
+      Python 3.13** (`lambda_function.lambda_handler`, timeout 60 s, 256 MB) con su **rol por
+      convención**: nombre `Lambda[_DynFull][_SES][_SQS][_S3][_SNS][_Scheduler][_Bedrock][_EUM]
+      [_Social][_Invoke]` **auto-detectado** de los `boto3.client/resource(...)` del código
+      (sin servicios → `Lambda_Basic`; override manual en `04_Backend/lambdas/role-map.json`,
+      ver `role-map.example.json`). Si el rol no existe en IAM lo crea: siempre
+      `AWSLambdaBasicExecutionRole` (ejecución + logs) + política **full** por token
+      (DynFull→DynamoDB, SES, SQS, S3, SNS, Scheduler→EventBridge Scheduler, Bedrock; EUM
+      `sms-voice:*`, Social `social-messaging:*` e Invoke `lambda:InvokeFunction` como inline).
+      Roles ya existentes se usan tal cual (no se les tocan políticas). ⚠️ La función nace SIN
+      env vars, SIN layers y SIN triggers (eso sigue manual, ver `DESPLIEGUE.md`). El input
+      manual `force_runtime313` migra también las funciones EXISTENTES a python3.13 (ojo:
+      layers con binarios de otra versión, p. ej. reportlab/Pillow, dejarían de funcionar).
+      El usuario IAM de CI necesita además `lambda:CreateFunction/GetFunctionConfiguration/
+      UpdateFunctionConfiguration` e `iam:GetRole/CreateRole/AttachRolePolicy/PutRolePolicy/
+      PassRole` (sobre los roles `Lambda_*`).
+- [x] **CD de lambdas — triggers y colas SQS (jul 2026):** en cada despliegue de una carpeta el
+      workflow asegura (idempotente: solo crea lo que falte, lo existente no se toca) los
+      triggers declarados en **`04_Backend/lambdas/trigger-map.json`**:
+      - `sqs`: crea la **cola** si no existe (VisibilityTimeout 360 s + long polling; override
+        `visibilityTimeout`) y el **event source mapping** cola→lambda (`batchSize` default 10).
+        La lambda con trigger `sqs` recibe además el token **`_SQS`** en su rol auto-detectado
+        (el poller de Lambda lee la cola con el rol de la FUNCIÓN, aunque su código no use SQS).
+      - `sns`: crea el **tópico** + permiso de invocación + suscripción (apuntar el config set
+        SES/EUM al tópico sigue siendo manual, por eso no viene pre-llenado).
+      - `schedule`: regla **EventBridge** `{funcion}-cron` con `rate()`/`cron()` + permiso + target.
+      Pre-llenado con las **9 colas reales del pipeline** (batchSize 1 — cada mensaje ya es un
+      lote): `Email_Prepare-batch-part`→Prepare-batch (worker de partes),
+      `Email_Send-batch-template-EM`→Send-EM, `Email_Send-batch-raw-EAU/-EAP`→Send-EAU/EAP,
+      `Template_Combination-EAP`→Template_Combination, `Template_Combination-EAP-PDF`→ídem-PDF,
+      `Sms/Wsp/Voice_Send-batch`→sus workers. El usuario de CI necesita además
+      `sqs:GetQueueUrl/CreateQueue/GetQueueAttributes` y `lambda:ListEventSourceMappings/
+      CreateEventSourceMapping/AddPermission` (+ `sns:CreateTopic/Subscribe/
+      ListSubscriptionsByTopic` y `events:PutRule/PutTargets` si se usan esas llaves) —
+      **agregar esos permisos ANTES del próximo push** que toque lambdas con trigger.
 
 ### Seguridad (URGENTE)
 - [x] Scripts `prueba genera JWT.py` / `prueba jwt.py` limpios: leen `SECRET_KEY` de env (jul 2026).

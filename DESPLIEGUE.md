@@ -11,6 +11,24 @@
 
 > **✅ Despliegue e infraestructura COMPLETADOS (2026-07-17):** todas las tareas [J] (tablas, GSIs, lambdas, rutas, IAM, mapping templates, provisión de admins) están desplegadas en AWS. Quedan solo, si acaso, tareas de código [C] (§8).
 
+> **🆕 (jul 2026) Ya NO hace falta "crear la función vacía" antes del CD:** `deploy-lambdas.yml`
+> ahora **crea la función si no existe** en AWS — siempre **Python 3.13** (handler
+> `lambda_function.lambda_handler`) y con el **rol por convención** `Lambda_DynFull_...`
+> (auto-detectado de los `boto3.client/resource` del código; override opcional en
+> `04_Backend/lambdas/role-map.json`; si el rol no existe en IAM, el CD también lo crea con
+> sus políticas full por servicio). Donde este documento diga "crear la función vacía",
+> basta con correr el CD (push o manual). **También asegura los TRIGGERS** declarados en
+> `04_Backend/lambdas/trigger-map.json` (pre-llenado con las 9 colas del pipeline): crea la
+> **cola SQS** si no existe + el **event source mapping** cola→lambda (y fuerza el token
+> `_SQS` en el rol), y opcionalmente tópicos **SNS** (tópico + permiso + suscripción) y
+> reglas **EventBridge** (`schedule`). Donde este documento diga "crear la cola + trigger",
+> basta con desplegar esa carpeta por el CD. **Siguen siendo manuales:** variables de
+> entorno, layers, rutas de API Gateway y apuntar los config sets (SES/EUM) a los tópicos
+> SNS. El usuario IAM de CI necesita los permisos extra listados en la cabecera del workflow
+> (`lambda:CreateFunction/CreateEventSourceMapping/AddPermission`, `iam:CreateRole/
+> AttachRolePolicy/PutRolePolicy/PassRole`, `sqs:CreateQueue`, …) — agregarlos ANTES del
+> próximo push que toque lambdas con trigger.
+
 ---
 
 ## 0. TL;DR — el orden correcto
