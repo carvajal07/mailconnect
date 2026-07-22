@@ -775,10 +775,16 @@ Marcado `[x]` = hecho, `[ ]` = pendiente.
       secciones para uso interno). Sidebar **colapsable** (riel de solo iconos con tooltips,
       toggle en el AppBar) con tabs: Plantillas HTML, Plantillas PDF, Campañas, Bases de datos,
       Reportes, Estadísticas, Mi cuenta.
-      - [x] **Plantillas HTML** → constructor drag-and-drop "pro" (tipo Topol): 10 bloques
+      - [x] **Plantillas HTML** → constructor drag-and-drop "pro" (tipo Topol/MailPro): 13 bloques
             (encabezado, texto, imagen, botón, logo, 2 columnas, redes sociales, HTML crudo,
-            divisor, espaciador) en paleta agrupada (Contenido/Estructura), reorden por
+            divisor, espaciador, **Imagen+Texto**, **Texto+Imagen**, **Productos**) en paleta
+            agrupada (Contenido/**Combinados**/Estructura), reorden por
             arrastre + flechas, duplicar/eliminar, panel de propiedades, variables `{{nombre}}`.
+            **Combos Imagen/Texto (jul 2026):** 2 celdas que apilan en móvil (`mc-col`) con imagen +
+            título + texto + botón opcional. **Grilla de Productos (jul 2026):** N columnas (2/3)
+            de {imagen, título, texto, enlace} con editor de items (agregar/quitar, subir imagen a
+            S3 por producto); genera filas `mc-col` que apilan en móvil (como el "Nuestros últimos
+            productos" de MailPro).
             **Arrastrar del panel al lienzo (jul 2026, tipo MailPro):** los bloques de la paleta
             son `draggable` y se **sueltan en una posición exacta** del lienzo con una **línea
             indicadora** de inserción (mitad superior/inferior de cada bloque); el lienzo vacío es

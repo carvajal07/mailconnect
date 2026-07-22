@@ -46,6 +46,9 @@ import ShareIcon from '@mui/icons-material/Share';
 import HorizontalRuleIcon from '@mui/icons-material/HorizontalRule';
 import HeightIcon from '@mui/icons-material/Height';
 import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
+import ViewSidebarIcon from '@mui/icons-material/ViewSidebar';
+import GridViewIcon from '@mui/icons-material/GridView';
+import AddIcon from '@mui/icons-material/Add';
 import BookmarkAddIcon from '@mui/icons-material/BookmarkAdd';
 import AddPhotoAlternateIcon from '@mui/icons-material/AddPhotoAlternate';
 import type { ReactNode } from 'react';
@@ -68,6 +71,7 @@ import {
   type Block,
   type BlockType,
   type EmailSettings,
+  type ProductItem,
 } from './htmlBuilder';
 
 const BLOCK_ICONS: Record<BlockType, ReactNode> = {
@@ -79,6 +83,9 @@ const BLOCK_ICONS: Record<BlockType, ReactNode> = {
   columns: <ViewColumnIcon fontSize="small" />,
   social: <ShareIcon fontSize="small" />,
   html: <CodeIcon fontSize="small" />,
+  imageText: <ViewQuiltIcon fontSize="small" />,
+  textImage: <ViewSidebarIcon fontSize="small" />,
+  products: <GridViewIcon fontSize="small" />,
   divider: <HorizontalRuleIcon fontSize="small" />,
   spacer: <HeightIcon fontSize="small" />,
 };
@@ -164,7 +171,14 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     setBlocks((prev) => {
       const i = prev.findIndex((b) => b.id === id);
       if (i < 0) return prev;
-      const copy = { ...prev[i], id: createBlock('text').id };
+      // Copia PROFUNDA de items/links para que el duplicado no comparta referencias.
+      const src = prev[i];
+      const copy: Block = {
+        ...src,
+        id: createBlock('text').id,
+        links: { ...src.links },
+        items: src.items ? src.items.map((it) => ({ ...it })) : undefined,
+      };
       const next = [...prev];
       next.splice(i + 1, 0, copy);
       return next;
@@ -909,6 +923,38 @@ const BlockPreview = ({ block: b }: { block: Block }) => {
         </Typography>
       );
     }
+    case 'imageText':
+    case 'textImage': {
+      const img = <Box component="img" src={b.imageUrl} alt={b.heading || ''} sx={{ width: '42%', maxWidth: 220, borderRadius: 1, display: 'block' }} />;
+      const txt = (
+        <Box sx={{ flex: 1 }}>
+          {b.heading && <Typography sx={{ fontSize: 17, fontWeight: 700, color: '#16233f', mb: 0.5 }}>{b.heading}</Typography>}
+          <Typography sx={{ fontSize: 14, color: '#333', whiteSpace: 'pre-wrap' }}>{b.text}</Typography>
+          {b.buttonText && (
+            <Box component="span" sx={{ display: 'inline-block', mt: 1, px: 2, py: 0.75, borderRadius: 1.5, bgcolor: '#0075be', color: '#fff', fontSize: 13 }}>{b.buttonText}</Box>
+          )}
+        </Box>
+      );
+      return (
+        <Stack direction="row" spacing={2} alignItems="flex-start">
+          {b.type === 'imageText' ? <>{img}{txt}</> : <>{txt}{img}</>}
+        </Stack>
+      );
+    }
+    case 'products': {
+      const cols = Math.min(Math.max(b.columns || 3, 1), 4);
+      return (
+        <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 1.5 }}>
+          {(b.items || []).map((it, i) => (
+            <Box key={i} sx={{ textAlign: 'center' }}>
+              {it.image && <Box component="img" src={it.image} alt={it.title} sx={{ width: '100%', borderRadius: 1, display: 'block', mb: 0.5 }} />}
+              <Typography sx={{ fontSize: 14, fontWeight: 700, color: '#16233f' }}>{it.title}</Typography>
+              <Typography sx={{ fontSize: 12, color: '#555' }}>{it.text}</Typography>
+            </Box>
+          ))}
+        </Box>
+      );
+    }
     case 'html':
       return <Box sx={{ fontSize: 13, color: '#555555' }} dangerouslySetInnerHTML={{ __html: b.text }} />;
     case 'divider':
@@ -937,19 +983,37 @@ const BlockEditor = ({
 }) => {
   const [varAnchor, setVarAnchor] = useState<null | HTMLElement>(null);
   const [uploadingImg, setUploadingImg] = useState(false);
+  const [uploadingItem, setUploadingItem] = useState<number | null>(null);
   const isImage = b.type === 'image' || b.type === 'logo';
   const hasText = b.type === 'heading' || b.type === 'text' || b.type === 'button';
   const hasUrl = b.type === 'image' || b.type === 'button' || b.type === 'logo';
+  const isCombo = b.type === 'imageText' || b.type === 'textImage';
+  const isProducts = b.type === 'products';
 
   const handleUpload = async (file: File | null) => {
     if (!file) return;
     setUploadingImg(true);
     const url = await onUploadImage(file);
     setUploadingImg(false);
-    if (url) onChange({ url });
+    if (url) onChange(isCombo ? { imageUrl: url } : { url });
   };
-  const hasAlign = b.type !== 'divider' && b.type !== 'spacer' && b.type !== 'html';
+  const hasAlign = !['divider', 'spacer', 'html', 'products'].includes(b.type);
   const hasColor = b.type === 'heading' || b.type === 'button';
+
+  /* --- Productos (items) --- */
+  const items: ProductItem[] = b.items ?? [];
+  const updateItem = (i: number, patch: Partial<ProductItem>) =>
+    onChange({ items: items.map((it, j) => (j === i ? { ...it, ...patch } : it)) });
+  const addItem = () =>
+    onChange({ items: [...items, { image: 'https://via.placeholder.com/200x200?text=Producto', title: 'Producto', text: 'Descripción breve', url: '' }] });
+  const removeItem = (i: number) => onChange({ items: items.filter((_, j) => j !== i) });
+  const uploadItemImage = async (i: number, file: File | null) => {
+    if (!file) return;
+    setUploadingItem(i);
+    const url = await onUploadImage(file);
+    setUploadingItem(null);
+    if (url) updateItem(i, { image: url });
+  };
 
   return (
     <Stack spacing={2}>
@@ -1016,6 +1080,50 @@ const BlockEditor = ({
               placeholder="https://"
             />
           ))}
+        </>
+      )}
+
+      {isCombo && (
+        <>
+          <TextField label="Título" value={b.heading ?? ''} onChange={(e) => onChange({ heading: e.target.value })} fullWidth size="small" />
+          <TextField label="Texto" value={b.text} onChange={(e) => onChange({ text: e.target.value })} fullWidth multiline minRows={3} size="small" />
+          <TextField label="URL de la imagen" value={b.imageUrl ?? ''} onChange={(e) => onChange({ imageUrl: e.target.value })} fullWidth size="small" />
+          <Button component="label" size="small" variant="outlined" disabled={uploadingImg} startIcon={uploadingImg ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}>
+            {uploadingImg ? 'Subiendo…' : 'Subir imagen a S3'}
+            <input type="file" accept="image/*" hidden onChange={(e) => handleUpload(e.target.files?.[0] ?? null)} />
+          </Button>
+          <TextField label="Texto del botón (opcional)" value={b.buttonText ?? ''} onChange={(e) => onChange({ buttonText: e.target.value })} fullWidth size="small" placeholder="Ver más" />
+          <TextField label="Enlace del botón" value={b.buttonUrl ?? ''} onChange={(e) => onChange({ buttonUrl: e.target.value })} fullWidth size="small" placeholder="https://" />
+        </>
+      )}
+
+      {isProducts && (
+        <>
+          <TextField select label="Columnas" value={b.columns ?? 3} onChange={(e) => onChange({ columns: parseInt(e.target.value) || 3 })} fullWidth size="small">
+            <MenuItem value={2}>2 columnas</MenuItem>
+            <MenuItem value={3}>3 columnas</MenuItem>
+          </TextField>
+          {items.map((it, i) => (
+            <Paper key={i} variant="outlined" sx={{ p: 1.5 }}>
+              <Stack spacing={1}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Typography variant="caption" color="text.secondary" fontWeight={700}>Producto {i + 1}</Typography>
+                  <IconButton size="small" color="error" onClick={() => removeItem(i)} disabled={items.length <= 1}>
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </Stack>
+                <TextField label="Título" size="small" value={it.title} onChange={(e) => updateItem(i, { title: e.target.value })} fullWidth />
+                <TextField label="Texto" size="small" value={it.text} onChange={(e) => updateItem(i, { text: e.target.value })} fullWidth multiline minRows={2} />
+                <TextField label="Imagen (URL)" size="small" value={it.image} onChange={(e) => updateItem(i, { image: e.target.value })} fullWidth />
+                <TextField label="Enlace (opcional)" size="small" value={it.url ?? ''} onChange={(e) => updateItem(i, { url: e.target.value })} fullWidth placeholder="https://" />
+                <Button component="label" size="small" variant="outlined" disabled={uploadingItem === i} startIcon={uploadingItem === i ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}>
+                  {uploadingItem === i ? 'Subiendo…' : 'Subir imagen'}
+                  <input type="file" accept="image/*" hidden onChange={(e) => uploadItemImage(i, e.target.files?.[0] ?? null)} />
+                </Button>
+              </Stack>
+            </Paper>
+          ))}
+          <Button size="small" startIcon={<AddIcon />} onClick={addItem}>Agregar producto</Button>
         </>
       )}
 

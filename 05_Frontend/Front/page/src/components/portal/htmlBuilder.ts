@@ -15,7 +15,10 @@ export type BlockType =
   | 'logo'
   | 'columns'
   | 'social'
-  | 'html';
+  | 'html'
+  | 'imageText'   // combo: imagen a la izquierda + texto a la derecha
+  | 'textImage'   // combo: texto a la izquierda + imagen a la derecha
+  | 'products';   // grilla de productos (imagen + título + texto + enlace)
 
 export interface SocialLinks {
   facebook?: string;
@@ -24,16 +27,31 @@ export interface SocialLinks {
   linkedin?: string;
 }
 
+/** Un producto de la grilla `products`. */
+export interface ProductItem {
+  image: string;
+  title: string;
+  text: string;
+  url?: string;
+}
+
 export interface Block {
   id: string;
   type: BlockType;
-  text: string; // encabezado / texto / etiqueta botón / columna izq / html crudo / alt
+  text: string; // encabezado / texto / etiqueta botón / columna izq / html crudo / alt / cuerpo combo
   textRight: string; // columna derecha
   url: string; // src de imagen-logo / href del botón
   align: 'left' | 'center' | 'right';
   color: string; // color de texto / fondo del botón / barra del logo
   height: number; // alto del espaciador (px)
   links: SocialLinks; // redes sociales
+  // Combos (imageText/textImage) y grilla de productos:
+  imageUrl?: string; // combos: src de la imagen
+  heading?: string; // combos: título
+  buttonText?: string; // combos: etiqueta del botón (opcional)
+  buttonUrl?: string; // combos: href del botón
+  columns?: number; // products: nº de columnas (2 | 3)
+  items?: ProductItem[]; // products: lista de productos
 }
 
 /** Ajustes globales del correo (como el panel "settings" de Topol). */
@@ -73,11 +91,15 @@ export const BLOCK_LABELS: Record<BlockType, string> = {
   columns: '2 Columnas',
   social: 'Redes sociales',
   html: 'HTML crudo',
+  imageText: 'Imagen + Texto',
+  textImage: 'Texto + Imagen',
+  products: 'Productos',
 };
 
-/** Agrupación de la paleta (contenido vs estructura), como Topol. */
+/** Agrupación de la paleta (contenido / combinados / estructura), como Topol/MailPro. */
 export const PALETTE_GROUPS: { label: string; types: BlockType[] }[] = [
   { label: 'Contenido', types: ['heading', 'text', 'image', 'button', 'logo', 'social', 'html'] },
+  { label: 'Combinados', types: ['imageText', 'textImage', 'products'] },
   { label: 'Estructura', types: ['columns', 'divider', 'spacer'] },
 ];
 
@@ -119,10 +141,30 @@ export const createBlock = (type: BlockType): Block => {
       };
     case 'html':
       return { ...b, text: '<p style="text-align:center">Tu HTML aquí</p>' };
+    case 'imageText':
+    case 'textImage':
+      return {
+        ...b,
+        imageUrl: 'https://via.placeholder.com/260x200?text=Imagen',
+        heading: 'Título de la sección',
+        text: 'Describe aquí tu producto, novedad u oferta. Edítalo en el panel derecho.',
+        buttonText: '',
+        buttonUrl: 'https://',
+        align: 'left',
+      };
+    case 'products':
+      return { ...b, align: 'center', columns: 3, items: [defaultProduct(), defaultProduct(), defaultProduct()] };
     default:
       return b;
   }
 };
+
+const defaultProduct = (): ProductItem => ({
+  image: 'https://via.placeholder.com/200x200?text=Producto',
+  title: 'Producto',
+  text: 'Descripción breve',
+  url: '',
+});
 
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -167,6 +209,41 @@ function imageHtml(src: string, alt: string, align: string, maxW: number): strin
   return `<img src="${esc(src)}" alt="${esc(alt)}" width="${maxW}" style="width:100%;max-width:${maxW}px;height:auto;display:block;margin:${align === 'center' ? '0 auto' : '0'};border:0;outline:none;text-decoration:none;" />`;
 }
 
+/** Combo imagen+texto (o texto+imagen). Dos celdas que APILAN en móvil (clase mc-col). */
+function comboHtml(b: Block, st: EmailSettings, imageLeft: boolean): string {
+  const img = imageHtml(b.imageUrl || '', b.heading || '', 'left', 240);
+  const btn = b.buttonText
+    ? `<div style="padding-top:14px;">${buttonHtml({ ...b, text: b.buttonText, url: b.buttonUrl || '#', align: 'left', color: '' }, st)}</div>`
+    : '';
+  const txt = `${b.heading ? `<h3 style="margin:0 0 8px;font-family:${st.fontFamily};font-size:19px;line-height:1.3;color:#16233f;">${esc(b.heading)}</h3>` : ''}${paragraph(b.text, b.align || 'left', st)}${btn}`;
+  const first = imageLeft ? img : txt;
+  const second = imageLeft ? txt : img;
+  const firstW = imageLeft ? 'width="42%" ' : '';
+  const secondW = imageLeft ? '' : 'width="42%" ';
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"><tr>
+        <td class="mc-col" ${firstW}valign="top" style="padding:0 12px 0 0;">${first}</td>
+        <td class="mc-col" ${secondW}valign="top" style="padding:0 0 0 12px;">${second}</td>
+      </tr></table>`;
+}
+
+/** Grilla de productos: imagen + título + texto + enlace, en filas de `columns` (apilan en móvil). */
+function productsHtml(b: Block, st: EmailSettings): string {
+  const items = b.items || [];
+  if (!items.length) return '';
+  const cols = Math.min(Math.max(b.columns || 3, 1), 4);
+  const w = Math.floor(100 / cols);
+  const cell = (it: ProductItem): string => `<td class="mc-col" width="${w}%" valign="top" style="padding:8px;">
+        ${it.image ? `<img src="${esc(it.image)}" alt="${esc(it.title || '')}" width="100%" style="width:100%;max-width:100%;height:auto;display:block;border:0;border-radius:8px;" />` : ''}
+        ${it.title ? `<p style="margin:12px 0 4px;font-family:${st.fontFamily};font-size:16px;font-weight:bold;line-height:1.3;color:#16233f;text-align:center;">${esc(it.title)}</p>` : ''}
+        ${it.text ? `<p style="margin:0;font-family:${st.fontFamily};font-size:13px;line-height:1.5;color:${st.textColor};text-align:center;">${esc(it.text)}</p>` : ''}
+        ${it.url ? `<p style="margin:8px 0 0;text-align:center;"><a href="${esc(it.url)}" target="_blank" style="color:${st.linkColor};font-family:${st.fontFamily};font-size:13px;font-weight:bold;text-decoration:none;">Ver m&aacute;s &rsaquo;</a></p>` : ''}
+      </td>`;
+  const rows: ProductItem[][] = [];
+  for (let i = 0; i < items.length; i += cols) rows.push(items.slice(i, i + cols));
+  const trs = rows.map((r) => `<tr>${r.map(cell).join('')}</tr>`).join('');
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">${trs}</table>`;
+}
+
 /** Serializa un bloque a HTML email-safe y responsive. */
 function renderBlock(b: Block, st: EmailSettings): string {
   const align = b.align || 'left';
@@ -191,6 +268,12 @@ function renderBlock(b: Block, st: EmailSettings): string {
       </table>`;
     case 'social':
       return socialRow(b.links, st);
+    case 'imageText':
+      return comboHtml(b, st, true);
+    case 'textImage':
+      return comboHtml(b, st, false);
+    case 'products':
+      return productsHtml(b, st);
     case 'html':
       return b.text; // HTML crudo, tal cual
     case 'divider':
