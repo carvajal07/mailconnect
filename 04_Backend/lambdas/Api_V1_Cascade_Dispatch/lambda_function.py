@@ -268,7 +268,10 @@ def lambda_handler(event, context):
 
     now = datetime.utcnow()
     now_iso = now.strftime('%Y-%m-%d %H:%M:%S')
-    next_check = (now + timedelta(minutes=wait_minutes)).strftime('%Y-%m-%d %H:%M:%S')
+    # Espera del paso 0: por-paso si viene, si no la del run. (Los steps guardan opcionalmente
+    # waitMinutes/successCriterion por nodo — el motor los usa; ver Cascade_Advance.)
+    step0_wait = int(_num(step0.get('waitMinutes'), wait_minutes)) or wait_minutes
+    next_check = (now + timedelta(minutes=max(1, step0_wait))).strftime('%Y-%m-%d %H:%M:%S')
 
     table_run.put_item(Item={
         'cascadeRunId': run_id, 'customerId': customer_id, 'customer': customer or '', 'nit': str(nit),

@@ -265,6 +265,36 @@ def test_advance_confirma_si_entregado(monkeypatch):
         assert run['status'] == 'done' and int(run['counts']['confirmed']) == 1
 
 
+def test_advance_criterio_por_paso(monkeypatch):
+    """El paso 0 exige 'read' aunque el run sea 'delivered': un estado 'entregado' (2) NO
+    confirma y escala. Prueba que el motor usa el criterio POR PASO (flujo de decisión)."""
+    with mock_aws():
+        ddb = boto3.client('dynamodb', region_name='us-east-1')
+        res = boto3.resource('dynamodb', region_name='us-east-1')
+        _base_tables(ddb)
+        run_id, contact_id = 'R4', 'C4'
+        _base_state(res, 100000)
+        res.Table('cascadeRun').put_item(Item={
+            'cascadeRunId': run_id, 'customerId': 'CU1', 'customer': 'empresa', 'nit': '900123',
+            'name': 'X', 'successCriterion': 'delivered', 'waitMinutes': 60,
+            'steps': [{'channel': 'WSP', 'content': 'hsm', 'successCriterion': 'read'},
+                      {'channel': 'SMS', 'content': 'txt', 'waitMinutes': 30}],
+            'status': 'running', 'counts': {'total': 1, 'confirmed': 0, 'exhausted': 0, 'inFlight': 1, 'budget': 0}})
+        res.Table('cascadeContact').put_item(Item={
+            'cascadeContactId': contact_id, 'cascadeRunId': run_id, 'customerId': 'CU1',
+            'contactKey': '3001234567', 'row': ['1', '3001234567', 'Ana'], 'stepIndex': 0, 'status': 'awaiting',
+            'lastChannel': 'WSP', 'lastSentAt': '2020-01-01 00:00:00', 'nextCheckAt': '2020-01-01 00:00:00', 'history': []})
+        _seed_status(ddb, res, run_id, contact_id, 2)  # 2 = entregado (delivered), pero el paso exige 'read'
+
+        adv = _load('Api_V1_Cascade_Advance', 'cascade_adv4')
+        urls = _queues(monkeypatch, adv)
+        adv.lambda_handler({}, None)
+
+        c = res.Table('cascadeContact').get_item(Key={'cascadeContactId': contact_id})['Item']
+        assert int(c['stepIndex']) == 1 and c['status'] == 'awaiting'  # escaló pese a 'entregado'
+        assert len(_drain(urls['SMS'])) == 1
+
+
 def test_advance_frena_sin_saldo(monkeypatch):
     with mock_aws():
         ddb = boto3.client('dynamodb', region_name='us-east-1')
