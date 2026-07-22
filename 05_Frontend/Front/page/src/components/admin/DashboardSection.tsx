@@ -29,7 +29,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { dashboardService } from '../../services/dashboardService';
 import type { DashboardData, HealthLevel } from '../../services/dashboardService';
 import { isOk } from '../../services/apiClient';
-import { StatTile, Funnel } from '../portal/charts';
+import { StatTile, Funnel, useStatusColors } from '../portal/charts';
 
 const num = (n: number) => new Intl.NumberFormat('es-CO').format(n || 0);
 const pct = (n: number) => `${((n || 0) * 100).toFixed(2)}%`;
@@ -72,6 +72,7 @@ const ChannelBars = ({ data }: { data: DashboardData['byChannel'] }) => {
  * entrega global, volumen por canal y SALUD DE ENVÍOS (reputación) por cliente.
  */
 export const DashboardSection = () => {
+  const status = useStatusColors();
   const [month, setMonth] = useState('');
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -126,11 +127,11 @@ export const DashboardSection = () => {
         <>
           {/* KPIs */}
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(5, 1fr)' }, gap: 2, mb: 2 }}>
-            <StatTile label="Clientes" value={num(k.customers)} icon={<PeopleIcon />} />
-            <StatTile label="Campañas activas" value={num(k.activeCampaigns)} sublabel={`${num(k.pendingCampaigns)} por aprobar`} icon={<CampaignIcon />} />
-            <StatTile label="Envíos" value={num(k.totalSent)} icon={<SendIcon />} />
+            <StatTile label="Clientes" value={k.customers} icon={<PeopleIcon />} />
+            <StatTile label="Campañas activas" value={k.activeCampaigns} sublabel={`${num(k.pendingCampaigns)} por aprobar`} icon={<CampaignIcon />} />
+            <StatTile label="Envíos" value={k.totalSent} icon={<SendIcon />} />
             <StatTile label="Tasa de entrega" value={pct(k.deliveryRate)} sublabel={`${num(k.delivered)} entregados`} icon={<MarkEmailReadIcon />} />
-            <StatTile label="Clientes en riesgo" value={num(k.atRisk)} color={k.atRisk > 0 ? '#d97e12' : undefined} sublabel="rebote/queja alto" icon={<WarningAmberIcon />} />
+            <StatTile label="Clientes en riesgo" value={k.atRisk} color={k.atRisk > 0 ? status.pendiente : undefined} sublabel="rebote/queja alto" icon={<WarningAmberIcon />} />
           </Box>
 
           {/* Embudo + por canal */}
