@@ -55,6 +55,10 @@ interface CampaignForm {
   channelName: string;
   attachmentType: string;
   template: string;
+  // Referencia a la plantilla de mensaje SMS/WSP elegida. Se envía a la campaña para que el
+  // ENVÍO resuelva el contenido EN VIVO (si el cliente edita la plantilla luego, se refleja).
+  // `template` guarda una copia (snapshot) para la vista previa y como respaldo.
+  messageTemplateId: string;
   from: string;
   dataPath: string;
   // Solo EAP: formato del documento (DOCX = combinación Word, PDF = campos personalizados).
@@ -75,6 +79,7 @@ const emptyForm = (from = DEFAULT_FROM): CampaignForm => ({
   channelName: 'EM',
   attachmentType: 'NONE',
   template: '',
+  messageTemplateId: '',
   from,
   dataPath: '',
   documentFormat: 'DOCX',
@@ -186,6 +191,7 @@ export const CampanasSection = () => {
       channelName: c.channel ?? 'EM',
       attachmentType: 'NONE',
       template: c.template ?? '',
+      messageTemplateId: c.messageTemplateId ?? '',
       from: c.originEmail ?? DEFAULT_FROM,
       dataPath: c.dataPath ?? '',
       documentFormat: (c.documentFormat as EapDocFormat) ?? 'DOCX',
@@ -245,20 +251,34 @@ export const CampanasSection = () => {
   ];
 
   /** Id de la plantilla que corresponde al contenido actual de la campaña (para el selector).
-   *  Se deriva del template guardado: SMS compara por texto (body), WSP por nombre HSM.
-   *  '' si no coincide con ninguna guardada (p. ej. al editar una plantilla ya borrada). */
-  const currentMsgTemplateId = isSms
-    ? smsTemplates.find((t) => t.body === formData.template)?.messageTemplateId ?? ''
-    : isWsp
-      ? wspTemplates.find((t) => t.hsmName === formData.template)?.messageTemplateId ?? ''
-      : '';
+   *  Se prefiere la REFERENCIA guardada (messageTemplateId) si aún existe; si no, se deriva del
+   *  texto guardado (SMS por body, WSP por nombre HSM) para campañas viejas sin referencia.
+   *  '' si no coincide con ninguna guardada (p. ej. si la plantilla fue borrada). */
+  const currentMsgTemplateId = ((): string => {
+    if (!isSms && !isWsp) return '';
+    if (formData.messageTemplateId && msgTemplates.some((t) => t.messageTemplateId === formData.messageTemplateId)) {
+      return formData.messageTemplateId;
+    }
+    return isSms
+      ? smsTemplates.find((t) => t.body === formData.template)?.messageTemplateId ?? ''
+      : wspTemplates.find((t) => t.hsmName === formData.template)?.messageTemplateId ?? '';
+  })();
 
-  /** Elige una plantilla guardada (SMS/WSP) → fija el contenido de la campaña. */
+  // Contenido VIGENTE de la plantilla referenciada (para la vista previa): si la plantilla
+  // existe, muestra su texto/HSM ACTUAL (refleja ediciones), no el snapshot guardado en la
+  // campaña. Así lo que se ve aquí coincide con lo que se enviará (resuelto en vivo).
+  const selectedMsgTemplate = msgTemplates.find((t) => t.messageTemplateId === currentMsgTemplateId);
+  const smsPreview = selectedMsgTemplate?.body ?? formData.template;
+  const wspPreview = selectedMsgTemplate?.hsmName ?? formData.template;
+
+  /** Elige una plantilla guardada (SMS/WSP) → guarda la REFERENCIA (para envío en vivo) y una
+   *  copia del contenido (snapshot para la vista previa y respaldo). */
   const selectMsgTemplate = (id: string) => {
     const t = msgTemplates.find((m) => m.messageTemplateId === id);
     if (!t) return;
     // SMS guarda el texto (body); WSP guarda el nombre de la plantilla HSM.
-    handleInputChange('template', t.channel === 'WSP' ? (t.hsmName ?? '') : (t.body ?? ''));
+    const snapshot = t.channel === 'WSP' ? (t.hsmName ?? '') : (t.body ?? '');
+    setFormData((prev) => ({ ...prev, template: snapshot, messageTemplateId: id }));
   };
 
   const handleInputChange = (field: keyof CampaignForm, value: string) => {
@@ -273,7 +293,7 @@ export const CampanasSection = () => {
         if (value !== 'EAP') next.documentFormat = 'DOCX';
         // Cada canal usa un tipo de plantilla distinto (SES / body SMS / HSM / texto voz):
         // al cambiar de canal se limpia para no arrastrar un valor incompatible.
-        if (value !== prev.channelName) next.template = '';
+        if (value !== prev.channelName) { next.template = ''; next.messageTemplateId = ''; }
       }
       return next;
     });
@@ -384,6 +404,8 @@ export const CampanasSection = () => {
           attachmentType: formData.attachmentType,
           dataPath: formData.dataPath,
           template: formData.template,
+          // Referencia de plantilla SMS/WSP (o '' para limpiarla si el canal ya no la usa).
+          messageTemplateId: (isSms || isWsp) ? formData.messageTemplateId : '',
           from: formData.from,
           documentFormat: isEap ? formData.documentFormat : undefined,
         })
@@ -394,6 +416,8 @@ export const CampanasSection = () => {
           attachmentType: formData.attachmentType,
           dataPath: formData.dataPath,
           template: formData.template,
+          // Referencia de plantilla SMS/WSP → el envío resuelve el contenido en vivo.
+          messageTemplateId: (isSms || isWsp) ? formData.messageTemplateId || undefined : undefined,
           from: formData.from,
           // Documento adjunto (solo EAU/EAP): el backend espera una lista de { path }.
           attachment: isAttachment && attachmentPath ? [{ path: attachmentPath }] : undefined,
@@ -517,12 +541,12 @@ export const CampanasSection = () => {
       </TableContainer>
 
       {/* Dialog para crear campaña */}
-      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
+      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="lg" fullWidth>
         <DialogTitle>{editingId ? 'Editar Campaña' : 'Crear Campaña'}</DialogTitle>
         <DialogContent>
-          <Box sx={{ mt: 2 }}>
-            <Stack spacing={2}>
-              <Alert severity="info" icon={<InfoOutlinedIcon />}>
+          <Box sx={{ mt: 1 }}>
+            <Stack spacing={1.5}>
+              <Alert severity="info" icon={<InfoOutlinedIcon />} sx={{ py: 0.5 }}>
                 <Typography variant="body2" component="div">
                   <strong>Canal</strong> — cómo se envía:
                 </Typography>
@@ -532,13 +556,6 @@ export const CampanasSection = () => {
                   <li><strong>EAP</strong>: correo con <em>adjunto personalizado</em> por destinatario. Dos tipos: <strong>Word (.docx)</strong> combinación de correspondencia, o <strong>PDF</strong> con campos personalizados.</li>
                   <li><strong>SMS</strong> / <strong>WSP</strong>: mensaje de texto / plantilla de WhatsApp (sin adjunto).</li>
                   <li><strong>VOZ</strong>: llamada telefónica que lee un mensaje por texto a voz (sin adjunto).</li>
-                </Box>
-                <Typography variant="body2" component="div" sx={{ mt: 0.5 }}>
-                  <strong>Entrega del adjunto</strong> (solo EAU/EAP):
-                </Typography>
-                <Box component="ul" sx={{ m: 0.5, pl: 2.5 }}>
-                  <li><strong>Archivo adjunto en el correo</strong>: el documento viaja pegado al correo.</li>
-                  <li><strong>Enlace / botón de descarga</strong>: el correo lleva un enlace para descargarlo (no lo adjunta).</li>
                 </Box>
               </Alert>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -580,7 +597,7 @@ export const CampanasSection = () => {
                     label="Entrega del adjunto"
                     onChange={(e) => handleInputChange('attachmentType', e.target.value)}
                   >
-                    <MenuItem value="NONE">Sin adjunto</MenuItem>
+                    {!isAttachment && <MenuItem value="NONE">Sin adjunto</MenuItem>}
                     <MenuItem value="ONFILE">Archivo adjunto en el correo</MenuItem>
                     <MenuItem value="ONLINE">Enlace / botón de descarga</MenuItem>
                   </Select>
@@ -691,9 +708,9 @@ export const CampanasSection = () => {
                       multiline
                       minRows={3}
                       label="Texto de la plantilla (solo lectura)"
-                      value={formData.template}
+                      value={smsPreview}
                       InputProps={{ readOnly: true }}
-                      helperText={`~${Math.max(1, Math.ceil(formData.template.length / 160))} segmento(s). En SMS la columna 2 del CSV es el celular (E.164, +57…). Edita el texto en "Plantillas SMS".`}
+                      helperText={`~${Math.max(1, Math.ceil(smsPreview.length / 160))} segmento(s). El envío usa SIEMPRE la versión vigente de la plantilla: si la editas en "Plantillas SMS", la campaña reflejará el cambio. En SMS la columna 2 del CSV es el celular (E.164, +57…).`}
                     />
                   )}
                 </>
@@ -718,9 +735,9 @@ export const CampanasSection = () => {
                     <TextField
                       fullWidth
                       label="Plantilla HSM seleccionada (solo lectura)"
-                      value={formData.template}
+                      value={wspPreview}
                       InputProps={{ readOnly: true }}
-                      helperText="Nombre de la plantilla de Meta. Los parámetros {{1}}, {{2}}… salen de las columnas del CSV desde 'Nombre'. La columna 2 es el celular (E.164, +57…)."
+                      helperText="Nombre de la plantilla de Meta. El envío usa la referencia vigente. Los parámetros {{1}}, {{2}}… salen de las columnas del CSV desde 'Nombre'. La columna 2 es el celular (E.164, +57…)."
                     />
                   )}
                 </>

@@ -3,7 +3,7 @@ Lambda para EDITAR una campaña existente.
 
 Ruta: POST /Campaign/Update  (integración no-proxy, envelope estándar)
 Request: { campaignId, campaignName?, channelName?, attachmentType?, dataPath?,
-           template?, from? }
+           template?, messageTemplateId?, from? }
 
 Solo se permite editar campañas en estado "Pendiente" (aún no enviadas ni con
 muestras/enviando/terminadas), para no alterar procesos ya disparados. El cliente
@@ -25,6 +25,9 @@ EDITABLE = {
     'attachmentType': 'attachmentType',
     'dataPath': 'dataPath',
     'template': 'template',
+    # Referencia a la plantilla de mensaje SMS/WSP (para que el envío resuelva el contenido
+    # en vivo). Vacío ('') = sin referencia → el envío cae al snapshot de `template`.
+    'messageTemplateId': 'messageTemplateId',
     'from': 'originEmail',
     # Solo EAP: DOCX (combinación Word) / PDF (campos personalizados).
     'documentFormat': 'documentFormat',

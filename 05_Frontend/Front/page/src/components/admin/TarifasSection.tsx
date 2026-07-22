@@ -61,6 +61,12 @@ const CHANNEL_LABEL: Record<PricingChannel, string> = {
 const CHANNELS = Object.keys(CHANNEL_FIELDS) as PricingChannel[];
 const GLOBAL = '*';
 
+// Claves de TRAMO por canal (el precio base es escalonado por volumen; email tiene 3).
+const TIER_KEYS: Record<PricingChannel, string[]> = {
+  EMAIL: ['EM', 'EAU', 'EAP'], SMS: ['SMS'], WHATSAPP: ['WHATSAPP'], VOICE: ['VOICE'],
+};
+const TIER_LABEL: Record<string, string> = { EM: 'EM', EAU: 'EAU', EAP: 'EAP', SMS: 'SMS', WHATSAPP: 'WSP', VOICE: 'Voz/min' };
+
 export const TarifasSection = () => {
   const { notify, FeedbackSnackbar } = useFeedback();
   const [scope, setScope] = useState<string>(GLOBAL);
@@ -69,6 +75,7 @@ export const TarifasSection = () => {
   const customers = customersCtx.items;
   const [overrides, setOverrides] = useState<RatesByChannel | null>(null);
   const [form, setForm] = useState<RatesByChannel | null>(null);
+  const [tiers, setTiers] = useState<Record<string, { min: number; unit: number }[]>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [savingChannel, setSavingChannel] = useState<string | null>(null);
@@ -80,6 +87,7 @@ export const TarifasSection = () => {
     setLoading(false);
     if (isOk(res) && res.data) {
       setOverrides(res.data.overrides);
+      setTiers(res.data.tiers ?? {});
       // El formulario arranca desde los valores efectivos (editable).
       setForm(JSON.parse(JSON.stringify(res.data.effective)));
     } else {
@@ -95,7 +103,8 @@ export const TarifasSection = () => {
   const setField = (channel: PricingChannel, key: string, value: string) => {
     setForm((prev) => {
       if (!prev) return prev;
-      return { ...prev, [channel]: { ...prev[channel], [key]: value === '' ? 0 : Number(value) } };
+      // Vacío = SIN override plano (se cobra por tramos): se guarda null, no 0.
+      return { ...prev, [channel]: { ...prev[channel], [key]: value === '' ? null : Number(value) } };
     });
   };
 
@@ -118,7 +127,9 @@ export const TarifasSection = () => {
     if (!form) return;
     const fields: ChannelRates = {};
     CHANNEL_FIELDS[channel].forEach(({ key }) => {
-      fields[key] = Number(form[channel]?.[key] ?? 0);
+      const v = form[channel]?.[key];
+      // Solo se envían los campos con valor (override plano). Los vacíos quedan por TRAMOS.
+      if (v !== null && v !== undefined && String(v) !== '') fields[key] = Number(v);
     });
     save(channel, fields);
   };
@@ -147,9 +158,10 @@ export const TarifasSection = () => {
         </Button>
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Define el precio por canal (COP). La <strong>tarifa global</strong> aplica a todos;
-        puedes crear <strong>overrides por cliente</strong>. Estos valores alimentan el estimador
-        de costos que ve el cliente antes de enviar.
+        El precio base es <strong>escalonado por volumen</strong> (ver la tabla de cada canal).
+        Dejá el campo <strong>vacío</strong> para cobrar por esos tramos, o escribí un valor para
+        fijar un <strong>precio plano</strong> (override) global o por cliente. Alimenta el
+        estimador y el cobro real.
       </Typography>
 
       <Paper sx={{ p: 2, mb: 2 }}>
@@ -201,7 +213,8 @@ export const TarifasSection = () => {
                       size="small"
                       type="number"
                       label={label}
-                      value={form[channel]?.[key] ?? 0}
+                      value={form[channel]?.[key] ?? ''}
+                      placeholder="Por volumen"
                       onChange={(e) => setField(channel, key, e.target.value)}
                       InputProps={{
                         startAdornment: <InputAdornment position="start">$</InputAdornment>,
@@ -215,6 +228,36 @@ export const TarifasSection = () => {
                     />
                   ))}
                 </Stack>
+                {tiers[TIER_KEYS[channel][0]] && (
+                  <Box sx={{ mt: 1.5 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      Precio por volumen (COP/u) — aplica cuando el campo de arriba está vacío:
+                    </Typography>
+                    <Box
+                      component="table"
+                      sx={{
+                        width: '100%', mt: 0.5, borderCollapse: 'collapse', fontSize: 11,
+                        '& th, & td': { border: '1px solid', borderColor: 'divider', px: 0.5, py: 0.25, textAlign: 'right' },
+                        '& th:first-of-type, & td:first-of-type': { textAlign: 'left' },
+                      }}
+                    >
+                      <Box component="thead">
+                        <Box component="tr">
+                          <Box component="th">Desde (envíos/mes)</Box>
+                          {TIER_KEYS[channel].map((k) => <Box component="th" key={k}>{TIER_LABEL[k]}</Box>)}
+                        </Box>
+                      </Box>
+                      <Box component="tbody">
+                        {tiers[TIER_KEYS[channel][0]].map((row, i) => (
+                          <Box component="tr" key={row.min}>
+                            <Box component="td">{row.min.toLocaleString('es-CO')}</Box>
+                            {TIER_KEYS[channel].map((k) => <Box component="td" key={k}>${tiers[k]?.[i]?.unit ?? '—'}</Box>)}
+                          </Box>
+                        ))}
+                      </Box>
+                    </Box>
+                  </Box>
+                )}
                 <Box sx={{ mt: 2, textAlign: 'right' }}>
                   <Button
                     size="small"

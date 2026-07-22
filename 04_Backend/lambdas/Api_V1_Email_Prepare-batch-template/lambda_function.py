@@ -161,6 +161,10 @@ table_process = dynamodb.Table('process')
 table_campaign = dynamodb.Table('campaign')
 table_customer = dynamodb.Table('customer')
 table_database = dynamodb.Table('databaseFile')
+# Plantillas de mensaje SMS/WSP (canales no-SES). El envío resuelve el contenido EN VIVO
+# desde esta tabla (por campaign.messageTemplateId) para reflejar ediciones posteriores a la
+# creación de la campaña; el texto guardado en campaign.template queda solo como respaldo.
+table_message_template = dynamodb.Table('messageTemplate')
 _audit_table = dynamodb.Table('adminAudit')
 
 # --- Cobro PREPAGO (monedero) -------------------------------------------------
@@ -555,7 +559,7 @@ def select_campaign(campaign_name:str, customer_id:str=None)->dict:
     Returns:
         dict: Nombre de la campaña
     """
-    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, samplesSentCount, documentFormat, attachmentType, approvalStatus'  # Lista de campos a consultar
+    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, messageTemplateId, samplesSentCount, documentFormat, attachmentType, approvalStatus'  # Lista de campos a consultar
 
     if customer_id:
         response_campaign = table_campaign.scan(
@@ -570,6 +574,41 @@ def select_campaign(campaign_name:str, customer_id:str=None)->dict:
             ProjectionExpression=projection_campaign_expression
         )
     return response_campaign
+
+
+def resolve_live_message_content(message_template_id, customer_id, channel):
+    """Contenido EN VIVO de la plantilla de mensaje (SMS/WSP) referenciada por la campaña.
+
+    La campaña de SMS/WSP guarda una REFERENCIA (`messageTemplateId`) a la plantilla, no solo
+    una copia del texto. Así, si el cliente edita la plantilla DESPUÉS de crear la campaña, el
+    envío usa el texto/HSM ACTUALIZADO (igual que el email, que referencia la plantilla SES por
+    nombre). Devuelve el `body` (SMS) o el `hsmName` (WSP) vigente, o None si no se puede
+    resolver — el llamador cae entonces al respaldo `campaign.template` (snapshot).
+
+    Fail-safe: cualquier problema (sin id, plantilla borrada, de otro tenant, error de DynamoDB)
+    devuelve None y NO rompe el envío.
+    """
+    if not message_template_id:
+        return None
+    try:
+        item = table_message_template.get_item(
+            Key={'messageTemplateId': message_template_id}).get('Item')
+    except Exception as e:
+        print('No se pudo resolver la plantilla de mensaje en vivo (se usa el snapshot): {}'.format(e))
+        return None
+    if not item:
+        return None
+    # Aislamiento multi-tenant: si la plantilla es de otro cliente, ignorarla (usar snapshot).
+    if customer_id and item.get('customerId') and item.get('customerId') != customer_id:
+        print('La plantilla {} no pertenece al cliente de la campaña; se usa el snapshot.'.format(message_template_id))
+        return None
+    if channel == 'SMS':
+        body = str(item.get('body', '') or '')
+        return body if body.strip() else None
+    if channel == 'WSP':
+        hsm = str(item.get('hsmName', '') or '')
+        return hsm if hsm.strip() else None
+    return None
 
 
 def increment_samples_count(st:'ProcessState')->int:
@@ -1749,14 +1788,22 @@ def lambda_handler(event, context):
                 st.channel = channel_name  # define el tipo de contacto (correo vs celular E.164)
                 data_path = response_campaign['Items'][0]["dataPath"]
                 st.from_email = response_campaign['Items'][0]["originEmail"]
+                # Contenido de SMS/WSP: se RESUELVE EN VIVO desde la plantilla referenciada
+                # (campaign.messageTemplateId) para reflejar ediciones posteriores a la creación
+                # de la campaña. Si no hay referencia o no se puede resolver, cae al snapshot
+                # guardado en campaign.template (compat con campañas viejas y con Voz).
+                snapshot_template = response_campaign['Items'][0].get("template", "") or ""
+                message_template_id = response_campaign['Items'][0].get("messageTemplateId") or ""
+                live_content = resolve_live_message_content(message_template_id, st.customer_id, channel_name)
                 # Para SMS el campo 'template' de la campaña guarda el TEXTO del mensaje
                 # (no un template de SES). Para email queda vacío y no se usa.
-                st.sms_body = response_campaign['Items'][0].get("template", "") if channel_name == "SMS" else ""
+                st.sms_body = (live_content if live_content is not None else snapshot_template) if channel_name == "SMS" else ""
                 # Para WhatsApp el campo 'template' guarda el NOMBRE de la plantilla HSM
                 # aprobada por Meta. Para el resto de canales queda vacío y no se usa.
-                st.wsp_template = response_campaign['Items'][0].get("template", "") if channel_name == "WSP" else ""
-                # Para Voz el campo 'template' guarda el TEXTO a leer por TTS.
-                st.voice_message = response_campaign['Items'][0].get("template", "") if channel_name == "VOZ" else ""
+                st.wsp_template = (live_content if live_content is not None else snapshot_template) if channel_name == "WSP" else ""
+                # Para Voz el campo 'template' guarda el TEXTO a leer por TTS (sin plantilla
+                # referenciada: la voz se escribe libre en el form, el snapshot ES la fuente).
+                st.voice_message = snapshot_template if channel_name == "VOZ" else ""
 
                 # Todas las tablas por cliente se nombran con la LLAVE POR NIT (st.tenant =
                 # tenant_key(companyTin)), igual que los buckets S3. Antes se usaba el nombre
