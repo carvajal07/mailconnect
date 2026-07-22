@@ -176,6 +176,73 @@ def test_voice_handler_no_rellama_en_redelivery(monkeypatch):
         assert len(llamadas) == 1, 'La redelivery NO debe repetir la llamada (idempotencia)'
 
 
+# --------------------------------------------------------------------------------------
+# 3) Checkpoint INTRA-PARTE (reanudación): EM/EAU trocean un `part` en varios send_bulk. Si
+#    uno falla, un reintento debe REANUDAR desde el chunk fallido, sin reenviar los ya
+#    enviados. El claim por chunk (stage='send#{offset}') + _release_part lo garantizan.
+# --------------------------------------------------------------------------------------
+@pytest.mark.parametrize('worker', ['em', 'eau'])
+def test_release_permite_reintentar_el_chunk(worker):
+    """_release_part borra el claim de un chunk que falló → un reintento puede reclamarlo de
+    nuevo y reenviarlo (sin él, la reanudación saltaría el chunk fallido → pérdida)."""
+    with mock_aws():
+        _mk_process_detail_table()
+        mod = _load(WORKER_MODULES[worker], f'{worker}_release_mod')
+        # Chunk reclamado y luego reclamado de nuevo (duplicado) → False.
+        assert mod._claim_part(TENANT, 'P1', 7, 5, 'd', stage='send#50') is True
+        assert mod._claim_part(TENANT, 'P1', 7, 5, 'd', stage='send#50') is False
+        # Falló el envío del chunk → se libera → un reintento vuelve a reclamarlo (True).
+        mod._release_part(TENANT, 'P1', 7, stage='send#50')
+        assert mod._claim_part(TENANT, 'P1', 7, 5, 'd', stage='send#50') is True
+        # Otros chunks del mismo part son independientes.
+        assert mod._claim_part(TENANT, 'P1', 7, 5, 'd', stage='send#0') is True
+
+
+def _em_event(process_id, part, data):
+    return {'Records': [{'body': json.dumps({
+        'customerId': 'C1', 'customerName': 'empresa', 'nit': NIT,
+        'processId': process_id, 'campaignId': 'CAMP', 'samples': False,
+        'fromEmail': 'no-reply@x.com', 'headers': ['Id', 'Email', 'Nombre'],
+        'templateName': 'tmpl', 'part': part, 'data': data,
+    })}]}
+
+
+def test_em_reanuda_sin_reenviar_chunks_ya_enviados(monkeypatch):
+    """EM trocea el `part` (250 máx.) en chunks de QUANTITY_BATCH=50. Si el 2º chunk falla, la
+    redelivery de SQS reanuda: omite el chunk ya enviado y completa los pendientes."""
+    with mock_aws():
+        _mk_process_detail_table()
+        em = _load(WORKER_MODULES['em'], 'em_resume_mod')
+        qbatch = em.QUANTITY_BATCH  # 50
+
+        # Stub de send_bulk: registra el offset de cada chunk enviado y FALLA una vez en el 2º.
+        sent = []
+        state = {'failed_once': False}
+        def fake_send_bulk(data, headers, start, end, tags):
+            if start == qbatch and not state['failed_once']:
+                state['failed_once'] = True
+                raise RuntimeError('SES throttled (simulado)')
+            sent.append(start)
+        monkeypatch.setattr(em, 'send_bulk', fake_send_bulk)
+
+        n = qbatch * 2 + 5   # 3 chunks: offsets 0, qbatch, 2*qbatch
+        data = [[str(i), f'u{i}@x.com', f'N{i}'] for i in range(n)]
+        ev = _em_event('P1', 7, data)
+
+        # 1ª entrega: envía el chunk 0, falla el 2º (offset qbatch) y re-lanza.
+        with pytest.raises(RuntimeError):
+            em.lambda_handler(ev, None)
+        assert sent == [0], 'Antes del fallo solo salió el primer chunk'
+
+        # 2ª entrega (redelivery): el chunk 0 ya está reclamado → se OMITE; reanuda desde el que
+        # falló y completa el resto.
+        em.lambda_handler(ev, None)
+
+        assert sorted(sent) == [0, qbatch, 2 * qbatch], 'Los 3 chunks se enviaron'
+        assert sent.count(0) == 1, 'El chunk ya enviado NO se reenvía en el reintento (idempotencia)'
+        assert sent.count(qbatch) == 1 and sent.count(2 * qbatch) == 1
+
+
 def test_wsp_handler_no_reenvia_en_redelivery(monkeypatch):
     with mock_aws():
         _mk_process_detail_table()

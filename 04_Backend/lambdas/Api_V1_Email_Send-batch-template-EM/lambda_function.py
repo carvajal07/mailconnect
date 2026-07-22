@@ -155,6 +155,19 @@ def _mark_part(tenant_key_value:str, process_id_value:str, part:int, state:str, 
         print(f'No se pudo marcar la parte {part} como {state}: {e}')
 
 
+def _release_part(tenant_key_value:str, process_id_value:str, part:int, stage:str='send')->None:
+    """Libera (borra) el claim de un chunk cuyo envío FALLÓ, para que una redelivery lo
+    REINTENTE. Se usa cuando la llamada a SES lanza excepción (no entregó nada): sin liberar, el
+    chunk quedaría reclamado y la reanudación lo saltaría → pérdida. Best-effort."""
+    if not tenant_key_value or not process_id_value or part is None:
+        return
+    try:
+        dynamodb.Table(f'{tenant_key_value}_processDetail').delete_item(
+            Key={'processDetailId': f'{process_id_value}#{part}#{stage}'})
+    except Exception as e:
+        print(f'No se pudo liberar el claim del chunk {stage} de la parte {part}: {e}')
+
+
 def count_sample_send(campaign_id:str)->None:
     """Cuenta 1 envío de MUESTRA (atómico) en la campaña, SOLO cuando el envío salió bien.
     Se llama desde el worker tras un envío exitoso (no en Prepare-batch), para que una
@@ -382,14 +395,9 @@ def lambda_handler(event:dict, context:dict):
         registers = len(data)
         print(f"Cantidad registros a procesar: {registers}")
         
-        # IDEMPOTENCIA: reclamo ATÓMICO de (processId, part) para evitar envíos duplicados por
-        # redelivery de SQS. Reemplaza el scan+put (no atómico) anterior: la condición
-        # attribute_not_exists garantiza que solo la PRIMERA entrega envíe; la duplicada se
-        # descarta (raise → se traga abajo → SQS borra el mensaje, no se reenvía el lote).
-        if not _claim_part(tenant, process_id, part, registers, formatted_date):
-            print(f"La parte {part} del proceso {process_id} ya fue reclamada; se omite (duplicado SQS).")
-            raise ValueError("La parte ya ha sido procesada")
-        print("Parte reclamada; inicia el envío")
+        # La idempotencia se hace por CHUNK en el bloque de envío (no a nivel de parte), para
+        # poder REANUDAR un envío parcial sin reenviar los sub-lotes ya enviados (ver abajo).
+        print(f"Parte {part}: {registers} registros a enviar en chunks de {QUANTITY_BATCH}")
     except Exception as e:
         print(e)
         print("Error en la lectura de los datos de entrada")
@@ -415,28 +423,38 @@ def lambda_handler(event:dict, context:dict):
         }]
 
         print(f"Encabezados de personalizacion ({headers})")
-        #Realizar la asignacion de variables y datos para la personalizacion 
+        #Realizar la asignacion de variables y datos para la personalizacion
 
-        # Envío de los lotes de la parte. Antes iba SIN try: si send_bulk fallaba a mitad
-        # (plantilla inexistente, cuenta pausada, throttling, config set faltante…) la parte
-        # quedaba en 'Procesando' (parecía en curso para siempre) y sin señal clara. Ahora
-        # se marca 'Error' (traza honesta) y se RE-LANZA para que la invocación falle de
-        # forma visible (métrica de error / DLQ). NO se habilita el reenvío automático: el
-        # guard de estado descarta la redelivery, evitando duplicar los correos ya enviados
-        # (un envío duplicado dispara quejas y daña la reputación SES). La parte en 'Error'
-        # se reintenta manualmente (Trabajos → Reintentar).
-        try:
-            for start in range(0, registers, QUANTITY_BATCH):
-                end = start + QUANTITY_BATCH
+        # Envío por CHUNKS con idempotencia + REANUDACIÓN (checkpoint intra-parte). Cada chunk
+        # [start..end) se reclama de forma ATÓMICA (clave DETERMINISTA processId#part#send#{start}
+        # vía _claim_part): si ya fue enviado (por otra entrega o un intento previo que falló más
+        # adelante), se OMITE — no se reenvía. Si la llamada a SES del chunk FALLA (no entregó
+        # nada), se LIBERA su claim y se RE-LANZA: la redelivery de SQS reanuda EXACTAMENTE desde
+        # ese chunk, sin repetir los ya enviados ni perder los pendientes. Antes, un fallo a mitad
+        # marcaba TODA la parte en 'Error' y la bloqueaba → los chunks siguientes se perdían y un
+        # reintento reenviaba desde cero. Compromiso (igual que antes, pero de grano fino): favorece
+        # "sin duplicados" (reputación SES) → una caída DURA entre reclamar y enviar deja ese único
+        # chunk (≤QUANTITY_BATCH) sin enviar.
+        any_sent = False
+        for start in range(0, registers, QUANTITY_BATCH):
+            end = start + QUANTITY_BATCH
+            chunk_len = min(end, registers) - start
+            if not _claim_part(tenant, process_id, part, chunk_len, formatted_date, stage=f'send#{start}'):
+                print(f"Chunk {start} de la parte {part} ya enviado; se omite (reanudación).")
+                continue
+            try:
                 print(f"Procesando registros {start} a {end}")
                 send_bulk(data, headers, start, end, default_tags)
-        except Exception as e:
-            print(f"Error enviando la parte {part} del proceso {process_id}: {e}")
-            _mark_part(tenant, process_id, part, "Error")
-            raise
+                any_sent = True
+            except Exception as e:
+                # La llamada a SES falló (no entregó nada): libera el claim del chunk para que la
+                # redelivery lo reintente, y re-lanza para que SQS reprocese la parte (reanuda).
+                _release_part(tenant, process_id, part, stage=f'send#{start}')
+                print(f"Error enviando el chunk {start} de la parte {part} del proceso {process_id}: {e}")
+                raise
 
         print("Proceso de envios finalizado")
-        _mark_part(tenant, process_id, part, "Terminado")
-        # Envío de MUESTRAS terminado OK → contar 1 en la campaña (no cuenta si falla antes).
-        if is_samples and campaign_id:
+        # Muestras: contar 1 SOLO si esta invocación envió algo nuevo (any_sent). En una redelivery
+        # donde todos los chunks ya estaban enviados no se recuenta (any_sent=False).
+        if is_samples and campaign_id and any_sent:
             count_sample_send(campaign_id)

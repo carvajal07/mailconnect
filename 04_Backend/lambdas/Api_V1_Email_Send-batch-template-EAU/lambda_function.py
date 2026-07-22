@@ -173,6 +173,19 @@ def _mark_part(tenant_key_value, process_id_value, part, state, stage='send'):
     except Exception as e:
         print(f'No se pudo marcar la parte {part} como {state}: {e}')
 
+
+def _release_part(tenant_key_value, process_id_value, part, stage='send'):
+    """Libera (borra) el claim de un chunk cuyo envío FALLÓ, para que una redelivery lo REINTENTE
+    (reanudación). Sin liberar, el chunk quedaría reclamado y la reanudación lo saltaría →
+    pérdida. Best-effort."""
+    if not tenant_key_value or not process_id_value or part is None:
+        return
+    try:
+        dynamodb.Table(f'{tenant_key_value}_processDetail').delete_item(
+            Key={'processDetailId': f'{process_id_value}#{part}#{stage}'})
+    except Exception as e:
+        print(f'No se pudo liberar el claim del chunk {stage} de la parte {part}: {e}')
+
 def insert_send_detail(data:dict)->None:
     """
     Función encargada de insertar los detalles de cada envio a la base de datos.
@@ -580,11 +593,8 @@ def lambda_handler(event, context):
         #Al crear la campa;a, el front debe validar que si exista la cantidad X de adjuntos segun los datos cargados a S3
         #Consultar la informacion de la plantilla
 
-        # IDEMPOTENCIA: reclama (processId, part) atómicamente ANTES de enviar. Si otra entrega
-        # del mismo mensaje ya lo reclamó (redelivery de SQS), se omite → no se reenvía el lote.
-        if not _claim_part(tenant, process_id, part, registers, formattedDate):
-            print(f"La parte {part} del proceso {process_id} ya fue reclamada; se omite (duplicado SQS).")
-            return
+        # La idempotencia se hace por CHUNK en el bloque de envío (no a nivel de parte), para
+        # poder REANUDAR un envío parcial sin reenviar los sub-lotes ya enviados (ver abajo).
 
         tags = [{
                 "Name":"customer",
@@ -678,23 +688,34 @@ def lambda_handler(event, context):
                     sys.exit(1)
 
         print("Antes del for")
-        try:
-            for start in range(0, registers, QUANTITY_BATCH):
-                print("En el for")
-                end = min(start + QUANTITY_BATCH, registers)
+        # Envío por CHUNKS con idempotencia + REANUDACIÓN (checkpoint intra-parte). Cada chunk
+        # [start..end) se reclama de forma ATÓMICA (clave DETERMINISTA processId#part#send#{start}):
+        # si ya fue enviado (otra entrega o un intento previo que falló más adelante), se OMITE. Si
+        # la llamada a SES del chunk FALLA (no entregó nada), se LIBERA su claim y se RE-LANZA: la
+        # redelivery de SQS reanuda EXACTAMENTE desde ese chunk, sin repetir los enviados ni perder
+        # los pendientes. Antes, un fallo a mitad marcaba TODA la parte y la bloqueaba → pérdida de
+        # los chunks siguientes. Favorece "sin duplicados": una caída DURA entre reclamar y enviar
+        # deja ese único chunk (≤QUANTITY_BATCH) sin enviar.
+        any_sent = False
+        for start in range(0, registers, QUANTITY_BATCH):
+            end = min(start + QUANTITY_BATCH, registers)
+            chunk_len = end - start
+            if not _claim_part(tenant, process_id, part, chunk_len, formattedDate, stage=f'send#{start}'):
+                print(f"Chunk {start} de la parte {part} ya enviado; se omite (reanudación).")
+                continue
+            try:
                 print(f"Procesando registros {start} a {end}")
                 send_bulk(data, header_list, start, end, tags)
-        except Exception as e:
-            # Falla a mitad del envío: marca la parte 'Error' y RE-LANZA. El guard de _claim_part
-            # descarta la redelivery (no reenvía lo ya enviado); se reintenta manualmente.
-            print(f"Error enviando la parte {part} del proceso {process_id}: {e}")
-            _mark_part(tenant, process_id, part, "Error")
-            raise
+                any_sent = True
+            except Exception as e:
+                _release_part(tenant, process_id, part, stage=f'send#{start}')
+                print(f"Error enviando el chunk {start} de la parte {part} del proceso {process_id}: {e}")
+                raise
 
         print("Proceso de envios finalizado")
-        _mark_part(tenant, process_id, part, "Terminado")
-        # Envío de MUESTRAS terminado OK → contar 1 en la campaña (no cuenta si falla antes).
-        if is_samples and campaign_id:
+        # Muestras: contar 1 SOLO si esta invocación envió algo nuevo (any_sent evita recontar en
+        # una redelivery donde todos los chunks ya estaban enviados).
+        if is_samples and campaign_id and any_sent:
             count_sample_send(campaign_id)
 
 

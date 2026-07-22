@@ -345,11 +345,25 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   `documentFormat` al re-emitir a `Send-EAP` → Send-EAP corría con `tenant=''` (escribía en la
   tabla equivocada) y no contaba muestras ni distinguía el formato. Ahora los **preserva** en la
   re-emisión (el combinador PDF ya lo hacía).
+- **Checkpoint INTRA-PARTE (reanudación) en EM/EAU:** un `part` del canal trae hasta 250
+  destinatarios que EM envía en chunks de `QUANTITY_BATCH` (50; EAU 25) → varios `send_bulk`. Si
+  uno fallaba a mitad, antes se marcaba TODA la parte en Error y se bloqueaba → los chunks
+  siguientes se **perdían** y un reintento reenviaba desde cero. Ahora `Send-EM`/`Send-EAU` reclaman
+  **por CHUNK** (`_claim_part` con `stage='send#{offset}'`): si el chunk ya salió, se OMITE; si su
+  `send_bulk` falla (SES no entregó nada), se **libera** el claim (`_release_part` = delete) y se
+  re-lanza → la redelivery de SQS **reanuda EXACTAMENTE desde ese chunk**, sin reenviar los ya
+  enviados ni perder los pendientes. La reanudación es **automática por SQS** (no necesita
+  `Admin_Requeue`, que opera al nivel de `procesar_parte`/`processedParts`). El resto de canales
+  (SMS/Voz/WhatsApp/EAP) procesa el `part` como unidad → conserva el claim a nivel de parte
+  (`stage='send'`). Muestras: el conteo se gatea con `any_sent` para no recontar en una redelivery
+  donde todos los chunks ya estaban enviados.
 - **Cobertura:** `08_Pruebas/PruebasSeguridad/test_idempotencia_envio.py` (claim atómico en los 6
-  workers + dedup a nivel handler de SMS/Voz/WhatsApp). Suite completo en verde. Los mensajes al
-  canal SIEMPRE llevan `part` único en el proceso (`prepare_message`, `part_offset = part*PART_SIZE`).
-  ⚠️ Pendiente relacionado (no en esta tanda): conciliación de fallos parciales de lote y DLQ en
-  las colas creadas por el CD.
+  workers + dedup a nivel handler de SMS/Voz/WhatsApp + reanudación por chunk en EM: falla el 2º
+  chunk y reanuda sin reenviar el 1º). Suite completo en verde. Los mensajes al canal SIEMPRE
+  llevan `part` único en el proceso (`prepare_message`, `part_offset = part*PART_SIZE`).
+  ⚠️ Pendiente relacionado (no en esta tanda): **DLQ** en las colas creadas por el CD (hoy solo en
+  Terraform); sin DLQ, un chunk con error PERSISTENTE se reintenta hasta agotar la retención. EAP
+  sigue tragando los fallos por-destinatario (pérdida silenciosa, otro pendiente).
 
 ### Ajustes operativos de envío y UX (jul 2026)
 - **Fix `ResourceNotFoundException` en el primer envío:** `Prepare-batch` ahora ESPERA a que
