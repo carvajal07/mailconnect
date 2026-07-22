@@ -183,6 +183,36 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 - [ ] `[J]` `Api_V1_Schedule_Cancel` → ruta **`/Schedule/Cancel`** (client). IAM: `GetItem`/`UpdateItem` sobre `scheduledSend`; **`scheduler:DeleteSchedule`**. Env `SCHEDULER_GROUP` (opc).
 - [ ] `[J]` (OPCIONAL) `Api_V1_Schedule_Dispatch` **(sin ruta)** — barrido de respaldo; conéctalo a una regla EventBridge de baja frecuencia (`rate(15 minutes)`) SOLO si quieres red de seguridad ante one-shots que no dispararon. IAM: `Scan`/`UpdateItem` sobre `scheduledSend`; `GetItem` sobre `campaign`; `lambda:InvokeFunction` sobre `Api_V1_Email_Prepare-batch-template`. Si confías en el one-shot, no lo despliegues.
 
+### 3c. Plantillas PDF — generador + envío EAP-PDF **🆕 (nuevo, post-2026-07-17)**
+
+> El editor de Plantillas PDF (HTML tipo Word) ya "habla" con el backend que **renderiza el PDF**.
+> Dos lambdas comparten el mismo render `html_to_pdf` (xhtml2pdf); el código del render está
+> **copiado** en ambas (convención del repo: sin imports compartidos entre lambdas).
+> **Requisito común:** ambas necesitan un **Lambda layer con `xhtml2pdf` (+ reportlab, Pillow)**
+> construido para el runtime de la función (igual que el layer de PyJWT en los Authorizers). Sin el
+> layer, la lambda responde 500 "Falta la librería de render de PDF" (diagnosticable, no rompe).
+
+- [ ] `[J]` **Layer PDF**: `xhtml2pdf==0.2.16` (+ `reportlab`, `Pillow`) empaquetado como layer para el
+  runtime de las dos funciones. Alternativa: descomentar el `requirements.txt` de cada carpeta para
+  bundlear en el zip — pero el Python de CI (deploy-lambdas) debe coincidir con el runtime (reportlab/
+  Pillow traen wheels por versión de CPython).
+- [ ] `[J]` `Api_V1_Template_Render-pdf` → ruta **`/Template/Render-pdf`** (client, authorizer + CORS +
+  mapping template con `customerId`/`customer`/`nit`). Ya está en `infra/api/routes.json` → `deploy-api.yml`
+  la crea. Crea la **función vacía** antes del primer CD. IAM: `GetItem` sobre `messageTemplate`;
+  (si se usa `store=true`) S3 `PutObject`/`CreateBucket`/`HeadBucket` sobre el bucket del cliente.
+  Es el endpoint del botón "Vista previa PDF" del editor.
+- [ ] `[J]` `Api_V1_Template_Combination-EAP-PDF` **(sin ruta de API — trigger SQS)** — crea la función
+  vacía + la **cola `Template_Combination-EAP-PDF`** (el nombre que ya usa Prepare-batch en `URL_SQS_EAP_PDF`)
+  + el **trigger** cola→lambda. IAM: DynamoDB `Scan document`, `Scan`/`PutItem` sobre `{tenant}_processDetail`;
+  S3 `GetObject` (plantilla) + `PutObject` (`attachment/{campaña}/{nombre}.pdf`) sobre el bucket del cliente;
+  **`sqs:SendMessage`** a `Email_Send-batch-raw-EAP`. Env `URL_SQS_EAP` (opc; default apunta a esa cola).
+- [ ] `[J]` **Redesplegar `Api_V1_Email_Send-batch-template-EAP`**: ahora usa `.pdf` (subtype
+  `application/pdf`) cuando el mensaje trae `documentFormat=PDF`. La ruta DOCX no cambia — no requiere
+  permisos nuevos.
+- [ ] `[C]` (pendiente) **Form de crear campaña**: opción "PDF personalizado" que fije `documentFormat=PDF`
+  y suba el HTML del editor como el adjunto de la campaña (registro `document.documentPath`). El backend ya
+  consume la campaña si llega así; falta ese cableado en el front (`CampanasSection`).
+
 - [x] `[J]` Crear las 12 funciones vacías + sus rutas + permisos de la tabla.
 - [x] `[J]` Confirmar que el **Authorizer** está asignado a las 12 rutas.
 - [x] `[J]` `Api_V1_Admin_Requeue` reencola las partes pendientes de un envío atascado

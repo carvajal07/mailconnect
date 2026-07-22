@@ -282,6 +282,12 @@ def lambda_handler(event, context):
         template_name = json_body["templateName"]
         part = json_body["part"]
         data = json_body["data"]
+        # Formato del adjunto personalizado: DOCX (por defecto) o PDF. El combinador
+        # EAP-PDF (Api_V1_Template_Combination-EAP-PDF) sube attachment/{campaña}/{nombre}.pdf
+        # con la MISMA base (register[2]) que la rama productiva DOCX. Solo cambia la
+        # extensión → la ruta DOCX queda intacta.
+        document_format = str(json_body.get("documentFormat", "DOCX") or "DOCX").upper()
+        attachment_ext = ".pdf" if document_format == "PDF" else ".docx"
         registers = len(data)
 
         print(f"Customer: {customer_name}")
@@ -448,7 +454,8 @@ def lambda_handler(event, context):
                 unique_id = register[0]
                 email = register[1]
                 #Temporal
-                doc_name = register[0] + ".docx"
+                # PDF usa la misma base (register[2]) que sube el combinador EAP-PDF.
+                doc_name = (register[2] + attachment_ext) if document_format == "PDF" else (register[0] + ".docx")
                 #Productivo
                 #doc_name = register[2] + ".docx"
                 print(f"Email: {email} - Pdf: {doc_name}")
@@ -488,12 +495,15 @@ def lambda_handler(event, context):
                 msg.attach(msg_body)
 
 
-                #Agregar adjunto
-                part = MIMEApplication(file_content)
+                #Agregar adjunto (PDF: bytes crudos + subtype application/pdf)
+                if document_format == "PDF":
+                    part = MIMEApplication(file_content, _subtype='pdf')
+                else:
+                    part = MIMEApplication(file_content)
                 part.add_header('Content-Disposition', 'attachment', filename=os.path.basename(doc_name))
                 msg.attach(part)
 
-                
+
                 # Try to send the email.
                 try:
                     response = ses.send_raw_email(
@@ -526,7 +536,7 @@ def lambda_handler(event, context):
                 # Preparar la lista de adjuntos 
                 unique_id = register[0]
                 email = register[1]
-                doc_name = register[2] + ".docx"
+                doc_name = register[2] + attachment_ext
                 attachmentPath = f'attachment/{campaign_id}/{doc_name}'
                 s3_object = s3.get_object(Bucket=bucket_name, Key=attachmentPath)
                 print("consulta adjunto ejecutada correctamente")
@@ -566,8 +576,11 @@ def lambda_handler(event, context):
                 msg.attach(msg_body)
                 print("Se agrego el body al mensaje")
 
-                #Agregar adjunto
-                part = MIMEApplication(file_object)
+                #Agregar adjunto (PDF: bytes crudos + subtype; DOCX: comportamiento previo)
+                if document_format == "PDF":
+                    part = MIMEApplication(file_content, _subtype='pdf')
+                else:
+                    part = MIMEApplication(file_object)
                 part.add_header('Content-Disposition', 'attachment', filename=os.path.basename(doc_name))
                 msg.attach(part)
 

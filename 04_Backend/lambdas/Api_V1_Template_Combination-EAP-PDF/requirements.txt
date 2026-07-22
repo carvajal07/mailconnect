@@ -1,0 +1,10 @@
+# Dependencias de esta lambda. Por convención del proyecto se entregan en un
+# Lambda LAYER (como PyJWT en los Authorizers), NO se bundlean en el zip: el
+# pipeline (deploy-lambdas.yml) solo hace pip install si hay líneas REALES aquí.
+#
+# Descomenta para bundlear en el zip (asegura que el Python de CI coincida con el
+# runtime de la función; reportlab/Pillow traen wheels por versión de CPython).
+#
+# xhtml2pdf==0.2.16
+# reportlab>=4.0
+# Pillow>=10.0

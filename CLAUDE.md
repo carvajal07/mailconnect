@@ -112,6 +112,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Schedule/List` | `{}` | 200 `data:{schedules:[{scheduleId, campaignId, campaignName, scheduledAt, status, firedAt, processId, error}], count}` (del tenant, próximos primero) |
 | `Schedule/Cancel` | `{ scheduleId }` | 200 ok · 400 · 403 otro cliente · 404 · 409 (ya no está `pending`). `pending→canceled` |
 | `Template/List` | `{ customer }` o `{ customerId }` | 200 `data:{templates:[{name, created}], count}` (SES filtrado por prefijo `{customer}_`) |
+| `Template/Render-pdf` | `{ html o messageTemplateId, variables?, pageSize?, store?, filename? }` | 200 `data:{pdfBase64, filename}` (store=false) · `data:{path, url}` (store=true) · 400 · 403 · 500 (falta layer). Renderiza a PDF el HTML del editor sustituyendo `{{campo}}` (xhtml2pdf). Lo llama el botón "Vista previa PDF" del editor |
 | `Email/Unsubscribe` | **GET/POST público (proxy, sin authorizer)** `?t=<token HMAC>` | 200 página HTML (confirmación / enlace inválido). El token lo firman las lambdas Send con `SECRET_KEY`; inserta en `{customer}_unsubscribe` (PK `email`) |
 | `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, duplicates?, allowDuplicates?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`). `allowDuplicates` = si el envío real NO filtra contactos repetidos |
 | `Database/List` | `{ customerId }` | 200 `data:{files[], count}` (incluye `columns`, `validEmails`, `invalidEmails`) |
@@ -287,9 +288,33 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   **herramientas a la izquierda** (insertar **Imagen** →S3 `resources`, **Variable** `{{campo}}`,
   **Tabla**, y selector de hoja **A4/Carta**) y un **lienzo con reglas** en cm (`HRuler`/`VRuler`)
   que dibuja la hoja blanca centrada. **Borradores** en localStorage (`mc_pdf_drafts`: Guardar/
-  Cargar por nombre), **Ver HTML** (diálogo + copiar) y **Descargar** (.html). Es el editor visual
-  de la plantilla; el **envío EAP-PDF** que la consuma (combinación + render a PDF) queda para una
-  fase posterior (sin backend aún).
+  Cargar por nombre), **Ver HTML** (diálogo + copiar) y **Descargar** (.html).
+- **Generador de PDF conectado al editor (jul 2026):** el editor "habla" con el backend que
+  RENDERIZA el PDF. **Botón "Vista previa PDF"** (`PdfTemplatesSection`) → `pdfTemplatesService.render`
+  → `POST /Template/Render-pdf` (lambda **`Api_V1_Template_Render-pdf`**): toma el HTML del editor +
+  **valores de muestra** de las `{{variables}}` detectadas y devuelve el PDF real (base64) que se
+  muestra en un diálogo con `<iframe>` + descargar. La lambda envuelve el HTML en una hoja (A4/Carta),
+  sustituye `{{campo}}` y renderiza con **xhtml2pdf** (`html_to_pdf`); `store=true` lo sube a S3
+  (`attachment/pdf-preview/…`) en vez de base64.
+- **Envío real EAP-PDF (jul 2026):** el hook ya existía stubbeado — `Prepare-batch` enruta `EAP` con
+  `documentFormat=PDF` a la cola **`Template_Combination-EAP-PDF`**, cuyo consumidor es la nueva
+  lambda **`Api_V1_Template_Combination-EAP-PDF`** (análoga al combinador DOCX): baja el HTML de la
+  plantilla (del `documentPath` del registro `document` de la campaña), por cada destinatario sustituye
+  `{{campo}}` con su fila del CSV, **renderiza el PDF** (mismo `html_to_pdf`), lo sube a
+  `attachment/{campaignId}/{nombre}.pdf` y **re-emite a `Email_Send-batch-raw-EAP` preservando `nit`
+  + `samples` + `documentFormat`** (el combinador DOCX los pierde — bug latente que este NO copia).
+  **`Send-batch-template-EAP`** ahora usa `.pdf` (subtype `application/pdf`) cuando el mensaje trae
+  `documentFormat=PDF`; la ruta DOCX queda intacta. El render es idéntico en ambas lambdas (copiado,
+  sin imports compartidos, como `tenant_key`). Cubierto por `08_Pruebas/PruebasSeguridad/test_render_pdf.py`
+  y `test_combination_eap_pdf.py`.
+  - ⚠️ `[J]` (despliegue): crear la función `Api_V1_Template_Render-pdf` + ruta `/Template/Render-pdf`
+    (authorizer + CORS); crear la función `Api_V1_Template_Combination-EAP-PDF` + la cola SQS
+    `Template_Combination-EAP-PDF` + trigger; **layer con `xhtml2pdf` (+ reportlab, Pillow)** en ambas
+    (como PyJWT en los Authorizers); IAM: S3 `GetObject/PutObject` (bucket del cliente), DynamoDB
+    `Scan document`/`Scan+PutItem {tenant}_processDetail` y `GetItem messageTemplate` (Render-pdf),
+    SQS `SendMessage` a `Email_Send-batch-raw-EAP` (combiner). Falta la parte del **form de crear
+    campaña** que elija "PDF personalizado" (documentFormat=PDF) y suba el HTML del editor como el
+    adjunto de la campaña — hoy el backend ya lo consume si la campaña llega así.
 - **Programar envíos (jul 2026, FUNCIONAL — HORA EXACTA):** `ProgramarEnviosSection` (tab junto a
   Campañas, RBAC **owner/approver**) permite **agendar el envío real** de una campaña aprobada a una
   fecha/hora futura. Backend: tabla **`scheduledSend`** (PK `scheduleId` + GSI `customerId-index`).

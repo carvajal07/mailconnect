@@ -8,6 +8,7 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import CodeIcon from '@mui/icons-material/Code';
 import DownloadIcon from '@mui/icons-material/Download';
 import SaveIcon from '@mui/icons-material/Save';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import FormatBoldIcon from '@mui/icons-material/FormatBold';
 import FormatItalicIcon from '@mui/icons-material/FormatItalic';
 import FormatUnderlinedIcon from '@mui/icons-material/FormatUnderlined';
@@ -29,6 +30,7 @@ import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
 import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
+import { pdfTemplatesService, base64ToPdfBlob } from '../../services/pdfTemplatesService';
 import { useFeedback } from '../../hooks/useFeedback';
 
 /**
@@ -49,6 +51,24 @@ const readDrafts = (): Record<string, string> => {
   try { return JSON.parse(localStorage.getItem(DRAFTS_KEY) || '{}'); } catch { return {}; }
 };
 const writeDrafts = (d: Record<string, string>) => localStorage.setItem(DRAFTS_KEY, JSON.stringify(d));
+
+/** Valores de MUESTRA para la vista previa (reemplazan {{campo}}). */
+const SAMPLE_VALUES: Record<string, string> = {
+  nombre: 'Juan Pérez', email: 'juan@ejemplo.com', empresa: 'ACME S.A.S', ciudad: 'Bogotá',
+};
+const sampleValueFor = (name: string) => SAMPLE_VALUES[name.toLowerCase()] ?? name;
+
+/** Detecta las variables {{campo}} presentes en el HTML y les asigna un valor de muestra. */
+const sampleVariables = (html: string): Record<string, string> => {
+  const out: Record<string, string> = {};
+  const re = /\{\{\s*([^{}]+?)\s*\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const key = m[1].trim();
+    if (key && !(key in out)) out[key] = sampleValueFor(key);
+  }
+  return out;
+};
 
 /** Regla horizontal con marcas de centímetro. */
 const HRuler = ({ width }: { width: number }) => (
@@ -86,6 +106,9 @@ export const PdfTemplatesSection = () => {
   const [loadAnchor, setLoadAnchor] = useState<null | HTMLElement>(null);
   const [htmlOpen, setHtmlOpen] = useState(false);
   const [htmlView, setHtmlView] = useState('');
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfOpen, setPdfOpen] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState('');
   const dims = PAGE_SIZES[size];
 
   useEffect(() => {
@@ -140,6 +163,28 @@ export const PdfTemplatesSection = () => {
   };
   const newDoc = () => { if (pageRef.current) pageRef.current.innerHTML = '<p><br></p>'; };
   const showHtml = () => { setHtmlView(pageRef.current?.innerHTML || ''); setHtmlOpen(true); };
+
+  /** Genera el PDF REAL desde el backend (lambda Render-pdf) con datos de muestra y lo previsualiza. */
+  const previewPdf = async () => {
+    const html = pageRef.current?.innerHTML || '';
+    if (!html.trim()) { notify('El documento está vacío.', 'warning'); return; }
+    setPdfLoading(true);
+    const res = await pdfTemplatesService.render({
+      html,
+      variables: sampleVariables(html),
+      pageSize: size,
+      filename: 'plantilla-pdf.pdf',
+    });
+    setPdfLoading(false);
+    if (!isOk(res) || !res.data?.pdfBase64) {
+      notify(res.description || 'No se pudo generar el PDF. ¿El servicio de PDF está desplegado?', 'error');
+      return;
+    }
+    const url = URL.createObjectURL(base64ToPdfBlob(res.data.pdfBase64));
+    setPdfUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return url; });
+    setPdfOpen(true);
+  };
+  const closePdf = () => { setPdfOpen(false); if (pdfUrl) { URL.revokeObjectURL(pdfUrl); setPdfUrl(''); } };
   const download = () => {
     const blob = new Blob(['<!doctype html><meta charset="utf-8">' + (pageRef.current?.innerHTML || '')], { type: 'text/html' });
     const a = document.createElement('a');
@@ -164,7 +209,17 @@ export const PdfTemplatesSection = () => {
           <Button size="small" startIcon={<NoteAddIcon />} onClick={newDoc}>Nueva</Button>
           <Button size="small" startIcon={<FolderOpenIcon />} onClick={(e) => setLoadAnchor(e.currentTarget)}>Cargar</Button>
           <Button size="small" startIcon={<CodeIcon />} onClick={showHtml}>Ver HTML</Button>
-          <Button size="small" variant="outlined" startIcon={<DownloadIcon />} onClick={download}>Descargar</Button>
+          <Button
+            size="small"
+            variant="outlined"
+            color="secondary"
+            disabled={pdfLoading}
+            startIcon={pdfLoading ? <CircularProgress size={16} /> : <PictureAsPdfIcon />}
+            onClick={previewPdf}
+          >
+            {pdfLoading ? 'Generando…' : 'Vista previa PDF'}
+          </Button>
+          <Button size="small" variant="outlined" startIcon={<DownloadIcon />} onClick={download}>Descargar HTML</Button>
           <Button size="small" variant="contained" startIcon={<SaveIcon />} onClick={saveDraft}>Guardar</Button>
         </Stack>
       </Stack>
@@ -270,6 +325,24 @@ export const PdfTemplatesSection = () => {
           ? <MenuItem disabled>No hay plantillas guardadas</MenuItem>
           : Object.keys(drafts).sort().map((n) => <MenuItem key={n} onClick={() => loadDraft(n)}>{n}</MenuItem>)}
       </Menu>
+
+      <Dialog open={pdfOpen} onClose={closePdf} maxWidth="md" fullWidth>
+        <DialogTitle>Vista previa del PDF (datos de muestra)</DialogTitle>
+        <DialogContent dividers sx={{ p: 0, height: '75vh' }}>
+          {pdfUrl && <Box component="iframe" src={pdfUrl} title="Vista previa PDF" sx={{ width: '100%', height: '100%', border: 0 }} />}
+        </DialogContent>
+        <DialogActions>
+          <Button
+            component="a"
+            href={pdfUrl}
+            download="plantilla-pdf.pdf"
+            startIcon={<DownloadIcon />}
+          >
+            Descargar PDF
+          </Button>
+          <Button onClick={closePdf}>Cerrar</Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={htmlOpen} onClose={() => setHtmlOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>HTML de la plantilla</DialogTitle>
