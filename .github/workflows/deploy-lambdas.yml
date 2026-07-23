@@ -3,7 +3,9 @@ name: Desplegar Lambdas
 # Despliega automáticamente a AWS SOLO las lambdas que cambiaron.
 # - En cada push a main: detecta las carpetas modificadas bajo 04_Backend/lambdas
 #   y actualiza el código de esas funciones.
-# - Manual (workflow_dispatch): puedes desplegar una función puntual o todas.
+# - Manual (workflow_dispatch): puedes desplegar una función puntual, todas, o
+#   "desde una carpeta en adelante" (input 'from', orden alfabético) para
+#   REANUDAR un despliegue que falló a mitad.
 # - Si la función NO existe en AWS, el workflow la CREA:
 #     · Runtime SIEMPRE python3.13 (handler lambda_function.lambda_handler).
 #     · Rol de ejecución según la convención de abajo. Si el rol tampoco existe
@@ -103,6 +105,10 @@ on:
         type: boolean
         required: false
         default: false
+      from:
+        description: 'Desplegar SOLO desde esta carpeta EN ADELANTE (orden alfabético). Ej: Api_V1_Sms_Send-batch. Útil para reanudar un despliegue que falló a mitad. Implica "all" (todas desde esa). Vacío = sin filtro.'
+        required: false
+        default: ''
       force_runtime313:
         description: 'Migrar también las funciones EXISTENTES a python3.13 (⚠️ layers con binarios de otra versión de Python dejarían de funcionar)'
         type: boolean
@@ -147,6 +153,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           FN_INPUT: ${{ github.event.inputs.function }}
           ALL_INPUT: ${{ github.event.inputs.all }}
+          FROM_INPUT: ${{ github.event.inputs.from }}
           BEFORE: ${{ github.event.before }}
           SHA: ${{ github.sha }}
         run: |
@@ -157,10 +164,11 @@ jobs:
             if [ -n "${FN_INPUT}" ]; then
               # Acepta lista separada por coma o espacio.
               printf '%s' "$FN_INPUT" | tr ', ' '\n' | grep -v '^$' | sort -u > folders.txt
-            elif [ "${ALL_INPUT}" = "true" ]; then
+            elif [ "${ALL_INPUT}" = "true" ] || [ -n "${FROM_INPUT}" ]; then
+              # 'all' o 'from' (que implica "todas desde X en adelante") → lista completa.
               ls -1 "$DIR" > folders.txt
             else
-              echo "Nada que hacer: indica 'function' o marca 'all'." ; : > folders.txt
+              echo "Nada que hacer: indica 'function', marca 'all', o usa 'from'." ; : > folders.txt
             fi
           else
             # push: carpetas de lambda cambiadas entre el commit anterior y este
@@ -170,7 +178,16 @@ jobs:
               | sort -u > folders.txt || true
           fi
 
-          echo "Carpetas candidatas:"; cat folders.txt || true
+          # Filtro 'from': deja SOLO las carpetas alfabéticamente >= FROM_INPUT (mismo orden en
+          # que se despliegan). Sirve para REANUDAR un despliegue desde donde falló. Se ordena y
+          # compara con la MISMA collation (locale del runner) que el resto del workflow.
+          if [ -n "${FROM_INPUT}" ]; then
+            sort folders.txt | awk -v f="${FROM_INPUT}" '$0 >= f' > folders.from
+            mv folders.from folders.txt
+            echo "Filtro 'from=${FROM_INPUT}': se despliega desde esa carpeta en adelante."
+          fi
+
+          echo "Carpetas candidatas (en orden de despliegue):"; cat folders.txt || true
           echo "count=$(wc -l < folders.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
 
       - name: Desplegar
