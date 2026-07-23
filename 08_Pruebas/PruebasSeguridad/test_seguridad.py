@@ -94,6 +94,7 @@ class Ctx:
         res = boto3.resource('dynamodb', region_name='us-east-1')
         self.tables = {t: res.Table(t) for t in TABLES}
         self._email_seq = 0
+        self._tin_seq = 900000000
 
     def handler(self, name):
         return self.mods[name].lambda_handler
@@ -103,7 +104,13 @@ class Ctx:
         return f"{prefix}{self._email_seq}@test.com"
 
     # ---- Helpers de flujo ----
-    def register(self, email, password='Password123', tin=900123456):
+    def register(self, email, password='Password123', tin=None):
+        # NIT ÚNICO por registro por defecto: desde el fix de seguridad, un NIT = una empresa
+        # = un solo auto-registro. Cada usuario de prueba crea su propio tenant (salvo que se
+        # pase un `tin` explícito para probar el caso de NIT repetido).
+        if tin is None:
+            self._tin_seq += 1
+            tin = self._tin_seq
         return self.handler('register')({
             'name': 'Usuario Test', 'phone': '3204586576', 'email': email,
             'company': 'Empresa Test', 'companyTin': tin, 'password': password,
@@ -192,6 +199,17 @@ def test_registro_email_duplicado_409(ctx):
     assert resp['statusCode'] == 409
 
 
+def test_registro_nit_existente_409(ctx):
+    # SEGURIDAD: el primer registro con un NIT nuevo crea la empresa; un segundo registro
+    # (otro correo) bajo el MISMO NIT se RECHAZA con 409. Antes se unía al tenant del dueño
+    # como owner (fuga entre empresas). El dueño suma a su equipo desde el portal.
+    tin = 987654321
+    assert ctx.register(ctx.unique_email('dueno'), tin=tin)['statusCode'] == 201
+    resp = ctx.register(ctx.unique_email('intruso'), tin=tin)
+    assert resp['statusCode'] == 409
+    assert 'registrada' in resp['description'].lower()
+
+
 def test_registro_telefono_invalido_400(ctx):
     resp = ctx.handler('register')({
         'name': 'X', 'phone': 'abc', 'email': ctx.unique_email('bad'),
@@ -258,10 +276,11 @@ def test_login_exitoso_devuelve_token(ctx):
     assert resp['data']['token']
     assert resp['data']['userId']
     # El NIT (companyTin) viaja como claim `nit`: es la LLAVE de los recursos por cliente
-    # (tablas/buckets vía tenant_key). El Authorizer lo reenvía en el context.
-    assert resp['data']['companyTin'] == '900123456'
+    # (tablas/buckets vía tenant_key). El Authorizer lo reenvía en el context. Se verifica el
+    # INVARIANTE (el NIT registrado == el del claim), no un número mágico.
+    assert resp['data']['companyTin']
     claims = jwt.decode(resp['data']['token'], os.environ['SECRET_KEY'], algorithms=['HS256'])
-    assert claims['nit'] == '900123456'
+    assert claims['nit'] == resp['data']['companyTin']
 
 
 def test_login_password_incorrecta_404(ctx):

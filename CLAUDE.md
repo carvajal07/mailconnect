@@ -497,10 +497,39 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   `{tenant}_sendStatus`/`_sendDetail`/`_processDetail`/`_blackList`/`_unsubscribe`, S3 `GetObject` (base),
   SQS `SendMessage` a las 4 colas de envío, y `lambda:InvokeFunction` sobre `Api_V1_Cascade_Tick` (para `Start`).
 
+### Registro por NIT + equipo del cliente (jul 2026, SEGURIDAD)
+> **Bug crítico corregido:** antes `Register` **reutilizaba el `customerId`** si el NIT ya existía
+> (`if exist_companyTin: customerId = get_customerId(...)`). Como **todo el aislamiento multi-tenant
+> es por `customerId`/`nit` del token**, cualquiera que conociera el NIT de una empresa (semi-público)
+> se registraba con un correo nuevo y quedaba **dentro de ese tenant como `owner`**: veía campañas,
+> saldo, bases, plantillas y podía **enviar a nombre de la empresa gastando su saldo**. El flag
+> `realSendEnabled` no protegía (la víctima activa ya lo tenía en `true` y el intruso heredaba el
+> mismo `customerId`).
+- **Fix:** `Register` ahora **rechaza (409)** el auto-registro bajo un NIT ya registrado
+  (`CompanyAlreadyRegistered`). Un NIT = una empresa = un solo auto-registro (el que registra queda
+  `owner`). Cubierto por `test_seguridad.py::test_registro_nit_existente_409`.
+- **Equipo del cliente (provisioning por el dueño):** el `owner` suma usuarios de SU empresa desde el
+  portal — lambdas `Api_V1_User_{Create,List,Delete}` (rutas cliente, **owner-only** por `tenantRole`):
+  - `Create`: crea el usuario con `tenantRole` **operator** (funcional: prepara/prueba) o **approver**
+    (aprueba/envía), **tope `MAX_TEAM_USERS`=2** (sin contar al owner), correo único. Queda **activo**
+    pero con contraseña **no usable** (hash aleatorio + `mustSetPassword`): define su clave con
+    "¿Olvidaste tu contraseña?" (OTP) → el front dispara ese correo tras crearlo (reutiliza el flujo
+    de recuperación; el dueño nunca maneja contraseñas ajenas).
+  - `List`: usuarios del tenant (+ `max`/`canAdd`). `Delete`: borra un usuario del tenant (no un owner
+    ni a sí mismo). Auditado (`user.create`/`user.delete`). Cubierto por `test_user_team.py` (10).
+  - **Front:** tab **"Usuarios"** (`UsuariosSection`, solo owner) — tabla del equipo + agregar (rol +
+    tope) + eliminar + reenviar el correo de "definir contraseña". `usersService.ts`. `RegisterPage`
+    muestra el 409 "empresa ya registrada".
+  - ⚠️ `[J]`: desplegar `Api_V1_User_{Create,List,Delete}` (crear vacías) + rutas `/User/{Create,List,
+    Delete}` (authorizer + CORS + mapping template con `customerId`/`nit`/`userId`/**`tenantRole`**).
+    IAM: `Scan/GetItem/PutItem/DeleteItem` sobre `user`/`userData`, `PutItem` sobre `adminAudit`.
+    Env `MAX_TEAM_USERS` (default 2). Estas rutas NO son admin (son del owner del tenant).
+
 ### Roles (admin/client) (jul 2026)
 - **Modelo:** dos roles — **`admin`** (personal interno de MailConnect: gestiona clientes,
   tarifas, config global) y **`client`** (default, usuario de una empresa). Dentro de un cliente
-  no hay sub-roles todavía (futuro: owner/member).
+  hay **sub-roles** (`tenantRole`): **owner** (dueño; suma usuarios, gestiona saldo, todo),
+  **approver** (aprueba/envía real), **operator** (prepara/prueba).
 - **Backend:** campo `role` en la tabla `user` (default `client` en `Register`). `Login` lo
   embebe en el JWT y lo devuelve en `data.role`; `Authorizer`/`Authorizer2` lo reenvían en el
   context (`event.requestContext.authorizer.role`); `Refresh-token` lo preserva. Los endpoints
