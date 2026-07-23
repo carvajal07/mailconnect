@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert, Box, Button, Card, CardActionArea, CardContent, Chip, Dialog, DialogActions,
   DialogContent, DialogTitle, Grid, IconButton, Stack, TextField, Tooltip, Typography,
@@ -17,8 +17,10 @@ import { messageTemplatesService } from '../../services/messageTemplatesService'
 import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { pdfEngineService } from '../../services/pdfEngineService';
 import { base64ToPdfBlob } from '../../services/pdfTemplatesService';
+import { databaseService } from '../../services/databaseService';
 import SketchEditor from '../../pdfsketch/SketchEditor';
 import { useDocumentStore, emptyDocument } from '../../pdfsketch/store/documentStore';
+import { useDataSourceStore, type SketchDataSource } from '../../pdfsketch/store/dataSourceStore';
 import { toEnvelope, deserializeFromJson } from '../../pdfsketch/json/documentJson';
 
 /**
@@ -41,6 +43,28 @@ export default function SketchStudio() {
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loadingList, setLoadingList] = useState(false);
+
+  // Bases de datos del cliente (fuente de variables {{campo}} en el editor).
+  const [databases, setDatabases] = useState<SketchDataSource[]>([]);
+
+  const loadDatabases = useCallback(async () => {
+    useDataSourceStore.getState().setLoading(true);
+    try {
+      const res = await databaseService.list(customerId, user?.customer);
+      const files = res.data?.files ?? [];
+      setDatabases(
+        files.map((f) => ({
+          id: f.databaseFileId,
+          name: f.fileName,
+          columns: f.columns ?? [],
+          previewRows: f.previewRows,
+        })),
+      );
+    } finally {
+      useDataSourceStore.getState().setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId]);
 
   // Edición en curso (overlay full-screen)
   const [editorOpen, setEditorOpen] = useState(false);
@@ -68,8 +92,15 @@ export default function SketchStudio() {
 
   useEffect(() => {
     void refreshList();
+    void loadDatabases();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
+
+  // Permite al panel de Datos del editor recargar las bases (botón refrescar).
+  useEffect(() => {
+    useDataSourceStore.getState().setReload(() => { void loadDatabases(); });
+    return () => useDataSourceStore.getState().setReload(null);
+  }, [loadDatabases]);
 
   const openNew = () => {
     setDoc(emptyDocument());
@@ -246,7 +277,7 @@ export default function SketchStudio() {
 
           {/* Editor pdfsketch (ocupa el resto de la pantalla) */}
           <Box sx={{ flex: 1, minHeight: 0 }}>
-            <SketchEditor />
+            <SketchEditor databases={databases} />
           </Box>
         </Box>
       )}

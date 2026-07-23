@@ -49,7 +49,17 @@ export default function LeftPanel() {
               </div>
             </div>
           </Panel>
-          <PanelResizeHandle className="h-px bg-line hover:bg-accent-dim transition-colors" />
+          <PanelResizeHandle
+            className="group relative flex items-center justify-center"
+            style={{ height: 8, cursor: 'row-resize', background: 'var(--bg-2)' }}
+          >
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2" style={{ height: 2, background: 'var(--line-2)' }} />
+            <div
+              className="absolute inset-x-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity"
+              style={{ height: 2, background: 'var(--accent)' }}
+            />
+            <div className="relative rounded" style={{ width: 28, height: 3, background: 'var(--line-3)' }} />
+          </PanelResizeHandle>
           <Panel defaultSize={45} minSize={20}>
             <div className="h-full flex flex-col">
               <SectionHeader title="Propiedades" />

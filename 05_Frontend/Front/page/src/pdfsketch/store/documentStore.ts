@@ -93,6 +93,10 @@ interface DocumentState {
 
   addElement: (pageId: string, el: ElementModel) => void;
   updateElement: (id: string, patch: Partial<ElementModel>) => void;
+  /** Actualiza varios elementos en UNA sola operación (una entrada de historial).
+   *  Se usa para mover una selección múltiple sin que cada elemento genere su
+   *  propio paso de undo. */
+  updateElements: (patches: { id: string; patch: Partial<ElementModel> }[]) => void;
   removeElement: (id: string) => void;
   removeElements: (ids: string[]) => void;
 
@@ -196,6 +200,25 @@ export const useDocumentStore = create<DocumentState>()(
           },
           dirty: true,
         })),
+
+      updateElements: (patches) =>
+        set((s) => {
+          if (!patches.length) return s;
+          const byId = new Map(patches.map((p) => [p.id, p.patch]));
+          return {
+            doc: {
+              ...s.doc,
+              pages: s.doc.pages.map((p) => ({
+                ...p,
+                elements: p.elements.map((e) =>
+                  byId.has(e.id) ? ({ ...e, ...byId.get(e.id) } as ElementModel) : e,
+                ),
+              })),
+              updatedAt: new Date().toISOString(),
+            },
+            dirty: true,
+          };
+        }),
 
       removeElement: (id) =>
         set((s) => ({
