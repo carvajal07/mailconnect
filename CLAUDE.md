@@ -152,7 +152,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Cascade/Dispatch` | `{ name, dataPath, waitMinutes?, successCriterion?, steps:[{channel(EM\|SMS\|WSP\|VOZ), content}] }` | 201 `data:{cascadeRunId, contacts, debited}` · 400 · 402 saldo · 403. Lanza la **cascada omnicanal** (Opción A): crea el run + un contacto por fila, filtra consentimiento del canal 0, encola el paso 0 y debita su costo. Ver `PLAN_CASCADA.md` |
 | `Cascade/List` | `{}` (tenant del token) | 200 `data:{runs:[{cascadeRunId, name, steps, status, counts{total,confirmed,exhausted,inFlight,budget}, createdAt}], count}` |
 | `Cascade/Advance` | (EventBridge cron; sin body) | Tick del motor: por cada contacto vencido lee el estado en `sendStatus`, y confirma/escala/agota/frena por saldo (`decide_next`). Escala encolando el siguiente canal + debitando |
-| `Assistant/Copilot` | `{ action:analyze\|draft\|rewrite, ... }` (portal, tras Authorizer) | **Copiloto de campañas (Opción B).** `analyze` (DETERMINISTA, sin IA): `data:{score, level, issues[], suggestions[], habeasData{ok,present,missing,requiredMissing}, sendTime}` — spam/entregabilidad + checklist Ley 1581 + hora óptima. `draft`/`rewrite` (Bedrock): redacta/mejora copy. Ver `PLAN_COPILOTO.md` |
+| `Assistant/Copilot` | `{ action:analyze\|draft\|rewrite, ... }` (portal, tras Authorizer) | **Copiloto de campañas (Opción B).** `analyze` (DETERMINISTA, sin IA): `data:{score, level, issues[], suggestions[], habeasData{ok,present,missing,requiredMissing}, sendTime}` — spam/entregabilidad + checklist Ley 1581 + hora óptima. `draft`/`rewrite` (Bedrock): redacta/mejora copy. Ver `PLAN_COPILOTO.md`. ⚠️ **UI oculta (jul 2026):** el tab **"Copiloto IA"** se quitó del portal (`PortalSidebar`/`PortalPage`) por decisión de producto ("de momento"); la lambda + la ruta `/Assistant/Copilot` quedan **desplegadas pero dormidas** (`CopilotoSection.tsx`/`copilotService.ts` quedan huérfanos). Re-habilitar = volver a agregar el tab + el `case`. |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -759,7 +759,13 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   - **WSP:** `name` + `hsmName` (plantilla HSM de Meta) + `language` (default `es`) + `params`
     (etiquetas de `{{1}},{{2}}…`). El contenido real vive en Meta; aquí solo el mapeo.
   - **DOCX:** `name` + `s3Path` (.docx subido a S3 con `get-urlS3` documentType=document) +
-    `params` (campos de combinación). La combinación real la hace el backend al enviar (EAP).
+    `params` (campos de combinación, **opcional/legado**). La combinación real la hace el backend
+    al enviar (EAP). ⚠️ **`params` NO se usa en la combinación:** `Template_Combination` reemplaza
+    `{{header}}` recorriendo los **encabezados del CSV** (`key = '{{' + headers[i] + '}}'`), no la
+    lista `params`. Por eso el selector "Campos de combinación" se **quitó del portal**
+    (`DocxTemplatesSection`, jul 2026): confundía (parecía que definía el merge). El cuadro azul
+    ahora indica escribir los datos variables como `{{campo}}` con el **nombre exacto de la columna**
+    de la base. El campo `params` se conserva en el esquema para plantillas viejas.
 - **Gotcha `_get_payload` en Create:** el canal SMS trae un campo `body` que **colisiona** con
   la convención Lambda-proxy (`event['body']`=JSON string). El helper solo trata `event['body']`
   como proxy si **parsea a un dict**; si es texto plano (SMS), `event` ES el payload.

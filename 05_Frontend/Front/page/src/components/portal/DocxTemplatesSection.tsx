@@ -30,7 +30,6 @@ import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
-import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 
 /**
  * Plantillas DOCX (combinación de correspondencia) para el canal de adjunto
@@ -52,11 +51,7 @@ export const DocxTemplatesSection = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [name, setName] = useState('');
-  // Campos de combinación: SOLO se agregan desde la base (no texto libre).
-  const [params, setParams] = useState<string[]>([]);
   const [file, setFile] = useState<File | null>(null);
-  const addParam = (f: string) => setParams((p) => (p.includes(f) ? p : [...p, f]));
-  const removeParam = (f: string) => setParams((p) => p.filter((x) => x !== f));
 
   const load = useCallback(async () => {
     if (!customerId) return;
@@ -103,13 +98,11 @@ export const DocxTemplatesSection = () => {
         channel: 'DOCX',
         name: name.trim(),
         s3Path: presign.data.path,
-        params,
       });
       setUploading(false);
       if (isOk(res)) {
         notify('Plantilla DOCX guardada correctamente.', 'success');
         setName('');
-        setParams([]);
         setFile(null);
         load();
       } else {
@@ -148,12 +141,16 @@ export const DocxTemplatesSection = () => {
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Documentos Word para <strong>combinación de correspondencia</strong> (adjunto personalizado, canal EAP).
-        Sube un <code>.docx</code> con campos de combinación y reutilízalo en tus campañas.
+        Sube un <code>.docx</code> con campos <code>{'{{campo}}'}</code> y reutilízalo en tus campañas.
       </Typography>
 
       <Alert severity="info" sx={{ mb: 2 }}>
-        La combinación real (reemplazo de campos por destinatario y generación del PDF/adjunto) la hace
-        el backend al enviar la campaña. Aquí guardas el documento base y sus campos.
+        Dentro del documento Word, escribe los datos que cambian por destinatario como{' '}
+        <strong><code>{'{{campo}}'}</code></strong>, usando <strong>exactamente el nombre de la columna
+        de tu base</strong> (por ejemplo <code>{'{{Nombre}}'}</code> o <code>{'{{Identificación}}'}</code>).
+        Al enviar la campaña, el backend reemplaza cada <code>{'{{campo}}'}</code> por el valor de esa
+        columna para cada persona y genera el adjunto personalizado. Los nombres deben coincidir con los
+        encabezados de tu base (respeta tildes y mayúsculas).
       </Alert>
 
       <Paper variant="outlined" sx={{ p: 3, mb: 2 }}>
@@ -162,24 +159,6 @@ export const DocxTemplatesSection = () => {
         </Typography>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField label="Nombre de la plantilla" value={name} onChange={(e) => setName(e.target.value)} size="small" fullWidth />
-          {/* Campos de combinación: SOLO por selección desde la base (no texto libre). */}
-          <Box>
-            <Typography variant="subtitle2" fontWeight={700} gutterBottom>
-              Campos de combinación
-            </Typography>
-            {params.length > 0 ? (
-              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 1 }}>
-                {params.map((p) => (
-                  <Chip key={p} label={p} onDelete={() => removeParam(p)} color="primary" variant="outlined" size="small" />
-                ))}
-              </Stack>
-            ) : (
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                Aún no agregas campos. Elígelos de una base abajo (no se escriben a mano).
-              </Typography>
-            )}
-            <DatabaseFieldPicker compact onInsert={addParam} />
-          </Box>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
             <Button variant="outlined" component="label" startIcon={<UploadFileIcon />}>
               {file ? 'Cambiar archivo' : 'Seleccionar .docx'}
@@ -215,14 +194,13 @@ export const DocxTemplatesSection = () => {
             <TableRow>
               <TableCell>Nombre</TableCell>
               <TableCell>Archivo</TableCell>
-              <TableCell>Campos</TableCell>
               <TableCell align="right">Acciones</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {!loading && templates.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} align="center" sx={{ py: 3, color: 'text.secondary' }}>
+                <TableCell colSpan={3} align="center" sx={{ py: 3, color: 'text.secondary' }}>
                   Aún no tienes plantillas DOCX.
                 </TableCell>
               </TableRow>
@@ -237,7 +215,6 @@ export const DocxTemplatesSection = () => {
                     </Link>
                   ) : '—'}
                 </TableCell>
-                <TableCell>{t.params && t.params.length ? t.params.join(', ') : '—'}</TableCell>
                 <TableCell align="right">
                   <Tooltip title="Eliminar">
                     <span>
