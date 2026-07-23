@@ -1254,11 +1254,16 @@ se puede leer del objeto ya subido a S3.)
 - [x] **CD de lambdas — reconciliación del rol en CADA despliegue (jul 2026):** antes de tocar los
       triggers, el workflow asegura que la función use su **rol de convención** (crea el rol si
       falta y **cambia el de la función si difiere**), tanto al crear como al **actualizar**. Antes,
-      la rama de actualizar solo tocaba el código → una función vieja con un rol sin el token `_SQS`
+      la rama de actualizar solo tocaba el código → una función vieja con un rol sin permiso SQS
       fallaba al crear el trigger (*"execution role does not have permissions to call ReceiveMessage
-      on SQS"*). Solo reconcilia roles de convención (`Lambda_*`) o ausentes; un rol **personalizado
-      NO se pisa** (se avisa; usa `role-map.json` para mapearlo). Tras crear/cambiar el rol espera la
-      propagación IAM, y la creación del event source mapping **reintenta** ese error transitorio.
+      on SQS"*). Solo actúa en carpetas con trigger `sqs`. **No toca** el rol si ya concede SQS (su
+      nombre incluye el token `SQS`, p. ej. `Lambda_DynFull_SQS_Messaging`) → evita churn. Reconcilia
+      (crea el rol de convención + cambia el de la función) si el rol actual es de convención sin SQS
+      (`Lambda_*`), el **auto-generado por AWS** al crear la función en consola (`{fn}-role-xxxx`), o
+      ninguno. Un rol **personalizado deliberado** (nombre no reconocido) NO se pisa (se avisa; usa
+      `role-map.json`). Al crear un rol nuevo espera la propagación IAM **antes** de asignarlo (si no,
+      *"The role ... cannot be assumed by Lambda"*), y el `update-function-configuration` + la creación
+      del event source mapping **reintentan** los errores transitorios de propagación.
       ⚠️ La función nace SIN
       env vars, SIN layers y SIN triggers (eso sigue manual, ver `DESPLIEGUE.md`). El input
       manual `force_runtime313` migra también las funciones EXISTENTES a python3.13 (ojo:
