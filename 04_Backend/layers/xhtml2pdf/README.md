@@ -13,15 +13,15 @@ las dos; este layer les entrega las **librerías** (no se bundlean en el zip de 
 
 - `xhtml2pdf==0.2.16` + su árbol: `reportlab`, `Pillow`, `lxml`, `pyhanko`→`cryptography`,
   `svglib`, `pypdf`, `html5lib`, `python-bidi`, `arabic-reshaper`, … (ver `requirements.txt`).
-- **Runtime objetivo: `python3.11`, arquitectura `x86_64`.** Los wheels son
-  **manylinux2014** (glibc 2.17), compatibles con Amazon Linux 2 (el SO de `python3.11`, glibc 2.26).
+- **Runtime objetivo: `python3.13`, arquitectura `x86_64`.** Los wheels son
+  **manylinux2014** (glibc 2.17), compatibles con Amazon Linux 2023 (el SO de `python3.13`, glibc 2.34).
 - Tamaño: **~21 MB** comprimido · **~58 MB** descomprimido (límite de Lambda: 250 MB
   descomprimido sumando función + layers).
 
 > ⚠️ Las extensiones nativas (`Pillow`, `lxml`, `cryptography`, `cffi`, `python-bidi`) son
-> **específicas de CPython y arquitectura**. Este layer sirve para **python3.11 / x86_64**.
-> Para `python3.12` o `arm64 (Graviton)` hay que **reconstruir** (ver abajo) — un layer cp311
-> no carga en un runtime cp312.
+> **específicas de la versión de CPython (ABI) y de la arquitectura**. Este layer sirve para
+> **python3.13 / x86_64**. Para `python3.12`/`python3.11` o `arm64 (Graviton)` hay que
+> **reconstruir** (ver abajo) — un layer cp313 no carga en un runtime cp312/cp311.
 
 ## Construir el layer
 
@@ -29,7 +29,7 @@ Requiere `pip` (con salida a PyPI) y `zip`. **No** requiere Docker (usa wheels p
 
 ```bash
 cd 04_Backend/layers/xhtml2pdf
-./build.sh                    # python3.11 / x86_64 (default) → xhtml2pdf-layer.zip
+./build.sh                    # python3.13 / x86_64 (default) → xhtml2pdf-layer.zip
 # variantes:
 PY_VERSION=3.12 ./build.sh    # otro runtime (ABI cp312)
 ARCH=arm64 ./build.sh         # Graviton (manylinux2014_aarch64)
@@ -46,9 +46,9 @@ Lambda agrega `/opt/python` a `sys.path`, así que el import funciona sin más.
 
 ```bash
 aws lambda publish-layer-version \
-  --layer-name xhtml2pdf-py311 \
-  --description "xhtml2pdf 0.2.16 + reportlab + Pillow (render PDF) — py3.11 x86_64" \
-  --compatible-runtimes python3.11 \
+  --layer-name xhtml2pdf-py313 \
+  --description "xhtml2pdf 0.2.16 + reportlab + Pillow (render PDF) — py3.13 x86_64" \
+  --compatible-runtimes python3.13 \
   --compatible-architectures x86_64 \
   --zip-file fileb://xhtml2pdf-layer.zip
 # → anota el "LayerVersionArn" que devuelve
@@ -58,15 +58,15 @@ aws lambda publish-layer-version \
 **reemplaza** la lista completa, así que incluye también los layers que ya tuvieran:
 
 ```bash
-LAYER_ARN=arn:aws:lambda:us-east-1:<ACCOUNT>:layer:xhtml2pdf-py311:1
+LAYER_ARN=arn:aws:lambda:us-east-1:<ACCOUNT>:layer:xhtml2pdf-py313:1
 for FN in Api_V1_Template_Render-pdf Api_V1_Template_Combination-EAP-PDF; do
   aws lambda update-function-configuration --function-name "$FN" --layers "$LAYER_ARN"
 done
 ```
 
 **Alternativa por consola:** Lambda → *Layers* → *Create layer* → sube `xhtml2pdf-layer.zip`,
-runtime `python3.11`, arch `x86_64`. Luego en cada función → *Layers* → *Add a layer* →
-*Custom layers* → elige `xhtml2pdf-py311`.
+runtime `python3.13`, arch `x86_64`. Luego en cada función → *Layers* → *Add a layer* →
+*Custom layers* → elige `xhtml2pdf-py313`.
 
 ## Verificar
 
