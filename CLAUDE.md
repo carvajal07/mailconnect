@@ -907,6 +907,38 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   test_split_sin_tenantrole_failclosed}`. Los tests de envío real ahora inyectan
   `authorizer.tenantRole='owner'` en el context (simulan el owner + template arreglado).
 
+### Fix de seguridad: gate OWNER en la gestión de dominios (jul 2026)
+- **Problema:** `Api_V1_Domain_Add`/`Domain_Delete` se documentaban como **RBAC owner** pero el
+  backend **solo verificaba que hubiera sesión** (cualquier usuario del tenant); el "owner" estaba
+  únicamente en el front (puenteable llamando la API directo). Un `operator` podía **registrar** o
+  —peor— **borrar** un dominio de envío VERIFICADO (rompe la capacidad de envío de la empresa).
+- **Fix:** ambos exigen ahora `tenantRole == 'owner'` (config de cuenta sensible: identidad de
+  envío, DKIM, anti-spoofing) leído del context, **fail-CLOSED** (default menor privilegio si no
+  llega). `Domain/List` (solo lectura) queda sin gate. Requiere el `tenantRole` del mapping template
+  (ver arriba). Cubierto por `test_domains.py::{test_add_operator_403, test_add_sin_tenantrole_403_
+  failclosed, test_delete_operator_403}`.
+
+### Fix de seguridad/cumplimiento: filtro de lista negra FAIL-CLOSED (jul 2026)
+- **Problema (LEGAL + reputación):** `_batch_get_emails` (el helper de `check_blacklist`/
+  `check_unsubscribes` en `Prepare-batch`) hacía `except Exception: return set()` → ante CUALQUIER
+  error (un **throttling** transitorio en un lote grande) devolvía "nadie está filtrado" y el envío
+  seguía **a ciegas** hacia contactos en lista negra / desuscritos (viola Ley 1581 / habeas data y
+  daña la reputación SES **compartida**).
+- **Fix:** el `except` distingue causa. **Estructural** (`ResourceNotFoundException`/
+  `ValidationException`: la tabla no existe o su esquema viejo no permite consultar) → vacío seguro
+  (no hay entradas que filtrar). **Transitorio** (throttling, límite, 5xx, red) → **re-lanza**
+  (fail-closed) para que la parte se REPROCESE, en vez de enviar sin filtrar.
+- **Fix acoplado — el worker SQS ya no traga excepciones:** el branch SQS de `Prepare-batch`
+  (`if 'Records' in event`) estaba dentro del `try/except Exception` del handler, que devolvía un
+  500 → **para SQS eso es una invocación EXITOSA → ACKea y BORRA el mensaje** → la parte se perdía
+  en silencio (incluido el re-lanzamiento del filtro). Ahora, si el evento es SQS, el `except`
+  **propaga** (la invocación falla → SQS redelivery → reproceso idempotente por el claim de parte/
+  chunk → DLQ tras agotar reintentos). La ruta API (proxy) sigue devolviendo el 500 al llamante.
+  Es SEGURO propagar ahora porque el punto de idempotencia atómica ya hace el reproceso sin duplicar.
+  ⚠️ Refuerza la necesidad de **DLQ** en las colas del CD (hoy solo en Terraform) para no reintentar
+  un "mensaje veneno" hasta agotar la retención. Cubierto por `test_prepare_batch.py::
+  {test_filtro_error_transitorio_falla_cerrado, test_worker_sqs_propaga_excepcion_no_ackea}`.
+
 ### Sesión del front
 - El JWT se decodifica en el cliente para conocer `exp`: si venció, `apiClient` corta antes de
   llamar a la API y cualquier 401/403 del Authorizer limpia la sesión y redirige a `/login`

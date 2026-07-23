@@ -78,8 +78,36 @@ def test_batch_get_dedup_y_troceo(pb):
 
 
 def test_tabla_inexistente_no_revienta(pb):
-    # Si la tabla no existe, devuelve vacío en vez de tumbar el envío.
+    # ESTRUCTURAL (ResourceNotFound): si la tabla no existe, devuelve vacío (no hay entradas que
+    # filtrar) en vez de tumbar el envío.
     assert pb._batch_get_emails('empresa_noexiste_unsubscribe', [{'email': 'a@test.com'}]) == set()
+
+
+def test_filtro_error_transitorio_falla_cerrado(pb, monkeypatch):
+    """FAIL-CLOSED (cumplimiento): un error TRANSITORIO (throttling) al consultar la lista negra
+    NO devuelve vacío (que enviaría SIN filtrar a contactos que podrían estar excluidos) → se
+    RE-LANZA para que la parte se reprocese. Antes cualquier error → vacío → envío a ciegas."""
+    from botocore.exceptions import ClientError
+
+    def _throttle(**kw):
+        raise ClientError({'Error': {'Code': 'ProvisionedThroughputExceededException',
+                                     'Message': 'throttled'}}, 'BatchGetItem')
+    monkeypatch.setattr(pb.dynamodb, 'batch_get_item', _throttle)
+    with pytest.raises(ClientError):
+        pb._batch_get_emails('empresa_blackList', [{'email': 'x@test.com'}])
+    # check_blacklist propaga (no traga) el error → el envío no continúa sin filtrar.
+    with pytest.raises(ClientError):
+        pb.check_blacklist('empresa', [{'email': 'x@test.com'}])
+
+
+def test_worker_sqs_propaga_excepcion_no_ackea(pb, monkeypatch):
+    """El branch SQS del handler debe PROPAGAR la excepción (fallar la invocación → SQS reprocesa
+    y, tras reintentos, DLQ), en vez de devolver 200 y ACKear el mensaje (que perdería la parte)."""
+    def _boom(_st, _job):
+        raise RuntimeError('fallo simulado en procesar_parte')
+    monkeypatch.setattr(pb, 'procesar_parte', _boom)
+    with pytest.raises(RuntimeError):
+        pb.lambda_handler({'Records': [{'body': json.dumps({'part': 1})}]}, None)
 
 
 # ---- Fase 0: quick wins ----
