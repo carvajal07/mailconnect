@@ -1,5 +1,7 @@
+import { useEffect } from 'react';
 import { useUIStore } from '@/store/uiStore';
 import AppShell from './app/layout/AppShell';
+import { useTheme } from '../contexts/ThemeContext';
 import './styles/tokens.css';
 import './styles/globals.css';
 
@@ -10,10 +12,19 @@ import './styles/globals.css';
  * - Todo el editor vive bajo el wrapper `.mc-sketch` (tokens y estilos
  *   scopeados; el tema dark/light se aplica como clase del wrapper, no sobre
  *   document.documentElement).
- * - Se monta lazy desde `PdfStudioSection` (nivel MEDIO de plantillas PDF).
+ * - El tema SIGUE al de la página MailConnect (ThemeContext → claro/oscuro):
+ *   los tokens `.light` del editor se activan cuando el portal está en claro.
+ * - Se monta desde `SketchStudio` (overlay full-screen del nivel MEDIO).
  */
 export default function SketchEditor() {
   const theme = useUIStore((s) => s.theme);
+  const setTheme = useUIStore((s) => s.setTheme);
+  const { mode } = useTheme();
+
+  // Sincroniza el tema del editor con el modo claro/oscuro del portal.
+  useEffect(() => {
+    setTheme(mode === 'light' ? 'light' : 'dark');
+  }, [mode, setTheme]);
 
   return (
     <div className={`mc-sketch ${theme === 'light' ? 'light' : 'dark'}`} style={{ height: '100%' }}>

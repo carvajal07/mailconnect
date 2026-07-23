@@ -41,6 +41,19 @@ export default function Sheet({ page, zoom, offsetX, offsetY }: Props) {
         strokeWidth={1}
         listening={false}
       />
+      {/* márgenes de la hoja (guía punteada, como el Diseñador PDF) */}
+      {(page.margin.top > 0 || page.margin.right > 0 || page.margin.bottom > 0 || page.margin.left > 0) && (
+        <Rect
+          x={page.margin.left * MM_TO_PX * zoom}
+          y={page.margin.top * MM_TO_PX * zoom}
+          width={Math.max(0, w - (page.margin.left + page.margin.right) * MM_TO_PX * zoom)}
+          height={Math.max(0, h - (page.margin.top + page.margin.bottom) * MM_TO_PX * zoom)}
+          stroke="rgba(59,130,246,0.55)"
+          strokeWidth={1}
+          dash={[6, 4]}
+          listening={false}
+        />
+      )}
     </Group>
   );
 }

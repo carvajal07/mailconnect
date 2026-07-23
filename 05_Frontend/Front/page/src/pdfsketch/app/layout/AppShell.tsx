@@ -21,7 +21,7 @@ export default function AppShell() {
 
   return (
     <div
-      className="h-screen w-screen bg-bg-0 text-ink overflow-hidden"
+      className="h-full w-full bg-bg-0 text-ink overflow-hidden"
       style={{
         display: 'grid',
         gridTemplateRows: `30px 34px ${showFormat ? '38px' : '0px'} 1fr ${showStatus ? '24px' : '0px'}`,

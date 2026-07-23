@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Pencil, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useDocumentStore, type StyleKey } from '@/store/documentStore';
 import { useSelectionStore } from '@/store/selectionStore';
 import type {
@@ -118,9 +118,13 @@ function applyStyle(el: ElementModel, key: StyleKey, style: unknown, update: (id
 export default function StylesPanel() {
   const doc = useDocumentStore((s) => s.doc);
   const updateElement = useDocumentStore((s) => s.updateElement);
+  const addColor = useDocumentStore((s) => s.addColor);
+  const updateColor = useDocumentStore((s) => s.updateColor);
+  const removeColor = useDocumentStore((s) => s.removeColor);
   const selectedIds = useSelectionStore((s) => s.selectedIds);
   const [editor, setEditor] = useState<StyleEditorTarget | null>(null);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
+    colors: true,
     textStyles: true, paragraphStyles: true, borderStyles: true, lineStyles: true, fillStyles: true,
   });
 
@@ -162,6 +166,18 @@ export default function StylesPanel() {
     }
   }
 
+  function applyColorToSelection(rgb: string) {
+    for (const el of selectedElements) {
+      if (el.type === 'rect' || el.type === 'circle' || el.type === 'frame' || el.type === 'flowable') {
+        updateElement(el.id, { fill: rgb } as Partial<ElementModel>);
+      } else if (el.type === 'text' || el.type === 'dataField') {
+        updateElement(el.id, { color: rgb } as Partial<ElementModel>);
+      } else if (el.type === 'line' || el.type === 'pen') {
+        updateElement(el.id, { stroke: rgb } as Partial<ElementModel>);
+      }
+    }
+  }
+
   function toggleSection(key: string) {
     setOpenSections((s) => ({ ...s, [key]: !s[key] }));
   }
@@ -190,6 +206,73 @@ export default function StylesPanel() {
       )}
 
       <div className="flex flex-col">
+        {/* ── Colores del documento (paleta reusable, como en Recursos del Diseñador) ── */}
+        <div style={{ borderBottom: '1px solid var(--line-2)' }}>
+          <div
+            className="flex items-center h-8 px-2 cursor-default hover:bg-bg-3 select-none group"
+            onClick={() => toggleSection('colors')}
+          >
+            <span className="w-4 flex items-center justify-center text-muted">
+              {openSections.colors ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+            </span>
+            <span className="flex-1 text-11 font-semibold text-ink-2 ml-1">Colores</span>
+            <span className="font-mono text-[10px] text-muted mr-1">{doc.assets.colors.length}</span>
+            <button
+              type="button"
+              title="Nuevo color"
+              onClick={(e) => { e.stopPropagation(); addColor(`Color ${doc.assets.colors.length + 1}`, '#3b82f6'); }}
+              className="w-5 h-5 flex items-center justify-center rounded hover:bg-bg-4 text-muted opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              <Plus size={11} />
+            </button>
+          </div>
+          {openSections.colors && (
+            <div className="pb-1">
+              {doc.assets.colors.length === 0 && (
+                <div className="px-7 py-1.5 text-[10px] text-muted italic">
+                  Sin colores — usa + para crear uno
+                </div>
+              )}
+              {doc.assets.colors.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center h-[28px] px-2 pl-7 gap-2 select-none group hover:bg-bg-3"
+                  style={selectedElements.length > 0 ? { cursor: 'pointer' } : {}}
+                  onClick={selectedElements.length > 0 ? () => applyColorToSelection(c.rgb) : undefined}
+                  title={selectedElements.length > 0 ? `Aplicar "${c.name}" a la selección` : c.name}
+                >
+                  <input
+                    type="color"
+                    value={c.rgb}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => updateColor(c.id, { rgb: e.target.value })}
+                    className="w-4 h-4 shrink-0 cursor-pointer rounded border-0 p-0 bg-transparent"
+                    title="Editar color"
+                  />
+                  <span className="flex-1 truncate text-11" style={{ color: 'var(--ink)' }}>{c.name}</span>
+                  <span className="font-mono text-[9px] text-muted">{c.rgb}</span>
+                  {selectedElements.length > 0 && (
+                    <span
+                      className="text-[9px] font-semibold px-1 rounded opacity-0 group-hover:opacity-100"
+                      style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
+                    >
+                      Aplicar
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    title="Eliminar color"
+                    onClick={(e) => { e.stopPropagation(); removeColor(c.id); }}
+                    className="w-5 h-5 flex items-center justify-center rounded hover:bg-bg-4 text-muted opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {STYLE_KEYS.map((key) => {
           const items = doc.assets[key] as { id: string; name: string }[];
           const isOpen = openSections[key];

@@ -32,7 +32,7 @@ function applyLineStyleProps(el: ElementModel, style: LineStyle): ElementModel {
 export type StyleKey = 'textStyles' | 'paragraphStyles' | 'borderStyles' | 'lineStyles' | 'fillStyles';
 export type AnyStyleItem = TextStyle | ParagraphStyle | BorderStyle | LineStyle | FillStyle;
 
-function emptyDocument(): DocumentModel {
+export function emptyDocument(): DocumentModel {
   const now = new Date().toISOString();
   const pageId = nextId('page');
   const defaultPage: Page = {
@@ -99,6 +99,11 @@ interface DocumentState {
   addStyle: (key: StyleKey, item: AnyStyleItem) => void;
   updateStyle: (key: StyleKey, id: string, patch: Partial<AnyStyleItem>) => void;
   removeStyle: (key: StyleKey, id: string) => void;
+
+  // Colores del documento (paleta reusable — sección Recursos)
+  addColor: (name: string, rgb: string) => void;
+  updateColor: (id: string, patch: Partial<{ name: string; rgb: string }>) => void;
+  removeColor: (id: string) => void;
 
   markSaved: () => void;
 }
@@ -220,6 +225,42 @@ export const useDocumentStore = create<DocumentState>()(
             dirty: true,
           };
         }),
+
+      addColor: (name, rgb) =>
+        set((s) => ({
+          doc: {
+            ...s.doc,
+            assets: {
+              ...s.doc.assets,
+              colors: [...s.doc.assets.colors, { id: nextId('col'), name, rgb }],
+            },
+            updatedAt: new Date().toISOString(),
+          },
+          dirty: true,
+        })),
+
+      updateColor: (id, patch) =>
+        set((s) => ({
+          doc: {
+            ...s.doc,
+            assets: {
+              ...s.doc.assets,
+              colors: s.doc.assets.colors.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+            },
+            updatedAt: new Date().toISOString(),
+          },
+          dirty: true,
+        })),
+
+      removeColor: (id) =>
+        set((s) => ({
+          doc: {
+            ...s.doc,
+            assets: { ...s.doc.assets, colors: s.doc.assets.colors.filter((c) => c.id !== id) },
+            updatedAt: new Date().toISOString(),
+          },
+          dirty: true,
+        })),
 
       addStyle: (key, item) =>
         set((s) => ({
