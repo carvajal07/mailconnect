@@ -1,0 +1,70 @@
+/* CellAlignmentGrid.css — Word-style 3×3 cell-alignment selector. */
+
+.cag {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  user-select: none;
+}
+
+.cag__row {
+  display: flex;
+  gap: 2px;
+}
+
+.cag__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border-strong, #d1d5db);
+  border-radius: var(--radius-sm, 3px);
+  padding: 0;
+  cursor: pointer;
+  transition: background-color 100ms, border-color 100ms;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.cag__btn:hover:not(:disabled) {
+  background: var(--color-surface-2, #f3f4f6);
+  border-color: var(--color-text-tertiary, #9ca3af);
+  color: var(--color-text-primary, #1f2937);
+}
+
+.cag__btn--active {
+  background: var(--color-primary, #3b82f6) !important;
+  border-color: var(--color-primary, #3b82f6) !important;
+  color: #fff !important;
+}
+
+.cag__btn--active svg rect {
+  fill: #fff;
+}
+
+.cag__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cag__btn svg rect {
+  fill: currentColor;
+}
+
+/* ── Sizes ────────────────────────────────────────────────────────────── */
+
+/* Roomy: properties panel */
+.cag--md .cag__btn {
+  width: 28px;
+  height: 22px;
+}
+
+/* Compact: ribbon strip */
+.cag--sm .cag__btn {
+  width: 22px;
+  height: 18px;
+}
+
+.cag--disabled {
+  pointer-events: none;
+  opacity: 0.6;
+}

@@ -1,0 +1,9 @@
+/* SelectionBox.css — Rectángulo de selección múltiple (rubber band) */
+
+.selection-box {
+  position: absolute;
+  border: 1px dashed var(--color-primary);
+  background: rgba(var(--color-primary-rgb), 0.06);
+  pointer-events: none;
+  z-index: 9998;
+}

@@ -1,0 +1,169 @@
+/* ChartEditorModal.css */
+
+.cem-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cem-modal {
+  width: 64vw;
+  min-width: 880px;
+  max-width: 96vw;
+  height: 82vh;
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface, #fff);
+  border-radius: 10px;
+  box-shadow: var(--shadow-xl, 0 24px 64px rgba(0, 0, 0, 0.35));
+  overflow: hidden;
+}
+
+/* Cuerpo principal: preview a la izquierda (siempre visible), controles a la derecha */
+.cem-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.cem-left {
+  flex: 0 0 46%;
+  display: flex;
+  padding: 12px;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface-2, #f8fafc);
+  min-height: 0;
+}
+.cem-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cem-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-2, #f8fafc);
+}
+.cem-header__title { font-size: 13px; font-weight: 700; color: var(--color-text-primary); flex: 1; }
+.cem-close {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border: none; background: none; cursor: pointer;
+  color: var(--color-text-tertiary); border-radius: 4px;
+}
+.cem-close:hover { background: var(--color-surface-3, #e5e7eb); color: var(--color-text-primary); }
+
+/* Preview (rellena la columna izquierda) */
+.cem-preview {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; min-height: 0;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cem-preview__svg { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.cem-preview__svg svg { display: block; max-width: 100%; max-height: 100%; }
+.cem-preview__loading { color: var(--color-text-tertiary); }
+.cem-preview__err { color: #b45309; font-size: 12px; }
+
+/* Tabs */
+.cem-tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--color-border); background: var(--color-surface-2, #f8fafc); flex-shrink: 0; }
+.cem-tab {
+  padding: 8px 14px; border: none; background: none; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: var(--color-text-secondary);
+  border-bottom: 2px solid transparent;
+}
+.cem-tab--active { color: var(--color-node-design, #3b82f6); border-bottom-color: var(--color-node-design, #3b82f6); }
+
+.cem-body { flex: 1; min-height: 0; padding: 14px; overflow: auto; }
+
+/* Type grid */
+.cem-typegrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cem-type {
+  padding: 14px 8px; border: 1.5px solid var(--color-border); border-radius: 6px;
+  background: var(--color-surface, #fff); cursor: pointer; font-size: 12px; font-weight: 600;
+  color: var(--color-text-primary);
+}
+.cem-type:hover { border-color: var(--color-node-design, #3b82f6); }
+.cem-type--active { border-color: var(--color-node-design, #3b82f6); background: #eff6ff; color: #1d4ed8; }
+
+.cem-btn {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 10px;
+  padding: 7px 12px; border: 1px solid var(--color-border); border-radius: 6px;
+  background: var(--color-surface-2, #f1f5f9); cursor: pointer; font-size: 12px; font-weight: 600;
+  color: var(--color-text-primary);
+}
+.cem-btn:hover { background: var(--color-surface-3, #e2e8f0); }
+
+/* Data table */
+.cem-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.cem-table th, .cem-table td { padding: 4px 6px; border-bottom: 1px solid var(--color-border); text-align: left; }
+.cem-table th { font-size: 10px; text-transform: uppercase; color: var(--color-text-secondary); font-weight: 600; }
+.cem-cell-input, .cem-th-input {
+  width: 100%; padding: 4px 6px; font-size: 12px; box-sizing: border-box;
+  border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-surface, #fff);
+  color: var(--color-text-primary); outline: none;
+}
+.cem-cell-input:focus, .cem-th-input:focus { border-color: var(--color-node-design, #3b82f6); }
+.cem-data-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+/* ── Switch estilo iOS (label izq, control der) ── */
+.cem-switch {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 7px 0; cursor: pointer;
+  border-bottom: 1px solid var(--color-surface-2, #f1f5f9);
+}
+.cem-switch:last-child { border-bottom: none; }
+.cem-switch__label { font-size: 12px; color: var(--color-text-primary); }
+.cem-switch__track {
+  position: relative; width: 34px; height: 18px; flex-shrink: 0;
+  border-radius: 999px; background: var(--color-border, #cbd5e1);
+  transition: background 0.15s;
+}
+.cem-switch__track--on { background: var(--color-node-design, #3b82f6); }
+.cem-switch__track input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.cem-switch__thumb {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s; pointer-events: none;
+}
+.cem-switch__track--on .cem-switch__thumb { transform: translateX(16px); }
+
+/* ── Títulos de sección dentro del modal (con acento) ── */
+.cem-body .pp-section-title {
+  margin: 16px 0 8px;
+  padding-left: 8px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+  color: var(--color-text-secondary, #64748b);
+  border-left: 3px solid var(--color-node-design, #3b82f6);
+  line-height: 1.2;
+}
+.cem-body > .pp-section-title:first-child,
+.cem-body .pp-section-title:first-child { margin-top: 2px; }
+
+/* Sub-tarjeta para ítems de lista (líneas de referencia, bandas) */
+.cem-subcard {
+  padding: 8px;
+  margin-bottom: 8px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 6px;
+  background: var(--color-surface-2, #f8fafc);
+}
+
+/* Selector de variable compacto (ƒx) bajo un campo numérico */
+.cem-varsel {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--color-node-design, #3b82f6);
+}
+.cem-varsel:not([value=""]), .cem-varsel option { color: var(--color-text-primary); }

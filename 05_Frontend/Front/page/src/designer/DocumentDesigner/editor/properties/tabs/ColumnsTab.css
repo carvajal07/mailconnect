@@ -1,0 +1,216 @@
+/* ColumnsTab.css */
+
+.coltab {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.coltab__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.coltab__count {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.coltab__distribute-btn {
+  font-size: 10px;
+  color: var(--color-node-design, #3b82f6);
+  background: none;
+  border: 1px solid var(--color-node-design, #3b82f6);
+  border-radius: 4px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+.coltab__distribute-btn:hover {
+  background: #eff6ff;
+}
+
+.coltab__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+/* ── Column card ─────────────────────────────────────────────────────── */
+
+.coltab__col {
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.coltab__col-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 6px;
+  background: var(--color-surface-2, #f9fafb);
+}
+
+.coltab__expand-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-tertiary, #9ca3af);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.coltab__expand-btn:hover {
+  color: var(--color-text-primary);
+}
+
+.coltab__grip {
+  color: var(--color-text-tertiary, #9ca3af);
+  flex-shrink: 0;
+  cursor: grab;
+}
+
+.coltab__label-input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 5px;
+  font-size: 11px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.coltab__label-input:focus {
+  background: var(--color-surface, #fff);
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.coltab__pct-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--color-text-tertiary, #9ca3af);
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+}
+
+.coltab__delete-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-tertiary, #9ca3af);
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.coltab__delete-btn:hover:not(:disabled) {
+  color: #ef4444;
+  background: #fef2f2;
+}
+
+.coltab__delete-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ── Expanded detail ────────────────────────────────────────────────── */
+
+.coltab__col-detail {
+  padding: 8px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface, #fff);
+}
+
+.coltab__hint {
+  font-size: 9px;
+  color: var(--color-text-tertiary, #9ca3af);
+  font-style: italic;
+  margin-top: 2px;
+  display: block;
+}
+
+.coltab__toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.coltab__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.coltab__toggle input {
+  cursor: pointer;
+}
+
+.coltab__move-row {
+  display: flex;
+  gap: 6px;
+}
+
+.coltab__move-btn {
+  flex: 1;
+  font-size: 10px;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface-2, #f9fafb);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.coltab__move-btn:hover:not(:disabled) {
+  background: var(--color-node-design, #3b82f6);
+  color: #fff;
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.coltab__move-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── Add column button ──────────────────────────────────────────────── */
+
+.coltab__add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  padding: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-node-design, #3b82f6);
+  background: none;
+  border: 1px dashed var(--color-node-design, #3b82f6);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.coltab__add-btn:hover {
+  background: #eff6ff;
+}

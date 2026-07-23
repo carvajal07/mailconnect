@@ -1,0 +1,358 @@
+/* ParagraphStyleEditor.css — Multi-tab ParagraphStyle editor (table layout) */
+
+.pse {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Preview ─────────────────────────────────────────────────────────────── */
+
+.pse__preview {
+  padding: 12px;
+  background: var(--color-surface-2, #f9fafb);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  word-break: break-word;
+  margin-bottom: 8px;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+
+.pse__tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.pse__tab {
+  padding: 5px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #6b7280);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+
+.pse__tab:hover {
+  color: var(--color-text-primary, #111827);
+}
+
+.pse__tab--active {
+  color: var(--color-node-design, #3b82f6);
+  border-bottom-color: var(--color-node-design, #3b82f6);
+}
+
+/* ── Body ────────────────────────────────────────────────────────────────── */
+
+.pse__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Table layout ────────────────────────────────────────────────────────── */
+
+.pse__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.pse__td-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #6b7280);
+  padding: 4px 8px 4px 0;
+  white-space: nowrap;
+  vertical-align: middle;
+  width: 1%;
+}
+
+.pse__td-value {
+  padding: 4px 0;
+  vertical-align: middle;
+}
+
+/* ── Inputs ──────────────────────────────────────────────────────────────── */
+
+.pse__select {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 12px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+  transition: border-color 0.12s;
+}
+
+.pse__select:focus {
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.pse__input {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 12px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+  transition: border-color 0.12s;
+}
+
+.pse__input:focus {
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.pse__num-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.pse__num-wrap--unit .pse__input {
+  border-right: none;
+  border-radius: 4px 0 0 4px;
+}
+
+.pse__unit {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #9ca3af);
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+/* ── Unit badge ──────────────────────────────────────────────────────────── */
+
+.pse__ubadge-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.pse__ubadge {
+  padding: 0 6px;
+  min-width: 28px;
+  height: 100%;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-secondary, #6b7280);
+  background: var(--color-surface-2, #f3f4f6);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.1s, color 0.1s;
+  letter-spacing: 0.2px;
+  line-height: 28px;
+}
+
+.pse__ubadge:hover {
+  background: var(--color-bg-hover, #e5e7eb);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.pse__upicker {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 200;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 5px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 52px;
+}
+
+.pse__uopt {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-primary, #1f2937);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.pse__uopt:hover {
+  background: var(--color-bg-hover, #f3f4f6);
+}
+
+.pse__uopt--active {
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+  font-weight: 700;
+}
+
+/* ── Color picker (list marker color) ──────────────────────────────────── */
+
+.pse__color-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pse__color-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  background: none;
+}
+
+.pse__color-swatch::-webkit-color-swatch-wrapper { padding: 1px; }
+.pse__color-swatch::-webkit-color-swatch { border: none; border-radius: 2px; }
+
+.pse__input--color {
+  flex: 1;
+  min-width: 0;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.pse__color-clear {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: var(--color-surface-2, #f3f4f6);
+  border-radius: 3px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--color-text-tertiary, #9ca3af);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.1s, color 0.1s;
+}
+
+.pse__color-clear:hover {
+  background: var(--color-bg-hover, #e5e7eb);
+  color: var(--color-text-primary, #111827);
+}
+
+/* ── Tab stops editor ───────────────────────────────────────────────────── */
+
+.pse__tabstops {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.pse__tabstop-default {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  margin-bottom: 2px;
+}
+
+.pse__tabstop-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-tertiary, #9ca3af);
+  padding: 0 2px;
+}
+
+.pse__tabstop-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pse__tabstop-pos {
+  flex: 0 0 56px;
+  width: 56px !important;
+}
+
+.pse__tabstop-type {
+  flex: 0 0 82px;
+  width: 82px !important;
+  font-size: 11px;
+}
+
+.pse__tabstop-leader {
+  flex: 0 0 72px;
+  width: 72px !important;
+  font-size: 11px;
+}
+
+.pse__tabstop-del {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--color-text-tertiary, #9ca3af);
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.pse__tabstop-del:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.pse__tabstop-add {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-node-design, #3b82f6);
+  background: var(--color-node-design-light, #dbeafe);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  width: 100%;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+.pse__tabstop-add:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+/* ── Section header inside table ─────────────────────────────────────────── */
+
+.pse__section-head {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-secondary, #6b7280);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}

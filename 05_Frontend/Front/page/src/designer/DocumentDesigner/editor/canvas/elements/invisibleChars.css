@@ -1,0 +1,20 @@
+/* invisibleChars.css — Shared styles for invisible character markers */
+
+.inv {
+  color: rgba(124, 58, 237, 0.4);
+  font-size: 0.75em;
+  pointer-events: none;
+  user-select: none;
+}
+
+.inv--space {
+  letter-spacing: -0.15em;
+}
+
+.inv--tab {
+  letter-spacing: 0;
+}
+
+.inv--para {
+  font-size: 0.7em;
+}

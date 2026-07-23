@@ -1,0 +1,566 @@
+/* src/styles/tokens.css — Design tokens globales */
+/* Importado UNA sola vez en main.jsx. Todos los componentes lo consumen via var() */
+
+:root {
+  /* ─── Paleta base ─── */
+  --color-white:      #ffffff;
+  --color-black:      #000000;
+
+  --color-gray-50:    #f9fafb;
+  --color-gray-100:   #f3f4f6;
+  --color-gray-200:   #e5e7eb;
+  --color-gray-300:   #d1d5db;
+  --color-gray-400:   #9ca3af;
+  --color-gray-500:   #6b7280;
+  --color-gray-600:   #4b5563;
+  --color-gray-700:   #374151;
+  --color-gray-800:   #1f2937;
+  --color-gray-900:   #111827;
+
+  /* ─── Colores semánticos ─── */
+  --color-primary:        #3b82f6;
+  --color-primary-hover:  #2563eb;
+  --color-primary-light:  #eff6ff;
+
+  --color-success:        #16a34a;
+  --color-success-light:  #f0fdf4;
+
+  --color-danger:         #dc2626;
+  --color-danger-light:   #fef2f2;
+
+  --color-warning:        #f59e0b;
+  --color-warning-light:  #fffbeb;
+
+  /* ─── Colores por categoría de nodo ─── */
+  --color-node-input:       #f59e0b;  /* amber  — WebhookTrigger */
+  --color-node-reading:     #ec4899;  /* pink   — DataReader */
+  --color-node-processing:  #14b8a6;  /* teal   — DataProcessor, ScriptProcessor */
+  --color-node-design:      #3b82f6;  /* blue   — DocumentDesigner */
+  --color-node-output:      #8b5cf6;  /* purple — DocumentRenderer, DocumentOutput, WebhookResponse */
+  --color-node-control:     #f97316;  /* orange — Condition */
+
+  /* Light variants para fondos de header */
+  --color-node-input-light:       #fffbeb;
+  --color-node-reading-light:     #fdf2f8;
+  --color-node-processing-light:  #f0fdfa;
+  --color-node-design-light:      #eff6ff;
+  --color-node-output-light:      #f5f3ff;
+  --color-node-control-light:     #fff7ed;
+
+  /* ─── Tipografía ─── */
+  --font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-family-mono: 'Fira Code', 'Cascadia Code', Consolas, monospace;
+
+  --font-size-xs:   11px;
+  --font-size-sm:   12px;
+  --font-size-base: 13px;
+  --font-size-md:   14px;
+  --font-size-lg:   16px;
+  --font-size-xl:   18px;
+
+  --font-weight-regular: 400;
+  --font-weight-medium:  500;
+  --font-weight-semibold: 600;
+  --font-weight-bold:    700;
+
+  --line-height-tight:  1.25;
+  --line-height-base:   1.5;
+
+  /* ─── Espaciado ─── */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ─── Bordes ─── */
+  --radius-sm:   4px;
+  --radius-md:   6px;
+  --radius-lg:   8px;
+  --radius-xl:   12px;
+  --radius-full: 9999px;
+
+  /* gray-300 (no gray-200): en tema claro, con brillo de pantalla, gray-200 se pierde —
+     divisorias y marcos quedaban casi invisibles. gray-300 da contraste sin verse pesado.
+     El tema oscuro tiene su propio override (#334155) más abajo, no se ve afectado. */
+  --border-color:        var(--color-gray-300);
+  --border-color-strong: var(--color-gray-400);
+
+  /* ─── Colores semánticos adicionales ─── */
+  --color-danger-hover:  #b91c1c;
+  --color-danger-border: #fecaca;
+
+  /* ─── Canvas / DocumentDesigner editor ─── */
+  --color-primary-rgb:        59, 130, 246;    /* componentes RGB de --color-primary */
+  --color-canvas-ruler-bg:    #f8fafc;
+  --color-canvas-ruler-tick:  #94a3b8;
+  --color-canvas-ruler-label: #475569;
+
+  /* ─── Semantic surface & text (usados por DocumentDesigner + editor chrome) ─── */
+  --color-bg-canvas:      #e2e8f0;   /* fondo del área de scroll del canvas */
+  --color-surface:        #ffffff;   /* paneles, sidebars, headers */
+  --color-surface-2:      #f3f4f6;   /* hover states, sub-headers */
+  --color-surface-3:      #e5e7eb;   /* hover states más profundos */
+  --color-border:         #e2e8f0;   /* bordes estándar */
+  --color-border-strong:  #d1d5db;   /* bordes de énfasis */
+  --color-text-primary:   #111827;   /* texto principal */
+  --color-text-secondary: #4b5563;   /* texto secundario */
+  --color-text-tertiary:  #9ca3af;   /* texto apagado / placeholders */
+
+  /* ─── Overlays semi-transparentes ─── */
+  --overlay-hover:        rgba(0,0,0,0.08);
+  --overlay-danger-hover: rgba(220,38,38,0.12);
+  --overlay-modal:        rgba(15,23,42,0.6);
+  --overlay-white-soft:   rgba(255,255,255,0.3);
+  --overlay-white-medium: rgba(255,255,255,0.4);
+  --overlay-white-dense:  rgba(255,255,255,0.7);
+  --overlay-ring:         rgba(0,0,0,0.05);
+
+  /* ─── Sombras ─── */
+  --shadow-xs: 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.08), 0 2px 4px -1px rgba(0,0,0,0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -2px rgba(0,0,0,0.04);
+  --shadow-xl: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);
+
+  /* Sombra de nodo seleccionado */
+  --shadow-node-selected: 0 0 0 2px var(--color-primary), 0 4px 12px rgba(59,130,246,0.25);
+
+  /* ─── Transiciones ─── */
+  --transition-fast:   0.12s ease;
+  --transition-base:   0.2s ease;
+  --transition-slow:   0.3s ease;
+
+  /* ─── Layout del editor ─── */
+  --sidebar-width:      260px;
+  --config-panel-width: 320px;
+  --toolbar-height:     48px;
+  --statusbar-height:   28px;
+
+  /* ─── Z-index ─── */
+  --z-canvas:       1;
+  --z-sidebar:      10;
+  --z-toolbar:      20;
+  --z-panel:        30;
+  --z-context-menu: 100;
+  --z-modal:        200;
+  --z-toast:        300;
+
+  /* ─── Type badge colors (indicadores de tipo en DataProcessor) ─── */
+  --type-string-bg:  #dbeafe;  --type-string-c:  #1d4ed8;
+  --type-number-bg:  #dcfce7;  --type-number-c:  #15803d;
+  --type-boolean-bg: #fef3c7;  --type-boolean-c: #b45309;
+  --type-object-bg:  #f3e8ff;  --type-object-c:  #7e22ce;
+  --type-array-bg:   #ffe4e6;  --type-array-c:   #be123c;
+  --type-date-bg:    #fce7f3;  --type-date-c:    #be185d;
+
+  /* ─── Nodo: dimensiones base ─── */
+  --node-width:       58px;
+  --node-min-width:   58px;
+  --node-max-width:   58px;
+  --node-header-h:    auto;
+  --node-padding:     var(--space-2);
+  --node-radius:      var(--radius-lg);
+  --node-border:      1px solid var(--color-gray-300);
+  --node-bg:          var(--color-white);
+  /* Sombra con un anillo sutil que define el borde aunque el fondo sea muy claro (brillo de pantalla). */
+  --node-shadow:      0 1px 4px rgba(15, 23, 42, 0.14), 0 0 0 1px rgba(15, 23, 42, 0.05);
+  --node-shadow-hover: 0 4px 14px rgba(15, 23, 42, 0.20), 0 0 0 1px rgba(15, 23, 42, 0.06);
+
+  /* ─── Handle (connection points) ─── */
+  --handle-size:        10px;
+  --handle-border:      2px solid var(--color-white);
+  --handle-bg:          var(--color-gray-400);
+  --handle-bg-hover:    var(--color-primary);
+
+  /* ─── Canvas ─── */
+  --canvas-bg:          #f1f5f9;
+  --canvas-dot-color:   #cbd5e1;
+  --canvas-dot-size:    1.5px;
+  --canvas-dot-spacing: 20px;
+
+  /* ─── Edge ─── */
+  --edge-color:         var(--color-gray-300);
+  --edge-width:         1.5px;
+  --edge-selected-color: var(--color-primary);
+  --edge-hover-color:   var(--color-gray-400);
+  --edge-selected-width: 2.5px;
+
+  /* ─── Superficies "blancas" — tokens específicos para evitar romper
+         color: white sobre fondos de color (ej: botón primary) ─── */
+  --surface-page:    #0f172a;   /* body / app root */
+  --surface-raised:  #1e293b;   /* toolbar, sidebar, modals, nodes */
+  --surface-overlay: #263348;   /* dropdowns, context menus, cards */
+  --surface-input:   var(--color-white); /* inputs/selects/textareas — invierte en dark */
+}
+
+/* ─── Surfaces oscuras para elementos que usan var(--color-white) como fondo ─── */
+[data-theme="dark"] body,
+[data-theme="dark"] #root {
+  background: var(--surface-page);
+  color: var(--color-gray-900);
+}
+
+/* Superficies de nivel 1: chrome del editor */
+[data-theme="dark"] .workflow-root,
+[data-theme="dark"] .workflow-toolbar,
+[data-theme="dark"] .workflow-sidebar,
+[data-theme="dark"] .node-config-panel {
+  background: var(--surface-raised) !important;
+}
+
+/* Superficies de nivel 2: modales y diálogos */
+[data-theme="dark"] .node-config-modal__box,
+[data-theme="dark"] .confirm-box,
+[data-theme="dark"] .json-modal__box {
+  background: var(--surface-raised) !important;
+}
+
+/* Superficie de nivel 3: context menu, overlays flotantes */
+[data-theme="dark"] .node-context-menu {
+  background: var(--surface-overlay) !important;
+}
+
+/* Botones secundarios / outline en modo oscuro */
+[data-theme="dark"] .confirm-box__btn--secondary,
+[data-theme="dark"] .node-config-modal__btn--secondary,
+[data-theme="dark"] .json-modal__action-btn {
+  background: var(--surface-raised) !important;
+}
+
+/* Textarea en dialogs, rename input en nodo, search input focus */
+[data-theme="dark"] .confirm-box__textarea,
+[data-theme="dark"] .node-wrapper__rename-input,
+[data-theme="dark"] .node-wrapper__desc-input,
+[data-theme="dark"] .workflow-sidebar__search-input:focus {
+  background: var(--surface-page) !important;
+  color: var(--color-gray-900) !important;
+}
+
+/* Meta section de config modal en dark */
+[data-theme="dark"] .node-config-modal__meta {
+  background: var(--surface-page) !important;
+}
+
+[data-theme="dark"] .node-config-modal__desc-input:focus {
+  background: var(--surface-raised) !important;
+}
+
+[data-theme="dark"] .node-config-modal__name-input {
+  color: var(--color-gray-900) !important;
+}
+
+/* ReactFlow controles */
+[data-theme="dark"] .react-flow__controls-button {
+  background: var(--surface-raised) !important;
+  color: var(--color-gray-700) !important;
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .react-flow__controls {
+  background: var(--surface-raised) !important;
+  border-color: var(--border-color) !important;
+}
+
+/* MiniMap en modo oscuro */
+[data-theme="dark"] .react-flow__minimap {
+  background: var(--surface-raised) !important;
+}
+
+/* Paletas flotantes de anotaciones en dark */
+[data-theme="dark"] .sticky-note__palette,
+[data-theme="dark"] .group-frame__palette {
+  background: var(--surface-overlay) !important;
+  border-color: var(--border-color) !important;
+}
+
+/* Label dialog en dark */
+[data-theme="dark"] .wf-label-dialog {
+  background: var(--color-surface) !important;
+  border-color: var(--color-border) !important;
+}
+
+[data-theme="dark"] .wf-label-dialog__input,
+[data-theme="dark"] .wf-label-dialog__select,
+[data-theme="dark"] .wf-label-dialog__textarea {
+  background: var(--color-surface-2) !important;
+  color: var(--color-text-primary) !important;
+  border-color: var(--color-border-strong) !important;
+}
+
+[data-theme="dark"] .wf-label-dialog__input:focus,
+[data-theme="dark"] .wf-label-dialog__select:focus,
+[data-theme="dark"] .wf-label-dialog__textarea:focus {
+  background: var(--color-surface) !important;
+  border-color: var(--color-primary) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Dark theme overrides — applied via data-theme="dark" on <html>
+   ══════════════════════════════════════════════════════════════ */
+[data-theme="dark"] {
+
+  /* ─── Grays invertidos (oscuro → claro) ─── */
+  --color-gray-50:    #0f172a;
+  --color-gray-100:   #1e293b;
+  --color-gray-200:   #334155;
+  --color-gray-300:   #475569;
+  --color-gray-400:   #64748b;
+  --color-gray-500:   #94a3b8;
+  --color-gray-600:   #cbd5e1;
+  --color-gray-700:   #e2e8f0;
+  --color-gray-800:   #f1f5f9;
+  --color-gray-900:   #f8fafc;
+
+  /* ─── Colores semánticos — variantes light → rgba oscuros ─── */
+  --color-primary-light:  rgba(59, 130, 246, 0.18);
+  --color-success-light:  rgba(22, 163, 74,  0.18);
+  --color-danger-light:   rgba(220, 38, 38,  0.18);
+  --color-warning-light:  rgba(245, 158, 11, 0.18);
+
+  /* ─── Colores por categoría — light variants oscuras ─── */
+  --color-node-input-light:       rgba(245, 158, 11,  0.18);
+  --color-node-reading-light:     rgba(236, 72,  153, 0.18);
+  --color-node-processing-light:  rgba(20,  184, 166, 0.18);
+  --color-node-design-light:      rgba(59,  130, 246, 0.18);
+  --color-node-output-light:      rgba(139, 92,  246, 0.18);
+  --color-node-control-light:     rgba(249, 115, 22,  0.18);
+
+  /* ─── Input surface — fondo de inputs/selects/textareas en dark ─── */
+  --surface-input: var(--surface-raised);
+
+  /* ─── Bordes ─── */
+  --border-color:        #334155;
+  --border-color-strong: #475569;
+
+  /* ─── Sombras más pronunciadas sobre fondo oscuro ─── */
+  --shadow-xs: 0 1px 2px rgba(0,0,0,0.35);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4),  0 1px 2px rgba(0,0,0,0.25);
+  --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.4),  0 2px 4px -1px rgba(0,0,0,0.25);
+  --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.4), 0 4px 6px -2px rgba(0,0,0,0.25);
+  --shadow-xl: 0 20px 25px -5px rgba(0,0,0,0.5), 0 10px 10px -5px rgba(0,0,0,0.25);
+
+  /* ─── Nodo ─── */
+  --node-bg:           #1e293b;
+  --node-border:       1px solid #334155;
+  --node-shadow:       var(--shadow-md);
+  --node-shadow-hover: var(--shadow-lg);
+  --shadow-node-selected: 0 0 0 2px var(--color-primary), 0 4px 12px rgba(59,130,246,0.35);
+
+  /* ─── Handle ─── */
+  --handle-border: 2px solid #1e293b;
+
+  /* ─── Canvas ─── */
+  --canvas-bg:        #0f172a;
+  --canvas-dot-color: #1e3a5f;
+
+  /* ─── Semantic surface & text (dark) ─── */
+  --color-bg-canvas:      #0f172a;
+  --color-surface:        #1e293b;
+  --color-surface-2:      #263348;
+  --color-surface-3:      #334155;
+  --color-border:         #334155;
+  --color-border-strong:  #475569;
+  --color-text-primary:   #f1f5f9;
+  --color-text-secondary: #94a3b8;
+  --color-text-tertiary:  #64748b;
+
+  /* ─── Canvas ruler (dark) ─── */
+  --color-canvas-ruler-bg:    #1e293b;
+  --color-canvas-ruler-tick:  #475569;
+  --color-canvas-ruler-label: #94a3b8;
+
+  /* ─── Type badges (dark) ─── */
+  --type-string-bg:  rgba(59,  130, 246, 0.15); --type-string-c:  #93c5fd;
+  --type-number-bg:  rgba(16,  185, 129, 0.15); --type-number-c:  #6ee7b7;
+  --type-boolean-bg: rgba(245, 158,  11, 0.15); --type-boolean-c: #fcd34d;
+  --type-object-bg:  rgba(139,  92, 246, 0.15); --type-object-c:  #c4b5fd;
+  --type-array-bg:   rgba(239,  68,  68, 0.15); --type-array-c:   #fca5a5;
+  --type-date-bg:    rgba(236,  72, 153, 0.15); --type-date-c:    #f9a8d4;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DocumentDesigner editor — dark mode overrides
+   Para clases con colores 100% hardcodeados (sin CSS vars)
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── DesignCanvas ruler borders ── */
+[data-theme="dark"] .dc-ruler-corner {
+  background: var(--color-surface);
+  border-right-color:  var(--color-border);
+  border-bottom-color: var(--color-border);
+}
+[data-theme="dark"] .dc-ruler-row { border-bottom-color: var(--color-border); }
+[data-theme="dark"] .dc-ruler-v   { border-right-color:  var(--color-border); }
+
+/* ── CanvasStatusBar ── */
+[data-theme="dark"] .csb {
+  background: var(--color-surface);
+  border-top-color: var(--color-border);
+  color: var(--color-text-secondary);
+}
+[data-theme="dark"] .csb-coords strong { color: var(--color-text-primary); }
+[data-theme="dark"] .csb-label         { color: var(--color-text-tertiary); }
+[data-theme="dark"] .csb-page-size {
+  color: var(--color-text-secondary);
+  background: var(--color-surface-2);
+  border-color: var(--color-border);
+}
+[data-theme="dark"] .csb-sep { background: var(--color-border); }
+[data-theme="dark"] .csb-unit-btn {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+[data-theme="dark"] .csb-unit-btn:hover        { background: var(--color-surface-2); }
+[data-theme="dark"] .csb-unit-btn--active       { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+[data-theme="dark"] .csb-icon-btn {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+[data-theme="dark"] .csb-icon-btn:hover         { background: var(--color-surface-2); }
+[data-theme="dark"] .csb-icon-btn--active {
+  background: rgba(var(--color-primary-rgb), 0.2);
+  color: #93c5fd;
+  border-color: var(--color-primary);
+}
+[data-theme="dark"] .csb-zoom-btn {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+[data-theme="dark"] .csb-zoom-btn:hover         { background: var(--color-surface-2); }
+[data-theme="dark"] .csb-zoom-val               { color: var(--color-text-primary); }
+[data-theme="dark"] .csb-zoom-fit {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+[data-theme="dark"] .csb-zoom-fit:hover         { background: var(--color-surface-2); }
+
+/* ── ElementWrapper handle border ── */
+[data-theme="dark"] .ew__handle { border-color: var(--color-surface); }
+
+/* ── DesignerSidebar map button hover ── */
+[data-theme="dark"] .dsb-map-btn:hover { background: rgba(var(--color-primary-rgb), 0.3); }
+
+/* ════════════════════════════════════════════════════════════════════════
+ * Tema CLARO — legibilidad de las cards de las páginas (Inicio, Jobs, Workflows…)
+ *
+ * Las cards usan `bg-white` (#fff) sobre un fondo casi blanco (slate-50) con borde
+ * `border-slate-200` (#e2e8f0): demasiado tenue → "los bordes no se ven". Marcamos el
+ * borde un poco más + una sombra sutil para que la card despegue del fondo. Va sin @layer
+ * (gana a las utilidades de Tailwind). En OSCURO el re-skin de abajo manda (mayor
+ * especificidad por [data-theme="dark"]), así que esto solo afecta al claro.
+ * ════════════════════════════════════════════════════════════════════════ */
+.app-page .border-slate-100,
+.app-page .border-slate-200 { border-color: var(--color-border-strong); }
+.app-page .bg-white.border  { box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06); }
+
+/* ════════════════════════════════════════════════════════════════════════
+ * Modo oscuro para las páginas de la app (Workflows, Ejecuciones, detalle de job)
+ *
+ * Estas vistas usan utilidades de Tailwind con colores fijos (bg-white, text-slate-*,
+ * border-slate-*) que NO responden a [data-theme]. En vez de añadir `dark:` a cada
+ * clase, re-skineamos las utilidades neutras dentro de `.app-page` usando los tokens.
+ * Estas reglas van sin @layer → ganan a las utilidades de Tailwind (que sí van en layer)
+ * sin !important. Solo aplican bajo [data-theme="dark"]; en claro no hacen nada.
+ *
+ * NO se tocan: las cajas oscuras intencionales (consola/logs: bg-slate-900/800,
+ * text-slate-100/300, text-white) ni los badges de color (verde/rojo/ámbar/azul).
+ * ════════════════════════════════════════════════════════════════════════ */
+/* `.app-page.bg-white` (mismo elemento, ej. la caja del Modal) + descendientes `.app-page .bg-white`. */
+[data-theme="dark"] .app-page.bg-white,
+[data-theme="dark"] .app-page .bg-white   { background-color: var(--color-surface); }
+[data-theme="dark"] .app-page .bg-slate-50  { background-color: var(--color-surface-2); }
+[data-theme="dark"] .app-page .bg-slate-100 { background-color: var(--color-surface-3); }
+[data-theme="dark"] .app-page .bg-slate-200 { background-color: var(--color-surface-3); }
+/* Acento azul de "seleccionado" (ej. card elegido): en oscuro un azul tenue, para que el
+   texto re-skineado a claro siga legible (sin esto queda claro-sobre-claro = invisible). */
+[data-theme="dark"] .app-page .bg-blue-50   { background-color: rgba(59, 130, 246, 0.18); }
+
+[data-theme="dark"] .app-page .text-slate-900,
+[data-theme="dark"] .app-page .text-slate-800 { color: var(--color-text-primary); }
+[data-theme="dark"] .app-page .text-slate-700,
+[data-theme="dark"] .app-page .text-slate-600 { color: #cbd5e1; }
+[data-theme="dark"] .app-page .text-slate-500,
+[data-theme="dark"] .app-page .text-slate-400 { color: var(--color-text-secondary); }
+
+[data-theme="dark"] .app-page .border-slate-100,
+[data-theme="dark"] .app-page .border-slate-200 { border-color: var(--color-border); }
+[data-theme="dark"] .app-page .border-slate-300 { border-color: var(--color-border-strong); }
+
+[data-theme="dark"] .app-page .hover\:bg-slate-50:hover  { background-color: var(--color-surface-2); }
+[data-theme="dark"] .app-page .hover\:bg-slate-100:hover { background-color: var(--color-surface-3); }
+[data-theme="dark"] .app-page .hover\:text-slate-800:hover,
+[data-theme="dark"] .app-page .hover\:text-slate-700:hover,
+[data-theme="dark"] .app-page .hover\:text-slate-600:hover { color: var(--color-text-primary); }
+
+/* Inputs (search, select, date): que el texto/placeholder no quede negro sobre oscuro. */
+[data-theme="dark"] .app-page input,
+[data-theme="dark"] .app-page select,
+[data-theme="dark"] .app-page textarea { color: var(--color-text-primary); }
+[data-theme="dark"] .app-page input::placeholder,
+[data-theme="dark"] .app-page textarea::placeholder { color: var(--color-text-tertiary); }
+
+/* Líneas divisorias (divide-*) entre filas/secciones: al borde del token en oscuro
+ * (Tailwind las pinta como border-color del 2º+ hijo, por eso el selector con ~). */
+[data-theme="dark"] .app-page .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+[data-theme="dark"] .app-page .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--color-border);
+}
+
+/* Bordes/fondos extra que faltaban. */
+[data-theme="dark"] .app-page .border-slate-400 { border-color: var(--color-border-strong); }
+[data-theme="dark"] .app-page .bg-slate-50\/60  { background-color: var(--color-surface-2); }
+
+/* ── Cajas semánticas claras (alertas / estados con fondo -50) ──────────────
+ * Hoy quedan como cajas claras dentro del shell oscuro. Las pasamos a un tinte
+ * translúcido del color y aclaramos su texto SOLO dentro de la caja (descendiente),
+ * así no chocan con los badges -100 (pills), que se dejan como están (legibles). */
+[data-theme="dark"] .app-page .bg-red-50    { background-color: rgba(239, 68, 68, 0.14); }
+[data-theme="dark"] .app-page .bg-green-50,
+[data-theme="dark"] .app-page .bg-emerald-50 { background-color: rgba(34, 197, 94, 0.14); }
+[data-theme="dark"] .app-page .bg-amber-50  { background-color: rgba(245, 158, 11, 0.14); }
+[data-theme="dark"] .app-page .bg-violet-50 { background-color: rgba(139, 92, 246, 0.14); }
+
+[data-theme="dark"] .app-page .border-red-200   { border-color: rgba(239, 68, 68, 0.35); }
+[data-theme="dark"] .app-page .border-amber-200 { border-color: rgba(245, 158, 11, 0.35); }
+[data-theme="dark"] .app-page .border-blue-500  { border-color: rgba(59, 130, 246, 0.6); }
+
+[data-theme="dark"] .app-page .bg-red-50 .text-red-700,
+[data-theme="dark"] .app-page .bg-red-50 .text-red-800,
+[data-theme="dark"] .app-page .bg-red-50 .text-red-900,
+[data-theme="dark"] .app-page .bg-red-50 .text-red-600,
+[data-theme="dark"] .app-page .bg-red-50.text-red-700 { color: #fca5a5; }
+[data-theme="dark"] .app-page .bg-green-50 .text-green-700,
+[data-theme="dark"] .app-page .bg-green-50 .text-green-800,
+[data-theme="dark"] .app-page .bg-green-50 .text-green-600,
+[data-theme="dark"] .app-page .bg-emerald-50 .text-emerald-700 { color: #86efac; }
+[data-theme="dark"] .app-page .bg-amber-50 .text-amber-700,
+[data-theme="dark"] .app-page .bg-amber-50 .text-amber-800,
+[data-theme="dark"] .app-page .bg-amber-50 .text-amber-900,
+[data-theme="dark"] .app-page .bg-amber-50 .text-amber-600 { color: #fcd34d; }
+[data-theme="dark"] .app-page .bg-violet-50 .text-violet-700,
+[data-theme="dark"] .app-page .bg-violet-50 .text-violet-600 { color: #c4b5fd; }
+[data-theme="dark"] .app-page .bg-blue-50 .text-blue-700,
+[data-theme="dark"] .app-page .bg-blue-50 .text-blue-600 { color: #93c5fd; }
+
+/* Shell de la app: el área de contenido (raíz del AppShell) usa bg-slate-50/text-slate-900
+ * hardcodeados que no se invierten. En oscuro la volvemos superficie de página + texto claro,
+ * para que TODAS las vistas (Inicio, Workflows, Ejecuciones, etc.) tengan fondo oscuro coherente.
+ * El sidebar y los modales traen su propio fondo, así que esto no los pisa. */
+[data-theme="dark"] .app-shell {
+  background: var(--surface-page);
+  color: var(--color-text-primary);
+}
+
+/* Footer: es hermano de <main> (no cae bajo .app-page); su borde claro se vería como
+ * una línea clara en oscuro. Oscurecemos el borde y subimos el contraste del hover. */
+[data-theme="dark"] .app-shell footer { border-top-color: var(--color-border); }
+[data-theme="dark"] .app-shell footer a:hover { color: var(--color-text-primary); }

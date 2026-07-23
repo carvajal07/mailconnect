@@ -1,0 +1,405 @@
+/* PagesConfigModal.css */
+
+/* ── Form field primitives ───────────────────────────────────────────────── */
+.pcm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.pcm-field__label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.pcm-field__input,
+.pcm-field__select {
+  width: 100%;
+  padding: 5px 7px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface, #ffffff);
+  color: var(--color-text-primary);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.pcm-field__input:focus,
+.pcm-field__select:focus {
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.pcm-row {
+  display: flex;
+  gap: 6px;
+}
+
+.pcm-row > .pcm-field {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.pcm-row--mb {
+  margin-bottom: 10px;
+}
+
+/* ── Toggle row ──────────────────────────────────────────────────────────── */
+.pcm-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.pcm-toggle__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pcm-toggle__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.pcm-toggle__hint {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Field input with datalist ───────────────────────────────────────────── */
+.pcp-field-input-wrap {
+  display: flex;
+  flex: 1;
+}
+
+.pcp-field-input-wrap .pcm-field__input {
+  flex: 1;
+}
+
+/* ── Section titles ──────────────────────────────────────────────────────── */
+.pcm-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-node-design, #3b82f6);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 16px 0 8px;
+  padding: 0 0 5px 8px;
+  border-bottom: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-node-design, #3b82f6);
+}
+
+.pcm-section-title:first-child {
+  margin-top: 4px;
+}
+
+/* ── Mode buttons ─────────────────────────────────────────────────────── */
+.pcsm__mode-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.pcsm__mode-btn {
+  flex: 1;
+  padding: 8px 10px;
+  border: 2px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-2, #f3f4f6);
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.pcsm__mode-btn:hover {
+  background: var(--color-node-design-light, #dbeafe);
+}
+
+.pcsm__mode-btn--active {
+  border-color: var(--color-node-design, #3b82f6);
+  background: var(--color-node-design-light, #dbeafe);
+}
+
+.pcsm__mode-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.pcsm__mode-hint {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #9ca3af);
+}
+
+/* ── TypeSelection buttons ────────────────────────────────────────────── */
+.pcsm__ts-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.pcsm__ts-btn {
+  flex: 1;
+  padding: 6px 8px;
+  border: 2px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface-2, #f3f4f6);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.pcsm__ts-btn:hover {
+  background: var(--color-node-design-light, #dbeafe);
+}
+
+.pcsm__ts-btn--active {
+  border-color: var(--color-node-design, #3b82f6);
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+}
+
+/* ── Condition rules table ────────────────────────────────────────────── */
+.pcsm__rules-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.pcsm__rules-table th {
+  padding: 4px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-tertiary, #9ca3af);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+}
+
+.pcsm__rule-row td {
+  padding: 4px 4px;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.pcsm__rule-row--default td {
+  background: var(--color-surface-2, #f3f4f6);
+}
+
+/* Expression button (the "..." button) */
+.pcsm__rule-expr-btn {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 4px 8px;
+  background: var(--color-surface-2, #f3f4f6);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.pcsm__rule-expr-btn:hover {
+  background: var(--color-node-design-light, #dbeafe);
+  border-color: var(--color-node-design, #3b82f6);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.pcsm__rule-del {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-tertiary, #9ca3af);
+  padding: 4px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  transition: color 0.12s, background 0.12s;
+}
+
+.pcsm__rule-del:hover {
+  color: #ef4444;
+  background: #fee2e2;
+}
+
+.pcsm__default-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding: 0 8px;
+}
+
+/* Add rule button */
+.pcsm__add-rule {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px dashed var(--color-border);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.pcsm__add-rule:hover {
+  border-color: var(--color-node-design, #3b82f6);
+  color: var(--color-node-design, #3b82f6);
+}
+
+/* Script area (legacy — keep for PagesConfigModal if still used) */
+.pcsm__script-area {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  resize: vertical;
+  min-height: 80px;
+}
+
+/* ── PCP script editor (inline panel) ──────────────────────────────── */
+.pcp-script-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.pcp-script-label {
+  flex: 1;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.pcp-script-label code {
+  font-family: monospace;
+  background: var(--color-surface-3, #e5e7eb);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 9px;
+}
+
+.pcp-script-expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-node-design, #3b82f6);
+  background: var(--color-node-design-light, #dbeafe);
+  border: 1px solid var(--color-node-design, #3b82f6);
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s;
+}
+.pcp-script-expand:hover { background: #bfdbfe; }
+
+.pcp-script-editor-wrap {
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  overflow: hidden;
+  min-height: 120px;
+}
+
+.pcp-script-editor-wrap .sp-editor-wrap {
+  border-radius: 0;
+  min-height: 120px;
+}
+
+/* ── Condition rule expr icon ───────────────────────────────────────── */
+.pcsm__rule-expr-icon {
+  flex-shrink: 0;
+  margin-right: 5px;
+  opacity: 0.6;
+}
+
+/* ── TypeSelection grid cards ─────────────────────────────────────────── */
+.pcsm__ts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.pcsm__ts-card {
+  padding: 7px 8px;
+  border: 2px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface-2, #f3f4f6);
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.pcsm__ts-card:hover { background: var(--color-node-design-light, #dbeafe); }
+.pcsm__ts-card--active {
+  border-color: var(--color-node-design, #3b82f6);
+  background: var(--color-node-design-light, #dbeafe);
+}
+.pcsm__ts-card-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+.pcsm__ts-card-hint {
+  font-size: 9px;
+  color: var(--color-text-tertiary, #9ca3af);
+}
+.pcsm__ts-card--active .pcsm__ts-card-label { color: var(--color-node-design, #3b82f6); }
+
+.pcm-page-sel { min-width: 100px; }
+
+/* ── Mapa de flujo (trigger button) ──────────────────────────────── */
+.pcp-map-trigger {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.pcp-map-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-node-design, #3b82f6);
+  background: var(--color-node-design-light, #dbeafe);
+  border: 1px solid var(--color-node-design, #3b82f6);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.pcp-map-btn:hover { background: #bfdbfe; }

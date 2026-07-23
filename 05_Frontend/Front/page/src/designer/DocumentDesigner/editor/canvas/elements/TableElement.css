@@ -1,0 +1,287 @@
+/* TableElement.css — Canvas preview styles for table element */
+
+.tele {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border: 1px dashed #a0aec0;
+  font-size: 9px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow: hidden;
+  position: relative; /* needed for col resize overlay */
+}
+
+/* ── Sections ──────────────────────────────────────────────────────────────── */
+
+.tele__section {
+  flex-shrink: 0;
+}
+
+/* When user-configured borders exist, eliminate the double line that appears
+   between adjacent sections (header bottom + body top = two stacked borders).
+   Pulling each subsequent section up by 1px makes the borders overlap. */
+.tele--has-borders .tele__section + .tele__section { margin-top: -1px; }
+
+/* Sections distinguished only by cell tints — section-level dashed borders
+   removed because they doubled with user-configured table borders and looked
+   like a "double line" between header/body/footer. */
+.tele__section--first-header .tele__cell { border-top-color: rgba(124, 58, 237, 0.18); border-right-color: rgba(124, 58, 237, 0.18); }
+
+.tele__section--header .tele__cell { border-top-color: rgba(29, 78, 216, 0.18); border-right-color: rgba(29, 78, 216, 0.18); }
+
+.tele__section--body {
+  flex: 1;
+  min-height: 0;
+  overflow: visible;
+}
+
+.tele__section--footer .tele__cell { border-top-color: rgba(5, 150, 105, 0.18); border-right-color: rgba(5, 150, 105, 0.18); }
+
+.tele__section--last-footer .tele__cell { border-top-color: rgba(180, 83, 9, 0.18); border-right-color: rgba(180, 83, 9, 0.18); }
+
+/* ── Cell editing: allow row to grow beyond table bounds ──────────────────── */
+
+.tele--cell-editing {
+  overflow: visible;
+}
+
+.tele--cell-editing .tele__section {
+  overflow: visible;
+}
+
+.tele--cell-editing .tele__section--body {
+  overflow: visible;
+  flex: none;       /* let the section size to its content instead of filling .tele */
+  min-height: unset;
+}
+
+/* ── Column resize overlay ─────────────────────────────────────────────────── */
+
+.tele__col-resize-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+}
+
+.tele__col-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+  pointer-events: all;
+}
+
+.tele__col-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 0.12s;
+}
+
+.tele__col-resize-handle:hover::after,
+.tele__col-resize-handle--active::after {
+  background: rgba(59, 130, 246, 0.75);
+}
+
+/* ── Rows ──────────────────────────────────────────────────────────────────── */
+
+.tele__row {
+  display: flex;
+  flex-shrink: 0;
+  flex-grow: 0;
+  position: relative; /* needed for row resize handle */
+}
+
+/* When the table has user-configured cell borders, hide the editor's dashed
+   grid guides — otherwise they double up with the real borders and look like
+   a "double line" between rows / columns. */
+.tele--has-borders { border: none; }
+.tele--has-borders .tele__cell { border-top: none; border-right: none; }
+
+/* "Copiar borde" (border painter) active — pencil cursor over the table
+   (hotspot at the pencil tip). Falls back to crosshair if the data-URI
+   cursor is unsupported. */
+.tele--painter,
+.tele--painter .tele__cell,
+.tele--painter .tele__cell * {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24'%3E%3Cg fill='none' stroke='%23111827' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z'/%3E%3Cpath d='M14.5 5.5l4 4'/%3E%3C/g%3E%3C/svg%3E") 2 19,
+    crosshair;
+}
+
+/* ── Row resize handle ─────────────────────────────────────────────────────── */
+
+.tele__row-resize-handle {
+  display: block;
+  position: absolute;
+  bottom: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+  pointer-events: all;
+  z-index: 9;
+}
+
+.tele__row-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 2px;
+  transform: translateY(-50%);
+  background: transparent;
+  transition: background 0.12s;
+}
+
+.tele__row-resize-handle:hover::after,
+.tele__row-resize-handle--active::after {
+  background: rgba(59, 130, 246, 0.75);
+}
+
+/* ── Cells ─────────────────────────────────────────────────────────────────── */
+
+.tele__cell {
+  /* Horizontal grid line lives on the cell's TOP border (not the row's
+     bottom) so a vertically-merged cell can erase just its own segment via
+     .tele__cell--span-up — enabling proper per-column vertical merges. */
+  border-top: 1px dashed #c0ccd8;
+  border-right: 1px dashed #c0ccd8;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  color: var(--color-text-primary);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+}
+
+.tele__cell:last-of-type {
+  border-right: none;
+}
+
+/* ONLY for non-bordered tables: the `.tele` dashed outer frame draws the top
+   edge, so the first row's dashed grid top would double up — drop it. For
+   `.tele--has-borders` the frame is `border: none`, so the first row's own
+   (positional, inline) top border IS the table's top edge and must be kept —
+   excluding bordered tables here is what makes that edge visible. */
+.tele:not(.tele--has-borders) > .tele__row:first-child > .tele__cell,
+.tele:not(.tele--has-borders) > .tele__section:first-child .tele__row:first-child > .tele__cell {
+  border-top: none;
+}
+
+.tele__cell--hidden {
+  display: none;
+}
+
+/* ── True vertical merge (rowspan) ──────────────────────────────────────────
+   Anchor renders as an absolute box (measured combined height) inside this
+   relative slot, which only reserves the column width + the anchor row's own
+   height. Merged-away rows render as invisible spacers keeping column width +
+   row height so OTHER columns stay aligned. */
+.tele__vmerge-slot {
+  box-sizing: border-box;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+.tele__cell--vmerged-spacer {
+  border: none !important;
+  background: transparent !important;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+/* Cell merged vertically (anchor lives in the row above) — hide top border so
+   the previous row's cell appears to extend into this one. The cell still
+   occupies space in the row so the layout doesn't collapse. */
+.tele__cell--span-up {
+  border-top: none !important;
+}
+
+/* Multi-cell selection highlight (drag, shift+click, ctrl+click).
+   Word-like: ONLY a neutral darkening laid OVER the cell (via inset
+   box-shadow) — no blue tint (invisible on a blue fill) and no per-cell
+   outline (it would draw fake blue dividers between selected cells). The
+   translucent slate-gray darkens ANY background uniformly so the selection
+   reads while the real fill color and border lines stay visible underneath. */
+.tele__cell--selected {
+  box-shadow: inset 0 0 0 9999px rgba(15, 23, 42, 0.16);
+}
+
+/* ── Inline edit mode ──────────────────────────────────────────────────────── */
+.tele__cell--editing {
+  display: block;            /* override flex so inline content (area-tags, text) flows naturally */
+  outline: 2px solid var(--color-node-design, #3b82f6);
+  outline-offset: -2px;
+  background: #fff !important;
+  cursor: text;
+  overflow: visible;
+  white-space: pre-wrap;
+  word-break: break-word;
+  caret-color: #1d4ed8;
+}
+
+/* Vertical alignment */
+.tele__cell--valign-center { justify-content: center; }
+.tele__cell--valign-bottom { justify-content: flex-end; }
+
+/* ── Repeat badge ──────────────────────────────────────────────────────────── */
+
+.tele__repeat-badge {
+  font-size: 7px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #7c3aed;
+  padding: 1px 4px;
+  background: #f5f3ff;
+  border-bottom: 1px dashed #c4b5fd;
+  flex-shrink: 0;
+}
+
+/* ── Conditional / empty indicators ──────────────────────────────────────── */
+
+.tele__empty-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  color: var(--color-text-tertiary, #9ca3af);
+  font-style: italic;
+}
+
+.tele__conditional-badge {
+  font-size: 7px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #b45309;
+  padding: 1px 4px;
+  background: #fffbeb;
+  border-bottom: 1px dashed #fcd34d;
+  flex-shrink: 0;
+}
+
+.tele--empty {
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: var(--color-text-tertiary, #9ca3af);
+  font-style: italic;
+}

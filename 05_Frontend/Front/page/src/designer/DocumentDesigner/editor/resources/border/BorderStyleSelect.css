@@ -1,0 +1,102 @@
+/* BorderStyleSelect.css — compact border-style slot picker (Table Style editor) */
+
+.bss { display: inline-block; width: 100%; }
+
+.bss__btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 6px;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--color-text-primary, #111827);
+  text-align: left;
+}
+.bss__btn:hover:not(:disabled) { border-color: var(--color-text-tertiary, #9ca3af); }
+.bss__btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.bss__btn--open { border-color: var(--color-primary, #3b82f6); }
+
+.bss__box {
+  width: 22px;
+  height: 14px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.bss__box--empty {
+  border: 1px dashed var(--color-border-strong, #d1d5db);
+  background: repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(0,0,0,0.05) 3px, rgba(0,0,0,0.05) 4px);
+}
+
+.bss__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bss__caret { color: var(--color-text-tertiary, #9ca3af); flex-shrink: 0; }
+
+/* ── Portaled menu ──────────────────────────────────────────────────────── */
+.bss__menu {
+  position: fixed;
+  z-index: 10000;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  padding: 4px;
+}
+
+.bss__opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--color-text-primary, #111827);
+  text-align: left;
+}
+.bss__opt:hover { background: var(--color-surface-2, #f3f4f6); }
+.bss__opt--on {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: var(--color-primary, #3b82f6);
+}
+.bss__opt-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.bss__create {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px;
+  background: none;
+  border: 1px dashed var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #4b5563);
+  text-align: left;
+}
+.bss__create:hover {
+  border-color: var(--color-primary, #3b82f6);
+  color: var(--color-primary, #3b82f6);
+  background: var(--color-surface-2, #f3f4f6);
+}
+
+[data-theme="dark"] .bss__opt--on { background: rgba(59, 130, 246, 0.22); }
+[data-theme="dark"] .bss__create:hover { background: rgba(59, 130, 246, 0.12); }

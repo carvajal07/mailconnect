@@ -1,0 +1,91 @@
+/* UnitInput.css — Input numérico con badge de unidad por campo */
+
+/* Wrapper: input + badge en fila */
+.ui {
+  display: flex;
+  width: 100%;
+  position: relative;
+}
+
+/* Input: igual que pp-field__input pero sin right border */
+.ui__input {
+  flex: 1;
+  min-width: 44px;
+  padding: 5px 4px;
+  font-size: 12px;
+  font-family: inherit;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-right: none;
+  border-radius: 4px 0 0 4px;
+  background: var(--color-surface, #ffffff);
+  color: var(--color-text-primary, #1f2937);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.ui__input:focus {
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+/* Unit badge — clickable, shows current unit */
+.ui__badge {
+  flex-shrink: 0;
+  padding: 0 6px;
+  min-width: 30px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-secondary, #6b7280);
+  background: var(--color-surface-2, #f3f4f6);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.1s, color 0.1s;
+  letter-spacing: 0.2px;
+}
+
+.ui__badge:hover {
+  background: var(--color-bg-hover, #e5e7eb);
+  color: var(--color-node-design, #3b82f6);
+}
+
+/* Dropdown picker */
+.ui__picker {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 200;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 5px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 52px;
+}
+
+.ui__opt {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-primary, #1f2937);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.ui__opt:hover {
+  background: var(--color-bg-hover, #f3f4f6);
+}
+
+.ui__opt--active {
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+  font-weight: 700;
+}

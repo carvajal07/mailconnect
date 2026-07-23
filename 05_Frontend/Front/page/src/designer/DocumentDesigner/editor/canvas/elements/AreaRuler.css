@@ -1,0 +1,137 @@
+/* AreaRuler.css — Horizontal ruler with indent markers for area editing */
+
+.arulr {
+  position: absolute;
+  top: -22px;
+  left: 0;
+  right: 0;
+  height: 20px;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-bottom: 1px solid var(--color-node-design, #3b82f6);
+  border-radius: 3px 3px 0 0;
+  user-select: none;
+  z-index: 5;
+  overflow: visible;
+  cursor: default;
+  box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.06);
+}
+
+/* ── Tick marks ── */
+
+.arulr__ticks {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.arulr__tick {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-border, #d1d5db);
+}
+
+.arulr__tick--major {
+  height: 10px;
+  background: var(--color-text-tertiary, #9ca3af);
+}
+
+.arulr__tick--mid {
+  height: 6px;
+}
+
+.arulr__tick--minor {
+  height: 3px;
+}
+
+.arulr__tick-label {
+  position: absolute;
+  top: 1px;
+  transform: translateX(-50%);
+  font-size: 7px;
+  font-weight: 600;
+  color: var(--color-text-tertiary, #9ca3af);
+  line-height: 1;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* ── Indent markers ── */
+
+.arulr__marker {
+  position: absolute;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  cursor: ew-resize;
+  z-index: 2;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.15));
+  transition: filter 0.1s;
+}
+
+.arulr__marker:hover,
+.arulr__marker--dragging {
+  filter: drop-shadow(0 1px 3px rgba(59, 130, 246, 0.5));
+}
+
+/* First line indent: downward triangle at top */
+.arulr__marker--first {
+  top: 1px;
+  bottom: auto;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid var(--color-node-design, #3b82f6);
+  transform: translateX(-5px);
+}
+
+/* Left indent: upward triangle at bottom */
+.arulr__marker--left {
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 7px solid var(--color-node-design, #3b82f6);
+  transform: translateX(-5px);
+}
+
+/* Right indent: upward triangle at bottom, from right */
+.arulr__marker--right {
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 7px solid var(--color-node-design, #3b82f6);
+  transform: translateX(-5px);
+}
+
+/* ── Marker tooltips ── */
+
+.arulr__marker-tip {
+  position: absolute;
+  padding: 2px 5px;
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--color-node-design, #3b82f6);
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 3;
+}
+
+.arulr__marker:hover .arulr__marker-tip,
+.arulr__marker--dragging .arulr__marker-tip {
+  opacity: 1;
+}
+
+.arulr__marker--first .arulr__marker-tip {
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.arulr__marker--left .arulr__marker-tip,
+.arulr__marker--right .arulr__marker-tip {
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+}

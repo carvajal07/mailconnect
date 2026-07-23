@@ -1,0 +1,185 @@
+/* PageFlowMapModal.css — Modal del mapa de flujo de páginas */
+
+.pfm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10600; /* por encima de todo */
+}
+
+.pfm-modal {
+  background: var(--color-surface, #ffffff);
+  border-radius: 10px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.32);
+  display: flex;
+  flex-direction: column;
+  width: min(96vw, 1400px);
+  height: min(92vh, 900px);
+  overflow: hidden;
+}
+
+/* ── Header ─────────────────────────────────────────────────────── */
+.pfm-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-2, #f9fafb);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.pfm-header__icon { color: var(--color-node-design, #3b82f6); }
+
+.pfm-header__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  margin-right: 4px;
+}
+
+/* ── Legend ─────────────────────────────────────────────────────── */
+.pfm-legend {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pfm-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.pfm-legend__dot {
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* ── Close button ───────────────────────────────────────────────── */
+/* ── Drag hint ──────────────────────────────────────────────────── */
+.pfm-hint {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #9ca3af);
+  white-space: nowrap;
+  font-style: italic;
+  flex-shrink: 0;
+}
+
+.pfm-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  border-radius: 4px;
+  transition: background 0.12s;
+  flex-shrink: 0;
+}
+
+.pfm-close:hover {
+  background: var(--color-surface-3, #e5e7eb);
+  color: var(--color-text-primary);
+}
+
+/* ── Body / canvas ──────────────────────────────────────────────── */
+.pfm-body {
+  flex: 1;
+  overflow: auto;
+  padding: 20px;
+  background: var(--color-surface-2, #f3f4f6);
+}
+
+.pfm-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 40px 20px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary, #9ca3af);
+}
+
+/* ── Buscador (mapa de desbordamiento) ──────────────────────────── */
+.pfm-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 200px;
+  min-width: 170px;
+  max-width: 340px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 6px;
+  background: var(--color-surface, #fff);
+}
+.pfm-search__icon { color: var(--color-text-tertiary, #94a3b8); flex-shrink: 0; }
+.pfm-search__input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  min-width: 0;
+}
+.pfm-search__results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 6px;
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0,0,0,0.15));
+  z-index: 5;
+  padding: 4px;
+}
+.pfm-search__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  text-align: left;
+}
+.pfm-search__item:hover { background: var(--color-surface-2, #f1f5f9); }
+.pfm-search__badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  background: #1e293b;
+  padding: 0 5px;
+  border-radius: 3px;
+}

@@ -19,6 +19,7 @@ import { MessageTemplatesSection } from '../../components/portal/MessageTemplate
 import { DocxTemplatesSection } from '../../components/portal/DocxTemplatesSection';
 import { PdfTemplatesSection } from '../../components/portal/PdfTemplatesSection';
 import { PdfStudioSection } from '../../components/portal/PdfStudioSection';
+import { DesignerPdfSection } from '../../components/portal/DesignerPdfSection';
 import { ProgramarEnviosSection } from '../../components/portal/ProgramarEnviosSection';
 import { CascadaSection } from '../../components/portal/CascadaSection';
 import { UsuariosSection } from '../../components/portal/UsuariosSection';
@@ -70,6 +71,8 @@ export const PortalPage = () => {
         return <PdfTemplatesSection />;
       case 'estudio':
         return <PdfStudioSection />;
+      case 'disenador':
+        return <DesignerPdfSection />;
       case 'sms':
         return <MessageTemplatesSection channel="SMS" />;
       case 'whatsapp':

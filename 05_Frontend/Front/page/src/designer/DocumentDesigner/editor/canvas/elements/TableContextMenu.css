@@ -1,0 +1,79 @@
+/* TableContextMenu.css — Right-click menu over table cells */
+
+.tcm {
+  position: fixed;
+  z-index: 10000;
+  min-width: 200px;
+  padding: 4px 0;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.1),
+    0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  font-size: 12px;
+  user-select: none;
+}
+
+.tcm--sub {
+  /* Sub-menu lives outside the main menu's flow but is portaled too */
+  min-width: 180px;
+}
+
+.tcm__sep {
+  height: 1px;
+  background: var(--color-border, #e5e7eb);
+  margin: 4px 4px;
+}
+
+.tcm__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary, #111827);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.08s, color 0.08s;
+}
+
+.tcm__item:hover:not(.tcm__item--disabled) {
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.tcm__item--disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tcm__item--danger:not(.tcm__item--disabled):hover {
+  background: rgba(239, 68, 68, 0.08);
+  color: #ef4444;
+}
+
+.tcm__item-icon {
+  width: 14px;
+  display: inline-flex;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.tcm__item:hover:not(.tcm__item--disabled) .tcm__item-icon {
+  color: inherit;
+}
+
+.tcm__item-label {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.tcm__item-arrow {
+  color: var(--color-text-tertiary, #9ca3af);
+  flex-shrink: 0;
+}

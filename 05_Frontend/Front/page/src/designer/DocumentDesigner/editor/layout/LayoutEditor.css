@@ -1,0 +1,417 @@
+/* layout/LayoutEditor.css — Visual boceto layout editor */
+
+/* ── Backdrop & Modal ────────────────────────────────────────────────────────── */
+
+.le-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10100;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.le-modal {
+  background: var(--color-surface, #fff);
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  width: 640px;
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────────── */
+
+.le-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  flex-shrink: 0;
+}
+
+.le-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary, #111827);
+}
+
+.le-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Boceto ──────────────────────────────────────────────────────────────────── */
+
+.le-boceto-wrap {
+  padding: 16px;
+  flex-shrink: 0;
+}
+
+.le-boceto {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  background: var(--color-surface-2, #f9fafb);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+}
+
+/* ── Rows ────────────────────────────────────────────────────────────────────── */
+
+.le-row {
+  display: flex;
+}
+
+.le-row--top,
+.le-row--bottom {
+  min-height: 40px;
+}
+
+.le-row--middle {
+  flex: 1;
+  min-height: 160px;
+  gap: 2px;
+}
+
+/* ── Zone ────────────────────────────────────────────────────────────────────── */
+
+.le-zone {
+  flex: 1;
+  display: flex;
+  padding: 6px;
+  gap: 4px;
+  border-radius: 5px;
+  background: var(--color-surface, #fff);
+  border: 2px dashed var(--color-border, #d1d5db);
+  transition: border-color 0.12s, background 0.12s;
+  min-width: 60px;
+  position: relative;
+  align-items: center;
+}
+
+.le-zone--h { flex-direction: row; flex-wrap: wrap; }
+.le-zone--v { flex-direction: column; align-items: stretch; }
+
+.le-zone--target {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.le-zone--empty {
+  justify-content: center;
+  align-items: center;
+}
+
+.le-zone__empty-hint {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #9ca3af);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Left/Right zones fixed width */
+.le-row--middle .le-zone--v {
+  flex: 0 0 120px;
+  min-width: 0;
+}
+
+/* ── Canvas placeholder ──────────────────────────────────────────────────────── */
+
+.le-canvas {
+  flex: 1;
+  min-height: 100%;
+  background: #e8edf5;
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.le-canvas__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+}
+
+.le-canvas__hint {
+  font-size: 10px;
+  color: #9ca3af;
+}
+
+/* ── Panel Chip ──────────────────────────────────────────────────────────────── */
+
+.le-chip-wrap {
+  /* plain block — chips render visually inside the zone border */
+}
+
+.le-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--chip-color, #6b7280);
+  cursor: grab;
+  user-select: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: box-shadow 0.1s, opacity 0.1s;
+}
+
+.le-chip:hover {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+.le-chip:active { cursor: grabbing; opacity: 0.7; }
+
+.le-chip__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chip-color, #6b7280);
+  flex-shrink: 0;
+}
+
+.le-chip__label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-primary, #111827);
+}
+
+/* ── Composite column (element-bar strip + zone) ─────────────────────────────── */
+
+.le-col-composite {
+  display: flex;
+  flex-direction: row;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+/* Body wraps zone + mode toggle in a column */
+.le-col-composite__body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 120px;         /* explicit — no guessing */
+}
+
+/* Zone inside composite: auto-height so empty space doesn't look like a second zone */
+.le-row--middle .le-col-composite__body .le-zone--v {
+  flex: 0 0 auto;       /* height = chips, not row height */
+  min-height: 50px;     /* enough to drop onto when empty */
+  width: 100%;
+}
+
+/* ── ElementBar strip preview ─────────────────────────────────────────────────── */
+
+.le-elementbar-strip {
+  background: #e2e8f0;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  cursor: default;
+}
+
+.le-elementbar-strip--v {
+  flex-direction: column;
+  width: 22px;
+  padding: 6px 0;
+}
+
+.le-elementbar-strip--h {
+  flex-direction: row;
+  height: 22px;
+  padding: 0 6px;
+}
+
+.le-elementbar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: #94a3b8;
+  flex-shrink: 0;
+}
+
+/* ── Drop indicator ──────────────────────────────────────────────────────────── */
+
+.le-drop-indicator {
+  background: #3b82f6;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.le-zone--h .le-drop-indicator { width: 3px; height: 28px; }
+.le-zone--v .le-drop-indicator { height: 3px; width: 100%; }
+
+/* ── Hidden pool ─────────────────────────────────────────────────────────────── */
+
+.le-pool {
+  margin: 0 16px;
+  padding: 8px 10px;
+  border: 2px dashed var(--color-border, #d1d5db);
+  border-radius: 6px;
+  background: var(--color-surface-2, #f9fafb);
+  transition: border-color 0.12s, background 0.12s;
+  flex-shrink: 0;
+}
+
+.le-pool--target {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.le-pool__label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-secondary, #6b7280);
+  margin-bottom: 6px;
+}
+
+.le-pool__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 28px;
+  align-items: center;
+}
+
+.le-pool__empty {
+  font-size: 11px;
+  color: var(--color-text-tertiary, #9ca3af);
+  font-style: italic;
+}
+
+/* ── Legend ──────────────────────────────────────────────────────────────────── */
+
+.le-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+  flex-shrink: 0;
+}
+
+.le-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.le-legend__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.le-legend__label {
+  font-size: 10px;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────────────── */
+
+.le-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+  flex-shrink: 0;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────────── */
+
+.le-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.le-btn--primary {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+}
+.le-btn--primary:hover { background: #2563eb; }
+
+.le-btn--ghost {
+  background: transparent;
+  color: var(--color-text-secondary, #6b7280);
+  border-color: var(--color-border, #e5e7eb);
+}
+.le-btn--ghost:hover { background: var(--color-surface-2, #f9fafb); }
+
+.le-btn--icon {
+  padding: 5px;
+  background: transparent;
+  color: var(--color-text-secondary, #6b7280);
+  border-color: transparent;
+}
+.le-btn--icon:hover { background: var(--color-surface-2, #f9fafb); }
+
+/* ── Zone mode toggle (Tabs / Separado) ──────────────────────────────────────── */
+
+.le-zone-mode {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  background: var(--color-surface-2, #f9fafb);
+  border-top: 1px solid var(--color-border, #e5e7eb);
+  flex-shrink: 0;
+}
+
+.le-zone-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  color: var(--color-text-secondary, #6b7280);
+  background: transparent;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  white-space: nowrap;
+}
+
+.le-zone-mode-btn:hover {
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+}
+
+.le-zone-mode-btn--active {
+  background: var(--color-surface, #fff);
+  border-color: var(--color-border, #d1d5db);
+  color: var(--color-text-primary, #111827);
+  font-weight: 600;
+  cursor: default;
+}

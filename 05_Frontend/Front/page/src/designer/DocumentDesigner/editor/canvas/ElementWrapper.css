@@ -1,0 +1,41 @@
+/* ElementWrapper.css */
+
+.ew {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.ew--selected {
+  outline: 2px solid var(--color-node-design, #3b82f6);
+  outline-offset: 1px;
+  z-index: 10;
+}
+
+.ew--locked {
+  cursor: default !important;
+}
+
+/* Content area: subtle dashed outline on hover to signal it can be resized
+   even though its inner content (table) is what receives the clicks. */
+.ew--hover-resizable {
+  outline: 1px dashed var(--color-node-design, #3b82f6);
+  outline-offset: 1px;
+}
+
+/* ── Resize handles ───────────────────────────────────────────────────── */
+.ew__handle {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  background: var(--color-node-design, #3b82f6);
+  border: 1.5px solid #ffffff;
+  border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  z-index: 20;
+  box-sizing: border-box;
+}
+
+.ew__handle:hover {
+  background: var(--color-node-design-dark, #2563eb);
+  transform: scale(1.2);
+}

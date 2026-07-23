@@ -1,0 +1,524 @@
+/* FillStyleEditor.css — Editor de contenido de Fill Style */
+
+/* ── Color dropdown (solid fill) ────────────────────────────────────────────── */
+
+.fse-color-drop {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+.fse-color-drop__swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid rgba(0,0,0,0.2);
+  flex-shrink: 0;
+}
+
+.fse-color-drop__select {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  padding: 2px 4px;
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 3px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #111);
+}
+
+.fse-color-drop__nav {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+  color: var(--color-text-secondary, #6b7280);
+  display: flex;
+  align-items: center;
+}
+.fse-color-drop__nav:hover { color: #2563eb; border-color: #2563eb; }
+
+.fse {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Row ──────────────────────────────────────────────────────────────────── */
+
+.fse__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fse__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #6b7280);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+  min-width: 60px;
+}
+
+.fse__axis-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #6b7280);
+  flex-shrink: 0;
+}
+
+/* ── Controls ──────────────────────────────────────────────────────────────── */
+
+.fse__select {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+  cursor: pointer;
+}
+
+.fse__select:focus { border-color: #2563eb; }
+
+.fse__color {
+  width: 28px;
+  height: 24px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  padding: 1px;
+  cursor: pointer;
+  background: none;
+  flex-shrink: 0;
+}
+
+.fse__hex {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  font-size: 12px;
+  font-family: monospace;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+}
+
+.fse__hex:focus { border-color: #2563eb; }
+
+.fse__slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: #2563eb;
+}
+
+.fse__val {
+  font-size: 11px;
+  color: var(--color-text-secondary, #6b7280);
+  min-width: 30px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.fse__num {
+  width: 52px;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.fse__num:focus { border-color: #2563eb; }
+
+.fse__unit {
+  font-size: 11px;
+  color: var(--color-text-secondary, #6b7280);
+  flex-shrink: 0;
+}
+
+/* ── Preview ──────────────────────────────────────────────────────────────── */
+
+.fse__preview-row {
+  display: flex;
+  justify-content: center;
+}
+
+.fse__solid-preview {
+  width: 100%;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border, #e5e7eb);
+}
+
+.fse__grad-preview {
+  width: 100%;
+  height: 36px;
+  border-radius: 5px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  /* Checkerboard below gradient to show transparency */
+  background-color: #fff;
+  background-image: repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%);
+  background-size: 8px 8px;
+  position: relative;
+}
+
+/* The gradient is layered on top of the checkerboard */
+.fse__grad-preview::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: inherit;
+}
+
+/* ── None hint ────────────────────────────────────────────────────────────── */
+
+.fse__none-hint {
+  font-size: 12px;
+  color: var(--color-text-secondary, #6b7280);
+  font-style: italic;
+  margin: 0;
+  padding: 4px 0;
+}
+
+/* ── Gradient sub-type buttons ─────────────────────────────────────────────── */
+
+.fse__grad-types {
+  display: flex;
+  gap: 3px;
+}
+
+.fse__gtbtn {
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-secondary, #6b7280);
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+
+.fse__gtbtn:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.fse__gtbtn--active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ── Direction presets ─────────────────────────────────────────────────────── */
+
+.fse__dir-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.fse__dir-presets {
+  display: flex;
+  gap: 2px;
+}
+
+.fse__dir-btn {
+  width: 22px;
+  height: 22px;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 3px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-secondary, #6b7280);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+
+.fse__dir-btn:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #2563eb;
+}
+
+.fse__dir-btn--on {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+/* ── Interactive gradient bar ──────────────────────────────────────────────── */
+
+.gsb {
+  margin-bottom: 2px;
+}
+
+.gsb__bar-area {
+  position: relative;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border, #d1d5db);
+  cursor: crosshair;
+  overflow: visible;
+  margin-bottom: 20px; /* room for stop handles below */
+}
+
+.gsb__checker,
+.gsb__fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.gsb__checker {
+  background: repeating-conic-gradient(#d1d5db 0% 25%, #fff 0% 50%) 0 0 / 8px 8px;
+}
+
+/* Stop handle — positioned below the bar */
+.gsb__handle {
+  position: absolute;
+  top: calc(100% + 4px);
+  width: 14px;
+  height: 14px;
+  transform: translateX(-50%);
+  border-radius: 3px;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1.5px #9ca3af;
+  cursor: grab;
+  z-index: 2;
+  transition: box-shadow 0.1s;
+}
+
+.gsb__handle::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 6px solid #9ca3af;
+}
+
+.gsb__handle--sel {
+  box-shadow: 0 0 0 2px #2563eb;
+  z-index: 3;
+}
+
+.gsb__handle--sel::before {
+  border-bottom-color: #2563eb;
+}
+
+.gsb__handle:active {
+  cursor: grabbing;
+}
+
+.gsb__hint {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #9ca3af);
+  text-align: center;
+  margin-top: 2px;
+}
+
+/* ── Selected stop panel ───────────────────────────────────────────────────── */
+
+.fse__stop-panel {
+  padding: 8px 10px;
+  background: var(--color-bg-secondary, #f9fafb);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fse__stop-panel-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.fse__stop-del-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #dc2626;
+  background: none;
+  border: 1px solid #fca5a5;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.fse__stop-del-btn:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #dc2626;
+}
+
+.fse__stop-del-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.fse__stop-hint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--color-text-tertiary, #9ca3af);
+  font-style: italic;
+}
+
+/* ── Add stop button ─────────────────────────────────────────────────────── */
+
+.fse__add-stop {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #2563eb;
+  background: none;
+  border: 1px solid #2563eb;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+
+.fse__add-stop:hover { background: #eff6ff; }
+
+/* ── Variable type cases ──────────────────────────────────────────────────── */
+
+.fse__stops-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.fse__cases {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fse__case {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.fse__case-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  background: var(--color-bg-secondary, #f9fafb);
+  flex-wrap: wrap;
+}
+
+.fse__case-op {
+  padding: 2px 4px;
+  font-size: 11px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 3px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+  flex-shrink: 0;
+}
+
+.fse__case-val {
+  width: 64px;
+  padding: 2px 5px;
+  font-size: 11px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 3px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+}
+
+.fse__case-val--full { flex: 1; width: auto; }
+
+.fse__case-val:focus,
+.fse__case-op:focus { border-color: #2563eb; }
+
+.fse__case-sep {
+  font-size: 12px;
+  color: var(--color-text-secondary, #6b7280);
+  flex-shrink: 0;
+}
+
+.fse__case-del {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  color: var(--color-text-secondary, #6b7280);
+  border-radius: 3px;
+  cursor: pointer;
+  margin-left: auto;
+  flex-shrink: 0;
+  transition: background 0.1s, color 0.1s;
+}
+
+.fse__case-del:hover { background: #fee2e2; color: #dc2626; }
+
+.fse__case-fill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+.fse__case-fill-label {
+  font-size: 10px;
+  color: var(--color-text-secondary, #6b7280);
+  flex-shrink: 0;
+}
+
+.fse__case-fill > .fss {
+  flex: 1;
+  min-width: 0;
+}
+
+.fse__default-fill {
+  padding: 0 0 4px;
+}

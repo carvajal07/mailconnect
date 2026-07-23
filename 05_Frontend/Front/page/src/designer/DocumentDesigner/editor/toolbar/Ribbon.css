@@ -1,0 +1,891 @@
+/* Ribbon.css — Office-style ribbon (header tabs + icons row) */
+
+.rb {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  background: var(--color-surface, #ffffff);
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  user-select: none;
+}
+
+/* ── Row 1: name | tabs | actions ─────────────────────────────────────── */
+
+.rb__header {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 8px;
+  gap: 12px;
+  background: linear-gradient(to bottom, #fafbfc, #f4f5f7);
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.rb__name {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-primary, #111827);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+  padding: 0 6px;
+}
+
+.rb__tabs {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.rb__tabs::-webkit-scrollbar { display: none; }
+
+.rb__tabs-divider {
+  width: 1px;
+  background: var(--color-border, #d1d5db);
+  margin: 8px 6px;
+  flex-shrink: 0;
+}
+
+.rb__tab {
+  position: relative;
+  padding: 0 14px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #4b5563);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s, background 0.12s;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  margin: 4px 0;
+}
+
+.rb__tab:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--color-text-primary, #111827);
+}
+
+.rb__tab--active {
+  color: var(--color-node-design, #3b82f6);
+  font-weight: 600;
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.rb__tab--active::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -5px;
+  height: 2px;
+  background: var(--color-node-design, #3b82f6);
+  border-radius: 2px 2px 0 0;
+}
+
+/* Contextual tabs — colored backgrounds */
+.rb__tab--ctx {
+  font-weight: 600;
+  padding: 0 14px;
+  margin: 4px 2px;
+  border-radius: 4px;
+}
+
+.rb__tab--ctx-amber {
+  background: linear-gradient(to bottom, #fef3c7, #fde68a);
+  color: #92400e;
+}
+.rb__tab--ctx-amber:hover { background: linear-gradient(to bottom, #fde68a, #fcd34d); }
+.rb__tab--ctx-amber.rb__tab--active { background: linear-gradient(to bottom, #fbbf24, #f59e0b); color: #fff; }
+.rb__tab--ctx-amber.rb__tab--active::after { background: #f59e0b; }
+
+.rb__tab--ctx-blue {
+  background: linear-gradient(to bottom, #dbeafe, #bfdbfe);
+  color: #1e40af;
+}
+.rb__tab--ctx-blue:hover { background: linear-gradient(to bottom, #bfdbfe, #93c5fd); }
+.rb__tab--ctx-blue.rb__tab--active { background: linear-gradient(to bottom, #3b82f6, #2563eb); color: #fff; }
+.rb__tab--ctx-blue.rb__tab--active::after { background: #2563eb; }
+
+.rb__tab--ctx-violet {
+  background: linear-gradient(to bottom, #ede9fe, #ddd6fe);
+  color: #5b21b6;
+}
+.rb__tab--ctx-violet:hover { background: linear-gradient(to bottom, #ddd6fe, #c4b5fd); }
+.rb__tab--ctx-violet.rb__tab--active { background: linear-gradient(to bottom, #8b5cf6, #7c3aed); color: #fff; }
+.rb__tab--ctx-violet.rb__tab--active::after { background: #7c3aed; }
+
+.rb__tab--ctx-pink {
+  background: linear-gradient(to bottom, #fce7f3, #fbcfe8);
+  color: #9d174d;
+}
+.rb__tab--ctx-pink:hover { background: linear-gradient(to bottom, #fbcfe8, #f9a8d4); }
+.rb__tab--ctx-pink.rb__tab--active { background: linear-gradient(to bottom, #ec4899, #db2777); color: #fff; }
+.rb__tab--ctx-pink.rb__tab--active::after { background: #db2777; }
+
+/* Save / Close buttons */
+.rb__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.rb__save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--color-node-design, #3b82f6);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, transform 0.08s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.rb__save:hover  { background: #2563eb; }
+.rb__save:active { transform: translateY(1px); }
+
+.rb__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--color-text-secondary, #6b7280);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.rb__close:hover { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+
+/* ── Row 2: icons of active tab ───────────────────────────────────────── */
+
+.rb__content {
+  display: flex;
+  align-items: stretch;
+  height: 44px;
+  padding: 4px 8px;
+  gap: 0;
+  background: var(--color-surface, #ffffff);
+  overflow-x: auto;
+  scrollbar-width: thin;
+  /* Query container: the responsive rules below react to the ribbon row's OWN
+     width (not the viewport), so they account for whatever side panels are
+     open. See the @container blocks at the end of this file. */
+  container-type: inline-size;
+}
+
+.rb__content::-webkit-scrollbar      { height: 6px; }
+.rb__content::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.22); border-radius: 3px; }
+
+/* Tinted background for contextual tabs */
+.rb__content--ctx-amber  { background: linear-gradient(to bottom, #fffbeb, #fef3c7); }
+.rb__content--ctx-blue   { background: linear-gradient(to bottom, #eff6ff, #dbeafe); }
+.rb__content--ctx-violet { background: linear-gradient(to bottom, #f5f3ff, #ede9fe); }
+.rb__content--ctx-pink   { background: linear-gradient(to bottom, #fdf2f8, #fce7f3); }
+
+/* TextFormatToolbar wrapper inside Texto tab — make it fill the row */
+.rb__textfmt-wrap {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+  /* Scroll horizontally instead of wrapping to a 2nd line that the fixed 44px
+     row would clip. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.rb__textfmt-wrap::-webkit-scrollbar      { height: 6px; }
+.rb__textfmt-wrap::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.22); border-radius: 3px; }
+.rb__textfmt-wrap > .tft {
+  flex: 1;
+  background: transparent;
+  border: none;
+  height: 100%;
+  padding: 0 4px;
+  /* Keep one row inside the ribbon (the global .tft uses flex-wrap:wrap for the
+     standalone panel; here the fixed-height row would clip a wrapped 2nd row). */
+  flex-wrap: nowrap;
+}
+
+/* The Texto toolbar packs ~25 controls — it's intrinsically wide. Tighten it
+   ALWAYS inside the ribbon (subtle enough to look fine on large screens) so it
+   needs ~150-200px less width before the scroll fallback kicks in. Scoped to
+   the ribbon context; the standalone text-toolbar panel keeps its full size. */
+.rb__textfmt-wrap .tft            { gap: 1px; }
+.rb__textfmt-wrap .tft__btn       { width: 24px; height: 24px; }
+.rb__textfmt-wrap .tft__btn > svg { width: 14px; height: 14px; }
+.rb__textfmt-wrap .tft__select    { font-size: 10px; height: 24px; padding: 2px 18px 2px 5px; }
+.rb__textfmt-wrap .tft__select--font   { width: 104px; }
+.rb__textfmt-wrap .tft__select--weight { width: 68px; }
+.rb__textfmt-wrap .tft__style-btn      { height: 24px; font-size: 10px; }
+.rb__textfmt-wrap .tft__style-nav      { height: 24px; }
+.rb__textfmt-wrap .tft__size-input     { font-size: 10px; }
+.rb__textfmt-wrap .tft__sep            { margin: 0 2px; }
+
+/* ── Group ──────────────────────────────────────────────────────────── */
+
+.rb__group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.rb__group-content {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+}
+
+.rb__group-label {
+  font-size: 9px;
+  color: var(--color-text-tertiary, #9ca3af);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.rb__sep {
+  width: 1px;
+  background: var(--color-border, #e5e7eb);
+  margin: 4px 2px;
+  flex-shrink: 0;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────── */
+
+.rb__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-primary, #111827);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+.rb__btn-label { font-size: 11px; }
+.rb__btn:hover:not(:disabled) { background: rgba(0, 0, 0, 0.06); }
+.rb__btn:disabled { opacity: 0.4; cursor: default; }
+.rb__btn--active { background: rgba(59, 130, 246, 0.12); color: var(--color-node-design, #3b82f6); }
+.rb__btn--active:hover:not(:disabled) { background: rgba(59, 130, 246, 0.18); }
+.rb__btn--danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+
+/* Icon-only mini button */
+.rb__mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-primary, #111827);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.rb__mini:hover:not(:disabled) { background: rgba(0, 0, 0, 0.06); }
+.rb__mini:disabled { opacity: 0.4; cursor: default; }
+.rb__mini--active { background: rgba(59, 130, 246, 0.12); color: var(--color-node-design, #3b82f6); }
+.rb__mini--active:hover:not(:disabled) { background: rgba(59, 130, 246, 0.18); }
+.rb__mini--danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+
+/* Zoom display button */
+.rb__zoom-display {
+  height: 26px;
+  min-width: 48px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-primary, #111827);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition: background 0.12s;
+}
+.rb__zoom-display:hover { background: rgba(59, 130, 246, 0.06); }
+
+/* Dropdown button (Word-style: Insert > Above / Below) */
+.rb__dropdown {
+  position: relative;
+  display: inline-flex;
+}
+.rb__dropdown-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 100;
+  min-width: 150px;
+  padding: 4px 0;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  white-space: nowrap;
+}
+/* Portaled to <body> (escapes the ribbon's overflow clip): needs viewport
+   stacking above panels/canvas — match the structural context menu. */
+.rb__dropdown-menu--portal {
+  z-index: 10000;
+}
+
+/* ── Table-design popovers (portaled) ──────────────────────────────────── */
+.rb__popover {
+  z-index: 10000;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  padding: 8px;
+}
+.rb__popover--gallery {
+  display: block;
+  width: 320px;
+}
+/* Section headers + preset grid inside the gallery popover. */
+.rb__gallery-sec { margin: 2px 0 4px; }
+.rb__gallery-sec:first-child { margin-top: 0; }
+.rb__gallery-list { max-height: 140px; overflow-y: auto; margin-bottom: 6px; }
+.rb__gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.rb__thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 5px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+.rb__thumb:hover { background: var(--color-surface-2, #f3f4f6); }
+.rb__thumb--active {
+  border-color: var(--color-primary, #3b82f6);
+  background: var(--color-surface-2, #eff6ff);
+}
+.rb__thumb-grid {
+  width: 48px;
+  height: 34px;
+  display: flex;
+  flex-direction: column;
+  outline-offset: -1px;
+  background: #fff;
+}
+.rb__thumb-row { display: flex; flex: 1; }
+.rb__thumb-cell { flex: 1; box-sizing: border-box; }
+.rb__thumb-label {
+  font-size: 9px;
+  color: var(--color-text-secondary, #6b7280);
+  max-width: 56px;
+  text-align: center;
+  line-height: 1.1;
+}
+.rb__popover--colors { width: 188px; }
+.rb__color-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  margin-top: 4px;
+}
+.rb__color-grid + .rb__color-grid { margin-top: 6px; border-top: 1px solid var(--color-border, #eee); padding-top: 6px; }
+.rb__swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  padding: 0;
+}
+.rb__swatch:hover { outline: 2px solid var(--color-primary, #3b82f6); outline-offset: 1px; }
+.rb__color-clear {
+  display: block;
+  width: 100%;
+  padding: 5px 6px;
+  font-size: 11px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--color-text-secondary, #6b7280);
+}
+.rb__color-clear:hover { background: var(--color-surface-2, #f3f4f6); }
+
+/* ── Named fill-/border-style picker inside Sombreado & Pluma popovers ──── */
+
+/* Scrollable list so a doc with many auto-styles doesn't blow up the popover. */
+.rb__fillstyle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.rb__fillstyle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--color-text-primary, #111827);
+  text-align: left;
+}
+.rb__fillstyle-row:hover { background: var(--color-surface-2, #f3f4f6); }
+.rb__fillstyle-row--on {
+  border-color: var(--color-primary, #3b82f6);
+  background: var(--color-surface-2, #eff6ff);
+}
+
+.rb__fillstyle-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  flex-shrink: 0;
+}
+
+.rb__fillstyle-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inline custom-color editor inside Pluma / Sombreado popovers. */
+.rb__pen-sep {
+  height: 1px;
+  background: var(--color-border, #e5e7eb);
+  margin: 8px 0 4px;
+}
+.rb__cc-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+.rb__cc-preview {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  flex-shrink: 0;
+}
+.rb__cc-native {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.rb__cc-hex {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-family: var(--font-family-mono, monospace);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+}
+.rb__cc-eye {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-secondary, #6b7280);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.rb__cc-eye:hover { background: var(--color-surface-2, #f3f4f6); }
+
+/* Active cell-box style anchor button (Model B). */
+.rb__activestyle-btn {
+  gap: 6px;
+  max-width: 180px;
+}
+.rb__activestyle-name {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 110px;
+}
+.rb__activestyle-count {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #9ca3af);
+  flex-shrink: 0;
+}
+
+/* "+ Crear estilo de …" entry at the bottom of the picker popovers. */
+.rb__create-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 6px;
+  background: none;
+  border: 1px dashed var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #4b5563);
+  text-align: left;
+}
+.rb__create-row:hover {
+  border-color: var(--color-primary, #3b82f6);
+  color: var(--color-primary, #3b82f6);
+  background: var(--color-surface-2, #f3f4f6);
+}
+
+/* Dark mode override (the popover uses dark surface tokens already, but the
+   row borders / dashed outline need a bit more contrast). */
+[data-theme="dark"] .rb__fillstyle-row--on {
+  background: rgba(59, 130, 246, 0.18);
+}
+[data-theme="dark"] .rb__fillstyle-swatch {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+[data-theme="dark"] .rb__create-row:hover {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+/* ── Pen button (combined style/weight/color, live preview) ───────────── */
+.rb__pen-btn { gap: 5px; }
+.rb__pen-preview {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  gap: 2px;
+}
+.rb__pen-meta { font-size: 9px; color: var(--color-text-tertiary, #9ca3af); }
+.rb__popover--pen { width: 210px; max-height: 70vh; overflow-y: auto; }
+.rb__pen-live {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  margin-bottom: 6px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: #fff;
+}
+.rb__pen-sec {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-tertiary, #9ca3af);
+  margin: 6px 2px 3px;
+}
+.rb__pen-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--color-text-secondary, #6b7280);
+}
+.rb__pen-row:hover { background: var(--color-surface-2, #f3f4f6); }
+.rb__pen-row--on {
+  border-color: var(--color-primary, #3b82f6);
+  background: var(--color-surface-2, #eff6ff);
+  color: var(--color-text-primary, #111827);
+}
+.rb__swatch--on { outline: 2px solid var(--color-primary, #3b82f6); outline-offset: 1px; }
+
+.rb__dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  color: var(--color-text-primary, #111827);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.08s;
+}
+.rb__dropdown-item:hover {
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--color-node-design, #3b82f6);
+}
+
+/* Info / hint inside groups */
+.rb__info {
+  font-size: 11px;
+  color: var(--color-text-secondary, #4b5563);
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  white-space: nowrap;
+}
+
+.rb__hint {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #9ca3af);
+  font-style: italic;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  white-space: nowrap;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Dark-mode overrides
+   The ribbon ships with many hardcoded light gradients/whites that don't
+   adapt via semantic tokens (because they ARE the design-language). Re-tint
+   them here for [data-theme="dark"] keeping the same Word-like accent hues
+   but on a low-saturation, low-luminance band so they read on dark chrome.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Row 1: header bar (Tabs + Save) ────────────────────────────────────── */
+[data-theme="dark"] .rb__header {
+  background: linear-gradient(to bottom, var(--color-surface-2), var(--color-surface));
+  border-bottom-color: var(--color-border);
+}
+
+/* ── Row 1: contextual tab pills (inactive states) ───────────────────────── */
+[data-theme="dark"] .rb__tab--ctx-amber {
+  background: linear-gradient(to bottom, rgba(245, 158, 11, 0.18), rgba(245, 158, 11, 0.28));
+  color: #fcd34d;
+}
+[data-theme="dark"] .rb__tab--ctx-amber:hover {
+  background: linear-gradient(to bottom, rgba(245, 158, 11, 0.28), rgba(245, 158, 11, 0.38));
+}
+[data-theme="dark"] .rb__tab--ctx-amber.rb__tab--active {
+  background: linear-gradient(to bottom, #d97706, #b45309);
+  color: #fff;
+}
+[data-theme="dark"] .rb__tab--ctx-amber.rb__tab--active::after { background: #b45309; }
+
+[data-theme="dark"] .rb__tab--ctx-blue {
+  background: linear-gradient(to bottom, rgba(59, 130, 246, 0.18), rgba(59, 130, 246, 0.28));
+  color: #93c5fd;
+}
+[data-theme="dark"] .rb__tab--ctx-blue:hover {
+  background: linear-gradient(to bottom, rgba(59, 130, 246, 0.28), rgba(59, 130, 246, 0.38));
+}
+[data-theme="dark"] .rb__tab--ctx-blue.rb__tab--active {
+  background: linear-gradient(to bottom, #2563eb, #1d4ed8);
+  color: #fff;
+}
+[data-theme="dark"] .rb__tab--ctx-blue.rb__tab--active::after { background: #1d4ed8; }
+
+[data-theme="dark"] .rb__tab--ctx-violet {
+  background: linear-gradient(to bottom, rgba(139, 92, 246, 0.18), rgba(139, 92, 246, 0.28));
+  color: #c4b5fd;
+}
+[data-theme="dark"] .rb__tab--ctx-violet:hover {
+  background: linear-gradient(to bottom, rgba(139, 92, 246, 0.28), rgba(139, 92, 246, 0.38));
+}
+[data-theme="dark"] .rb__tab--ctx-violet.rb__tab--active {
+  background: linear-gradient(to bottom, #7c3aed, #6d28d9);
+  color: #fff;
+}
+[data-theme="dark"] .rb__tab--ctx-violet.rb__tab--active::after { background: #6d28d9; }
+
+[data-theme="dark"] .rb__tab--ctx-pink {
+  background: linear-gradient(to bottom, rgba(236, 72, 153, 0.18), rgba(236, 72, 153, 0.28));
+  color: #f9a8d4;
+}
+[data-theme="dark"] .rb__tab--ctx-pink:hover {
+  background: linear-gradient(to bottom, rgba(236, 72, 153, 0.28), rgba(236, 72, 153, 0.38));
+}
+[data-theme="dark"] .rb__tab--ctx-pink.rb__tab--active {
+  background: linear-gradient(to bottom, #db2777, #be185d);
+  color: #fff;
+}
+[data-theme="dark"] .rb__tab--ctx-pink.rb__tab--active::after { background: #be185d; }
+
+/* ── Row 2: content body — replace the pastel tints with dark accent washes ── */
+[data-theme="dark"] .rb__content--ctx-amber  {
+  background: linear-gradient(to bottom, rgba(245, 158, 11, 0.10), rgba(245, 158, 11, 0.04));
+}
+[data-theme="dark"] .rb__content--ctx-blue   {
+  background: linear-gradient(to bottom, rgba(59, 130, 246, 0.10), rgba(59, 130, 246, 0.04));
+}
+[data-theme="dark"] .rb__content--ctx-violet {
+  background: linear-gradient(to bottom, rgba(139, 92, 246, 0.10), rgba(139, 92, 246, 0.04));
+}
+[data-theme="dark"] .rb__content--ctx-pink   {
+  background: linear-gradient(to bottom, rgba(236, 72, 153, 0.10), rgba(236, 72, 153, 0.04));
+}
+
+/* Btn / mini hover overlays — flip from rgba(black) to rgba(white) so they
+   show on the dark base. */
+[data-theme="dark"] .rb__btn:hover:not(:disabled),
+[data-theme="dark"] .rb__mini:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+[data-theme="dark"] .rb__btn--active,
+[data-theme="dark"] .rb__mini--active {
+  background: rgba(59, 130, 246, 0.22);
+  color: #93c5fd;
+}
+[data-theme="dark"] .rb__btn--active:hover:not(:disabled),
+[data-theme="dark"] .rb__mini--active:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.32);
+}
+[data-theme="dark"] .rb__btn--danger:hover:not(:disabled),
+[data-theme="dark"] .rb__mini--danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.22);
+  color: #fca5a5;
+}
+
+/* Save button hover (kept primary brand) */
+[data-theme="dark"] .rb__save:hover { background: var(--color-primary-hover); }
+
+/* Close button red on dark */
+[data-theme="dark"] .rb__close:hover {
+  background: rgba(239, 68, 68, 0.22);
+  color: #fca5a5;
+}
+
+/* Zoom display: was hardcoded #fff */
+[data-theme="dark"] .rb__zoom-display {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+[data-theme="dark"] .rb__zoom-display:hover {
+  background: rgba(59, 130, 246, 0.18);
+}
+
+/* Content scrollbar */
+[data-theme="dark"] .rb__content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Dropdown items hover */
+[data-theme="dark"] .rb__dropdown-item:hover {
+  background: rgba(59, 130, 246, 0.22);
+  color: #93c5fd;
+}
+
+/* ── Popovers (portaled) ────────────────────────────────────────────────── */
+[data-theme="dark"] .rb__thumb-grid     { background: var(--color-surface); }
+[data-theme="dark"] .rb__pen-live       { background: var(--color-surface); border-color: var(--color-border); }
+[data-theme="dark"] .rb__swatch         { border-color: rgba(255, 255, 255, 0.22); }
+
+/* Color/pen popover: row hover + active state */
+[data-theme="dark"] .rb__color-clear:hover,
+[data-theme="dark"] .rb__pen-row:hover    { background: var(--color-surface-2); }
+[data-theme="dark"] .rb__pen-row--on      {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+[data-theme="dark"] .rb__thumb:hover       { background: var(--color-surface-2); }
+[data-theme="dark"] .rb__thumb--active     {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: var(--color-primary);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Responsive ribbon — compact mode (container queries)
+   When the ribbon row gets narrow (small screens, or side panels open), drop
+   the button TEXT labels and group captions → icon-only buttons with tooltips
+   (Word-style). This shrinks the row enough to fit most/all groups without the
+   horizontal scrollbar; if it still doesn't fit, the scrollbar remains as the
+   final fallback. Breakpoints are tunable.
+   ══════════════════════════════════════════════════════════════════════════ */
+/* Tier 1 — compact: KEEP the text labels (more legible than icon-only) but
+   shrink them and tighten spacing/icons. Group captions go (they only add
+   height/noise; the per-button labels carry the meaning). */
+@container (max-width: 1200px) {
+  .rb__group { padding: 0 3px; }
+  .rb__sep   { margin: 4px 1px; }
+  .rb__group-label { display: none; }
+
+  .rb__btn-label { font-size: 9px; }
+  .rb__btn  { padding: 0 6px; gap: 3px; height: 24px; }
+  .rb__mini { width: 24px; height: 24px; }
+  /* Smaller glyphs (icons render as SVG with width/height attrs we override). */
+  .rb__btn > svg, .rb__mini > svg { width: 13px; height: 13px; }
+
+  .rb__activestyle-btn  { max-width: 130px; }
+  .rb__activestyle-name { max-width: 70px; }
+  .rb__pen-preview      { min-width: 32px; }
+
+  /* Texto toolbar — reclaim width from the wide style pickers + font select.
+     The text/paragraph style pickers are the biggest hogs (~182px each), so:
+     trim the name, and hide the secondary "go to resource" link (the dropdown
+     still lets you navigate). */
+  .rb__textfmt-wrap .tft__select--font     { width: 88px; }
+  .rb__textfmt-wrap .tft__style-btn        { max-width: 104px; border-radius: 4px; }
+  .rb__textfmt-wrap .tft__style-btn__name  { max-width: 58px; }
+  .rb__textfmt-wrap .tft__style-nav        { display: none; }
+}
+
+/* Tier 2 — very narrow: only NOW drop the labels to icon-only, as the last
+   step before relying on horizontal scroll. */
+@container (max-width: 720px) {
+  .rb__btn-label        { display: none; }
+  .rb__btn              { gap: 0; }
+  .rb__info             { display: none; }
+  .rb__activestyle-name { display: none; }
+}
