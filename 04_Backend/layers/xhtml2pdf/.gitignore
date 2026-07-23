@@ -1,0 +1,3 @@
+# El .zip es un ARTEFACTO de build (21 MB). No se versiona: se regenera con ./build.sh.
+xhtml2pdf-layer.zip
+python/
