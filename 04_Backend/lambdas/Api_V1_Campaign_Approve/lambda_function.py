@@ -63,9 +63,12 @@ def lambda_handler(event, context):
 
     if not tenant_customer_id:
         return {'status': False, 'statusCode': 403, 'description': 'Sesión sin identidad de cliente.'}
-    # RBAC: solo owner/approver pueden aprobar. Fail-open de rollout: si el context no
-    # trae tenantRole (Authorizer/mapping viejo), default 'owner' → permitido.
-    tenant_role = str(auth.get('tenantRole', 'owner') or 'owner')
+    # RBAC (maker-checker): solo owner/approver pueden aprobar. Fail-CLOSED: si el context no
+    # trae tenantRole, default al MENOR privilegio ('operator') → denegado. El mapping template
+    # (sync_api.py) reenvía $context.authorizer.tenantRole y el Authorizer pone 'owner' para
+    # tokens legacy sin el claim, así que un owner/approver legítimo SÍ pasa; el default cierra
+    # el bypass en el que cualquier usuario era tratado como owner cuando tenantRole no llegaba.
+    tenant_role = str(auth.get('tenantRole', 'operator') or 'operator')
     if tenant_role not in ('owner', 'approver'):
         return {'status': False, 'statusCode': 403,
                 'description': 'Tu rol no permite aprobar campañas.'}

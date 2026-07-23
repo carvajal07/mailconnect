@@ -170,9 +170,13 @@ def _campaign():
 
 
 def _real_event():
-    return {'resource': '/Email/Send-batch-template', 'body': json.dumps({
-        'customerName': 'empresa', 'campaignName': 'PromoSMS', 'userId': 'U1',
-        'template': 'Hola {{Nombre}}, promo!', 'templateVersion': 1})}
+    # tenantRole owner en el context: el envío real exige owner/approver (gate RBAC) y el
+    # mapping template lo reenvía; aquí se simula al owner.
+    return {'resource': '/Email/Send-batch-template',
+            'requestContext': {'authorizer': {'tenantRole': 'owner'}},
+            'body': json.dumps({
+                'customerName': 'empresa', 'campaignName': 'PromoSMS', 'userId': 'U1',
+                'template': 'Hola {{Nombre}}, promo!', 'templateVersion': 1})}
 
 
 def test_envio_real_sms_encola_celulares_en_e164(env):

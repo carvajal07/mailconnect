@@ -1917,10 +1917,14 @@ def lambda_handler(event, context):
                                             data.get('quantitySamples', ''), campaign_name, channel_name))
                     else:
                         # RBAC: el envío real solo lo puede disparar owner/approver (el
-                        # funcional/operator solo prepara y solicita aprobación). Fail-open
-                        # de rollout: si el context no trae tenantRole, default 'owner'.
+                        # funcional/operator solo prepara y solicita aprobación). Fail-CLOSED: si
+                        # el context no trae tenantRole, default al MENOR privilegio ('operator')
+                        # → denegado. El mapping template (sync_api.py) reenvía tenantRole y el
+                        # Authorizer pone 'owner' para tokens legacy, así que un owner/approver
+                        # legítimo SÍ dispara; el default cierra el bypass (operator tratado como
+                        # owner) que dejaba a cualquiera gastar saldo en un envío real.
                         _trole = str(((event.get('requestContext') or {}).get('authorizer') or {})
-                                     .get('tenantRole', 'owner') or 'owner') if isinstance(event, dict) else 'owner'
+                                     .get('tenantRole', 'operator') or 'operator') if isinstance(event, dict) else 'operator'
                         if _trole not in ('owner', 'approver'):
                             status = False
                             status_code = 403

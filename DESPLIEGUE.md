@@ -68,7 +68,8 @@ usa este **body mapping template**:
       "userId": "$context.authorizer.userId",
       "customerId": "$context.authorizer.customerId",
       "customer": "$context.authorizer.customer",
-      "nit": "$context.authorizer.nit"
+      "nit": "$context.authorizer.nit",
+      "tenantRole": "$context.authorizer.tenantRole"
     }
   }
 }
@@ -86,6 +87,13 @@ usa este **body mapping template**:
 > `nit` no llega, las read-lambdas de cliente (Statistics/Bootstrap/Blacklist/state-report) no
 > encuentran las tablas del tenant. **`deploy-api.yml`/`sync_api.py` ya lo inyectan** — si el
 > template está a mano, agrégale la línea `nit`.
+>
+> **⚠️ `tenantRole` (RBAC de sub-rol) — nuevo, obligatorio (jul 2026):** sin esta línea, los
+> gates `Campaign_Approve`/`Reject`, `Schedule_Create` y el **envío REAL** (`Prepare-batch`)
+> ahora hacen **fail-CLOSED** (default menor privilegio) → un owner/approver legítimo recibiría
+> **403** al aprobar o enviar. Antes su ausencia hacía lo contrario (todos tratados como owner →
+> bypass del maker-checker). `sync_api.py` ya la inyecta; si aplicas el template a mano en alguna
+> ruta, **incluye `tenantRole`**. Redespliega el template (`deploy-api.yml`) junto con las lambdas.
 >
 > **No pasar estas rutas a proxy:** las lambdas devuelven el envelope
 > `{status, statusCode, description, data}` en el cuerpo (estilo no-proxy). En proxy

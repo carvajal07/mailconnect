@@ -881,6 +881,32 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   los mismos claims y `exp` fresco (sesión deslizante). El front lo renueva en segundo plano
   (`RequireAuth`) cuando el usuario está activo y al token le queda < 1 h.
 
+### Fix de seguridad: RBAC de sub-rol (`tenantRole`) — cierre del bypass del maker-checker (jul 2026)
+- **Problema (ALTO):** el mapping template no-proxy (`scripts/sync_api.py` `CONTEXT_TEMPLATE`) NO
+  reenviaba `tenantRole`. Los gates RBAC de sub-rol —`Campaign_Approve`, `Campaign_Reject`,
+  `Schedule_Create` y el **envío REAL** en `Prepare-batch`— leían `auth.get('tenantRole', 'owner')`:
+  al no llegar el campo, el default `'owner'` trataba a **cualquier** usuario autenticado del
+  tenant (incluido un `operator`) como owner → podía **aprobar/rechazar campañas y disparar envíos
+  reales** (gastar saldo), anulando el control maker-checker.
+- **Fix (2 partes, se despliegan juntas):**
+  1. **Mapping template** reenvía ahora `"tenantRole": "$context.authorizer.tenantRole"` (junto a
+     role/user/userId/customerId/customer/nit). Lo aplica `deploy-api.yml` (se dispara al cambiar
+     `scripts/sync_api.py`).
+  2. **Gates fail-CLOSED:** los 4 consumidores cambian su default de `'owner'` a `'operator'`
+     (menor privilegio) → si `tenantRole` no llega, **deniegan** en vez de asumir owner. El
+     `Authorizer`/`Login` **mantienen** el default `'owner'` para tokens **legacy** sin el claim
+     (compatibilidad: el usuario original de una empresa ES owner), así que un owner/approver
+     legítimo sigue pasando; solo cierra el caso de context ausente.
+- ⚠️ **Orden de despliegue:** ambos workflows (`deploy-api.yml` + `deploy-lambdas.yml`) se disparan
+  en el mismo push a `main`. Corren en paralelo; si las lambdas se actualizan antes que el template,
+  hay una ventana breve en la que un owner recibe 403 al aprobar/enviar (**falla SEGURO**: deniega,
+  nunca escala) que se auto-resuelve al terminar `deploy-api.yml`. Verificar que AMBOS terminen OK.
+- **Cobertura:** `test_mapping_template.py` (guard: el template reenvía todos los claims, incl.
+  `tenantRole`), `test_campaign_approval.py::test_approve_sin_tenantrole_403_failclosed` y
+  `test_prepare_batch_integration.py::{test_split_operator_no_dispara_envio_real,
+  test_split_sin_tenantrole_failclosed}`. Los tests de envío real ahora inyectan
+  `authorizer.tenantRole='owner'` en el context (simulan el owner + template arreglado).
+
 ### Sesión del front
 - El JWT se decodifica en el cliente para conocer `exp`: si venció, `apiClient` corta antes de
   llamar a la API y cualquier 401/403 del Authorizer limpia la sesión y redirige a `/login`

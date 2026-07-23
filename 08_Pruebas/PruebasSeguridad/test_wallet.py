@@ -137,6 +137,9 @@ def _api_event(resource='/Email/Send-batch-template'):
             'customerName': 'empresa', 'campaignName': 'Promo', 'userId': 'U1',
             'template': 'T', 'templateVersion': 1,
         }),
+        # El envío real exige tenantRole owner/approver (gate RBAC). El mapping template lo
+        # reenvía; aquí se simula al owner disparando el envío.
+        'requestContext': {'authorizer': {'tenantRole': 'owner'}},
     }
 
 

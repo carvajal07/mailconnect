@@ -57,7 +57,10 @@ def env():
         yield req, apr, rej, t
 
 
-def _auth(body, cid='CU1', user='ana@x.com', uid='U1', trole=None):
+def _auth(body, cid='CU1', user='ana@x.com', uid='U1', trole='owner'):
+    # El usuario por defecto de estas pruebas es el OWNER de la empresa (puede aprobar/rechazar).
+    # El mapping template reenvía tenantRole al lambda; aquí se simula ese context. Pasar
+    # trole=None simula que tenantRole NO llega (mapping viejo) → el gate hace fail-CLOSED.
     authz = {'customerId': cid, 'user': user, 'userId': uid}
     if trole is not None:
         authz['tenantRole'] = trole
@@ -140,6 +143,18 @@ def test_approve_approver_ok(env):
     resp = apr.lambda_handler(_auth({'campaignId': 'C1'}, trole='approver'), None)
     assert resp['statusCode'] == 200
     assert t.get_item(Key={'campaignId': 'C1'})['Item']['approvalStatus'] == 'approved'
+
+
+def test_approve_sin_tenantrole_403_failclosed(env):
+    """Fail-CLOSED: si el context NO trae tenantRole (mapping template viejo/mal configurado), el
+    gate NIEGA (default al menor privilegio) en vez de tratar al usuario como owner. Cierra el
+    bypass en el que cualquier usuario era tratado como owner cuando tenantRole no llegaba."""
+    req, apr, _, t = env
+    req.lambda_handler(_auth({'campaignId': 'C1'}), None)
+    resp = apr.lambda_handler(_auth({'campaignId': 'C1'}, trole=None), None)
+    assert resp['statusCode'] == 403
+    # La campaña sigue pendiente (no se aprobó).
+    assert t.get_item(Key={'campaignId': 'C1'})['Item']['approvalStatus'] == 'pending'
 
 
 def test_reject_operator_403(env):
