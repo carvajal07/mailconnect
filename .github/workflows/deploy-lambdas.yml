@@ -31,6 +31,12 @@ name: Desplegar Lambdas
 #     EUM, Social, Invoke.
 #   Ejemplos: Lambda_DynFull_SES_SQS_S3 · Lambda_DynFull_SQS · Lambda_S3
 #   Si el rol YA existe en IAM se usa tal cual (no se le tocan las políticas).
+#   RECONCILIACIÓN en cada despliegue (crear Y actualizar): antes de tocar los triggers, la
+#   función se pone en su rol de convención (se crea el rol si falta y se CAMBIA el de la
+#   función si difiere) — así una función vieja con un rol sin el token _SQS no falla al crear
+#   el trigger ("execution role does not have permissions to call ReceiveMessage"). Solo se
+#   reconcilian roles de convención (Lambda_*) o ausentes; un rol personalizado NO se pisa
+#   (se avisa) — usa role-map.json para mapear un folder a un rol propio.
 #
 # ── Triggers y colas SQS (04_Backend/lambdas/trigger-map.json) ──────────────
 # En CADA despliegue de una carpeta, el workflow asegura (idempotente) los
@@ -334,13 +340,27 @@ jobs:
                        --event-source-arn "$qarn" --query 'EventSourceMappings[0].UUID' --output text)
               if [ "$uuid" = "None" ] || [ -z "$uuid" ]; then
                 echo "   🔗 Creando trigger SQS $qname → $fn (batch $batch)"
-                if ! out=$(aws lambda create-event-source-mapping --function-name "$fn" \
+                local esm_ok=0 i
+                for i in 1 2 3 4 5 6; do
+                  if out=$(aws lambda create-event-source-mapping --function-name "$fn" \
                              --event-source-arn "$qarn" --batch-size "$batch" 2>&1); then
+                    esm_ok=1; break
+                  fi
+                  # El rol recién asignado (reconcile_role) puede tardar en propagar los permisos
+                  # SQS que el poller necesita → reintentar SOLO ese error transitorio.
+                  if echo "$out" | grep -qi "does not have permissions\|cannot be assumed"; then
+                    echo "   ⏳ El rol de $fn aún propaga permisos SQS (intento $i); reintento en 10s..."
+                    sleep 10
+                  else
+                    break
+                  fi
+                done
+                if [ "$esm_ok" != "1" ]; then
                   echo "❌ No se pudo crear el trigger SQS $qname → $fn:"
                   echo "$out"
-                  echo "   💡 Si es un error de permisos, el ROL de la función necesita el token _SQS"
-                  echo "      (sqs:ReceiveMessage/DeleteMessage/GetQueueAttributes). Ajusta role-map.json"
-                  echo "      o agrega las políticas al rol actual y relanza."
+                  echo "   💡 El ROL de la función necesita permisos SQS (token _SQS: sqs:ReceiveMessage/"
+                  echo "      DeleteMessage/GetQueueAttributes). reconcile_role debió asignarlo; si persiste,"
+                  echo "      revisa role-map.json o el rol de la función."
                   exit 1
                 fi
               else
@@ -436,6 +456,51 @@ jobs:
             ROLE_JUST_CREATED=1
           }
 
+          ROLE_SWAPPED=0
+          reconcile_role() {  # $1=folder $2=fn → asegura que la función USE su rol de convención.
+            # La rama de ACTUALIZAR solo tocaba el código: una función vieja podía quedarse con un
+            # rol sin el token _SQS y fallar al crear el trigger ("execution role does not have
+            # permissions to call ReceiveMessage"). Aquí se calcula el rol esperado (incluye _SQS
+            # si la carpeta tiene trigger sqs), se crea si falta, y se cambia el de la función si
+            # difiere — ANTES de tocar los triggers.
+            local folder="$1" fn="$2" src role role_arn cur cur_name has_sqs=""
+            src="$DIR/$folder"
+            ROLE_SWAPPED=0
+            # Solo hace falta reconciliar el rol cuando hay un trigger SQS: el poller de la cola
+            # LEE con el rol de EJECUCIÓN de la función. SNS/schedule invocan por resource-policy
+            # (add-permission), no por el rol → no requieren reconciliación. Así no se tocan los
+            # roles de las lambdas de API (sin trigger).
+            [ -f "$TRIGGER_MAP" ] && has_sqs=$(jq -r --arg k "$folder" '.[$k].sqs // empty' "$TRIGGER_MAP" 2>/dev/null)
+            [ -n "$has_sqs" ] || return 0
+            role=$(role_for "$folder" "$src")
+            ensure_role "$role" || return 1
+            role_arn="arn:aws:iam::${ACCOUNT_ID}:role/${role}"
+            cur=$(aws lambda get-function-configuration --function-name "$fn" --query Role --output text 2>/dev/null || true)
+            cur_name="${cur##*/}"
+            if [ "$cur" != "$role_arn" ]; then
+              case "$cur_name" in
+                Lambda_*|"")
+                  # Rol gestionado por la convención (o ninguno): se reconcilia al esperado.
+                  echo "   🔑 Rol de $fn: ${cur_name:-ninguno} → $role (reconciliando a la convención)"
+                  aws lambda update-function-configuration --function-name "$fn" --role "$role_arn" >/dev/null
+                  aws lambda wait function-updated-v2 --function-name "$fn"
+                  ROLE_SWAPPED=1 ;;
+                *)
+                  # Rol personalizado (no-convención): no se pisa. Si el trigger SQS falla por
+                  # permisos, hay que darle SQS a ese rol o mapear el folder en role-map.json.
+                  echo "   ⚠️  $fn usa un rol NO-convención ($cur_name); no se cambia. Si el trigger SQS"
+                  echo "      falla por permisos, agrégale SQS a ese rol o mapea el folder en role-map.json." ;;
+              esac
+            else
+              echo "   🔑 $fn ya usa su rol de convención ($role)."
+            fi
+            # Tras crear o cambiar el rol, IAM tarda en propagar para el poller de SQS.
+            if [ "$ROLE_JUST_CREATED" = "1" ] || [ "$ROLE_SWAPPED" = "1" ]; then
+              echo "   ⏳ Esperando propagación IAM del rol de $fn..."
+              sleep 10
+            fi
+          }
+
           while read -r folder; do
             [ -z "$folder" ] && continue
             src="$DIR/$folder"
@@ -483,8 +548,12 @@ jobs:
                 --zip-file fileb:///tmp/lambda.zip \
                 --publish >/dev/null
               echo "✅  $fn actualizada."
+              # Antes de tocar triggers: asegurar que la función use su ROL de convención. Un
+              # trigger SQS exige que el rol de EJECUCIÓN pueda ReceiveMessage; una función vieja
+              # puede tener un rol sin el token _SQS → sin esto, el event source mapping falla.
+              reconcile_role "$folder" "$fn"
               ensure_triggers "$folder" "$fn"
-              echo "| $folder | $fn | actualizada | $runtime | (el actual) | $TRIGGER_NOTE |" >> "$SUMMARY"
+              echo "| $folder | $fn | actualizada | $runtime | $(role_for "$folder" "$src") | $TRIGGER_NOTE |" >> "$SUMMARY"
             else
               if ! echo "$cfg" | grep -q "ResourceNotFoundException"; then
                 echo "❌  Error consultando $fn:"; echo "$cfg"; exit 1
