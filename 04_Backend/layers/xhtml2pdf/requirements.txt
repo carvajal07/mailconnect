@@ -1,0 +1,9 @@
+# Layer xhtml2pdf — dependencias del render de PDF (Api_V1_Template_Render-pdf y
+# Api_V1_Template_Combination-EAP-PDF). Versiones FIJAS para builds reproducibles.
+#
+# xhtml2pdf arrastra su árbol completo (reportlab, Pillow, lxml, pyhanko→cryptography,
+# svglib, pypdf, html5lib, python-bidi, arabic-reshaper). No fijamos las transitivas:
+# pip resuelve wheels manylinux2014 (glibc 2.17) compatibles con el runtime de Lambda.
+xhtml2pdf==0.2.16
+reportlab>=4.0,<5
+Pillow>=10.0
