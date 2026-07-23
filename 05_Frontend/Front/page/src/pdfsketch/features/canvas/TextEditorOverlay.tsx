@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import type { TextEl, TextSpan } from '@/types/document';
 import { MM_TO_PX, PT_PER_MM } from '@/utils/units';
 import { spansToHtml, htmlToSpans } from '@/utils/richText';
+import { useActiveEditorStore } from '@/store/activeEditorStore';
 
 interface Props {
   el: TextEl;
@@ -12,9 +13,16 @@ interface Props {
   onCancel: () => void;
 }
 
-/* Colores rápidos de la paleta */
-const PALETTE = ['#000000', '#ffffff', '#ef4444', '#3b82f6', '#22c55e', '#f97316', '#a855f7', '#902774'];
-
+/**
+ * Editor de texto en línea (contenteditable) del lienzo.
+ *
+ * - SOLO edita el texto y permite insertar variables `{{campo}}` (fichas).
+ * - El FORMATO (fuente, tamaño, color, negrita, alineación…) se controla desde
+ *   la barra de formato de ARRIBA (a nivel de elemento) para que haya una sola
+ *   fuente de verdad — se quitó la barra flotante que causaba inconsistencias.
+ * - Se registra en `activeEditorStore` para que el panel de Datos inserte una
+ *   variable en la posición del cursor (doble clic o arrastre).
+ */
 export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit, onCancel }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef    = useRef<HTMLDivElement>(null);
@@ -23,14 +31,15 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
   const savedRange   = useRef<Range | null>(null);
   const onCommitRef  = useRef(onCommit);
   const onCancelRef  = useRef(onCancel);
+  const setInsertBinding = useActiveEditorStore((s) => s.setInsertBinding);
   useEffect(() => { onCommitRef.current = onCommit; }, [onCommit]);
   useEffect(() => { onCancelRef.current = onCancel; }, [onCancel]);
 
-  const [sizeInput, setSizeInput] = useState(String(el.fontSize));
-
   const s      = MM_TO_PX * zoom;
   const fontPx = (el.fontSize / PT_PER_MM) * s;
-  const textAlign = el.align.startsWith('justify') ? 'left' : (el.align as 'left' | 'center' | 'right');
+  const textAlign = el.align.startsWith('justify')
+    ? (el.align === 'justify-center' ? 'center' : el.align === 'justify-right' ? 'right' : 'left')
+    : (el.align as 'left' | 'center' | 'right');
 
   /* ── commit / cancel ── */
   function commit() {
@@ -45,82 +54,121 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
     onCancelRef.current();
   }
 
+  /* ── selección: guardar el rango para insertar variables ── */
+  function rangeInsideEditor(): boolean {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return false;
+    const r = sel.getRangeAt(0);
+    return !!editorRef.current && editorRef.current.contains(r.commonAncestorContainer);
+  }
+  function saveSelection() {
+    if (rangeInsideEditor()) {
+      savedRange.current = window.getSelection()!.getRangeAt(0).cloneRange();
+    }
+  }
+
+  /* ── inserción de una variable como ficha ── */
+  function makeChip(binding: string): HTMLElement {
+    const label = binding.split('.').pop() ?? binding;
+    const span = document.createElement('span');
+    span.className = 'var-chip';
+    span.setAttribute('contenteditable', 'false');
+    span.setAttribute('data-binding', binding);
+    span.style.cssText =
+      'background:rgba(144,39,116,.13);color:#902774;border-radius:3px;padding:0 3px;' +
+      'font-size:.9em;border:1px solid rgba(144,39,116,.3);user-select:none;cursor:default';
+    span.textContent = `{{${label}}}`;
+    return span;
+  }
+  function insertNodeAtRange(range: Range, node: Node) {
+    range.deleteContents();
+    range.insertNode(node);
+    const after = document.createRange();
+    after.setStartAfter(node);
+    after.collapse(true);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(after);
+    savedRange.current = after.cloneRange();
+  }
+  function insertBindingAtCaret(binding: string) {
+    const ed = editorRef.current;
+    if (!ed) return;
+    ed.focus();
+    // usa el rango guardado si sigue dentro del editor; si no, inserta al final
+    let range = savedRange.current;
+    if (!range || !ed.contains(range.commonAncestorContainer)) {
+      range = document.createRange();
+      range.selectNodeContents(ed);
+      range.collapse(false);
+    }
+    insertNodeAtRange(range, makeChip(binding));
+  }
+  function insertBindingAtPoint(binding: string, clientX: number, clientY: number) {
+    const ed = editorRef.current;
+    if (!ed) return;
+    const docAny = document as unknown as {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    };
+    let range: Range | null = null;
+    if (docAny.caretRangeFromPoint) {
+      range = docAny.caretRangeFromPoint(clientX, clientY);
+    } else if (docAny.caretPositionFromPoint) {
+      const pos = docAny.caretPositionFromPoint(clientX, clientY);
+      if (pos) { range = document.createRange(); range.setStart(pos.offsetNode, pos.offset); range.collapse(true); }
+    }
+    if (!range || !ed.contains(range.commonAncestorContainer)) { insertBindingAtCaret(binding); return; }
+    insertNodeAtRange(range, makeChip(binding));
+  }
+
   /* ── init editor ── */
   useEffect(() => {
     const ed = editorRef.current;
     if (!ed) return;
 
-    // Populate with existing content
-    const initHtml = (el.spans?.length)
-      ? spansToHtml(el.spans)
-      : escHtml(el.text);
+    const initHtml = (el.spans?.length) ? spansToHtml(el.spans) : escHtml(el.text);
     ed.innerHTML = initHtml;
 
     ed.focus();
-    // Place cursor at end
     const range = document.createRange();
     range.selectNodeContents(ed);
     range.collapse(false);
     window.getSelection()?.removeAllRanges();
     window.getSelection()?.addRange(range);
+    savedRange.current = range.cloneRange();
 
-    // Outside-click commits
+    // Registrar este editor como el activo (para el panel de Datos)
+    setInsertBinding(insertBindingAtCaret);
+
+    // Mantener actualizado el rango del cursor
+    const onSelChange = () => saveSelection();
+    document.addEventListener('selectionchange', onSelChange);
+
+    // Clic fuera: commitea (salvo si es sobre el árbol de Datos → insertar variable)
     function onOutsideMouseDown(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        cancelRef.current ? cancel() : commit();
-      }
+      const target = e.target as HTMLElement | null;
+      if (containerRef.current && containerRef.current.contains(target as Node)) return;
+      if (target && target.closest('[data-var-source]')) return; // insertar variable: no cerrar
+      cancelRef.current ? cancel() : commit();
     }
     document.addEventListener('mousedown', onOutsideMouseDown, true);
-    return () => document.removeEventListener('mousedown', onOutsideMouseDown, true);
+    return () => {
+      document.removeEventListener('mousedown', onOutsideMouseDown, true);
+      document.removeEventListener('selectionchange', onSelChange);
+      setInsertBinding(null);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  /* ── selection save/restore (for toolbar interactions) ── */
-  function saveSelection() {
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) savedRange.current = sel.getRangeAt(0).cloneRange();
-  }
-  function restoreSelection() {
-    editorRef.current?.focus();
-    const r = savedRange.current;
-    if (!r) return;
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(r);
-  }
-
-  /* ── formatting helpers ── */
-  function fmt(cmd: string, val?: string) {
-    editorRef.current?.focus();
-    document.execCommand(cmd, false, val);
-  }
-  function wrapSelection(cssText: string) {
-    restoreSelection();
-    const sel = window.getSelection();
-    if (!sel || !sel.rangeCount || sel.isCollapsed) return;
-    const range = sel.getRangeAt(0);
-    const span = document.createElement('span');
-    span.style.cssText = cssText;
-    try {
-      const frag = range.extractContents();
-      span.appendChild(frag);
-      range.insertNode(span);
-      sel.removeAllRanges();
-      const nr = document.createRange();
-      nr.selectNodeContents(span);
-      sel.addRange(nr);
-    } catch { /* cross-boundary selection – skip */ }
-  }
-  function applyColor(hex: string) { wrapSelection(`color:${hex}`); }
-  function applySize(pt: number) {
-    if (!pt || pt < 1) return;
-    wrapSelection(`font-size:${pt}pt`);
-  }
 
   /* ── keyboard ── */
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key === 'Escape') { e.preventDefault(); cancelRef.current = true; cancel(); }
-    // Allow Enter (line break inside contenteditable)
+    // El formato inline (Ctrl+B/I/U) se maneja a nivel de elemento desde la barra
+    // superior; se evita crear spans sueltos aquí.
+    if ((e.ctrlKey || e.metaKey) && ['b', 'i', 'u', 'B', 'I', 'U'].includes(e.key)) {
+      e.preventDefault();
+    }
   }
 
   return (
@@ -135,13 +183,28 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
         transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
       }}
     >
-      {/* ── Editor ── */}
       <div
         ref={editorRef}
         contentEditable
         suppressContentEditableWarning
         onKeyDown={handleKeyDown}
-        onBlur={() => { if (!cancelRef.current) commit(); }}
+        onKeyUp={saveSelection}
+        onMouseUp={saveSelection}
+        onBlur={() => { if (!cancelRef.current) saveSelection(); }}
+        onDragOver={(e) => {
+          // permite el "cursor de texto" nativo siguiendo al puntero durante el arrastre
+          if (e.dataTransfer.types.includes('text/x-binding-path')) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+          }
+        }}
+        onDrop={(e) => {
+          const binding = e.dataTransfer.getData('text/x-binding-path');
+          if (!binding) return;
+          e.preventDefault();
+          e.stopPropagation();
+          insertBindingAtPoint(binding, e.clientX, e.clientY);
+        }}
         style={{
           width: el.width * s,
           minHeight: el.height * s,
@@ -164,129 +227,8 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
           whiteSpace: 'pre-wrap',
         }}
       />
-
-      {/* ── Toolbar ── */}
-      <div
-        onMouseDown={(e) => e.preventDefault()} // keep editor focus
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          gap: 2,
-          marginTop: 4,
-          padding: '3px 4px',
-          background: 'var(--bg-1)',
-          border: '1px solid var(--line)',
-          borderRadius: 4,
-          boxShadow: '0 2px 8px rgba(0,0,0,.18)',
-          userSelect: 'none',
-        }}
-      >
-        {/* Bold */}
-        <TBtn title="Negrita (Ctrl+B)" style={{ fontWeight: 700 }} onMouseDown={() => fmt('bold')}>B</TBtn>
-        {/* Italic */}
-        <TBtn title="Cursiva (Ctrl+I)" style={{ fontStyle: 'italic' }} onMouseDown={() => fmt('italic')}>I</TBtn>
-        {/* Underline */}
-        <TBtn title="Subrayado (Ctrl+U)" style={{ textDecoration: 'underline' }} onMouseDown={() => fmt('underline')}>U</TBtn>
-        {/* Strikethrough */}
-        <TBtn title="Tachado" style={{ textDecoration: 'line-through' }} onMouseDown={() => fmt('strikeThrough')}>S</TBtn>
-
-        <Sep />
-
-        {/* Color palette */}
-        {PALETTE.map((c) => (
-          <button
-            key={c}
-            type="button"
-            title={c}
-            onMouseDown={(e) => { e.preventDefault(); saveSelection(); applyColor(c); }}
-            style={{
-              width: 14, height: 14, borderRadius: 2, cursor: 'pointer',
-              background: c, border: c === '#ffffff' ? '1px solid #ccc' : '1px solid transparent',
-              flexShrink: 0,
-            }}
-          />
-        ))}
-
-        {/* Hex color input */}
-        <input
-          type="text"
-          maxLength={7}
-          placeholder="#hex"
-          defaultValue=""
-          title="Color personalizado"
-          onMouseDown={(e) => { e.stopPropagation(); saveSelection(); }}
-          onFocus={saveSelection}
-          onKeyDown={(e) => {
-            e.stopPropagation();
-            if (e.key === 'Enter') {
-              const val = e.currentTarget.value;
-              if (/^#[0-9a-f]{6}$/i.test(val)) applyColor(val);
-            }
-          }}
-          style={{ width: 46, fontSize: 10, padding: '1px 3px', border: '1px solid var(--line)', borderRadius: 2, background: 'var(--bg-2)', color: 'var(--ink)' }}
-        />
-
-        <Sep />
-
-        {/* Font size */}
-        <input
-          type="number"
-          min={4} max={300} step={0.5}
-          value={sizeInput}
-          title="Tamaño de fuente (pt)"
-          onMouseDown={(e) => { e.stopPropagation(); saveSelection(); }}
-          onFocus={saveSelection}
-          onChange={(e) => setSizeInput(e.target.value)}
-          onKeyDown={(e) => {
-            e.stopPropagation();
-            if (e.key === 'Enter') applySize(parseFloat(sizeInput));
-          }}
-          onBlur={() => applySize(parseFloat(sizeInput))}
-          style={{ width: 42, fontSize: 10, padding: '1px 3px', border: '1px solid var(--line)', borderRadius: 2, background: 'var(--bg-2)', color: 'var(--ink)' }}
-        />
-        <span style={{ fontSize: 10, color: 'var(--ink-2)' }}>pt</span>
-
-        <Sep />
-
-        {/* Clear rich text */}
-        <TBtn
-          title="Quitar formato"
-          onMouseDown={() => { restoreSelection(); fmt('removeFormat'); }}
-          style={{ fontSize: 9, color: 'var(--ink-2)' }}
-        >A×</TBtn>
-      </div>
     </div>
   );
-}
-
-/* ── Small components ── */
-
-function TBtn({ children, title, style, onMouseDown }: {
-  children: React.ReactNode;
-  title?: string;
-  style?: React.CSSProperties;
-  onMouseDown: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onMouseDown={(e) => { e.preventDefault(); onMouseDown(); }}
-      style={{
-        width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 11, borderRadius: 3, cursor: 'pointer', border: 'none',
-        background: 'var(--bg-3)', color: 'var(--ink)',
-        ...style,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Sep() {
-  return <div style={{ width: 1, height: 18, background: 'var(--line)', margin: '0 2px', flexShrink: 0 }} />;
 }
 
 function escHtml(s: string) {

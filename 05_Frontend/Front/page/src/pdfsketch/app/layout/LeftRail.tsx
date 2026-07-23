@@ -5,7 +5,6 @@ import {
   Square,
   Circle,
   Slash,
-  PenLine,
   Image,
   Table2,
   QrCode,
@@ -28,7 +27,6 @@ const groups: { items: { icon: typeof Square; tool: Tool; label: string; shortcu
         { icon: Square, tool: 'rect', label: 'Rectángulo', shortcut: 'R' },
         { icon: Circle, tool: 'circle', label: 'Círculo', shortcut: 'O' },
         { icon: Slash, tool: 'line', label: 'Línea', shortcut: 'L' },
-        { icon: PenLine, tool: 'pen', label: 'Lápiz', shortcut: 'P' },
       ],
     },
     {

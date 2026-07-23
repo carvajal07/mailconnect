@@ -31,7 +31,7 @@ export function spansToPlainText(spans: TextSpan[]): string {
 export function layoutSpans(
   ctx: CanvasRenderingContext2D,
   spans: TextSpan[],
-  el: Pick<TextEl, 'fontSize' | 'fontWeight' | 'fontStyle' | 'fontFamily' | 'lineHeight' | 'color' | 'textDecoration'>,
+  el: Pick<TextEl, 'fontSize' | 'fontWeight' | 'fontStyle' | 'fontFamily' | 'lineHeight' | 'color' | 'textDecoration' | 'align'>,
   fontScale: number,        // zoom * MM_TO_PX
   containerWidthPx: number,
 ): DrawCmd[] {
@@ -80,29 +80,30 @@ export function layoutSpans(
     }
   }
 
-  /* ── Layout ── */
-  const cmds: DrawCmd[] = [];
+  /* ── Layout: wrap into lines ── */
+  interface Line { toks: Array<Token & { width: number }>; width: number; lineH: number; }
+  const lines: Line[] = [];
   let lineX = 0;
-  let lineY = 0;
-  let lineH = defaultLineH;
+  let curLineH = defaultLineH;
   let pending: Array<Token & { width: number }> = [];
 
-  function flush() {
-    let x = 0;
-    for (const t of pending) {
-      cmds.push({ text: t.text, x, y: lineY, lineH, fontSize: t.fontSize, font: t.font, color: t.color, underline: t.underline, lineThrough: t.lineThrough, isVariable: t.isVariable });
-      x += t.width;
+  function pushLine() {
+    // trim trailing whitespace of the line
+    while (pending.length > 0 && /^\s+$/.test(pending[pending.length - 1].text)) {
+      pending.pop();
     }
-    lineY += lineH;
-    lineX  = 0;
-    lineH  = defaultLineH;
+    let width = 0;
+    for (const t of pending) width += t.width;
+    lines.push({ toks: pending, width, lineH: curLineH });
     pending = [];
+    lineX = 0;
+    curLineH = defaultLineH;
   }
 
   for (const tok of tokens) {
-    if (tok.isNewline) { flush(); continue; }
+    if (tok.isNewline) { pushLine(); continue; }
 
-    lineH = Math.max(lineH, tok.fontSize * el.lineHeight);
+    const tokLineH = tok.fontSize * el.lineHeight;
     ctx.font = tok.font;
     const w = ctx.measureText(tok.text).width;
     const isWs = /^\s+$/.test(tok.text);
@@ -113,15 +114,53 @@ export function layoutSpans(
         lineX -= pending[pending.length - 1].width;
         pending.pop();
       }
-      flush();
+      pushLine();
     }
 
     if (isWs && lineX === 0) continue; // skip leading whitespace on new line
 
+    curLineH = Math.max(curLineH, tokLineH);
     pending.push({ ...tok, width: w });
     lineX += w;
   }
-  if (pending.length > 0) flush();
+  if (pending.length > 0) pushLine();
+
+  /* ── Position lines according to alignment ── */
+  const align = el.align ?? 'left';
+  const isJustify = align.startsWith('justify');
+  const cmds: DrawCmd[] = [];
+  let lineY = 0;
+
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    const isLastLine = li === lines.length - 1;
+    const slack = Math.max(0, containerWidthPx - line.width);
+    const wsToks = line.toks.filter((t) => /^\s+$/.test(t.text));
+    // Justificar sólo las líneas que NO son la última (Word/InDesign) y que tengan espacios.
+    const doJustify = isJustify && !isLastLine && slack > 0 && wsToks.length > 0;
+    const extraPerGap = doJustify ? slack / wsToks.length : 0;
+
+    let x: number;
+    if (doJustify) {
+      x = 0;
+    } else if (align === 'center' || (align === 'justify-center' && isLastLine)) {
+      x = slack / 2;
+    } else if (align === 'right' || (align === 'justify-right' && isLastLine)) {
+      x = slack;
+    } else {
+      x = 0; // left · justify-left · justify-block (última) · líneas justify sin espacios
+    }
+
+    for (const t of line.toks) {
+      cmds.push({
+        text: t.text, x, y: lineY, lineH: line.lineH, fontSize: t.fontSize,
+        font: t.font, color: t.color, underline: t.underline, lineThrough: t.lineThrough,
+        isVariable: t.isVariable, width: t.width,
+      });
+      x += t.width + (doJustify && /^\s+$/.test(t.text) ? extraPerGap : 0);
+    }
+    lineY += line.lineH;
+  }
 
   return cmds;
 }
