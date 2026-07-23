@@ -502,7 +502,12 @@ jobs:
             role=$(role_for "$folder" "$src")           # rol de convención (incluye _SQS por el trigger)
             role_arn="arn:aws:iam::${ACCOUNT_ID}:role/${role}"
             case "$cur_name" in
-              Lambda_*|"")
+              Lambda_*|"${fn}-role-"*|"")
+                # Se reconcilia al rol de convención (que sí tiene SQS) cuando el rol actual es:
+                #  - de convención sin SQS (Lambda_*),
+                #  - el AUTO-GENERADO por AWS al crear la función en la consola ({fn}-role-xxxx)
+                #    → NO es un rol deliberado, es el default de AWS,
+                #  - o ninguno.
                 ensure_role "$role" || return 1
                 # Rol recién creado → IAM tarda en propagarlo; ESPERAR antes de asignarlo o falla
                 # con "The role defined for the function cannot be assumed by Lambda".
@@ -532,11 +537,12 @@ jobs:
                 echo "   ⏳ Esperando propagación IAM de los permisos SQS del nuevo rol..."
                 sleep 10 ;;
               *)
-                # Rol personalizado SIN token SQS en el nombre: no se pisa (podría tener SQS por una
-                # política attachada aunque el nombre no lo diga). Si el trigger falla por permisos,
-                # dale SQS a ese rol o mapea el folder en role-map.json.
-                echo "   ⚠️  $fn usa un rol NO-convención sin token SQS ($cur_name); no se cambia. Si el"
-                echo "      trigger SQS falla por permisos, dale SQS a ese rol o usa role-map.json." ;;
+                # Rol PERSONALIZADO deliberado (nombre no reconocido: ni Lambda_*, ni el auto-
+                # generado {fn}-role-xxxx): no se pisa (podría tener SQS por una política attachada
+                # aunque el nombre no lo diga, o ser un rol a medida del equipo). Si el trigger falla
+                # por permisos, dale SQS a ese rol o mapea el folder en role-map.json.
+                echo "   ⚠️  $fn usa un rol personalizado ($cur_name); no se cambia. Si el trigger SQS"
+                echo "      falla por permisos, dale SQS a ese rol o usa role-map.json." ;;
             esac
           }
 
