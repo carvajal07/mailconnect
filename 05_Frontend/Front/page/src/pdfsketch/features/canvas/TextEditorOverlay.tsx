@@ -31,7 +31,7 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
   const savedRange   = useRef<Range | null>(null);
   const onCommitRef  = useRef(onCommit);
   const onCancelRef  = useRef(onCancel);
-  const setInsertBinding = useActiveEditorStore((s) => s.setInsertBinding);
+  const setApi = useActiveEditorStore((s) => s.setApi);
   useEffect(() => { onCommitRef.current = onCommit; }, [onCommit]);
   useEffect(() => { onCancelRef.current = onCancel; }, [onCancel]);
 
@@ -66,6 +66,46 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
       savedRange.current = window.getSelection()!.getRangeAt(0).cloneRange();
     }
   }
+  function restoreSelection() {
+    const ed = editorRef.current;
+    const r = savedRange.current;
+    if (!ed || !r || !ed.contains(r.commonAncestorContainer)) return;
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(r);
+  }
+
+  /* ── formato inline sobre la selección (lo llama la barra de arriba) ── */
+  function execCmd(cmd: 'bold' | 'italic' | 'underline' | 'strikeThrough') {
+    const ed = editorRef.current;
+    if (!ed) return;
+    ed.focus();
+    restoreSelection();
+    document.execCommand(cmd, false);
+    saveSelection();
+  }
+  function wrapSelectionCss(cssText: string) {
+    const ed = editorRef.current;
+    if (!ed) return;
+    ed.focus();
+    restoreSelection();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+    const range = sel.getRangeAt(0);
+    const span = document.createElement('span');
+    span.style.cssText = cssText;
+    try {
+      span.appendChild(range.extractContents());
+      range.insertNode(span);
+      sel.removeAllRanges();
+      const nr = document.createRange();
+      nr.selectNodeContents(span);
+      sel.addRange(nr);
+      savedRange.current = nr.cloneRange();
+    } catch { /* selección cruzada: se ignora */ }
+  }
+  function setColorSel(hex: string) { wrapSelectionCss(`color:${hex}`); }
+  function setFontSizeSel(pt: number) { if (pt > 0) wrapSelectionCss(`font-size:${pt}pt`); }
 
   /* ── inserción de una variable como ficha ── */
   function makeChip(binding: string): HTMLElement {
@@ -138,8 +178,13 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
     window.getSelection()?.addRange(range);
     savedRange.current = range.cloneRange();
 
-    // Registrar este editor como el activo (para el panel de Datos)
-    setInsertBinding(insertBindingAtCaret);
+    // Registrar este editor como el activo (barra de formato + panel de Datos)
+    setApi({
+      insertBinding: insertBindingAtCaret,
+      exec: execCmd,
+      setColor: setColorSel,
+      setFontSize: setFontSizeSel,
+    });
 
     // Mantener actualizado el rango del cursor
     const onSelChange = () => saveSelection();
@@ -149,14 +194,16 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
     function onOutsideMouseDown(e: MouseEvent) {
       const target = e.target as HTMLElement | null;
       if (containerRef.current && containerRef.current.contains(target as Node)) return;
-      if (target && target.closest('[data-var-source]')) return; // insertar variable: no cerrar
+      // No cerrar el editor al usar el panel de Datos o la barra de formato
+      // (insertar variable / formatear la selección).
+      if (target && (target.closest('[data-var-source]') || target.closest('[data-format-toolbar]'))) return;
       cancelRef.current ? cancel() : commit();
     }
     document.addEventListener('mousedown', onOutsideMouseDown, true);
     return () => {
       document.removeEventListener('mousedown', onOutsideMouseDown, true);
       document.removeEventListener('selectionchange', onSelChange);
-      setInsertBinding(null);
+      setApi(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -164,11 +211,9 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
   /* ── keyboard ── */
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key === 'Escape') { e.preventDefault(); cancelRef.current = true; cancel(); }
-    // El formato inline (Ctrl+B/I/U) se maneja a nivel de elemento desde la barra
-    // superior; se evita crear spans sueltos aquí.
-    if ((e.ctrlKey || e.metaKey) && ['b', 'i', 'u', 'B', 'I', 'U'].includes(e.key)) {
-      e.preventDefault();
-    }
+    // Ctrl+B/I/U aplican formato inline nativo del contentEditable (a la palabra
+    // seleccionada) — se dejan pasar; el guard del Canvas ignora atajos cuando el
+    // foco está en un contentEditable.
   }
 
   return (

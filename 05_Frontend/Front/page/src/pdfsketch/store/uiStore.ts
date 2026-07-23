@@ -15,6 +15,7 @@ interface UIState {
   zoom: number;
   showGrid: boolean;
   showSnap: boolean;
+  showMargins: boolean;
   cursor: { x: number; y: number };
   previewOpen: boolean;
 
@@ -30,6 +31,7 @@ interface UIState {
   setZoom: (z: number) => void;
   toggleGrid: () => void;
   toggleSnap: () => void;
+  toggleMargins: () => void;
   setCursor: (x: number, y: number) => void;
   setPreviewOpen: (v: boolean) => void;
 }
@@ -43,6 +45,7 @@ export const useUIStore = create<UIState>((set) => ({
   zoom: 1,
   showGrid: false,
   showSnap: true,
+  showMargins: true,
   cursor: { x: 0, y: 0 },
   previewOpen: false,
 
@@ -58,5 +61,6 @@ export const useUIStore = create<UIState>((set) => ({
   setZoom: (z) => set({ zoom: Math.max(0.1, Math.min(5, z)) }),
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
   toggleSnap: () => set((s) => ({ showSnap: !s.showSnap })),
+  toggleMargins: () => set((s) => ({ showMargins: !s.showMargins })),
   setCursor: (x, y) => set({ cursor: { x, y } }),
 }));
