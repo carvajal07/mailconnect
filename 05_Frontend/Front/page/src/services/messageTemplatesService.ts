@@ -34,8 +34,12 @@ export interface MessageTemplate {
   language?: string;
   /** DOCX: ruta del .docx ya subido a S3. */
   s3Path?: string;
-  /** PDF: HTML del editor (con {{variables}}), que se renderiza por destinatario. */
+  /** PDF (editor básico tipo Word): HTML del editor (con {{variables}}). */
   html?: string;
+  /** PDF (editor medio pdfsketch): documento JSON, guardado como string. */
+  sketchJson?: string;
+  /** PDF (diseñador full DocumentDesigner): templateJson, guardado como string. */
+  templateJson?: string;
   /** WSP: etiquetas de los parámetros {{1}},{{2}}… · DOCX: campos de combinación. */
   params?: string[];
   created?: string;
@@ -51,6 +55,10 @@ export interface CreateMessageTemplatePayload {
   language?: string;
   s3Path?: string;
   html?: string;
+  /** PDF pdfsketch: se puede enviar el objeto (el backend lo guarda como string JSON). */
+  sketchJson?: Record<string, unknown> | string;
+  /** PDF DocumentDesigner: ídem. */
+  templateJson?: Record<string, unknown> | string;
   params?: string[];
   /** Si se envía, la ruta Create ACTUALIZA esa plantilla (upsert) en vez de crear una nueva. */
   messageTemplateId?: string;

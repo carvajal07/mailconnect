@@ -1,0 +1,421 @@
+/* TextStyleEditor.css — Multi-tab TextStyle editor (table layout) */
+
+.tse {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Preview ─────────────────────────────────────────────────────────────── */
+
+.tse__preview {
+  padding: 12px;
+  background: var(--color-surface-2, #f9fafb);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  text-align: center;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  word-break: break-word;
+  margin-bottom: 8px;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+
+.tse__tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.tse__tab {
+  padding: 5px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #6b7280);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+
+.tse__tab:hover {
+  color: var(--color-text-primary, #111827);
+}
+
+.tse__tab--active {
+  color: var(--color-node-design, #3b82f6);
+  border-bottom-color: var(--color-node-design, #3b82f6);
+}
+
+/* ── Body ────────────────────────────────────────────────────────────────── */
+
+.tse__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Section title (inside tab body) ─────────────────────────────────────── */
+
+.tse__section-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-primary, #111827);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin: 8px 0 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+/* ── Table layout (label | value) ─────────────────────────────────────────── */
+
+.tse__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tse__tr {
+  /* no extra styles needed, table rows auto-space */
+}
+
+.tse__td-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #6b7280);
+  padding: 4px 8px 4px 0;
+  white-space: nowrap;
+  vertical-align: middle;
+  width: 1%;
+}
+
+.tse__td-value {
+  padding: 4px 0;
+  vertical-align: middle;
+}
+
+/* ── Inputs ──────────────────────────────────────────────────────────────── */
+
+.tse__select {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 12px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+  transition: border-color 0.12s;
+}
+
+.tse__select:focus {
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.tse__input {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 12px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+  transition: border-color 0.12s;
+}
+
+.tse__input:focus {
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.tse__input--hex {
+  font-family: monospace;
+  width: 80px;
+  flex-shrink: 0;
+}
+
+.tse__num-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+/* When num-wrap has a unit badge, input gets joined border */
+.tse__num-wrap--unit .tse__input {
+  border-right: none;
+  border-radius: 4px 0 0 4px;
+}
+
+.tse__unit {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #9ca3af);
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+/* ── Unit badge (clickable unit switcher) ────────────────────────────────── */
+
+.tse__ubadge-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.tse__ubadge {
+  padding: 0 6px;
+  min-width: 28px;
+  height: 100%;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-secondary, #6b7280);
+  background: var(--color-surface-2, #f3f4f6);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.1s, color 0.1s;
+  letter-spacing: 0.2px;
+  line-height: 28px;
+}
+
+.tse__ubadge:hover {
+  background: var(--color-bg-hover, #e5e7eb);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.tse__upicker {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 200;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 5px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 52px;
+}
+
+.tse__uopt {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-primary, #1f2937);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.tse__uopt:hover {
+  background: var(--color-bg-hover, #f3f4f6);
+}
+
+.tse__uopt--active {
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+  font-weight: 700;
+}
+
+/* ── Color row ───────────────────────────────────────────────────────────── */
+
+.tse__color-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tse__color-pick {
+  width: 26px;
+  height: 26px;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.tse__color-nav {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 3px;
+  background: none;
+  color: var(--color-text-secondary, #6b7280);
+  cursor: pointer;
+  padding: 0;
+}
+.tse__color-nav:hover { border-color: #2563eb; color: #2563eb; }
+
+/* ── Section head inside table (like Avanzado in ParagraphStyleEditor) ─────── */
+
+.tse__section-head {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-secondary, #6b7280);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+/* ── Fill selector row ───────────────────────────────────────────────────── */
+
+.tse__fill-selector {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Color swatch button (opens fill+color popup) ─────────────────────────── */
+
+.tse__color-swatch-btn {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: border-color 0.12s;
+}
+.tse__color-swatch-btn:hover { border-color: var(--color-node-design, #3b82f6); }
+.tse__color-swatch-btn:disabled { cursor: default; opacity: 0.5; }
+
+.tse__color-hex-label {
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+/* ── Color Fill Popup (portal) ───────────────────────────────────────────── */
+
+.tse-cfp {
+  position: fixed;
+  z-index: 9999;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  padding: 10px;
+  width: 220px;
+}
+
+.tse-cfp__label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-tertiary, #9ca3af);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tse-cfp__count {
+  background: var(--color-surface-2, #f3f4f6);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+}
+
+.tse-cfp__fills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-bottom: 4px;
+}
+
+.tse-cfp__swatch-btn {
+  width: 22px;
+  height: 22px;
+  border: 2px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.1s, transform 0.1s;
+}
+.tse-cfp__swatch-btn:hover { border-color: var(--color-text-secondary, #6b7280); transform: scale(1.1); }
+.tse-cfp__swatch-btn--active { border-color: var(--color-node-design, #3b82f6); box-shadow: 0 0 0 1.5px var(--color-node-design, #3b82f6); }
+
+.tse-cfp__swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  display: block;
+  border: 1px solid rgba(0,0,0,0.1);
+}
+
+.tse-cfp__empty {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #9ca3af);
+  margin: 0 0 4px;
+}
+
+.tse-cfp__sep {
+  border: none;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+  margin: 8px 0;
+}
+
+.tse-cfp__color-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.tse-cfp__color-native {
+  width: 32px;
+  height: 28px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 2px;
+  background: none;
+  flex-shrink: 0;
+}
+
+.tse-cfp__hex {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: monospace;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+}
+.tse-cfp__hex:focus { border-color: var(--color-node-design, #3b82f6); }
+
+/* ── Hint text ───────────────────────────────────────────────────────────── */
+
+.tse__hint {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #9ca3af);
+  line-height: 1.4;
+  margin: 6px 0 0;
+  padding: 0 2px;
+}

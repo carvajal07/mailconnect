@@ -1,0 +1,34 @@
+/* CanvasRuler.css */
+
+.canvas-ruler {
+  display: block;
+}
+
+.canvas-ruler--h {
+  width: 100%;
+  min-width: 3000px;
+}
+
+.canvas-ruler--v {
+  height: 100%;
+  min-height: 3000px;
+}
+
+.ruler-bg {
+  fill: var(--color-canvas-ruler-bg);
+}
+
+.ruler-tick {
+  stroke: var(--color-canvas-ruler-tick);
+  stroke-width: 0.5;
+}
+
+.ruler-tick--major {
+  stroke-width: 1;
+}
+
+.ruler-label {
+  fill: var(--color-canvas-ruler-label);
+  font-size: 7px;
+  font-family: monospace;
+}

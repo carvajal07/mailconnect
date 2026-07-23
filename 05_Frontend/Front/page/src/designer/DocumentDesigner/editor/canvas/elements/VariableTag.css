@@ -1,0 +1,218 @@
+/* VariableTag.css — Inline variable chip inside contentEditable areas */
+
+/* ── Variable chip (atomic, non-editable inline element) ── */
+.var-tag {
+  display: inline;
+  padding: 1px 4px;
+  margin: 0 1px;
+  border-radius: 3px;
+  /* Inherit ALL text styles from surrounding context */
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  color: inherit;
+  text-decoration: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  white-space: nowrap;
+  cursor: default;
+  user-select: all;
+  vertical-align: baseline;
+  /* Subtle background highlight to indicate it's a variable */
+  background: rgba(124, 58, 237, 0.1);
+  border-bottom: 1.5px dashed rgba(124, 58, 237, 0.45);
+  border-top: none;
+  border-left: none;
+  border-right: none;
+}
+
+.var-tag::before {
+  content: '{{ ';
+  font-size: 0.8em;
+  opacity: 0.4;
+  color: #7c3aed;
+}
+
+.var-tag::after {
+  content: ' }}';
+  font-size: 0.8em;
+  opacity: 0.4;
+  color: #7c3aed;
+}
+
+/* Hover highlight */
+.var-tag:hover {
+  background: rgba(124, 58, 237, 0.18);
+  border-bottom-color: rgba(124, 58, 237, 0.6);
+}
+
+/* Selected state */
+.var-tag:focus,
+.var-tag::selection {
+  background: rgba(124, 58, 237, 0.22);
+}
+
+/* ── Preview mode: show resolved value ── */
+.var-tag--preview {
+  background: rgba(34, 197, 94, 0.1);
+  border-bottom-color: rgba(34, 197, 94, 0.4);
+  color: #15803d;
+}
+
+.var-tag--preview::before,
+.var-tag--preview::after {
+  display: none;
+}
+
+/* ── Variable tag in edit mode (selectable, clickable) ── */
+.cae__editor .var-tag {
+  cursor: pointer;
+  user-select: all;
+}
+
+/* ── Variable tag in view mode (non-editing) ── */
+.cae__content .var-tag {
+  pointer-events: none;
+}
+
+/* ── Preview mode via parent class ── */
+.cae__content--var-preview .var-tag {
+  background: rgba(34, 197, 94, 0.1);
+  border-bottom-color: rgba(34, 197, 94, 0.4);
+  color: #15803d;
+  white-space: normal;
+}
+
+.cae__content--var-preview .var-tag::before,
+.cae__content--var-preview .var-tag::after {
+  display: none;
+}
+
+/* ── Type badge inside tag (optional, for system vars) ── */
+.var-tag__type {
+  display: inline;
+  font-size: 0.75em;
+  font-weight: 700;
+  opacity: 0.4;
+  margin-right: 2px;
+  text-transform: uppercase;
+}
+
+/* ── Area-tag chip (inline sub-area reference) — hidden marker ── */
+/* display:none removes it completely from layout so it never causes line-breaks.
+   querySelectorAll still finds it. The --preview override restores display:inline
+   with full inherited text properties when the editor expands it. */
+.area-tag {
+  display: none;
+}
+
+/* ── Area-tag inline preview (edit mode: shows child area content inline) ──────── */
+/* display:inline so the sub-area content flows naturally with surrounding text.    */
+/* Block elements inside are pre-flattened to inline by blockToInline() in          */
+/* contentAreaUtils.expandAreaTagsForEditor, so no invalid HTML issues.             */
+/* contenteditable="false" prevents Chrome from absorbing adjacent text into this   */
+/* span's editing range (Bug: "Texto 2" loss). commitEdit() never reads this span's */
+/* innerHTML — it always restores from data-orig-html via collapseAreaTagsForEditor.*/
+.area-tag.area-tag--preview {
+  display: inline;
+  font-size: inherit;
+  line-height: inherit;
+  background: rgba(34, 197, 94, 0.08);
+  color: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  padding: 1px 3px;
+  margin: 0 1px;
+  border: none;
+  border-bottom: 1.5px solid rgba(34, 197, 94, 0.45);
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: default;
+  user-select: all;
+  text-decoration: none;
+  border-radius: 2px;
+  vertical-align: baseline;
+}
+
+.area-tag.area-tag--preview:hover {
+  background: rgba(34, 197, 94, 0.1);
+}
+
+/* ── Area content view indicator (view mode) — no visual indicator ── */
+.area-content-view {
+  text-decoration: none;
+}
+
+/* ── Element-tag chip (embedded block element in flow) ── */
+.element-tag {
+  display: block;
+  width: 100%;
+  margin: 4px 0;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 0.82em;
+  line-height: 1.4;
+  font-weight: 600;
+  font-style: normal;
+  color: #1d4ed8;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(29, 78, 216, 0.08);
+  border: 1.5px dashed rgba(29, 78, 216, 0.35);
+  box-sizing: border-box;
+}
+
+.element-tag:hover,
+.cae__editor .element-tag:hover {
+  background: rgba(29, 78, 216, 0.14);
+  border-color: rgba(29, 78, 216, 0.55);
+}
+
+.element-tag--selected {
+  background: rgba(29, 78, 216, 0.16);
+  border-color: #3b82f6;
+  outline: 2px solid #3b82f6;
+  outline-offset: 1px;
+}
+
+/* ── Element-tag rendered: muestra el elemento real en modo edición ── */
+/* Override display:block/width:100%/margin from .element-tag so the rendered
+   table span stays inline-block and doesn't create a phantom line-break after it. */
+.element-tag--rendered {
+  display: inline-block;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  vertical-align: top;
+  background: transparent;
+  border-style: solid;
+  border-color: rgba(29, 78, 216, 0.4);
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.element-tag--rendered.element-tag--selected {
+  border-color: #3b82f6;
+  outline: 2px solid #3b82f6;
+  outline-offset: 1px;
+}
+
+/* Repeated area badge in expanded view */
+.area-expand--repeated {
+  display: inline;
+  color: #059669;
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* Conditional area badge in expanded view */
+.area-expand--condition {
+  display: inline;
+  color: #d97706;
+  font-style: italic;
+  opacity: 0.7;
+}

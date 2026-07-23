@@ -1,0 +1,64 @@
+/* ChartElement.css */
+
+.che {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  position: relative;
+  background: #fff;
+}
+
+.che__svg {
+  width: 100%;
+  height: 100%;
+  line-height: 0;
+}
+.che__svg svg {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.che__loading,
+.che__error {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  text-align: center;
+  padding: 6px;
+  box-sizing: border-box;
+}
+.che__loading { color: var(--color-text-tertiary, #94a3b8); }
+.che__error {
+  color: #b45309;
+  background: repeating-linear-gradient(45deg, #fffbeb, #fffbeb 6px, #fef3c7 6px, #fef3c7 12px);
+}
+
+/* Indicador "dinámico" (vinculado a variable) — igual que el barcode. */
+.che__var-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: rgba(34, 197, 94, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.45);
+  z-index: 2;
+}
+.che__var-chip {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  max-width: calc(100% - 4px);
+  padding: 0 4px;
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(22, 163, 74, 0.92);
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

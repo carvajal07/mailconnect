@@ -1,0 +1,509 @@
+/* ContentAreaElement.css */
+
+.cae {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  /* Use outline (no layout impact) so content truly starts at (0,0) */
+  outline: 1.5px dashed rgba(124, 58, 237, 0.55);
+  outline-offset: -1px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: transparent;
+  font-family: inherit;
+  position: relative;
+}
+
+/* Editing state: allow ruler to overflow above the element */
+.cae--editing {
+  overflow: visible;
+}
+
+/* When real border/fill is applied via inline style, suppress the default dashed outline */
+.cae--styled {
+  outline: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* SVG border mode: overflow visible so RoundOut arcs protrude at corners */
+.cae--svg-border {
+  outline: none;
+  overflow: visible;
+  background: transparent;
+}
+
+/* Inner content wrapper (used in SVG border mode to clip bands at element bounds) */
+.cae__bands-inner {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.cae--editing .cae__bands-inner {
+  overflow: visible;
+}
+
+/* ── Area band ── */
+.cae__band {
+  position: relative;
+  border-bottom: 1px dashed rgba(124, 58, 237, 0.3);
+  overflow: hidden;
+  min-height: 8px;
+  /* display:flex + justifyContent set via inline style for vertical alignment */
+}
+
+.cae__band:last-child {
+  border-bottom: none;
+}
+
+/* Editing state: overflow visible so the ruler shows above the band */
+.cae__band--editing {
+  overflow: visible;
+  position: relative;
+}
+
+/* ── Content display (view mode) ── */
+.cae__content {
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* font-size, color, line-height, font-family, font-weight, font-style
+     are set via inline style from the area's defaultTextStyleId */
+}
+
+/* ── Text selection highlight (Word-like) ───────────────────────────────────
+   Light translucent fill that does NOT override `color`, so the selected text
+   keeps its own color/weight/style visible underneath (instead of an opaque
+   block that hides the formatting). Applies to the area editor and table-cell
+   editor and all their inner spans. */
+.cae__editor::selection,
+.cae__editor *::selection,
+.tele__cell--editing::selection,
+.tele__cell--editing *::selection {
+  background: rgba(100, 116, 139, 0.30);
+}
+.cae__editor::-moz-selection,
+.cae__editor *::-moz-selection,
+.tele__cell--editing::-moz-selection,
+.tele__cell--editing *::-moz-selection {
+  background: rgba(100, 116, 139, 0.30);
+}
+
+/* ── List styling (override designer-reset.css and Tailwind Preflight) ──────
+   designer-reset.css sets .dc-page ul/ol { list-style: none } at specificity
+   (0,1,1). Adding .dc-page to these selectors raises them to (0,2,1) so they
+   always win regardless of CSS load order. Non-prefixed versions are kept as
+   fallback for contexts outside the canvas (mini-canvas, etc.). */
+
+.cae__content ul,
+.cae__editor ul,
+.dc-page .cae__content ul,
+.dc-page .cae__editor ul {
+  list-style-type: disc;
+  margin: 2px 0;
+  padding-left: var(--list-indent, 22px);
+}
+
+.cae__content ol,
+.cae__editor ol,
+.dc-page .cae__content ol,
+.dc-page .cae__editor ol {
+  list-style-type: none;
+  counter-reset: oli;
+  margin: 2px 0;
+  padding-left: var(--list-indent, 22px);
+}
+
+.cae__content li,
+.cae__editor li,
+.dc-page .cae__content li,
+.dc-page .cae__editor li {
+  display: list-item;
+  margin: 0;
+  padding: 0;
+}
+
+/* Apply list marker color via ::marker (bullets) and ::before (numbers) */
+.cae__content ul > li::marker,
+.cae__editor ul > li::marker,
+.dc-page .cae__content ul > li::marker,
+.dc-page .cae__editor ul > li::marker {
+  color: var(--list-color, inherit);
+}
+
+/* Hierarchical numbering for ol: 1. → 1.1. → 1.1.1. */
+.cae__content ol > li,
+.cae__editor ol > li,
+.dc-page .cae__content ol > li,
+.dc-page .cae__editor ol > li {
+  list-style-type: none;
+  counter-increment: oli;
+}
+
+.cae__content ol > li::before,
+.cae__editor ol > li::before,
+.dc-page .cae__content ol > li::before,
+.dc-page .cae__editor ol > li::before {
+  content: counters(oli, ".") ". ";
+  color: var(--list-color, inherit);
+}
+
+/* Nested list indentation + alternate marker styles */
+.cae__content ul ul,
+.cae__editor ul ul,
+.dc-page .cae__content ul ul,
+.dc-page .cae__editor ul ul {
+  list-style-type: circle;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.cae__content ul ul ul,
+.cae__editor ul ul ul,
+.dc-page .cae__content ul ul ul,
+.dc-page .cae__editor ul ul ul {
+  list-style-type: square;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.cae__content ol ol,
+.cae__editor ol ol,
+.dc-page .cae__content ol ol,
+.dc-page .cae__editor ol ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.cae__content ol ol ol,
+.cae__editor ol ol ol,
+.dc-page .cae__content ol ol ol,
+.dc-page .cae__editor ol ol ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.cae__content ul ol,
+.cae__content ol ul,
+.cae__editor ul ol,
+.cae__editor ol ul,
+.dc-page .cae__content ul ol,
+.dc-page .cae__content ol ul,
+.dc-page .cae__editor ul ol,
+.dc-page .cae__editor ol ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+/* ── Bullet sub-styles (via data-list-style attribute) ── */
+
+.cae__content ul[data-list-style="circle"],
+.cae__editor ul[data-list-style="circle"],
+.dc-page .cae__content ul[data-list-style="circle"],
+.dc-page .cae__editor ul[data-list-style="circle"] {
+  list-style-type: circle;
+}
+
+.cae__content ul[data-list-style="square"],
+.cae__editor ul[data-list-style="square"],
+.dc-page .cae__content ul[data-list-style="square"],
+.dc-page .cae__editor ul[data-list-style="square"] {
+  list-style-type: square;
+}
+
+.cae__content ul[data-list-style="dash"] > li,
+.cae__editor ul[data-list-style="dash"] > li,
+.dc-page .cae__content ul[data-list-style="dash"] > li,
+.dc-page .cae__editor ul[data-list-style="dash"] > li {
+  list-style-type: '– ';
+}
+
+.cae__content ul[data-list-style="arrow"] > li,
+.cae__editor ul[data-list-style="arrow"] > li,
+.dc-page .cae__content ul[data-list-style="arrow"] > li,
+.dc-page .cae__editor ul[data-list-style="arrow"] > li {
+  list-style-type: '➤ ';
+}
+
+.cae__content ul[data-list-style="check"] > li,
+.cae__editor ul[data-list-style="check"] > li,
+.dc-page .cae__content ul[data-list-style="check"] > li,
+.dc-page .cae__editor ul[data-list-style="check"] > li {
+  list-style-type: '✓ ';
+}
+
+/* ── Number sub-styles (via data-list-style attribute on <ol>) ── */
+
+/* Parenthesis: 1) 2) 3) */
+.cae__content ol[data-list-style="decimal-paren"] > li::before,
+.cae__editor ol[data-list-style="decimal-paren"] > li::before {
+  content: counters(oli, ".") ") ";
+}
+
+/* Upper Roman: I. II. III. */
+.cae__content ol[data-list-style="upper-roman"] > li::before,
+.cae__editor ol[data-list-style="upper-roman"] > li::before {
+  content: counter(oli, upper-roman) ". ";
+}
+
+/* Upper Alpha: A. B. C. */
+.cae__content ol[data-list-style="upper-alpha"] > li::before,
+.cae__editor ol[data-list-style="upper-alpha"] > li::before {
+  content: counter(oli, upper-alpha) ". ";
+}
+
+/* Lower Alpha: a. b. c. */
+.cae__content ol[data-list-style="lower-alpha"] > li::before,
+.cae__editor ol[data-list-style="lower-alpha"] > li::before {
+  content: counter(oli, lower-alpha) ". ";
+}
+
+/* Lower Roman: i. ii. iii. */
+.cae__content ol[data-list-style="lower-roman"] > li::before,
+.cae__editor ol[data-list-style="lower-roman"] > li::before {
+  content: counter(oli, lower-roman) ". ";
+}
+
+/* Lower Alpha Parenthesis: a) b) c) */
+.cae__content ol[data-list-style="lower-alpha-paren"] > li::before,
+.cae__editor ol[data-list-style="lower-alpha-paren"] > li::before {
+  content: counter(oli, lower-alpha) ") ";
+}
+
+.cae__placeholder {
+  color: rgba(124, 58, 237, 0.3);
+  font-style: italic;
+  font-size: 10px;
+}
+
+/* ── FlowType badge (top-right corner, view mode only) ── */
+.cae__flow-badge {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 1px 4px;
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 10;
+  letter-spacing: 0.2px;
+}
+
+.cae__flow-badge--repeated {
+  background: rgba(5, 150, 105, 0.13);
+  color: #059669;
+}
+
+.cae__flow-badge--inline-condition {
+  background: rgba(217, 119, 6, 0.13);
+  color: #d97706;
+}
+
+.cae__flow-badge--section {
+  background: rgba(124, 58, 237, 0.12);
+  color: #7c3aed;
+}
+
+/* ── Layout / production-feature badges (bottom-left area) ── */
+.cae__layout-badge {
+  position: absolute;
+  bottom: 2px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #6366f1;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 3px;
+  padding: 0 3px;
+  line-height: 1.6;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Stack badges left to right */
+.cae__layout-badge:nth-of-type(1) { left: 2px; }
+.cae__layout-badge:nth-of-type(2) { left: 22px; }
+.cae__layout-badge:nth-of-type(3) { left: 42px; }
+.cae__layout-badge:nth-of-type(4) { left: 62px; }
+
+.cae__layout-badge--dh {
+  color: #059669;
+  background: rgba(5, 150, 105, 0.1);
+  border-color: rgba(5, 150, 105, 0.25);
+}
+
+/* Dynamic height: allow content to overflow the fixed box visually */
+.cae--dynamic-height {
+  overflow: visible !important;
+}
+
+/* ── Text content overflow indicator (content exceeds area height) ── */
+.cae__text-overflow {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
+  background: linear-gradient(to bottom, transparent, rgba(249, 115, 22, 0.13));
+  pointer-events: none;
+  z-index: 6;
+}
+
+.cae__text-overflow::after {
+  content: '↕';
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  color: #f97316;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(249, 115, 22, 0.35);
+  border-radius: 2px;
+  padding: 0 3px;
+  line-height: 1.6;
+}
+
+/* ── Overflow chain indicator (bottom-right corner) ── */
+.cae__overflow-badge {
+  position: absolute;
+  bottom: 2px;
+  right: 4px;
+  font-size: 10px;
+  color: #6366f1;
+  opacity: 0.75;
+  pointer-events: none;
+  z-index: 10;
+  line-height: 1;
+}
+
+/* ── Auto-desbordamiento (desborda en sí misma) — badge no intrusivo ── */
+.cae__self-badge {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 0 5px;
+  color: #fff;
+  background: rgba(124, 58, 237, 0.9);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 10;
+  white-space: nowrap;
+}
+
+/* ── Continuación de desbordamiento (recibe el flujo de otra área) ── */
+.cae--continuation {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(37, 99, 235, 0.04),
+    rgba(37, 99, 235, 0.04) 6px,
+    rgba(37, 99, 235, 0.09) 6px,
+    rgba(37, 99, 235, 0.09) 12px
+  );
+}
+.cae__continuation {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.cae__continuation-banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(37, 99, 235, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 2;
+}
+/* El cuerpo es solo lectura (preview del flujo de la cabecera): ligeramente
+   atenuado y sin capturar clics, para que la selección/arrastre del área siga
+   funcionando. Se ve el MISMO diseño que la cabecera (tablas, imágenes, etc.). */
+.cae__continuation-body {
+  opacity: 0.6;
+  pointer-events: none;
+  margin-top: 16px;       /* deja sitio al banner */
+  user-select: none;
+}
+
+/* ── Hidden state (visible = false): area preserved, content blanked ── */
+.cae--hidden {
+  opacity: 0.45;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 4px,
+    rgba(124, 58, 237, 0.06) 4px,
+    rgba(124, 58, 237, 0.06) 8px
+  ) !important;
+}
+
+.cae__hidden-state {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cae__hidden-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: rgba(124, 58, 237, 0.4);
+  font-style: italic;
+}
+
+/* ── Locked state: no-edit cursor, subtle lock badge ── */
+.cae--locked {
+  cursor: default !important;
+}
+
+.cae__lock-indicator {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(100, 116, 139, 0.65);
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ── Inline editor (edit mode) ── */
+.cae__editor {
+  width: 100%;
+  padding: 0;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  cursor: text;
+  background: rgba(255, 255, 255, 0.95);
+  caret-color: #7c3aed;
+  z-index: 3;
+  /* font-size, color, line-height, font-family, font-weight, font-style
+     are set via inline style from the area's defaultTextStyleId */
+}

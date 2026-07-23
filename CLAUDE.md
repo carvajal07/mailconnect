@@ -181,6 +181,51 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
    ✅ EAP ya reemplaza `{{unsubscribeUrl}}` por destinatario (mismo patrón que EAU; jul 2026).
    Requiere la env `SECRET_KEY` (y `UNSUBSCRIBE_URL`) también en `Send-batch-template-EAP`.
 
+### Tres niveles de plantillas PDF + motor estándar (jul 2026)
+> **Objetivo:** tres generadores de PDF en el portal, del más simple al más potente, con
+> **un solo contrato** de render por plantilla posicionada. Los diseñadores se trajeron
+> (COPIADOS, los repos `workflow*` originales NO se tocan) de:
+> `carvajal07/workflow` (pdfsketch) y `carvajal07/workflow-doc-studio` (DocumentDesigner);
+> el motor de `carvajal07/workflow-doc-studio-production` (pdf_engine, ReportLab).
+
+- **Nivel BÁSICO — "Plantillas PDF"** (sin cambios): editor tipo Word (`PdfTemplatesSection`,
+  HTML + xhtml2pdf vía `Api_V1_Template_Render-pdf`).
+- **Nivel MEDIO — "Estudio PDF"** (`PdfStudioSection` → chunk lazy `SketchStudio`): editor de
+  lienzo **pdfsketch** (Konva) copiado a `src/pdfsketch/`, scopeado bajo `.mc-sketch` (Tailwind
+  SOLO para esa carpeta, sin preflight → MUI intacto; alias `@` → `src/pdfsketch`). **El export
+  pasó de XML a JSON**: envelope `{schema:'pdfsketch@1', document}` (`json/documentJson.ts`),
+  que es lo que se guarda en el backend y lo que consume el motor.
+- **Nivel FULL — "Diseñador PDF"** (`DesignerPdfSection` → chunk lazy `DesignerStudio`): el
+  **DocumentDesigner** completo copiado a `src/designer/` (+ satélites `ScriptProcessor/config`,
+  `DataProcessor/engine/JsonPath`, `tokens.css`; `allowJs` activado en tsconfig). Abre como
+  overlay full-screen; las variables `{{campo}}` se alimentan con las **columnas de las bases**
+  del cliente. Gráficas (vega) quedan en chunk dinámico propio.
+- **Motor estándar** — lambda **`Api_V1_Template_Render-engine`** (`POST /Template/Render-engine`,
+  no-proxy, envelope): `pdf_engine/` de production **vendorizado** + `sketch_translator.py`
+  (pdfsketch JSON → templateJson: unidades mm/pt/px, var-tags `data-var` con rutas de punto,
+  warnings de elementos no soportados — pen/data-URI/rotación). Request:
+  `{ templateJson | sketch | messageTemplateId, data, store?, filename? }` → base64 o S3
+  (`attachment/pdf-preview/…`). Imágenes por URL http(s) (descarga a /tmp con tope). Fix real
+  al motor: `drawImage` con `ImageReader` en QR/barcode (con BytesIO reventaba).
+- **Persistencia:** `MessageTemplate_Create` (channel `PDF`) acepta ahora **tres formatos**:
+  `html` (básico), `sketchJson` (medio) o `templateJson` (full), guardados como **string JSON**
+  (`_json_field`). El front (`messageTemplatesService`) expone los tres campos; `Render-engine`
+  puede renderizar por `messageTemplateId` (valida tenant).
+- **Front:** `pdfEngineService.ts` (`RENDER_ENGINE`), tabs nuevos `estudio` y `disenador`
+  (`PortalSidebar`/`PortalPage`), visibles para todos los roles (como los demás tabs de plantillas).
+- **Pruebas:** `08_Pruebas/PruebasSeguridad/test_render_engine.py` (13: render real con
+  reportlab, traductor elemento a elemento, contrato del handler, S3 con moto, canal PDF
+  extendido). Suite completo en verde. `requirements.txt` suma reportlab/qrcode/pillow.
+- ⚠️ `[J]` (despliegue): crear `Api_V1_Template_Render-engine` + ruta `/Template/Render-engine`
+  (authorizer + CORS + mapping template con `customerId`/`customer`/`nit`); **layer** con
+  `reportlab` + `Pillow` (+ `qrcode`, `python-barcode`) para el runtime; IAM
+  `dynamodb:GetItem messageTemplate` + S3 `PutObject` (store). El paquete de la lambda incluye
+  `pdf_engine/`, `sketch_translator.py` y `fonts/` (el CD sube la carpeta completa).
+- ⚠️ Pendientes conocidos del motor (nivel FULL): tablas standalone usan el modelo viejo
+  (las de rowSets solo renderizan EMBEBIDAS en áreas), bordes de celda por `styleRef` sin
+  resolver, sin merges (`spanUp/spanLeft`), `flowType:'repeated'` sin implementar, sin render
+  de gráficas. El editor las diseña; cerrar esa brecha es la siguiente iteración del motor.
+
 ### Landing: login responsive, botones flotantes y asistente IA (jul 2026)
 - **Fix login en móvil:** en la landing el botón "Iniciar sesión" se ocultaba en pantallas
   ≤640px (clase `nav-hide` → `display:none`) y "desaparecía". Se quitó ese ocultamiento y se

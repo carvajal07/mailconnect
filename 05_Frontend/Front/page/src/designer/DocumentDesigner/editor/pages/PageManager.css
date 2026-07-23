@@ -1,0 +1,181 @@
+/* PageManager.css */
+
+.pm {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface, #ffffff);
+  flex-shrink: 0;
+  padding: 0 8px;
+  gap: 6px;
+  overflow: hidden;
+}
+
+/* ── Pages strip ──────────────────────────────────────────────────────── */
+.pm__pages {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  max-width: 30%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pm__pages::-webkit-scrollbar { display: none; }
+
+.pm__page {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-2, #f3f4f6);
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  user-select: none;
+  flex-shrink: 0;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.pm__page:hover { background: var(--color-surface-3, #e5e7eb); }
+
+.pm__page--active {
+  background: var(--color-node-design-light, #dbeafe);
+  border-color: var(--color-node-design, #3b82f6);
+  color: var(--color-node-design, #3b82f6);
+  font-weight: 600;
+}
+
+.pm__page--hidden { opacity: 0.5; font-style: italic; }
+
+.pm__page-num {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--color-text-tertiary, #9ca3af);
+  min-width: 12px;
+}
+
+.pm__page--active .pm__page-num { color: var(--color-node-design, #3b82f6); }
+
+.pm__page-name {
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pm__page-menu-btn {
+  opacity: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  padding: 1px;
+  display: flex;
+  align-items: center;
+  border-radius: 2px;
+  transition: opacity 0.12s;
+}
+.pm__page:hover .pm__page-menu-btn { opacity: 1; }
+
+/* ── Context menu ─────────────────────────────────────────────────────── */
+.pm__page-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  min-width: 140px;
+  z-index: 200;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pm__page-menu button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: var(--color-text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  text-align: left;
+  white-space: nowrap;
+}
+.pm__page-menu button:hover:not(:disabled) { background: var(--color-surface-2, #f3f4f6); }
+.pm__page-menu button:disabled { opacity: 0.4; cursor: not-allowed; }
+.pm__page-menu-danger { color: #dc2626 !important; }
+.pm__page-menu-danger:hover:not(:disabled) { background: #fef2f2 !important; }
+
+/* ── Spacer (rellena el resto del ancho tras las páginas) ─────────────── */
+.pm__spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Add button ───────────────────────────────────────────────────────── */
+.pm__add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px dashed var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.pm__add:hover {
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+/* ── Nav ──────────────────────────────────────────────────────────────── */
+.pm__nav {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--color-border);
+  padding-left: 8px;
+}
+
+.pm__nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.pm__nav-btn:hover:not(:disabled) { background: var(--color-surface-2, #f3f4f6); }
+.pm__nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.pm__nav-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding: 0 4px;
+  min-width: 36px;
+  text-align: center;
+}

@@ -1,0 +1,139 @@
+/* ElementBar.css — Vertical element insertion toolbar (left edge) */
+
+.ebar {
+  width: 36px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0;
+  background: var(--color-surface, #ffffff);
+  border-right: 1px solid var(--color-border);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.ebar__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+  color: var(--color-text-tertiary, #9ca3af);
+  transition: background 0.12s, color 0.12s;
+}
+
+.ebar__btn:hover {
+  background: var(--color-surface-2, #f3f4f6);
+  color: var(--color-text-primary);
+}
+
+.ebar__btn--active {
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.ebar__btn--active:hover {
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.ebar__sep {
+  width: 20px;
+  height: 1px;
+  background: var(--color-border, #e5e7eb);
+  margin: 3px 0;
+  flex-shrink: 0;
+}
+
+/* ── Table grid picker wrapper ────────────────────────────────────────── */
+
+.ebar__table-wrap {
+  position: relative;
+}
+
+/* ── Table grid picker panel — rendered via portal at fixed position ──── */
+
+.tgp {
+  position: fixed;
+  z-index: 9999;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.14), 0 2px 8px rgba(0,0,0,0.08);
+  padding: 10px;
+  min-width: 180px;
+  user-select: none;
+}
+
+.tgp__title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin: 0 0 8px;
+}
+
+.tgp__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.tgp__grid-row {
+  display: flex;
+  gap: 2px;
+}
+
+.tgp__cell {
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--color-border, #e5e7eb);
+  border-radius: 2px;
+  background: var(--color-surface-2, #f9fafb);
+  transition: border-color 0.08s, background 0.08s;
+  flex-shrink: 0;
+}
+
+.tgp__cell--active {
+  background: #dbeafe;
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.tgp__label {
+  margin: 8px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-node-design, #3b82f6);
+  text-align: center;
+  min-height: 16px;
+}
+
+.tgp__advanced {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 5px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-secondary, #4b5563);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tgp__advanced:hover {
+  border-color: var(--color-node-design, #3b82f6);
+  color: var(--color-node-design, #3b82f6);
+  background: var(--color-surface-2, #f3f4f6);
+}

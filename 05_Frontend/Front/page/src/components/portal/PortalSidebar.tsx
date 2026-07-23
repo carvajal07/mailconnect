@@ -14,6 +14,8 @@ import {
 import CodeIcon from '@mui/icons-material/Code';
 import DescriptionIcon from '@mui/icons-material/Description';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import DesignServicesIcon from '@mui/icons-material/DesignServices';
+import ArchitectureIcon from '@mui/icons-material/Architecture';
 import SmsIcon from '@mui/icons-material/Sms';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import CampaignIcon from '@mui/icons-material/Campaign';
@@ -47,6 +49,8 @@ export const PORTAL_TABS: PortalTab[] = [
   { id: 'html', label: 'Plantillas HTML', icon: <CodeIcon /> },
   { id: 'docx', label: 'Plantillas DOCX', icon: <DescriptionIcon /> },
   { id: 'pdf', label: 'Plantillas PDF', icon: <PictureAsPdfIcon /> },
+  { id: 'estudio', label: 'Estudio PDF', icon: <DesignServicesIcon /> },
+  { id: 'disenador', label: 'Diseñador PDF', icon: <ArchitectureIcon /> },
   { id: 'sms', label: 'Plantillas SMS', icon: <SmsIcon /> },
   { id: 'whatsapp', label: 'Plantillas WhatsApp', icon: <WhatsAppIcon />, dividerAfter: true },
   { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },

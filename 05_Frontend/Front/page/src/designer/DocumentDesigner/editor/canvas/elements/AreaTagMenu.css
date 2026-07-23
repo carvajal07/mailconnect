@@ -1,0 +1,87 @@
+/* AreaTagMenu.css — Floating menu for inserting area-tags */
+
+.atm {
+  position: fixed;
+  z-index: 10400;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14), 0 1px 4px rgba(0, 0, 0, 0.06);
+  padding: 4px;
+  min-width: 170px;
+  max-width: 260px;
+  font-size: 12px;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.atm__header {
+  padding: 4px 8px 6px;
+  color: #6b7280;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-bottom: 1px solid #f3f4f6;
+  margin-bottom: 2px;
+}
+
+.atm__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  text-align: left;
+  cursor: pointer;
+  color: #1f2937;
+  font-size: 12px;
+  transition: background 0.08s;
+}
+
+.atm__item:hover {
+  background: #f3f4f6;
+}
+
+.atm__icon {
+  color: #059669;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.atm__item--new {
+  color: #059669;
+  font-weight: 500;
+}
+
+.atm__item--new svg {
+  flex-shrink: 0;
+}
+
+.atm__sep {
+  height: 1px;
+  background: #f3f4f6;
+  margin: 4px 0;
+}
+
+.atm__empty {
+  padding: 4px 8px 6px;
+  color: #9ca3af;
+  font-size: 11px;
+  font-style: italic;
+}
+
+.atm__item--embed {
+  color: #1d4ed8;
+  font-weight: 500;
+}
+
+.atm__item--embed:hover {
+  background: #eff6ff;
+}
+
+.atm__icon--embed {
+  color: #1d4ed8;
+}

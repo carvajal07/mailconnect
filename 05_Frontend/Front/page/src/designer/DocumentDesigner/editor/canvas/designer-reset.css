@@ -1,0 +1,139 @@
+/*
+ * designer-reset.css
+ * Scoped CSS reset for the document canvas page (.dc-page).
+ * Eliminates browser-injected UA styles so elements render pixel-perfect.
+ * Inspired by Eric Meyer's reset + Josh W Comeau's modern reset, but scoped
+ * only to the white page surface — editor UI panels are NOT affected.
+ */
+
+/* ── Universal box-sizing ────────────────────────────────────────────────── */
+.dc-page *,
+.dc-page *::before,
+.dc-page *::after {
+  box-sizing: border-box;
+}
+
+/* ── Block elements: strip all margin / padding / border ─────────────────── */
+.dc-page h1,
+.dc-page h2,
+.dc-page h3,
+.dc-page h4,
+.dc-page h5,
+.dc-page h6,
+.dc-page p,
+.dc-page blockquote,
+.dc-page figure,
+.dc-page figcaption,
+.dc-page pre,
+.dc-page ul,
+.dc-page ol,
+.dc-page li,
+.dc-page dl,
+.dc-page dt,
+.dc-page dd,
+.dc-page hr,
+.dc-page fieldset,
+.dc-page legend {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+/* ── Lists: remove bullets / counters ────────────────────────────────────── */
+.dc-page ul,
+.dc-page ol {
+  list-style: none;
+}
+
+/* ── Table: collapse borders, kill cell spacing ─────────────────────────── */
+/*
+ * The most important rule for pixel-perfect tables.
+ * `border-collapse: collapse` removes inter-cell gaps.
+ * `border-spacing: 0` is redundant with collapse but makes intent explicit.
+ */
+.dc-page table {
+  border-collapse: collapse;
+  border-spacing: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  table-layout: fixed;
+  font-size: inherit;
+  color: inherit;
+}
+
+.dc-page caption,
+.dc-page thead,
+.dc-page tbody,
+.dc-page tfoot,
+.dc-page tr,
+.dc-page th,
+.dc-page td {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  line-height: inherit;
+  color: inherit;
+  vertical-align: top;
+  text-align: left;
+  background: transparent;
+}
+
+/* ── Media elements ──────────────────────────────────────────────────────── */
+.dc-page img,
+.dc-page svg,
+.dc-page video,
+.dc-page canvas {
+  display: block;
+  max-width: 100%;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Inline elements ─────────────────────────────────────────────────────── */
+.dc-page a {
+  color: inherit;
+  text-decoration: inherit;
+}
+
+.dc-page b,
+.dc-page strong {
+  font-weight: inherit;
+}
+
+.dc-page i,
+.dc-page em {
+  font-style: inherit;
+}
+
+.dc-page sub,
+.dc-page sup {
+  font-size: 100%;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+
+/* ── Form elements (if used inside doc) ──────────────────────────────────── */
+.dc-page button,
+.dc-page input,
+.dc-page select,
+.dc-page textarea {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+}

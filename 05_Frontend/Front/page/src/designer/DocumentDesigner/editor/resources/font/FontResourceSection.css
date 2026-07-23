@@ -1,0 +1,49 @@
+/* FontResourceSection.css — only font-specific additions; structure uses dsb-resource__* */
+
+/* ── Font preview chip inside each item row ─────────────────────────────────── */
+
+.frs__preview {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-text-primary, #111827);
+  line-height: 1;
+  min-width: 22px;
+  text-align: left;
+}
+
+/* ── Empty state upload hint ─────────────────────────────────────────────────── */
+
+.frs__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.frs__upload-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 5px 8px;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-node-design, #3b82f6);
+  background: transparent;
+  border: 1px dashed rgba(59, 130, 246, 0.35);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.frs__upload-hint:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.07);
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.frs__upload-hint:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

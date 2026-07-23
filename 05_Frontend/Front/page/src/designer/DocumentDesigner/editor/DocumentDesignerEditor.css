@@ -1,0 +1,314 @@
+/* DocumentDesignerEditor.css */
+
+/* ── Overlay full-screen ──────────────────────────────────────────────── */
+.dde-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: var(--color-bg-canvas, #f1f5f9);
+  display: flex;
+  flex-direction: column;
+}
+
+.dde-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── Header (single row) ─────────────────────────────────────────────── */
+.dde-header {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 8px;
+  background: var(--color-surface, #ffffff);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.dde-header__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.dde-header__title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+
+.dde-header__center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.dde-header__right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.dde-header__sep {
+  width: 1px;
+  height: 20px;
+  background: var(--color-border, #e5e7eb);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* ── Body: sidebar + canvas + properties ─────────────────────────────── */
+.dde-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── Canvas area (centro) ─────────────────────────────────────────────── */
+.dde-canvas-area {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--color-bg-canvas, #e2e8f0);
+}
+
+/* ── Layout zones ─────────────────────────────────────────────────────── */
+
+/* Top / bottom horizontal bars */
+.dde-zone-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  background: var(--color-surface, #fff);
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.dde-zone-bar:last-of-type {
+  border-bottom: none;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+/* Left / right vertical columns */
+.dde-zone-col {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--color-surface, #fff);
+  min-width: 180px;
+}
+
+/* Individual panel slot */
+.dde-zone-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Text-toolbar and element-bar don't grow/shrink the same way */
+.dde-zone-panel[data-panel="text-toolbar"],
+.dde-zone-panel[data-panel="element-bar"] {
+  flex: 0 0 auto;
+}
+
+/* In a horizontal bar, panels sit side by side */
+.dde-zone-bar .dde-zone-panel {
+  flex: 0 0 auto;
+}
+
+/* ── Botones de header ────────────────────────────────────────────────── */
+.dde-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s, opacity 0.15s;
+  white-space: nowrap;
+}
+
+.dde-btn--primary {
+  background: var(--color-node-design, #3b82f6);
+  color: #ffffff;
+}
+
+.dde-btn--primary:hover {
+  opacity: 0.88;
+}
+
+.dde-btn--ghost {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border-color: var(--color-border);
+}
+
+.dde-btn--ghost:hover {
+  background: var(--color-surface-2, #f3f4f6);
+}
+
+/* ── Zone sides (left/right wrappers) ─────────────────────────────── */
+.dde-zone-side {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+/* Borders now provided by resize handle */
+
+/* ── Resize handle ────────────────────────────────────────────────────── */
+.dde-resize-handle {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+  user-select: none;
+  position: relative;
+}
+
+.dde-resize-handle--left,
+.dde-resize-handle--left2 {
+  border-right: 1px solid var(--color-border, #e5e7eb);
+}
+
+.dde-resize-handle--right,
+.dde-resize-handle--right2 {
+  border-left: 1px solid var(--color-border, #e5e7eb);
+}
+
+.dde-resize-handle:hover {
+  background: var(--color-node-design-light, #dbeafe);
+}
+
+.dde-resize-handle:hover::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 24px;
+  border-radius: 2px;
+  background: var(--color-node-design, #3b82f6);
+  opacity: 0.6;
+}
+
+/* ── Tabbed column ────────────────────────────────────────────────── */
+.dde-zone-col--tabbed {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--color-surface, #fff);
+  min-width: 180px;
+}
+
+.dde-zone-tabs {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-surface-2, #f9fafb);
+}
+
+.dde-zone-tab {
+  flex: 1;
+  padding: 5px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #6b7280);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.dde-zone-tab:hover {
+  color: var(--color-text-primary, #111827);
+  background: var(--color-surface, #fff);
+}
+
+.dde-zone-tab--active {
+  color: var(--color-node-design, #3b82f6);
+  border-bottom-color: var(--color-node-design, #3b82f6);
+  background: var(--color-surface, #fff);
+  font-weight: 600;
+}
+
+.dde-zone-tab-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ── Split column — paneles siempre visibles ──────────────────────── */
+.dde-zone-col--split {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--color-surface, #fff);
+  min-width: 180px;
+}
+
+.dde-zone-split-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 80px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.dde-zone-split-section:last-child {
+  border-bottom: none;
+}
+
+.dde-zone-split-header {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-secondary, #6b7280);
+  background: var(--color-surface-2, #f9fafb);
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.dde-zone-split-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}

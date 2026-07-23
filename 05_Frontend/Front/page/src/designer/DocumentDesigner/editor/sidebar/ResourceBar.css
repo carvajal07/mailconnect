@@ -1,0 +1,63 @@
+/* ResourceBar.css — Icon strip for quick resource access */
+
+/* Vertical mode (legacy) */
+.rbar {
+  width: 36px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0;
+  background: var(--color-surface, #ffffff);
+  border-right: 1px solid var(--color-border);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Horizontal mode (bottom of sidebar) */
+.rbar--horizontal {
+  width: auto;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 1px;
+  padding: 4px 2px;
+  border-right: none;
+  overflow: visible;
+}
+
+.rbar__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  color: var(--color-text-tertiary, #9ca3af);
+  transition: background 0.12s, color 0.12s;
+  flex-shrink: 0;
+}
+
+.rbar--horizontal .rbar__btn {
+  width: 22px;
+  height: 22px;
+}
+
+.rbar__btn:hover {
+  background: var(--color-surface-2, #f3f4f6);
+  color: var(--color-text-primary);
+}
+
+.rbar__btn--active {
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.rbar__btn--active:hover {
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+}

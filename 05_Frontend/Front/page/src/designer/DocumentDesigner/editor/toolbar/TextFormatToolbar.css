@@ -1,0 +1,933 @@
+/* TextFormatToolbar.css — Inline text formatting controls (header center) */
+
+.tft {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+/* Disabled state — all children muted */
+.tft--disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* ── Buttons (Bold, Italic, Align, etc.) ────────────────────────────────── */
+
+.tft__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-secondary, #6b7280);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+
+.tft__btn:hover:not(:disabled) {
+  background: var(--color-surface-2, #f3f4f6);
+  color: var(--color-text-primary, #111827);
+}
+
+.tft__btn:disabled {
+  cursor: not-allowed;
+}
+
+.tft__btn--active {
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.tft__btn--active:hover {
+  background: var(--color-node-design-light, #dbeafe);
+}
+
+/* ── Separator ──────────────────────────────────────────────────────────── */
+
+.tft__sep {
+  width: 1px;
+  height: 18px;
+  background: var(--color-border, #e5e7eb);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* ── Select wrappers (font family, weight) ──────────────────────────────── */
+
+.tft__select-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.tft__select {
+  appearance: none;
+  padding: 3px 20px 3px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+  cursor: pointer;
+  height: 26px;
+  transition: border-color 0.12s;
+}
+
+.tft__select:focus {
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.tft__select--font {
+  width: 120px;
+}
+
+.tft__select--weight {
+  width: 82px;
+}
+
+.tft__select-arrow {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-tertiary, #9ca3af);
+  pointer-events: none;
+}
+
+/* ── Font size input ────────────────────────────────────────────────────── */
+
+.tft__size-wrap {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.tft__size-arrows {
+  display: flex;
+  flex-direction: column;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.tft__size-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 13px;
+  padding: 0;
+  border: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-surface-2, #f3f4f6);
+  color: var(--color-text-tertiary, #9ca3af);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.tft__size-arrow:first-child {
+  border-radius: 4px 0 0 0;
+  border-bottom: none;
+}
+
+.tft__size-arrow:last-child {
+  border-radius: 0 0 0 4px;
+}
+
+.tft__size-arrow:hover:not(:disabled) {
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+}
+
+.tft__size-arrow:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.tft__size-input {
+  width: 42px;
+  height: 26px;
+  padding: 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-left: none;
+  border-right: none;
+  border-radius: 0;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+  box-sizing: border-box;
+  -moz-appearance: textfield;
+}
+
+.tft__size-input::-webkit-inner-spin-button,
+.tft__size-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.tft__size-input:focus {
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.tft__size-unit {
+  height: 26px;
+  line-height: 26px;
+  padding: 0 5px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--color-text-tertiary, #9ca3af);
+  background: var(--color-surface-2, #f3f4f6);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.tft__size-unit:hover:not(:disabled) {
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+}
+
+.tft__size-unit:disabled {
+  cursor: not-allowed;
+}
+
+/* ── Color picker ───────────────────────────────────────────────────────── */
+
+.tft__color-wrap {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.tft__color-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+
+.tft__color-wrap::before {
+  content: 'A';
+  position: absolute;
+  top: 1px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-primary, #111827);
+  pointer-events: none;
+  line-height: 18px;
+}
+
+.tft__color-bar {
+  position: absolute;
+  bottom: 2px;
+  left: 3px;
+  right: 3px;
+  height: 3px;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+/* Transparent button overlaid on the color-wrap (opens the popup) */
+.tft__color-trigger {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  z-index: 1;
+}
+
+.tft__color-wrap--disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* ── TextColorButton popup ────────────────────────────────────────────── */
+
+.tcb-popup {
+  position: fixed;
+  z-index: 10200;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  padding: 8px;
+  min-width: 190px;
+  max-width: 240px;
+}
+
+.tcb-popup__section-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--color-text-tertiary, #9ca3af);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0 2px 4px;
+}
+
+.tcb-popup__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-bottom: 4px;
+}
+
+.tcb-popup__swatch-btn {
+  width: 22px;
+  height: 22px;
+  padding: 2px;
+  border: 1.5px solid var(--color-border, #d1d5db);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  transition: border-color 0.1s, transform 0.1s;
+}
+
+.tcb-popup__swatch-btn:hover {
+  border-color: var(--color-text-secondary, #6b7280);
+  transform: scale(1.1);
+}
+
+.tcb-popup__swatch-btn--active {
+  border-color: var(--color-node-design, #3b82f6);
+  box-shadow: 0 0 0 1.5px var(--color-node-design, #3b82f6);
+}
+
+.tcb-popup__swatch {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.tcb-popup__sep {
+  height: 1px;
+  background: var(--color-border, #e5e7eb);
+  margin: 6px 0;
+}
+
+.tcb-popup__color-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tcb-popup__color-native {
+  width: 28px;
+  height: 24px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  padding: 1px;
+  cursor: pointer;
+  background: none;
+  flex-shrink: 0;
+}
+
+.tcb-popup__hex {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-family: monospace;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+}
+
+.tcb-popup__hex:focus {
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.tcb-popup__count {
+  margin-left: 4px;
+  font-size: 9px;
+  color: var(--color-text-tertiary, #9ca3af);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.tcb-popup__hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary, #9ca3af);
+  font-style: italic;
+  margin: 0 0 6px;
+  padding: 0 2px;
+}
+
+.tcb-popup__footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+.tcb-popup__create-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #2563eb;
+  background: none;
+  border: 1px solid #2563eb;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+
+.tcb-popup__create-btn:hover { background: #eff6ff; }
+
+/* ── Hyperlink button + modal ───────────────────────────────────────────── */
+
+.tft__link-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.tft-link-modal {
+  position: fixed;
+  transform: translateX(-50%);
+  z-index: 10100;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  min-width: 280px;
+}
+
+.tft-link-modal__form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tft-link-modal__input {
+  flex: 1;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+  min-width: 0;
+}
+
+.tft-link-modal__input:focus {
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.tft-link-modal__ok,
+.tft-link-modal__rm,
+.tft-link-modal__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface-2, #f3f4f6);
+  color: var(--color-text-secondary, #6b7280);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.1s, color 0.1s;
+}
+
+.tft-link-modal__ok:hover {
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.tft-link-modal__rm:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.tft-link-modal__close:hover {
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+}
+
+/* ── Mini fields (LH, LS) ──────────────────────────────────────────────── */
+
+.tft__mini-field {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+}
+
+.tft__mini-label {
+  height: 26px;
+  line-height: 26px;
+  padding: 0 4px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--color-text-tertiary, #9ca3af);
+  background: var(--color-surface-2, #f3f4f6);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-right: none;
+  border-radius: 4px 0 0 4px;
+  box-sizing: border-box;
+  letter-spacing: 0.3px;
+}
+
+.tft__mini-input {
+  width: 40px;
+  height: 26px;
+  padding: 0 3px;
+  font-size: 11px;
+  text-align: center;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 0 4px 4px 0;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  outline: none;
+  box-sizing: border-box;
+  -moz-appearance: textfield;
+}
+
+.tft__mini-input::-webkit-inner-spin-button,
+.tft__mini-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.tft__mini-input:focus {
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+/* ── Style pickers (Text Style / Paragraph Style) ──────────────────────── */
+
+.tft__style-picker {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 0;
+}
+
+.tft__style-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 6px 0 5px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px 0 0 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  /* Ancho FIJO: el botón no debe crecer/encogerse según el largo del nombre del
+     estilo (eso movía toda la barra). El nombre se trunca con ellipsis. */
+  width: 150px;
+  box-sizing: border-box;
+  transition: border-color 0.12s, background 0.1s;
+}
+
+/* Los íconos (Type / Pilcrow / Chevron) no se comprimen; solo el nombre flexiona. */
+.tft__style-btn > svg {
+  flex-shrink: 0;
+}
+
+.tft__style-btn:hover:not(:disabled) {
+  background: var(--color-surface-2, #f3f4f6);
+  border-color: var(--color-text-tertiary, #9ca3af);
+}
+
+.tft__style-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.tft__style-btn__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.tft__style-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 26px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+  background: var(--color-surface-2, #f3f4f6);
+  color: var(--color-text-tertiary, #9ca3af);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.1s, color 0.1s;
+}
+
+.tft__style-nav:hover:not(:disabled) {
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.tft__style-nav:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+/* When there's no navigate button, round the right side */
+.tft__style-btn:last-child {
+  border-radius: 4px;
+}
+
+/* ── Style dropdown (text/paragraph style list) ──────────────────────── */
+
+.tft__style-dropdown {
+  z-index: 10200;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  padding: 6px;
+  min-width: 200px;
+  max-width: 300px;
+}
+
+.tft__style-dropdown__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 5px 6px;
+}
+
+.tft__style-dropdown__title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-tertiary, #9ca3af);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tft__style-dropdown__add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-node-design, #3b82f6);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.tft__style-dropdown__add:hover {
+  background: var(--color-node-design-light, #dbeafe);
+  border-color: var(--color-node-design, #3b82f6);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.tft__style-dropdown__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.tft__style-dropdown__item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.tft__style-dropdown__item:hover {
+  background: var(--color-surface-2, #f3f4f6);
+}
+
+.tft__style-dropdown__item--active {
+  background: var(--color-node-design-light, #dbeafe);
+}
+
+.tft__style-dropdown__item-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tft__style-dropdown__item-preview {
+  font-size: 9px;
+  color: var(--color-text-tertiary, #9ca3af);
+  font-weight: 400;
+  font-style: normal;
+}
+
+.tft__style-dropdown__empty {
+  padding: 12px 8px;
+  font-size: 11px;
+  color: var(--color-text-tertiary, #9ca3af);
+  text-align: center;
+  font-style: italic;
+}
+
+/* ── List split buttons (main + arrow dropdown) ────────────────────────── */
+
+.tft__list-split {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.tft__btn--split-main {
+  border-radius: 4px 0 0 4px;
+}
+
+.tft__list-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 26px;
+  border: none;
+  border-radius: 0 4px 4px 0;
+  background: transparent;
+  color: var(--color-text-tertiary, #9ca3af);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.1s, color 0.1s;
+}
+
+.tft__list-arrow:hover:not(:disabled) {
+  background: var(--color-surface-2, #f3f4f6);
+  color: var(--color-text-primary, #111827);
+}
+
+.tft__list-arrow--active {
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.tft__list-arrow:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/* ── List style dropdown ───────────────────────────────────────────────── */
+
+.tft__list-dropdown {
+  z-index: 10200;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  padding: 8px;
+  min-width: 180px;
+}
+
+.tft__list-dropdown__title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #6b7280);
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  margin-bottom: 6px;
+}
+
+.tft__list-dropdown__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.tft__list-dropdown__grid--num {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.tft__list-dropdown__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 4px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  background: var(--color-surface, #fff);
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+  min-height: 44px;
+}
+
+.tft__list-dropdown__item:hover {
+  background: var(--color-surface-2, #f3f4f6);
+  border-color: var(--color-text-tertiary, #9ca3af);
+}
+
+.tft__list-dropdown__item--active {
+  background: var(--color-node-design-light, #dbeafe);
+  border-color: var(--color-node-design, #3b82f6);
+}
+
+.tft__list-dropdown__symbol {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--color-text-primary, #111827);
+}
+
+.tft__list-dropdown__label {
+  font-size: 9px;
+  color: var(--color-text-secondary, #6b7280);
+  margin-top: 2px;
+}
+
+.tft__list-dropdown__item--num {
+  padding: 6px;
+}
+
+.tft__list-dropdown__lines {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--color-text-primary, #111827);
+  white-space: nowrap;
+  text-align: left;
+}
+
+.tft__list-dropdown__lines div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.tft__list-dropdown__none {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px;
+  border: none;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+  background: transparent;
+  font-size: 11px;
+  color: var(--color-text-secondary, #6b7280);
+  cursor: pointer;
+  text-align: left;
+  border-radius: 0;
+  transition: background 0.1s;
+}
+
+.tft__list-dropdown__none:hover {
+  background: var(--color-surface-2, #f3f4f6);
+  color: var(--color-text-primary, #111827);
+}
+
+/* ── List dropdown: marker color section ─────────────────────────────── */
+
+.tft__list-dropdown__color-section {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+.tft__list-dropdown__color-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #6b7280);
+  margin-bottom: 4px;
+  padding: 0 2px;
+}
+
+.tft__list-dropdown__color-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.tft__list-dropdown__color-chip {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1.5px solid var(--color-border, #d1d5db);
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.1s, transform 0.1s;
+  background: repeating-conic-gradient(#e5e7eb 0% 25%, #fff 0% 50%) 50% / 8px 8px;
+}
+
+.tft__list-dropdown__color-chip:hover {
+  transform: scale(1.15);
+  border-color: var(--color-text-tertiary, #9ca3af);
+}
+
+.tft__list-dropdown__color-chip--active {
+  border-color: var(--color-node-design, #3b82f6);
+  box-shadow: 0 0 0 1.5px var(--color-node-design, #3b82f6);
+}
+
+.tft__list-dropdown__color-x {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #9ca3af);
+  line-height: 1;
+}
+
+.tft__list-dropdown__color-custom {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1.5px solid var(--color-border, #d1d5db);
+  border-radius: 3px;
+  cursor: pointer;
+  background: none;
+}
+
+.tft__list-dropdown__color-custom::-webkit-color-swatch-wrapper { padding: 0; }
+.tft__list-dropdown__color-custom::-webkit-color-swatch { border: none; border-radius: 1px; }

@@ -1,0 +1,28 @@
+/* QRElement.css */
+
+.qre {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-2, #f3f4f6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.qre__icon {
+  color: var(--color-text-secondary);
+}
+
+.qre__label {
+  font-size: 9px;
+  color: var(--color-text-tertiary, #9ca3af);
+  text-align: center;
+  padding: 0 4px;
+  word-break: break-all;
+  max-width: 100%;
+}

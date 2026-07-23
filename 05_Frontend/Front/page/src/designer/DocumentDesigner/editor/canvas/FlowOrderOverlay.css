@@ -1,0 +1,96 @@
+/* FlowOrderOverlay.css — modo "Orden de desbordamiento" */
+
+.flo__svg { pointer-events: none; }
+
+/* Zona clicable sobre cada área de contenido (solo con la herramienta activa). */
+.flo__rect {
+  box-sizing: border-box;
+  cursor: pointer;
+  border: 2px dashed transparent;
+  border-radius: 3px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.flo__rect:hover {
+  background: rgba(37, 99, 235, 0.08);
+  border-color: rgba(37, 99, 235, 0.55);
+}
+/* Área que ya está en una cadena. */
+.flo__rect--chain {
+  border-color: rgba(37, 99, 235, 0.3);
+  border-style: solid;
+}
+/* Origen armado (esperando el destino). */
+.flo__rect--armed {
+  background: rgba(37, 99, 235, 0.14);
+  border-color: #2563eb;
+  border-style: solid;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
+}
+
+/* Número de orden dentro de la cadena. */
+.flo__order {
+  position: absolute;
+  top: -9px;
+  left: -9px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: #2563eb;
+  border: 1.5px solid #fff;
+  border-radius: 999px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Área con auto-desbordamiento (desborda en sí misma). */
+.flo__rect--self {
+  border-color: #7c3aed;
+  border-style: solid;
+}
+
+/* Chip ↻ para activar/desactivar el auto-desbordamiento. */
+.flo__self-chip {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  color: #7c3aed;
+  background: #fff;
+  border: 1.5px solid #7c3aed;
+  border-radius: 999px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  padding: 0;
+}
+.flo__self-chip:hover { background: #f5f3ff; }
+.flo__self-chip--on {
+  color: #fff;
+  background: #7c3aed;
+}
+
+/* Chip de enlace entre páginas. */
+.flo__chip {
+  position: absolute;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #fff;
+  background: #db2777;
+  border: 1px solid #fff;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}

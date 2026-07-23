@@ -1,0 +1,72 @@
+/* BorderTab.css — Styles for the border properties tab */
+
+.bt-unit-hint {
+  margin: -6px 0 10px;
+  font-size: 10px;
+  color: var(--color-text-tertiary, #9ca3af);
+  text-align: right;
+}
+
+/* ── Named style row (select + edit button) ───────────────────────────────── */
+
+.bt-style-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bt-style-row .pp-field__select {
+  flex: 1;
+  min-width: 0;
+}
+
+.bt-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-secondary, #6b7280);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.bt-edit-btn:hover {
+  border-color: #7c3aed;
+  background: rgba(124, 58, 237, 0.06);
+  color: #7c3aed;
+}
+
+/* ── SideInput ────────────────────────────────────────────────────────────── */
+
+.bt-side-input {
+  margin-bottom: 8px;
+}
+
+/* ── Color row ───────────────────────────────────────────────────────────── */
+
+.bt-color-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bt-color-pick {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  padding: 1px;
+  cursor: pointer;
+  background: none;
+}
+
+.bt-color-text {
+  font-family: ui-monospace, monospace;
+  width: 80px;
+}

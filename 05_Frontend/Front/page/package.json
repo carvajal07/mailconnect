@@ -15,27 +15,48 @@
     "@mui/icons-material": "^7.3.5",
     "@mui/material": "^7.3.5",
     "@xyflow/react": "^12.11.2",
+    "bwip-js": "^4.11.2",
+    "dompurify": "^3.4.12",
+    "jsbarcode": "^3.12.3",
+    "konva": "^9.3.16",
     "libphonenumber-js": "^1.13.8",
+    "lucide-react": "^0.577.0",
+    "qrcode": "^1.5.4",
     "react": "^19.2.0",
+    "react-arborist": "^3.4.3",
     "react-dom": "^19.2.0",
+    "react-konva": "^19.0.10",
+    "react-resizable-panels": "^2.1.7",
     "react-router-dom": "^7.9.6",
-    "read-excel-file": "^9.3.1"
+    "read-excel-file": "^9.3.1",
+    "vega": "^6.3.1",
+    "vega-lite": "^6.4.3",
+    "zundo": "^2.3.0",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@types/node": "^24.10.0",
+    "@types/qrcode": "^1.5.5",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^5.1.0",
+    "autoprefixer": "^10.4.21",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.3",
     "vite": "npm:rolldown-vite@7.2.2"
   },
   "overrides": {
-    "vite": "npm:rolldown-vite@7.2.2"
+    "vite": "npm:rolldown-vite@7.2.2",
+    "react-arborist": {
+      "react": "$react",
+      "react-dom": "$react-dom"
+    }
   }
 }

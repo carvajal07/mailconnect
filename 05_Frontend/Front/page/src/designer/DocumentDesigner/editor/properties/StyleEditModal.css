@@ -1,0 +1,90 @@
+/* StyleEditModal.css — Modal de edición de estilo (texto/párrafo/viñetas) */
+
+.sem-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Por encima de .dde-overlay (z-index: 9999) — el editor full-screen. El portal
+     vive en <body>, fuera del stacking context del editor, así que necesita > 9999. */
+  z-index: 10000;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.sem {
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  max-width: 100%;
+  max-height: 90vh;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.sem__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-surface-2, #f9fafb);
+  flex-shrink: 0;
+}
+
+.sem__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-primary, #111827);
+}
+
+.sem__close {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--color-text-secondary, #6b7280);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.sem__close:hover { background: var(--color-surface-3, #e5e7eb); color: var(--color-text-primary, #111827); }
+
+.sem__body {
+  padding: 14px 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.sem__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-surface-2, #f9fafb);
+  flex-shrink: 0;
+}
+
+.sem__btn {
+  padding: 7px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #111827);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.sem__btn:hover { background: var(--color-surface-2, #f3f4f6); }
+
+.sem__btn--primary {
+  border-color: var(--color-node-design, #3b82f6);
+  background: var(--color-node-design, #3b82f6);
+  color: #fff;
+}
+.sem__btn--primary:hover { background: #2563eb; border-color: #2563eb; }

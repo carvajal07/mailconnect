@@ -1,0 +1,125 @@
+/* TextTab.css — Text style properties in ElementPanel */
+
+/* ── Named style selector ────────────────────────────────────────────────── */
+
+.tt__style-row {
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.tt__style-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.tt__nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--color-surface-2, #f3f4f6);
+  color: var(--color-node-design, #3b82f6);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s;
+}
+
+.tt__nav-btn:hover {
+  background: var(--color-node-design-light, #dbeafe);
+}
+
+.tt__linked-hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary, #9ca3af);
+  margin: 0 0 8px;
+  font-style: italic;
+}
+
+/* ── Color row ───────────────────────────────────────────────────────────── */
+
+.tt__color-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.tt__color-pick {
+  width: 28px;
+  height: 28px;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.tt__hex-input {
+  font-family: monospace;
+  width: 80px;
+}
+
+/* ── Decoration toggles ──────────────────────────────────────────────────── */
+
+.tt__deco-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.tt__tog {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--color-surface-2, #f3f4f6);
+  color: var(--color-text-secondary, #6b7280);
+  transition: all 0.12s;
+}
+
+.tt__tog--active {
+  border-color: var(--color-node-design, #3b82f6);
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+}
+
+.tt__tog--i { font-style: italic; }
+.tt__tog--u { text-decoration: underline; }
+.tt__tog--s { text-decoration: line-through; }
+
+/* ── Alignment buttons ───────────────────────────────────────────────────── */
+
+.tt__align-row {
+  display: flex;
+  gap: 4px;
+}
+
+.tt__align-btn {
+  flex: 1;
+  height: 26px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--color-surface-2, #f3f4f6);
+  color: var(--color-text-secondary, #6b7280);
+  transition: all 0.12s;
+}
+
+.tt__align-btn--active {
+  border-color: var(--color-node-design, #3b82f6);
+  background: var(--color-node-design-light, #dbeafe);
+  color: var(--color-node-design, #3b82f6);
+}
