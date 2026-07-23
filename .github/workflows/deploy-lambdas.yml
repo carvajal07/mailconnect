@@ -482,7 +482,24 @@ jobs:
                 Lambda_*|"")
                   # Rol gestionado por la convención (o ninguno): se reconcilia al esperado.
                   echo "   🔑 Rol de $fn: ${cur_name:-ninguno} → $role (reconciliando a la convención)"
-                  aws lambda update-function-configuration --function-name "$fn" --role "$role_arn" >/dev/null
+                  # La función debe estar ESTABLE antes de update-function-configuration (si no,
+                  # ResourceConflictException por un update-function-code reciente). Se espera y,
+                  # por si el estado tarda en reflejarse, se REINTENTA ante ese conflicto.
+                  aws lambda wait function-updated-v2 --function-name "$fn" 2>/dev/null || true
+                  local sw=0 k
+                  for k in 1 2 3 4 5; do
+                    if aws lambda update-function-configuration --function-name "$fn" --role "$role_arn" >/dev/null 2>/tmp/cfgerr; then
+                      sw=1; break
+                    fi
+                    if grep -qi "ResourceConflictException\|update is in progress" /tmp/cfgerr; then
+                      echo "   ⏳ La función aún se está actualizando (intento $k); reintento en 6s..."
+                      sleep 6
+                      aws lambda wait function-updated-v2 --function-name "$fn" 2>/dev/null || true
+                    else
+                      echo "❌ No se pudo cambiar el rol de $fn:"; cat /tmp/cfgerr; return 1
+                    fi
+                  done
+                  [ "$sw" = "1" ] || { echo "❌ No se pudo cambiar el rol de $fn tras varios intentos."; return 1; }
                   aws lambda wait function-updated-v2 --function-name "$fn"
                   ROLE_SWAPPED=1 ;;
                 *)
@@ -547,6 +564,12 @@ jobs:
                 --function-name "$fn" \
                 --zip-file fileb:///tmp/lambda.zip \
                 --publish >/dev/null
+              # ESPERAR a que termine la actualización del código (LastUpdateStatus=Successful).
+              # update-function-code deja la función "InProgress"; si acto seguido reconcile_role
+              # hace update-function-configuration (cambio de rol) —o se crea el trigger— AWS lanza
+              # ResourceConflictException ("An update is in progress for resource ..."). El waiter
+              # lo evita: no se toca la config ni los triggers hasta que la función esté estable.
+              aws lambda wait function-updated-v2 --function-name "$fn"
               echo "✅  $fn actualizada."
               # Antes de tocar triggers: asegurar que la función use su ROL de convención. Un
               # trigger SQS exige que el rol de EJECUCIÓN pueda ReceiveMessage; una función vieja
