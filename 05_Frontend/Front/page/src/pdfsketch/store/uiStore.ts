@@ -23,6 +23,9 @@ interface UIState {
   /** Contador que el Canvas observa para hacer zoom-ajustar a la ventana. */
   fitTick: number;
   requestFit: () => void;
+  /** Contador para zoom-ajustar al ANCHO de la hoja. */
+  fitWidthTick: number;
+  requestFitWidth: () => void;
   togglePanel: (key: keyof Panels) => void;
   setZoom: (z: number) => void;
   toggleGrid: () => void;
@@ -35,6 +38,7 @@ export const useUIStore = create<UIState>((set) => ({
   theme: 'dark',
   unit: 'mm',
   fitTick: 0,
+  fitWidthTick: 0,
   panels: { leftRail: true, leftPanel: true, formatToolbar: true, statusBar: true },
   zoom: 1,
   showGrid: false,
@@ -49,6 +53,7 @@ export const useUIStore = create<UIState>((set) => ({
   setTheme: (t) => set({ theme: t }),
   setUnit: (u) => set({ unit: u }),
   requestFit: () => set((s) => ({ fitTick: s.fitTick + 1 })),
+  requestFitWidth: () => set((s) => ({ fitWidthTick: s.fitWidthTick + 1 })),
   togglePanel: (key) => set((s) => ({ panels: { ...s.panels, [key]: !s.panels[key] } })),
   setZoom: (z) => set({ zoom: Math.max(0.1, Math.min(5, z)) }),
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),

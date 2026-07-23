@@ -19,9 +19,9 @@
   --ink: #e8e8ea;
   --ink-2: #b4b4b8;
   --muted: #7d7d82;
-  --accent: oklch(0.72 0.15 150);
-  --accent-dim: oklch(0.52 0.12 150);
-  --accent-soft: oklch(0.72 0.15 150 / 0.12);
+  --accent: #60a5fa;
+  --accent-dim: #3b82f6;
+  --accent-soft: rgba(96, 165, 250, 0.15);
   --sel: oklch(0.68 0.19 235);
   --paper: #fbfbf8;
   --paper-shadow: rgba(0, 0, 0, 0.45);
@@ -29,16 +29,22 @@
 }
 
 .mc-sketch.light {
-  --bg-0: #eeede8;
-  --bg-1: #f5f4ef;
-  --bg-2: #eceae4;
-  --bg-3: #e2dfd7;
-  --bg-4: #d6d3ca;
-  --canvas: #d9d7cf;
-  --line: #bab8b1;
-  --line-2: #c9c6be;
-  --line-3: #a8a59c;
-  --ink: #1a1a1a;
-  --ink-2: #4a4a4a;
-  --muted: #7a7a78;
+  /* Paleta clara alineada con el Diseñador PDF: blancos/slate + acento azul */
+  --bg-0: #f1f5f9;
+  --bg-1: #ffffff;
+  --bg-2: #f8fafc;
+  --bg-3: #e2e8f0;
+  --bg-4: #cbd5e1;
+  --canvas: #e2e8f0;
+  --line: #cbd5e1;
+  --line-2: #e2e8f0;
+  --line-3: #94a3b8;
+  --ink: #0f172a;
+  --ink-2: #475569;
+  --muted: #64748b;
+  --accent: #3b82f6;
+  --accent-dim: #2563eb;
+  --accent-soft: rgba(59, 130, 246, 0.12);
+  --sel: #3b82f6;
+  --paper-shadow: rgba(15, 23, 42, 0.18);
 }

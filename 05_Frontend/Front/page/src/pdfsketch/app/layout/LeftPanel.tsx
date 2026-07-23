@@ -15,7 +15,7 @@ export default function LeftPanel() {
     <div className="h-full flex flex-col">
       {/* ── Tab switcher ── */}
       <div
-        className="h-8 shrink-0 flex items-center px-1 gap-0.5"
+        className="h-8 shrink-0 flex items-center px-2 gap-2"
         style={{ borderBottom: '1px solid var(--line)', background: 'var(--bg-1)' }}
       >
         <TabBtn
@@ -94,7 +94,7 @@ function TabBtn({
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-1.5 h-6 px-2.5 rounded text-11 transition-colors"
+      className="flex items-center gap-1.5 h-6 px-3 rounded text-11 transition-colors"
       style={
         active
           ? { background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 600 }
