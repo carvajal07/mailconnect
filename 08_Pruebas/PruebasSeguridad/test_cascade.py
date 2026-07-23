@@ -1,17 +1,13 @@
 """
-Cascada omnicanal — motor (Tick) + Create.
+Pruebas de la CASCADA omnicanal (Opción A). Ver PLAN_CASCADA.md.
 
-Verifica la máquina de estados por contacto SIN enviar de verdad: los "envíos" se
-encolan a colas SQS de moto (se asserta el mensaje) y la confirmación de entrega/lectura
-se simula escribiendo filas en {tenant}_sendStatus / _sendDetail. Cubre: materialización
-de contactos, envío + débito de saldo, confirmación (para), escalamiento por fallo y por
-timeout, agotamiento, tope de presupuesto, salto por consentimiento y pausa por saldo.
+- Motor puro `decide_next` + `classify_outcome` (sin AWS): la lógica de escalamiento.
+- Integración con moto: Dispatch (crea run+contactos, encola paso 0, debita) y Advance (tick:
+  confirma / escala / frena por saldo según el estado leído de sendStatus).
 """
-import importlib.util
-import io
-import json
 import os
-import time
+import json
+import importlib.util
 from pathlib import Path
 
 os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
@@ -21,233 +17,298 @@ os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'testing')
 import pytest  # noqa: E402
 import boto3  # noqa: E402
 from moto import mock_aws  # noqa: E402
+from boto3.dynamodb.conditions import Key  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LAMBDAS = REPO_ROOT / '04_Backend' / 'lambdas'
-
-CID = 'CU1'
-CUST = 'empresa'
-NIT = '900123'
+DIR = REPO_ROOT / '04_Backend' / 'lambdas'
 TENANT = '900123'
-CTX = {'requestContext': {'authorizer': {'customerId': CID, 'customer': CUST, 'nit': NIT}}}
-
-CSV = 'id,correo,celular,nombre\n1,ana@x.com,3001112233,Ana\n2,beto@x.com,3004445566,Beto\n'
 
 
-def _load(name, folder):
-    spec = importlib.util.spec_from_file_location(name, str(LAMBDAS / folder / 'lambda_function.py'))
+def _load(folder, alias):
+    p = DIR / folder / 'lambda_function.py'
+    spec = importlib.util.spec_from_file_location(alias, str(p))
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m
 
 
-def _mk_table(ddb, name, pk, sk=None, gsi=None):
+# ============================ Motor puro (sin AWS) ============================
+@pytest.fixture(scope='module')
+def eng():
+    return _load('Api_V1_Cascade_Advance', 'cascade_adv_eng')
+
+
+STEPS = [{'channel': 'WSP', 'content': 'hsm'}, {'channel': 'SMS', 'content': 'txt'}, {'channel': 'VOZ', 'content': 'voz'}]
+CHEAP = lambda ch: 10  # noqa: E731
+YES = lambda ch: True  # noqa: E731
+
+
+def test_confirmado_done(eng):
+    d = eng.decide_next(STEPS, 0, 'confirmed', 999, 60, 10**9, CHEAP, YES)
+    assert d['action'] == 'done'
+
+
+def test_pendiente_dentro_de_ventana_wait(eng):
+    d = eng.decide_next(STEPS, 0, 'pending', 10, 60, 10**9, CHEAP, YES)
+    assert d['action'] == 'wait'
+
+
+def test_pendiente_vencido_escala(eng):
+    d = eng.decide_next(STEPS, 0, 'pending', 61, 60, 10**9, CHEAP, YES)
+    assert d['action'] == 'send' and d['stepIndex'] == 1 and d['channel'] == 'SMS'
+
+
+def test_fallo_escala_de_inmediato(eng):
+    # Un fallo duro no espera la ventana.
+    d = eng.decide_next(STEPS, 0, 'failed', 0, 60, 10**9, CHEAP, YES)
+    assert d['action'] == 'send' and d['channel'] == 'SMS'
+
+
+def test_ultimo_paso_agota(eng):
+    d = eng.decide_next(STEPS, 2, 'failed', 0, 60, 10**9, CHEAP, YES)
+    assert d['action'] == 'exhausted'
+
+
+def test_salta_canal_sin_consentimiento(eng):
+    # Sin consentimiento en SMS (paso 1) → salta a VOZ (paso 2).
+    consent = lambda ch: ch != 'SMS'  # noqa: E731
+    d = eng.decide_next(STEPS, 0, 'failed', 0, 60, 10**9, CHEAP, consent)
+    assert d['action'] == 'send' and d['channel'] == 'VOZ' and d['stepIndex'] == 2
+
+
+def test_frena_por_saldo(eng):
+    d = eng.decide_next(STEPS, 0, 'failed', 0, 60, 5, CHEAP, YES)  # saldo 5 < costo 10
+    assert d['action'] == 'budget'
+
+
+@pytest.mark.parametrize('state,criterion,expected', [
+    (None, 'delivered', 'pending'),
+    (3, 'delivered', 'failed'),
+    (11, 'sent', 'failed'),
+    (1, 'sent', 'confirmed'),
+    (1, 'delivered', 'pending'),
+    (2, 'delivered', 'confirmed'),
+    (2, 'read', 'pending'),
+    (4, 'read', 'confirmed'),
+    (5, 'read', 'confirmed'),
+])
+def test_classify_outcome(eng, state, criterion, expected):
+    assert eng.classify_outcome(state, criterion) == expected
+
+
+# ============================ Integración (moto) ============================
+def _mk(ddb, name, pk, gsi=None):
     attrs = [{'AttributeName': pk, 'AttributeType': 'S'}]
-    schema = [{'AttributeName': pk, 'KeyType': 'HASH'}]
-    if sk:
-        attrs.append({'AttributeName': sk, 'AttributeType': 'S'})
-        schema.append({'AttributeName': sk, 'KeyType': 'RANGE'})
-    kwargs = dict(TableName=name, KeySchema=schema, AttributeDefinitions=attrs, BillingMode='PAY_PER_REQUEST')
+    kwargs = {'TableName': name, 'KeySchema': [{'AttributeName': pk, 'KeyType': 'HASH'}],
+              'BillingMode': 'PAY_PER_REQUEST'}
     if gsi:
-        gk = gsi
-        if not any(a['AttributeName'] == gk for a in attrs):
-            attrs.append({'AttributeName': gk, 'AttributeType': 'S'})
-        kwargs['AttributeDefinitions'] = attrs
+        attrs.append({'AttributeName': gsi, 'AttributeType': 'S'})
         kwargs['GlobalSecondaryIndexes'] = [{
-            'IndexName': gk + '-index',
-            'KeySchema': [{'AttributeName': gk, 'KeyType': 'HASH'}],
+            'IndexName': gsi + '-index',
+            'KeySchema': [{'AttributeName': gsi, 'KeyType': 'HASH'}],
             'Projection': {'ProjectionType': 'ALL'}}]
+    kwargs['AttributeDefinitions'] = attrs
     ddb.create_table(**kwargs)
 
 
-@pytest.fixture
-def env():
+def _mk_composite(ddb, name, pk, sk):
+    ddb.create_table(
+        TableName=name,
+        KeySchema=[{'AttributeName': pk, 'KeyType': 'HASH'}, {'AttributeName': sk, 'KeyType': 'RANGE'}],
+        AttributeDefinitions=[{'AttributeName': pk, 'AttributeType': 'S'}, {'AttributeName': sk, 'AttributeType': 'S'}],
+        BillingMode='PAY_PER_REQUEST')
+
+
+def _base_tables(ddb):
+    _mk(ddb, 'cascadeRun', 'cascadeRunId', gsi='customerId')
+    _mk(ddb, 'cascadeContact', 'cascadeContactId', gsi='cascadeRunId')
+    _mk(ddb, 'customerBalance', 'customerId')
+    _mk(ddb, 'walletTransaction', 'txId')
+    _mk(ddb, 'pricingRate', 'customerId')  # simplificado (dispatch lee con get_item)
+
+
+def _queues(monkeypatch, mod):
+    sqs = boto3.client('sqs', region_name='us-east-1')
+    urls = {}
+    for ch, q in (('EM', 'Email_Send-batch-template-EM'), ('SMS', 'Sms_Send-batch'),
+                  ('WSP', 'Wsp_Send-batch'), ('VOZ', 'Voice_Send-batch')):
+        urls[ch] = sqs.create_queue(QueueName=q)['QueueUrl']
+    monkeypatch.setattr(mod, 'CHANNEL_QUEUE', urls)
+    return urls
+
+
+def _drain(url):
+    sqs = boto3.client('sqs', region_name='us-east-1')
+    out = []
+    while True:
+        msgs = sqs.receive_message(QueueUrl=url, MaxNumberOfMessages=10).get('Messages', [])
+        if not msgs:
+            break
+        for m in msgs:
+            out.append(json.loads(m['Body']))
+            sqs.delete_message(QueueUrl=url, ReceiptHandle=m['ReceiptHandle'])
+    return out
+
+
+def _ctx(body):
+    return {**body, 'requestContext': {'authorizer': {'customerId': 'CU1', 'customer': 'empresa', 'nit': '900123'}}}
+
+
+CSV_WSP = "Id;Celular;Nombre\n1;3001234567;Ana\n2;3002345678;Luis\n3;3003456789;Eva\n"
+
+
+def test_dispatch_crea_run_encola_paso0_y_debita(monkeypatch):
     with mock_aws():
         ddb = boto3.client('dynamodb', region_name='us-east-1')
         res = boto3.resource('dynamodb', region_name='us-east-1')
-        sqs = boto3.client('sqs', region_name='us-east-1')
-        # Colas de los 4 canales.
-        urls = {ch: sqs.create_queue(QueueName='q_' + ch)['QueueUrl'] for ch in ('EM', 'SMS', 'WSP', 'VOZ')}
-        os.environ['URL_SQS_EM'] = urls['EM']
-        os.environ['URL_SQS_SMS'] = urls['SMS']
-        os.environ['URL_SQS_WSP'] = urls['WSP']
-        os.environ['URL_SQS_VOICE'] = urls['VOZ']
-        # Tablas.
-        _mk_table(ddb, 'cascadeRun', 'cascadeRunId', gsi='customerId')
-        _mk_table(ddb, 'cascadeContact', 'cascadeContactId', gsi='cascadeRunId')
-        _mk_table(ddb, 'customerBalance', 'customerId')
-        _mk_table(ddb, 'walletTransaction', 'txId')
-        _mk_table(ddb, 'databaseFile', 'databaseFileId', gsi='customerId')
-        _mk_table(ddb, f'{TENANT}_sendStatus', 'processId', 'sendStatusId')
-        _mk_table(ddb, f'{TENANT}_sendDetail', 'processId', 'sendDetailId')
-        _mk_table(ddb, f'{TENANT}_blackList', 'email')
-        _mk_table(ddb, f'{TENANT}_unsubscribe', 'email')
-        # Base CSV en S3 + registro databaseFile.
+        _base_tables(ddb)
+        res.Table('customerBalance').put_item(Item={'customerId': 'CU1', 'balance': 100000})
         s3 = boto3.client('s3', region_name='us-east-1')
-        s3.create_bucket(Bucket=f'mailconnect-{TENANT}')
-        s3.put_object(Bucket=f'mailconnect-{TENANT}', Key='database/2026/base.csv', Body=CSV.encode('utf-8'))
-        res.Table('databaseFile').put_item(Item={
-            'databaseFileId': 'db1', 'customerId': CID, 'customer': CUST,
-            's3Path': 'database/2026/base.csv', 'delimiter': ',',
-            'columns': ['id', 'correo', 'celular', 'nombre']})
-        res.Table('customerBalance').put_item(Item={'customerId': CID, 'balance': 100000})
+        s3.create_bucket(Bucket='mailconnect-900123')
+        s3.put_object(Bucket='mailconnect-900123', Key='database/base.csv', Body=CSV_WSP.encode('utf-8'))
 
-        create = _load('casc_create', 'Api_V1_Cascade_Create')
-        tick = _load('casc_tick', 'Api_V1_Cascade_Tick')
-        yield {'create': create, 'tick': tick, 'res': res, 'sqs': sqs, 'urls': urls}
-        for k in ('URL_SQS_EM', 'URL_SQS_SMS', 'URL_SQS_WSP', 'URL_SQS_VOICE'):
-            os.environ.pop(k, None)
+        disp = _load('Api_V1_Cascade_Dispatch', 'cascade_disp')
+        urls = _queues(monkeypatch, disp)
 
+        event = _ctx({'name': 'Cobranza', 'dataPath': 'database/base.csv', 'waitMinutes': 120,
+                      'successCriterion': 'delivered',
+                      'steps': [{'channel': 'WSP', 'content': 'plantilla_hsm'},
+                                {'channel': 'SMS', 'content': 'Hola {{Nombre}}, ...'}]})
+        resp = disp.lambda_handler(event, None)
+        assert resp['statusCode'] == 201
+        run_id = resp['data']['cascadeRunId']
+        assert resp['data']['contacts'] == 3
 
-# --- helpers ---------------------------------------------------------------
-def _steps_em_sms():
-    return [{'channel': 'EM', 'template': 't_em', 'from': 'no-reply@x.com'},
-            {'channel': 'SMS', 'body': 'Hola {{nombre}}'}]
+        # Se encolaron 3 envíos por WhatsApp (paso 0), con correlación processId/uniqueId.
+        msgs = _drain(urls['WSP'])
+        assert len(msgs) == 3
+        assert all(m['processId'] == run_id and m['channel'] == 'WSP' for m in msgs)
+        assert all(m['uniqueId'] == m['cascadeContactId'] for m in msgs)
 
+        # Débito del paso 0: WhatsApp, 3 destinatarios → mín. 5000 + IVA = 5950.
+        bal = res.Table('customerBalance').get_item(Key={'customerId': 'CU1'})['Item']['balance']
+        assert int(bal) == 100000 - 5950
 
-def _create_run(env, steps=None, confirm_on='delivered', budget=None, timeout=60):
-    payload = {'name': 'Cobranza', 'databaseFileId': 'db1',
-               'emailCol': 1, 'phoneCol': 2, 'nameCol': 3,
-               'steps': steps or _steps_em_sms(), 'confirmOn': confirm_on, 'stepTimeoutMin': timeout}
-    if budget is not None:
-        payload['budgetCap'] = budget
-    resp = env['create'].lambda_handler({**payload, **CTX}, None)
-    assert resp['statusCode'] == 201, resp
-    run_id = resp['data']['cascadeRunId']
-    env['res'].Table('cascadeRun').update_item(
-        Key={'cascadeRunId': run_id}, UpdateExpression='SET #s = :r',
-        ExpressionAttributeNames={'#s': 'status'}, ExpressionAttributeValues={':r': 'running'})
-    return run_id
+        # Run + 3 contactos awaiting en el paso 0.
+        run = res.Table('cascadeRun').get_item(Key={'cascadeRunId': run_id})['Item']
+        assert run['status'] == 'running' and int(run['counts']['inFlight']) == 3
+        contacts = res.Table('cascadeContact').query(
+            IndexName='cascadeRunId-index', KeyConditionExpression=Key('cascadeRunId').eq(run_id))['Items']
+        assert len(contacts) == 3 and all(c['status'] == 'awaiting' and int(c['stepIndex']) == 0 for c in contacts)
 
 
-def _contacts(env, run_id):
-    from boto3.dynamodb.conditions import Key
-    r = env['res'].Table('cascadeContact').query(
-        IndexName='cascadeRunId-index', KeyConditionExpression=Key('cascadeRunId').eq(run_id))
-    return {it['name']: it for it in r['Items']}
+def _seed_run_and_contact(res, run_id, contact_id, balance=100000, wait=0):
+    _base_state(res, balance)
+    res.Table('cascadeRun').put_item(Item={
+        'cascadeRunId': run_id, 'customerId': 'CU1', 'customer': 'empresa', 'nit': '900123',
+        'name': 'Cobranza', 'successCriterion': 'delivered', 'waitMinutes': wait,
+        'steps': [{'channel': 'WSP', 'content': 'hsm'}, {'channel': 'SMS', 'content': 'texto SMS'}],
+        'status': 'running', 'counts': {'total': 1, 'confirmed': 0, 'exhausted': 0, 'inFlight': 1, 'budget': 0}})
+    res.Table('cascadeContact').put_item(Item={
+        'cascadeContactId': contact_id, 'cascadeRunId': run_id, 'customerId': 'CU1',
+        'contactKey': '3001234567', 'row': ['1', '3001234567', 'Ana'], 'stepIndex': 0, 'status': 'awaiting',
+        'lastChannel': 'WSP', 'lastSentAt': '2020-01-01 00:00:00', 'nextCheckAt': '2020-01-01 00:00:00',
+        'history': [{'channel': 'WSP', 'sentAt': '2020-01-01 00:00:00', 'uniqueId': contact_id}]})
 
 
-def _tick(env, run_id):
-    return env['tick'].lambda_handler({'cascadeRunId': run_id}, None)
+def _base_state(res, balance):
+    res.Table('customerBalance').put_item(Item={'customerId': 'CU1', 'balance': balance})
 
 
-def _qcount(env, ch):
-    a = env['sqs'].get_queue_attributes(QueueUrl=env['urls'][ch], AttributeNames=['ApproximateNumberOfMessages'])
-    return int(a['Attributes']['ApproximateNumberOfMessages'])
+def _seed_status(ddb, res, run_id, contact_id, state):
+    _mk_composite(ddb, '{}_sendStatus'.format(TENANT), 'processId', 'sendStatusId')
+    res.Table('{}_sendStatus'.format(TENANT)).put_item(Item={
+        'processId': run_id, 'sendStatusId': 's1', 'uniqueId': contact_id, 'state': state})
 
 
-def _sim_email(env, cid, step, state):
-    pid = 'csc-{}-{}'.format(cid, step)
-    mid = 'M-{}-{}'.format(cid, state)
-    env['res'].Table(f'{TENANT}_sendDetail').put_item(Item={'processId': pid, 'sendDetailId': mid, 'uniqueId': cid})
-    env['res'].Table(f'{TENANT}_sendStatus').put_item(Item={'processId': pid, 'sendStatusId': 's' + mid, 'messageId': mid, 'state': state})
+def test_advance_escala_al_fallar(monkeypatch):
+    with mock_aws():
+        ddb = boto3.client('dynamodb', region_name='us-east-1')
+        res = boto3.resource('dynamodb', region_name='us-east-1')
+        _base_tables(ddb)
+        run_id, contact_id = 'R1', 'C1'
+        _seed_run_and_contact(res, run_id, contact_id)
+        _seed_status(ddb, res, run_id, contact_id, 3)  # 3 = rechazado/fallido
+
+        adv = _load('Api_V1_Cascade_Advance', 'cascade_adv1')
+        urls = _queues(monkeypatch, adv)
+        adv.lambda_handler({}, None)
+
+        # Escaló a SMS (paso 1) y encoló el envío por SMS.
+        c = res.Table('cascadeContact').get_item(Key={'cascadeContactId': contact_id})['Item']
+        assert int(c['stepIndex']) == 1 and c['lastChannel'] == 'SMS' and c['status'] == 'awaiting'
+        sms = _drain(urls['SMS'])
+        assert len(sms) == 1 and sms[0]['channel'] == 'SMS' and sms[0]['uniqueId'] == contact_id
+        # Debitó el costo unitario de SMS (55 * 1.19 = 65).
+        bal = int(res.Table('customerBalance').get_item(Key={'customerId': 'CU1'})['Item']['balance'])
+        assert bal == 100000 - 65
 
 
-def _sim_phone(env, cid, step, state):
-    pid = 'csc-{}-{}'.format(cid, step)
-    env['res'].Table(f'{TENANT}_sendStatus').put_item(Item={
-        'processId': pid, 'sendStatusId': 's{}{}'.format(cid, state), 'messageId': 'm', 'uniqueId': cid, 'state': state})
+def test_advance_confirma_si_entregado(monkeypatch):
+    with mock_aws():
+        ddb = boto3.client('dynamodb', region_name='us-east-1')
+        res = boto3.resource('dynamodb', region_name='us-east-1')
+        _base_tables(ddb)
+        run_id, contact_id = 'R2', 'C2'
+        _seed_run_and_contact(res, run_id, contact_id)
+        _seed_status(ddb, res, run_id, contact_id, 2)  # 2 = entregado → criterio 'delivered' cumplido
+
+        adv = _load('Api_V1_Cascade_Advance', 'cascade_adv2')
+        urls = _queues(monkeypatch, adv)
+        adv.lambda_handler({}, None)
+
+        c = res.Table('cascadeContact').get_item(Key={'cascadeContactId': contact_id})['Item']
+        assert c['status'] == 'confirmed'
+        assert _drain(urls['SMS']) == []  # no escaló
+        # El run se cierra (ya no hay contactos en vuelo).
+        run = res.Table('cascadeRun').get_item(Key={'cascadeRunId': run_id})['Item']
+        assert run['status'] == 'done' and int(run['counts']['confirmed']) == 1
 
 
-def _bal(env):
-    return int(env['res'].Table('customerBalance').get_item(Key={'customerId': CID})['Item']['balance'])
+def test_advance_criterio_por_paso(monkeypatch):
+    """El paso 0 exige 'read' aunque el run sea 'delivered': un estado 'entregado' (2) NO
+    confirma y escala. Prueba que el motor usa el criterio POR PASO (flujo de decisión)."""
+    with mock_aws():
+        ddb = boto3.client('dynamodb', region_name='us-east-1')
+        res = boto3.resource('dynamodb', region_name='us-east-1')
+        _base_tables(ddb)
+        run_id, contact_id = 'R4', 'C4'
+        _base_state(res, 100000)
+        res.Table('cascadeRun').put_item(Item={
+            'cascadeRunId': run_id, 'customerId': 'CU1', 'customer': 'empresa', 'nit': '900123',
+            'name': 'X', 'successCriterion': 'delivered', 'waitMinutes': 60,
+            'steps': [{'channel': 'WSP', 'content': 'hsm', 'successCriterion': 'read'},
+                      {'channel': 'SMS', 'content': 'txt', 'waitMinutes': 30}],
+            'status': 'running', 'counts': {'total': 1, 'confirmed': 0, 'exhausted': 0, 'inFlight': 1, 'budget': 0}})
+        res.Table('cascadeContact').put_item(Item={
+            'cascadeContactId': contact_id, 'cascadeRunId': run_id, 'customerId': 'CU1',
+            'contactKey': '3001234567', 'row': ['1', '3001234567', 'Ana'], 'stepIndex': 0, 'status': 'awaiting',
+            'lastChannel': 'WSP', 'lastSentAt': '2020-01-01 00:00:00', 'nextCheckAt': '2020-01-01 00:00:00', 'history': []})
+        _seed_status(ddb, res, run_id, contact_id, 2)  # 2 = entregado (delivered), pero el paso exige 'read'
+
+        adv = _load('Api_V1_Cascade_Advance', 'cascade_adv4')
+        urls = _queues(monkeypatch, adv)
+        adv.lambda_handler({}, None)
+
+        c = res.Table('cascadeContact').get_item(Key={'cascadeContactId': contact_id})['Item']
+        assert int(c['stepIndex']) == 1 and c['status'] == 'awaiting'  # escaló pese a 'entregado'
+        assert len(_drain(urls['SMS'])) == 1
 
 
-# --- tests -----------------------------------------------------------------
-def test_create_materializes_contacts(env):
-    run_id = _create_run(env)
-    contacts = _contacts(env, run_id)
-    assert set(contacts) == {'Ana', 'Beto'}
-    assert contacts['Ana']['email'] == 'ana@x.com'
-    assert contacts['Ana']['phone'] == '+573001112233'   # normalizado E.164
-    assert contacts['Ana']['status'] == 'pending'
+def test_advance_frena_sin_saldo(monkeypatch):
+    with mock_aws():
+        ddb = boto3.client('dynamodb', region_name='us-east-1')
+        res = boto3.resource('dynamodb', region_name='us-east-1')
+        _base_tables(ddb)
+        run_id, contact_id = 'R3', 'C3'
+        _seed_run_and_contact(res, run_id, contact_id, balance=10)  # saldo insuficiente para SMS
+        _seed_status(ddb, res, run_id, contact_id, 3)  # falla → intentaría escalar
 
+        adv = _load('Api_V1_Cascade_Advance', 'cascade_adv3')
+        urls = _queues(monkeypatch, adv)
+        adv.lambda_handler({}, None)
 
-def test_tick_sends_first_channel_and_debits(env):
-    run_id = _create_run(env)
-    _tick(env, run_id)
-    contacts = _contacts(env, run_id)
-    assert contacts['Ana']['status'] == 'awaiting'
-    assert contacts['Ana']['currentChannel'] == 'EM'
-    assert _qcount(env, 'EM') == 2            # ambos por correo (paso 0)
-    assert _bal(env) == 100000 - 2 * 10       # EM = round(8*1.19)=10 c/u
-
-
-def test_delivered_confirms_and_stops(env):
-    run_id = _create_run(env)
-    _tick(env, run_id)                         # → awaiting (EM)
-    ana = _contacts(env, run_id)['Ana']
-    _sim_email(env, ana['cascadeContactId'], 0, 2)   # entregado
-    _tick(env, run_id)
-    ana2 = _contacts(env, run_id)['Ana']
-    assert ana2['status'] == 'confirmed'
-    # No re-envía: la cola EM sigue con los 2 del primer tick (Ana no generó uno nuevo).
-    assert _qcount(env, 'EM') == 2
-
-
-def test_escalates_to_next_channel_on_timeout(env):
-    run_id = _create_run(env)
-    _tick(env, run_id)                         # EM enviado, awaiting
-    # Fuerza el vencimiento del timeout de Beto (sin confirmación).
-    beto = _contacts(env, run_id)['Beto']
-    env['res'].Table('cascadeContact').update_item(
-        Key={'cascadeContactId': beto['cascadeContactId']},
-        UpdateExpression='SET nextEscalationAt = :p', ExpressionAttributeValues={':p': int(time.time()) - 10})
-    _tick(env, run_id)                         # timeout → escala a SMS (pending, step 1)
-    beto2 = _contacts(env, run_id)['Beto']
-    assert beto2['status'] == 'pending' and int(beto2['stepIndex']) == 1
-    _tick(env, run_id)                         # envía SMS
-    beto3 = _contacts(env, run_id)['Beto']
-    assert beto3['status'] == 'awaiting' and beto3['currentChannel'] == 'SMS'
-    assert _qcount(env, 'SMS') >= 1
-
-
-def test_failed_channel_escalates(env):
-    run_id = _create_run(env)
-    _tick(env, run_id)
-    ana = _contacts(env, run_id)['Ana']
-    _sim_email(env, ana['cascadeContactId'], 0, 3)   # rechazado → escala
-    _tick(env, run_id)
-    ana2 = _contacts(env, run_id)['Ana']
-    assert ana2['status'] == 'pending' and int(ana2['stepIndex']) == 1
-
-
-def test_exhausted_when_no_more_channels(env):
-    run_id = _create_run(env, steps=[{'channel': 'SMS', 'body': 'Hola'}])
-    _tick(env, run_id)                         # envía SMS, awaiting
-    c = _contacts(env, run_id)['Ana']
-    env['res'].Table('cascadeContact').update_item(
-        Key={'cascadeContactId': c['cascadeContactId']},
-        UpdateExpression='SET nextEscalationAt = :p', ExpressionAttributeValues={':p': int(time.time()) - 10})
-    _tick(env, run_id)                         # timeout, sin más canales → exhausted
-    assert _contacts(env, run_id)['Ana']['status'] == 'exhausted'
-
-
-def test_budget_cap_stops_sends(env):
-    # budget 5 < costo EM (10) → no envía, agota por presupuesto.
-    run_id = _create_run(env, budget=5)
-    _tick(env, run_id)
-    contacts = _contacts(env, run_id)
-    assert all(c['status'] == 'exhausted' for c in contacts.values())
-    assert _qcount(env, 'EM') == 0
-    assert _bal(env) == 100000                 # no se debitó nada
-
-
-def test_consent_skip_advances_channel(env):
-    # Ana bloqueada por correo → salta al SMS en el mismo tick.
-    env['res'].Table(f'{TENANT}_blackList').put_item(Item={'email': 'ana@x.com'})
-    run_id = _create_run(env)
-    _tick(env, run_id)
-    ana = _contacts(env, run_id)['Ana']
-    assert ana['currentChannel'] == 'SMS' and int(ana['stepIndex']) == 1
-    assert ana['status'] == 'awaiting'
-
-
-def test_insufficient_balance_pauses_run(env):
-    env['res'].Table('customerBalance').put_item(Item={'customerId': CID, 'balance': 0})
-    run_id = _create_run(env)
-    _tick(env, run_id)
-    run = env['res'].Table('cascadeRun').get_item(Key={'cascadeRunId': run_id})['Item']
-    assert run['status'] == 'paused'
-    # El contacto vuelve a pending (reintenta al recargar).
-    assert any(c['status'] == 'pending' for c in _contacts(env, run_id).values())
+        c = res.Table('cascadeContact').get_item(Key={'cascadeContactId': contact_id})['Item']
+        assert c['status'] == 'budget'          # frenado por saldo
+        assert _drain(urls['SMS']) == []         # no se encoló nada
+        assert int(res.Table('customerBalance').get_item(Key={'customerId': 'CU1'})['Item']['balance']) == 10

@@ -2,102 +2,54 @@ import { apiPost } from './apiClient';
 import type { ApiResponse } from './apiClient';
 
 /**
- * Cascada omnicanal — "entrega garantizada al menor costo". Define un mensaje lógico
- * (base + orden de canales + criterio de éxito) y la plataforma escala sola hasta
- * confirmar entrega/lectura. Backend: Api_V1_Cascade_{Create,Start,Status,List,Cancel}.
+ * Servicio de CASCADA omnicanal (Opción A — "entrega garantizada al menor costo").
+ * Ver PLAN_CASCADA.md. Define un mensaje lógico + orden de canales; la plataforma escala
+ * automáticamente hasta confirmar o agotar. Endpoints (no-proxy, envelope):
+ *   - POST /Cascade/Dispatch  -> lanza la cascada (crea run + contactos, envía paso 0)
+ *   - POST /Cascade/List      -> runs del tenant + progreso
  */
-
 export const CASCADE_ENDPOINTS = {
-  CREATE: '/Cascade/Create',
-  START: '/Cascade/Start',
-  STATUS: '/Cascade/Status',
+  DISPATCH: '/Cascade/Dispatch',
   LIST: '/Cascade/List',
-  CANCEL: '/Cascade/Cancel',
 };
 
+/** Canal soportado por la cascada v1 (sin adjuntos EAU/EAP). */
 export type CascadeChannel = 'EM' | 'SMS' | 'WSP' | 'VOZ';
-export type ConfirmOn = 'delivered' | 'read';
-export type CascadeRunStatus = 'draft' | 'running' | 'paused' | 'done' | 'canceled';
+export type SuccessCriterion = 'sent' | 'delivered' | 'read';
 
 export interface CascadeStep {
   channel: CascadeChannel;
-  /** EM: nombre de plantilla SES. */
-  template?: string;
-  /** EM: remitente (correo verificado). */
-  from?: string;
-  /** SMS: texto con {{variables}}. */
-  body?: string;
-  /** WSP: nombre de la plantilla HSM aprobada. */
-  hsm?: string;
-  /** VOZ: texto a leer con {{variables}}. */
-  voiceText?: string;
+  /** Contenido listo para enviar: plantilla SES (EM), texto (SMS/VOZ) o nombre HSM (WSP). */
+  content: string;
+  /** Espera (min) antes de escalar DESDE este paso. Si falta, usa la del run (flujo de decisión). */
+  waitMinutes?: number;
+  /** Qué cuenta como confirmado en este paso. Si falta, usa el del run. */
+  successCriterion?: SuccessCriterion;
 }
 
-export interface CascadeCounts {
-  total?: number;
-  confirmed?: number;
-  exhausted?: number;
-  inProgress?: number;
-  spent?: number;
-}
-
-export interface CreateCascadePayload {
+export interface CascadeDispatchPayload {
   name: string;
-  databaseFileId: string;
-  emailCol: number;
-  phoneCol: number;
-  nameCol: number;
+  dataPath: string;
+  waitMinutes: number;
+  successCriterion: SuccessCriterion;
   steps: CascadeStep[];
-  confirmOn: ConfirmOn;
-  stepTimeoutMin: number;
-  budgetCap?: number;
 }
 
-export interface CascadeRunSummary {
+export interface CascadeRun {
   cascadeRunId: string;
   name: string;
-  status: CascadeRunStatus;
-  confirmOn: ConfirmOn;
-  channels: CascadeChannel[];
-  counts: CascadeCounts;
-  budgetCap?: number | null;
-  createdAt?: string;
-  startedAt?: string;
-  finishedAt?: string;
+  steps: CascadeStep[];
+  successCriterion: SuccessCriterion;
+  waitMinutes: number;
+  status: 'running' | 'done' | 'canceled';
+  counts?: { total: number; confirmed: number; exhausted: number; inFlight: number; budget: number };
+  createdAt: string;
 }
-
-export interface CascadeContactRow {
-  cascadeContactId: string;
-  contactId: string;
-  name?: string;
-  email?: string;
-  phone?: string;
-  status: string;
-  currentChannel?: string;
-  stepIndex?: number;
-  spent?: number;
-  attempts?: { channel: string; at: string; outcome: string; cost: number }[];
-}
-
-export interface CascadeStatusData {
-  run: CascadeRunSummary & { steps: CascadeStep[]; stepTimeoutMin: number };
-  contacts: CascadeContactRow[];
-  byChannel: Record<string, { attempts: number; confirmed: number }>;
-}
-
-export const CHANNEL_LABEL: Record<CascadeChannel, string> = {
-  EM: 'Correo', SMS: 'SMS', WSP: 'WhatsApp', VOZ: 'Voz',
-};
 
 export const cascadeService = {
-  create: (payload: CreateCascadePayload): Promise<ApiResponse<{ cascadeRunId?: string; total?: number; truncated?: boolean }>> =>
-    apiPost(CASCADE_ENDPOINTS.CREATE, payload),
-  start: (cascadeRunId: string): Promise<ApiResponse> =>
-    apiPost(CASCADE_ENDPOINTS.START, { cascadeRunId }),
-  status: (cascadeRunId: string): Promise<ApiResponse<CascadeStatusData>> =>
-    apiPost(CASCADE_ENDPOINTS.STATUS, { cascadeRunId }),
-  list: (): Promise<ApiResponse<{ runs?: CascadeRunSummary[]; count?: number }>> =>
+  dispatch: (payload: CascadeDispatchPayload): Promise<ApiResponse<{ cascadeRunId?: string; contacts?: number; debited?: number }>> =>
+    apiPost(CASCADE_ENDPOINTS.DISPATCH, payload),
+
+  list: (): Promise<ApiResponse<{ runs?: CascadeRun[]; count?: number }>> =>
     apiPost(CASCADE_ENDPOINTS.LIST, {}),
-  cancel: (cascadeRunId: string): Promise<ApiResponse> =>
-    apiPost(CASCADE_ENDPOINTS.CANCEL, { cascadeRunId }),
 };

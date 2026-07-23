@@ -270,29 +270,33 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 > Orquestación por contacto: intenta el canal preferido/más barato y escala (correo→WhatsApp→SMS→voz)
 > hasta confirmar entrega/lectura. Reutiliza los workers de envío, `sendStatus`/recibos, monedero y
 > tarifas ya desplegados — solo agrega la capa de reglas. **El motor lo mueve un cron.**
+> El front tiene un editor **visual (ReactFlow)** y uno de **campos** (toggle Básico/Flujo); ver `PLAN_CASCADA.md`.
 
 - [ ] `[J]` Tablas **`cascadeRun`** (PK `cascadeRunId` + GSI `customerId-index`) y **`cascadeContact`**
-  (PK `cascadeContactId` + GSI `cascadeRunId-index`), On-Demand — las crea `Cascade_Create` on-demand, o
+  (PK `cascadeContactId` + GSI `cascadeRunId-index`), On-Demand — las crea `Cascade_Dispatch` on-demand, o
   créalas a mano.
-- [ ] `[J]` Crear las **6 funciones vacías** antes del primer CD: `Api_V1_Cascade_Create`, `_Start`,
-  `_Status`, `_List`, `_Cancel`, `_Tick`.
-- [ ] `[J]` **Regla EventBridge `rate(5 minutes)` → `Api_V1_Cascade_Tick`** (el motor). Es lo que hace
-  avanzar los envíos/escalamientos. `Cascade_Start` además invoca el Tick una vez para arranque inmediato
-  (`lambda:InvokeFunction` sobre `Api_V1_Cascade_Tick`; env `CASCADE_TICK_FUNCTION` si el nombre AWS difiere).
-- [ ] `[J]` Rutas `/Cascade/{Create,Start,Status,List,Cancel}` (client, authorizer + CORS + mapping de
-  `customerId`/`customer`/`nit`). Ya están en `infra/api/routes.json` → `deploy-api.yml` las crea. El `Tick`
-  **no** lleva ruta.
-- [ ] `[J]` IAM del `Tick` (el que más permisos necesita): DynamoDB `Query`/`UpdateItem`/`Scan` sobre
+- [ ] `[J]` Crear las **3 funciones vacías** antes del primer CD: `Api_V1_Cascade_Dispatch`,
+  `Api_V1_Cascade_Advance`, `Api_V1_Cascade_List`.
+- [ ] `[J]` **Regla EventBridge `rate(10 minutes)` → `Api_V1_Cascade_Advance`** (el motor). Es lo que hace
+  avanzar los envíos/escalamientos por contacto vencido. `Advance` también acepta `POST /Cascade/Advance`
+  manual para pruebas, pero **no** necesita ruta pública.
+- [ ] `[J]` Rutas `/Cascade/{Dispatch,List}` (client, authorizer + CORS + mapping de
+  `customerId`/`customer`/`nit`). Ya están en `infra/api/routes.json` → `deploy-api.yml` las crea. El
+  `Advance` **no** lleva ruta.
+- [ ] `[J]` IAM del `Advance` (el que más permisos necesita): DynamoDB `Query`/`UpdateItem`/`Scan` sobre
   `cascadeRun`/`cascadeContact`; `UpdateItem` sobre `customerBalance` + `PutItem` sobre `walletTransaction`
   (débito/reembolso); `GetItem` sobre `pricingRate`; `Query`/`GetItem` sobre `{tenant}_sendStatus`,
-  `{tenant}_sendDetail`, `{tenant}_blackList`, `{tenant}_unsubscribe` (patrón `*_sendStatus`, etc.);
-  `CreateTable/DescribeTable` sobre `{tenant}_*` (los crea si faltan); **`sqs:SendMessage`** a las 4 colas
+  `{tenant}_sendDetail` (patrón `*_sendStatus`, etc.); **`sqs:SendMessage`** a las 4 colas
   de envío (`Email_Send-batch-template-EM`, `Sms_Send-batch`, `Wsp_Send-batch`, `Voice_Send-batch`).
-  `Cascade_Create` además: `GetItem databaseFile`, S3 `GetObject` (la base CSV), `Put/BatchWrite` sobre
-  `cascadeContact`/`cascadeRun`. `Status`/`List`/`Cancel`: `Query`/`GetItem`/`UpdateItem` sobre las 2 tablas.
+  `Cascade_Dispatch` además: `GetItem databaseFile`, S3 `GetObject` (la base CSV), `Put/BatchWrite` sobre
+  `cascadeContact`/`cascadeRun`, `UpdateItem customerBalance` + `PutItem walletTransaction` (débito del paso
+  0), `SendMessage` a la cola del canal 0. `Cascade_List`: `Query` sobre `cascadeRun` (GSI `customerId-index`).
+  Envs opcionales: `URL_SQS_EM`/`URL_SQS_SMS`/`URL_SQS_WSP`/`URL_SQS_VOICE` (colas por canal, con default
+  embebido), `GSI_CASCADE_CUSTOMER_INDEX`/`GSI_CASCADE_RUN_INDEX`.
 - [ ] `[J]` Los envíos de la cascada escriben en las tablas por tenant que ya usan los workers
-  (`{tenant}_sendStatus`, y para correo `{tenant}_processDetail`/`_sendDetail`); el `Tick` las crea si no
-  existen, pero si un tenant nunca ha enviado, el primer arranque puede tardar un tick en quedar `ACTIVE`.
+  (`{tenant}_sendStatus`, y para correo `{tenant}_processDetail`/`_sendDetail`). Los `Send-*` deben
+  persistir el `uniqueId` (= `cascadeContactId`) y `processId` (= `csc-{contactId}-{step}`) que la cascada
+  envía en el mensaje, para que `Advance` lea el resultado por contacto.
 
 ### 3e. SEGURIDAD: registro por NIT + equipo del cliente **🆕 (nuevo)**
 
