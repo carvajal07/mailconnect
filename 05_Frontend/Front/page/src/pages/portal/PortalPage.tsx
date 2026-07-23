@@ -20,6 +20,7 @@ import { DocxTemplatesSection } from '../../components/portal/DocxTemplatesSecti
 import { PdfTemplatesSection } from '../../components/portal/PdfTemplatesSection';
 import { ProgramarEnviosSection } from '../../components/portal/ProgramarEnviosSection';
 import { CascadaSection } from '../../components/portal/CascadaSection';
+import { UsuariosSection } from '../../components/portal/UsuariosSection';
 import { BasesDatosSection } from '../../components/portal/BasesDatosSection';
 import { ListaNegraSection } from '../../components/portal/ListaNegraSection';
 import { MuestrasSection } from '../../components/portal/MuestrasSection';
@@ -76,6 +77,8 @@ export const PortalPage = () => {
         return <ProgramarEnviosSection />;
       case 'cascada':
         return <CascadaSection />;
+      case 'usuarios':
+        return <UsuariosSection />;
       case 'muestras':
         return <MuestrasSection />;
       case 'aprobaciones':

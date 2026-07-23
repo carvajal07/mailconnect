@@ -255,6 +255,22 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
   (`{tenant}_sendStatus`, y para correo `{tenant}_processDetail`/`_sendDetail`); el `Tick` las crea si no
   existen, pero si un tenant nunca ha enviado, el primer arranque puede tardar un tick en quedar `ACTIVE`.
 
+### 3e. SEGURIDAD: registro por NIT + equipo del cliente **🆕 (nuevo)**
+
+> **Bug crítico corregido:** `Register` reutilizaba el `customerId` si el NIT ya existía → cualquiera que
+> supiera el NIT (semi-público) se registraba y quedaba dentro del tenant de otra empresa como owner.
+
+- [ ] `[J]` **Redesplegar `Api_V1_Security_Register`**: ahora **rechaza (409)** el registro bajo un NIT ya
+  existente. Sin permisos nuevos. (Es el fix crítico — priorizar.)
+- [ ] `[J]` Desplegar `Api_V1_User_Create`, `Api_V1_User_List`, `Api_V1_User_Delete` (crear vacías) + rutas
+  `/User/{Create,List,Delete}` (authorizer + CORS + **mapping template con `customerId`/`nit`/`userId`/
+  `tenantRole`** — el owner-check usa `tenantRole`). **NO son admin** (las usa el owner del tenant). IAM:
+  `Scan/GetItem/PutItem/DeleteItem` sobre `user` y `userData`; `PutItem` sobre `adminAudit`. Env
+  `MAX_TEAM_USERS` (default 2).
+- [ ] `[C]` **Front (hecho):** tab **Usuarios** (`UsuariosSection`, owner) + `usersService`; `RegisterPage`
+  muestra el 409 del backend (NIT o correo). El usuario nuevo define su clave con "¿Olvidaste tu
+  contraseña?" (el front dispara `forgot-password` tras crearlo).
+
 - [x] `[J]` Crear las 12 funciones vacías + sus rutas + permisos de la tabla.
 - [x] `[J]` Confirmar que el **Authorizer** está asignado a las 12 rutas.
 - [x] `[J]` `Api_V1_Admin_Requeue` reencola las partes pendientes de un envío atascado

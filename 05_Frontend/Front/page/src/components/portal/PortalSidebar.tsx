@@ -26,6 +26,7 @@ import BlockIcon from '@mui/icons-material/Block';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+import GroupIcon from '@mui/icons-material/Group';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import DnsIcon from '@mui/icons-material/Dns';
 import type { ReactNode } from 'react';
@@ -58,6 +59,7 @@ export const PORTAL_TABS: PortalTab[] = [
   { id: 'estadisticas', label: 'Estadísticas', icon: <BarChartIcon /> },
   { id: 'saldo', label: 'Saldo y recargas', icon: <AccountBalanceWalletIcon /> },
   { id: 'dominios', label: 'Dominios', icon: <DnsIcon /> },
+  { id: 'usuarios', label: 'Usuarios', icon: <GroupIcon /> },
   { id: 'cuenta', label: 'Mi cuenta', icon: <AccountCircleIcon /> },
 ];
 

@@ -200,7 +200,7 @@ export const RegisterPage = () => {
       }
 
       const msg =
-        res.statusCode === 409 ? 'Este correo ya está registrado. Intenta iniciar sesión.'
+        res.statusCode === 409 ? (res.description || 'Este correo ya está registrado. Intenta iniciar sesión.')
         : res.statusCode === 400 ? 'Algunos datos no son válidos. Revisa el formulario.'
         : res.statusCode === 0 ? res.description
         : (res.description || 'No fue posible completar el registro. Intenta nuevamente.');
