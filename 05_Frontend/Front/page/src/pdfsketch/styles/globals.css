@@ -1,0 +1,102 @@
+/*
+ * Estilos base del editor pdfsketch, SCOPEADOS bajo `.mc-sketch` (el editor
+ * vive dentro del portal MailConnect; nada de esto debe tocar body/html ni a
+ * MUI). Tailwind se configura sin preflight (ver tailwind.config.ts del
+ * front) por la misma razón.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.mc-sketch {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg-0);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 12px;
+  user-select: none;
+  overflow: hidden;
+}
+
+.mc-sketch .mono,
+.mc-sketch .font-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- scrollbar --- */
+.mc-sketch ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.mc-sketch ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.mc-sketch ::-webkit-scrollbar-thumb {
+  background: var(--bg-4);
+  border-radius: 5px;
+}
+.mc-sketch ::-webkit-scrollbar-thumb:hover {
+  background: var(--line-3);
+}
+
+/* --- utilities used across the app --- */
+.mc-sketch .hairline {
+  background: var(--line);
+}
+.mc-sketch .hairline-2 {
+  background: var(--line-2);
+}
+
+/* Reset mínimo de botones (solo dentro del editor; MUI no se toca) */
+.mc-sketch button {
+  cursor: default;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+}
+.mc-sketch button:focus-visible {
+  outline: 1.5px solid var(--sel);
+  outline-offset: 1px;
+}
+.mc-sketch input,
+.mc-sketch select,
+.mc-sketch textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* Konva container wrapper */
+.mc-sketch .konvajs-content {
+  background: transparent;
+}
+
+/* Reusable form input style */
+.mc-sketch .field {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--bg-3);
+  border-radius: 4px;
+  color: var(--ink);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.mc-sketch .field:focus {
+  border-color: var(--accent);
+}
+.mc-sketch select.field {
+  cursor: default;
+}
+.mc-sketch textarea.field {
+  height: auto;
+  padding: 6px 8px;
+  resize: vertical;
+}

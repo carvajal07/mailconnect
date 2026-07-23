@@ -19,7 +19,16 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.9.6",
-    "read-excel-file": "^9.3.1"
+    "read-excel-file": "^9.3.1",
+    "konva": "^9.3.16",
+    "react-konva": "^19.0.10",
+    "react-arborist": "^3.4.3",
+    "react-resizable-panels": "^2.1.7",
+    "jsbarcode": "^3.12.3",
+    "qrcode": "^1.5.4",
+    "zustand": "^5.0.12",
+    "zundo": "^2.3.0",
+    "lucide-react": "^0.577.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -33,9 +42,17 @@
     "globals": "^16.5.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.3",
-    "vite": "npm:rolldown-vite@7.2.2"
+    "vite": "npm:rolldown-vite@7.2.2",
+    "tailwindcss": "^3.4.17",
+    "postcss": "^8.5.6",
+    "autoprefixer": "^10.4.21",
+    "@types/qrcode": "^1.5.5"
   },
   "overrides": {
-    "vite": "npm:rolldown-vite@7.2.2"
+    "vite": "npm:rolldown-vite@7.2.2",
+    "react-arborist": {
+      "react": "$react",
+      "react-dom": "$react-dom"
+    }
   }
 }

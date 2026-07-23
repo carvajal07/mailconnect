@@ -49,6 +49,7 @@ export const API_CONFIG = {
     GET: '/Template/Get-template',        // ✅ real
     DELETE: '/Template/Delete-template',  // ✅ real
     RENDER_PDF: '/Template/Render-pdf',   // ✅ real (genera el PDF desde el editor)
+    RENDER_ENGINE: '/Template/Render-engine', // motor estándar (pdfsketch / DocumentDesigner)
     LIST: '/templates/list',              // ⚠️ no existe aún
     UPDATE: '/templates/update',          // ⚠️ no existe aún
     SEARCH: '/templates/search',          // ⚠️ no existe aún

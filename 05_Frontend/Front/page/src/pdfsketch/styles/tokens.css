@@ -1,0 +1,44 @@
+/*
+ * Tokens del editor pdfsketch, SCOPEADOS bajo `.mc-sketch` para no chocar con
+ * el resto del portal MailConnect (MUI). El tema se controla con la clase
+ * `dark`/`light` sobre el MISMO wrapper (ver SketchEditor.tsx), no sobre
+ * document.documentElement como en el prototipo original.
+ */
+.mc-sketch,
+.mc-sketch.dark {
+  /* ---- Dark theme (default) ---- */
+  --bg-0: #1e1e20;
+  --bg-1: #26262a;
+  --bg-2: #2c2c31;
+  --bg-3: #34343a;
+  --bg-4: #3d3d44;
+  --canvas: #3a3a3f;
+  --line: #1a1a1c;
+  --line-2: #3a3a40;
+  --line-3: #47474e;
+  --ink: #e8e8ea;
+  --ink-2: #b4b4b8;
+  --muted: #7d7d82;
+  --accent: oklch(0.72 0.15 150);
+  --accent-dim: oklch(0.52 0.12 150);
+  --accent-soft: oklch(0.72 0.15 150 / 0.12);
+  --sel: oklch(0.68 0.19 235);
+  --paper: #fbfbf8;
+  --paper-shadow: rgba(0, 0, 0, 0.45);
+  --danger: oklch(0.65 0.18 25);
+}
+
+.mc-sketch.light {
+  --bg-0: #eeede8;
+  --bg-1: #f5f4ef;
+  --bg-2: #eceae4;
+  --bg-3: #e2dfd7;
+  --bg-4: #d6d3ca;
+  --canvas: #d9d7cf;
+  --line: #bab8b1;
+  --line-2: #c9c6be;
+  --line-3: #a8a59c;
+  --ink: #1a1a1a;
+  --ink-2: #4a4a4a;
+  --muted: #7a7a78;
+}
