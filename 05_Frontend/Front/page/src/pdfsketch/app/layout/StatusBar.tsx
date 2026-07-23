@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import {
   Minus,
   Plus,
@@ -7,7 +8,6 @@ import {
   ChevronRight,
   Grid3x3,
   Magnet,
-  Maximize,
   Circle,
   FilePlus,
   Trash2,
@@ -15,12 +15,35 @@ import {
 import { useUIStore } from '@/store/uiStore';
 import { DISPLAY_UNITS, formatMmAs } from '@/utils/displayUnits';
 import { useDocumentStore } from '@/store/documentStore';
-import { sizeLabel } from '@/utils/pageSizes';
 
 function Sep() {
-  return <div className="w-px h-3.5 bg-line-2 mx-2" />;
+  return <div className="w-px h-4 bg-line-2 mx-2" />;
 }
 
+/** Botón "en caja" del estilo de la barra del Diseñador PDF. */
+function BoxBtn({ onClick, title, active, children }: {
+  onClick: () => void; title?: string; active?: boolean; children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className="h-[22px] px-2 rounded flex items-center gap-1 text-11"
+      style={active
+        ? { background: 'var(--accent-soft)', color: 'var(--accent)', border: '1px solid var(--accent)' }
+        : { background: 'var(--bg-1)', color: 'var(--ink-2)', border: '1px solid var(--line)' }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Barra de estado con el layout de la del Diseñador PDF:
+ * X/Y · [tamaño de hoja] · Unidad: mm cm pt px in · Grilla · − % + · 1:1 ·
+ * Ajustar · Ancho (+ navegación de páginas y estado de guardado propios del sketch).
+ */
 export default function StatusBar() {
   const zoom = useUIStore((s) => s.zoom);
   const setZoom = useUIStore((s) => s.setZoom);
@@ -32,6 +55,7 @@ export default function StatusBar() {
   const unit = useUIStore((s) => s.unit);
   const setUnit = useUIStore((s) => s.setUnit);
   const requestFit = useUIStore((s) => s.requestFit);
+  const requestFitWidth = useUIStore((s) => s.requestFitWidth);
 
   const pages = useDocumentStore((s) => s.doc.pages);
   const currentPageId = useDocumentStore((s) => s.currentPageId);
@@ -42,118 +66,70 @@ export default function StatusBar() {
   const page = pages[idx] ?? pages[0];
   const lastSaved = useDocumentStore((s) => s.lastSavedAt);
 
-  const label = page ? sizeLabel(page.size.width, page.size.height) : '—';
-
   return (
-    <div className="h-full bg-bg-1 flex items-center text-11 px-2">
-      {/* Zoom */}
-      <button
-        type="button"
-        className="w-5 h-5 rounded-3 hover:bg-bg-3 text-ink-2 flex items-center justify-center"
-        onClick={() => setZoom(zoom - 0.1)}
-        aria-label="Reducir zoom"
-      >
-        <Minus size={12} />
+    <div className="h-full bg-bg-1 flex items-center text-11 px-2" style={{ color: 'var(--ink-2)' }}>
+      {/* ── Navegación de páginas (propia del sketch) ── */}
+      <button type="button" className="w-5 h-5 rounded hover:bg-bg-3 flex items-center justify-center"
+        onClick={() => pages[0] && setCurrentPage(pages[0].id)} title="Primera hoja">
+        <SkipBack size={11} />
       </button>
-      <span className="font-mono w-12 text-center">{Math.round(zoom * 100)} %</span>
-      <button
-        type="button"
-        className="w-5 h-5 rounded-3 hover:bg-bg-3 text-ink-2 flex items-center justify-center"
-        onClick={() => setZoom(zoom + 0.1)}
-        aria-label="Aumentar zoom"
-      >
-        <Plus size={12} />
+      <button type="button" className="w-5 h-5 rounded hover:bg-bg-3 flex items-center justify-center"
+        onClick={() => pages[idx - 1] && setCurrentPage(pages[idx - 1].id)} title="Hoja anterior">
+        <ChevronLeft size={11} />
       </button>
-      <button
-        type="button"
-        className="px-1.5 h-5 rounded-3 hover:bg-bg-3 text-ink-2 font-mono text-[10px]"
-        onClick={() => setZoom(1)}
-        title="Zoom real (100%)"
-      >
-        1:1
+      <span className="font-mono mx-1">{idx + 1}/{pages.length}</span>
+      <button type="button" className="w-5 h-5 rounded hover:bg-bg-3 flex items-center justify-center"
+        onClick={() => pages[idx + 1] && setCurrentPage(pages[idx + 1].id)} title="Hoja siguiente">
+        <ChevronRight size={11} />
       </button>
-      <button
-        type="button"
-        className="w-5 h-5 rounded-3 hover:bg-bg-3 text-ink-2 flex items-center justify-center"
-        onClick={requestFit}
-        aria-label="Ajustar a la ventana"
-        title="Ajustar a la ventana"
-      >
-        <Maximize size={11} />
+      <button type="button" className="w-5 h-5 rounded hover:bg-bg-3 flex items-center justify-center"
+        onClick={() => pages[pages.length - 1] && setCurrentPage(pages[pages.length - 1].id)} title="Última hoja">
+        <SkipForward size={11} />
       </button>
-
-      <Sep />
-
-      {/* Page nav */}
-      <button
-        type="button"
-        className="w-5 h-5 rounded-3 hover:bg-bg-3 text-ink-2 flex items-center justify-center"
-        onClick={() => pages[0] && setCurrentPage(pages[0].id)}
-      >
-        <SkipBack size={12} />
+      <button type="button" className="w-5 h-5 rounded hover:bg-bg-3 flex items-center justify-center"
+        onClick={addPage} title="Nueva hoja">
+        <FilePlus size={11} />
       </button>
-      <button
-        type="button"
-        className="w-5 h-5 rounded-3 hover:bg-bg-3 text-ink-2 flex items-center justify-center"
-        onClick={() => pages[idx - 1] && setCurrentPage(pages[idx - 1].id)}
-      >
-        <ChevronLeft size={12} />
-      </button>
-      <span className="font-mono mx-1">
-        {idx + 1} / {pages.length}
-      </span>
-      <button
-        type="button"
-        className="w-5 h-5 rounded-3 hover:bg-bg-3 text-ink-2 flex items-center justify-center"
-        onClick={() => pages[idx + 1] && setCurrentPage(pages[idx + 1].id)}
-      >
-        <ChevronRight size={12} />
-      </button>
-      <button
-        type="button"
-        className="w-5 h-5 rounded-3 hover:bg-bg-3 text-ink-2 flex items-center justify-center"
-        onClick={() => pages[pages.length - 1] && setCurrentPage(pages[pages.length - 1].id)}
-      >
-        <SkipForward size={12} />
-      </button>
-      <button
-        type="button"
-        className="w-5 h-5 rounded-3 hover:bg-bg-3 text-ink-2 flex items-center justify-center"
-        onClick={addPage}
-        aria-label="Nueva hoja"
-        title="Nueva hoja"
-      >
-        <FilePlus size={12} />
-      </button>
-      <button
-        type="button"
-        className="w-5 h-5 rounded-3 hover:bg-bg-3 flex items-center justify-center disabled:opacity-30"
-        style={{ color: pages.length > 1 ? 'var(--ink-2)' : undefined }}
+      <button type="button"
+        className="w-5 h-5 rounded hover:bg-bg-3 flex items-center justify-center disabled:opacity-30"
         onClick={() => pages.length > 1 && removePage(currentPageId)}
-        disabled={pages.length <= 1}
-        aria-label="Eliminar hoja"
-        title="Eliminar hoja"
-      >
-        <Trash2 size={12} />
+        disabled={pages.length <= 1} title="Eliminar hoja">
+        <Trash2 size={11} />
       </button>
 
       <Sep />
 
-      <span className="font-mono text-muted">
-        x: {formatMmAs(cursor.x, unit)}  y: {formatMmAs(cursor.y, unit)} {unit}
+      {/* ── Posición del cursor ── */}
+      <span className="font-mono whitespace-nowrap">
+        X: <strong style={{ color: 'var(--ink)' }}>{formatMmAs(cursor.x, unit)}</strong>{' '}
+        Y: <strong style={{ color: 'var(--ink)' }}>{formatMmAs(cursor.y, unit)}</strong> {unit}
       </span>
 
       <Sep />
 
-      {/* Selector de unidad (como el Diseñador PDF) */}
-      <div className="flex items-center gap-0.5">
+      {/* ── Tamaño de la hoja (chip en caja) ── */}
+      <span
+        className="font-mono px-2 h-[22px] flex items-center rounded whitespace-nowrap"
+        style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', color: 'var(--accent)' }}
+        title="Tamaño de la hoja"
+      >
+        {page ? `${formatMmAs(page.size.width, unit)} × ${formatMmAs(page.size.height, unit)} ${unit}` : '—'}
+      </span>
+
+      <Sep />
+
+      {/* ── Unidad ── */}
+      <span className="mr-1" style={{ color: 'var(--muted)' }}>Unidad:</span>
+      <div className="flex items-center gap-1">
         {DISPLAY_UNITS.map((u) => (
           <button
             key={u}
             type="button"
             onClick={() => setUnit(u)}
-            className="px-1 h-5 rounded-3 hover:bg-bg-3 font-mono text-[10px]"
-            style={u === unit ? { color: 'var(--accent)', background: 'var(--accent-soft)' } : { color: 'var(--muted)' }}
+            className="h-[20px] px-1.5 rounded font-mono text-[10px]"
+            style={u === unit
+              ? { background: 'var(--accent)', color: '#ffffff', fontWeight: 700 }
+              : { background: 'var(--bg-1)', color: 'var(--ink-2)', border: '1px solid var(--line)' }}
             title={`Mostrar medidas en ${u}`}
           >
             {u}
@@ -163,31 +139,34 @@ export default function StatusBar() {
 
       <Sep />
 
-      <button
-        type="button"
-        onClick={toggleGrid}
-        className="flex items-center gap-1 px-1.5 h-5 rounded-3 hover:bg-bg-3"
-        style={showGrid ? { color: 'var(--accent)' } : undefined}
-      >
-        <Grid3x3 size={12} /> Grid
-      </button>
-      <button
-        type="button"
-        onClick={toggleSnap}
-        className="flex items-center gap-1 px-1.5 h-5 rounded-3 hover:bg-bg-3"
-        style={showSnap ? { color: 'var(--accent)' } : undefined}
-      >
-        <Magnet size={12} /> Snap
-      </button>
+      {/* ── Grilla / Snap ── */}
+      <BoxBtn onClick={toggleGrid} active={showGrid} title="Mostrar/ocultar la grilla">
+        <Grid3x3 size={11} /> Grilla
+      </BoxBtn>
+      <span className="mx-0.5" />
+      <BoxBtn onClick={toggleSnap} active={showSnap} title="Imantar a la grilla/guías">
+        <Magnet size={11} /> Snap
+      </BoxBtn>
 
       <div className="flex-1" />
 
-      <span className="font-mono text-muted mr-2">
-        {label} · {page ? `${formatMmAs(page.size.width, unit)}×${formatMmAs(page.size.height, unit)} ${unit}` : '—'}
+      {/* ── Zoom + ajustes ── */}
+      <BoxBtn onClick={() => setZoom(zoom - 0.1)} title="Reducir zoom"><Minus size={11} /></BoxBtn>
+      <span className="font-mono w-11 text-center" style={{ color: 'var(--ink)' }}>
+        {Math.round(zoom * 100)}%
       </span>
+      <BoxBtn onClick={() => setZoom(zoom + 0.1)} title="Aumentar zoom"><Plus size={11} /></BoxBtn>
+      <span className="mx-0.5" />
+      <BoxBtn onClick={() => setZoom(1)} title="Zoom real (100%)">1:1</BoxBtn>
+      <span className="mx-0.5" />
+      <BoxBtn onClick={requestFit} title="Ajustar la hoja a la ventana">Ajustar</BoxBtn>
+      <span className="mx-0.5" />
+      <BoxBtn onClick={requestFitWidth} title="Ajustar al ancho de la hoja">Ancho</BoxBtn>
+
       <Sep />
-      <Circle size={8} style={{ color: 'var(--accent)', fill: 'var(--accent)' }} />
-      <span className="ml-1.5 text-ink-2">
+
+      <Circle size={8} style={{ color: 'var(--accent)', fill: lastSaved ? 'var(--accent)' : 'transparent' }} />
+      <span className="ml-1.5 whitespace-nowrap">
         {lastSaved ? `guardado ${timeAgo(lastSaved)}` : 'sin guardar'}
       </span>
     </div>

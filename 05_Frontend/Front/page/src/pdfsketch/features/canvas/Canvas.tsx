@@ -31,6 +31,7 @@ export default function Canvas() {
   const unit = useUIStore((s) => s.unit);
   const theme = useUIStore((s) => s.theme);
   const fitTick = useUIStore((s) => s.fitTick);
+  const fitWidthTick = useUIStore((s) => s.fitWidthTick);
   const activeTool = useToolStore((s) => s.active);
   const setActiveTool = useToolStore((s) => s.setActive);
   const clearSelection = useSelectionStore((s) => s.clear);
@@ -157,11 +158,29 @@ export default function Canvas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setZoom, draw.cancel]);
 
-  // "Ajustar a la ventana" pedido desde la barra de estado (uiStore.requestFit).
+  // "Ajustar a la ventana" / "Ajustar al ancho" pedidos desde la barra de estado.
   useEffect(() => {
     if (fitTick > 0) fitToViewport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitTick]);
+
+  useEffect(() => {
+    if (fitWidthTick > 0) fitToWidth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitWidthTick]);
+
+  function fitToWidth() {
+    if (!page) return;
+    const margin = 40;
+    const availW = Math.max(100, size.w - RULER_SIZE_PX - margin * 2);
+    const z = Math.min(5, availW / (page.size.width * MM_TO_PX));
+    setZoom(z);
+    const sheetW = page.size.width * MM_TO_PX * z;
+    setOffset({
+      x: RULER_SIZE_PX + (size.w - RULER_SIZE_PX - sheetW) / 2,
+      y: RULER_SIZE_PX + 24,
+    });
+  }
 
   function fitToViewport() {
     if (!page) return;

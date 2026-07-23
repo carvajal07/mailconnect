@@ -64,9 +64,28 @@
   outline: 1.5px solid var(--sel);
   outline-offset: 1px;
 }
-.mc-sketch input,
+/* Sin el preflight de Tailwind, los inputs traen el borde negro nativo del
+   navegador → se les da el look de campo del editor (los .field lo refinan). */
+.mc-sketch input:not([type='color']):not([type='checkbox']):not([type='radio']):not([type='range']),
 .mc-sketch select,
 .mc-sketch textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  padding: 1px 6px;
+  outline: none;
+}
+.mc-sketch input:focus,
+.mc-sketch select:focus,
+.mc-sketch textarea:focus {
+  border-color: var(--accent);
+}
+.mc-sketch input[type='color'],
+.mc-sketch input[type='checkbox'],
+.mc-sketch input[type='radio'],
+.mc-sketch input[type='range'] {
   font: inherit;
   color: inherit;
 }

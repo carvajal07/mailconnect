@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Undo2, Redo2, FileDown, FolderOpen, FileOutput } from 'lucide-react';
+import { Undo2, Redo2, FolderOpen, FileOutput } from 'lucide-react';
 import { useDocumentHistory, useDocumentStore } from '@/store/documentStore';
 import { serializeToJson, deserializeFromJson } from '@/json/documentJson';
 import { downloadBlob } from '@/api/export';
-import { useUIStore } from '@/store/uiStore';
 
 const OTHER_MENUS = ['Editar', 'Ver', 'Insertar', 'Formato', 'Datos', 'Ayuda'];
 
@@ -11,7 +10,6 @@ export default function MenuBar() {
   const history = useDocumentHistory();
   const doc = useDocumentStore((s) => s.doc);
   const setDoc = useDocumentStore((s) => s.setDoc);
-  const setPreviewOpen = useUIStore((s) => s.setPreviewOpen);
 
   const [archivoOpen, setArchivoOpen] = useState(false);
   const archivoRef = useRef<HTMLDivElement>(null);
@@ -144,18 +142,6 @@ export default function MenuBar() {
         onChange={handleFileChange}
       />
 
-      {/* Exportar PDF */}
-      <div className="ml-auto">
-        <button
-          className="h-[24px] px-3 rounded-3 flex items-center gap-1.5 font-semibold"
-          style={{ background: 'var(--accent)', color: '#0b1a10' }}
-          type="button"
-          onClick={() => setPreviewOpen(true)}
-        >
-          <FileDown size={13} />
-          Exportar PDF
-        </button>
-      </div>
     </div>
   );
 }
