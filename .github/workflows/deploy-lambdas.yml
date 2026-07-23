@@ -38,6 +38,13 @@ name: Desplegar Lambdas
 #   { "NombreCarpeta": { "sqs": "NombreCola", "batchSize": 1 } }
 #     · Crea la cola SQS si no existe (VisibilityTimeout 360 s + long polling)
 #       y el event source mapping cola→lambda si falta. batchSize default 10.
+#     · DLQ: crea también la cola de mensajes muertos `{NombreCola}-dlq`
+#       (retención 14 días) y le pone a la cola una redrive policy con
+#       maxReceiveCount 5 (override `maxReceiveCount`). Misma convención que
+#       Terraform → convergen. Una cola EXISTENTE sin redrive recibe la DLQ
+#       (best-effort); las de Terraform (ya con redrive) se dejan intactas.
+#       Sin DLQ, un "mensaje veneno" se reintenta hasta agotar la retención
+#       (4 días) y se pierde en silencio.
 #     · Una lambda disparada por SQS LEE la cola con su PROPIO rol, así que el
 #       trigger fuerza el token _SQS en el rol auto-detectado al crearla.
 #   { "NombreCarpeta": { "sns": "NombreTopico" } }
@@ -62,6 +69,7 @@ name: Desplegar Lambdas
 #   iam:GetRole, iam:CreateRole, iam:AttachRolePolicy, iam:PutRolePolicy,
 #   iam:PassRole (sobre los roles Lambda_*), sts:GetCallerIdentity,
 #   sqs:GetQueueUrl, sqs:CreateQueue, sqs:GetQueueAttributes,
+#   sqs:SetQueueAttributes (para añadir la DLQ/redrive a colas existentes; best-effort),
 #   (si usas triggers SNS)  sns:CreateTopic, sns:Subscribe, sns:ListSubscriptionsByTopic,
 #   (si usas 'schedule')    events:PutRule, events:PutTargets.
 # Alternativa más segura: rol OIDC (ver nota al final del archivo).
@@ -267,20 +275,57 @@ jobs:
             local qname
             qname=$(echo "$cfg" | jq -r '.sqs // empty')
             if [ -n "$qname" ]; then
-              local batch vis qurl qarn uuid out
+              local batch vis maxrecv qurl qarn uuid out dlqname dlqarn redrive attrs existing_rd
               batch=$(echo "$cfg" | jq -r '.batchSize // 10')
               vis=$(echo "$cfg" | jq -r '.visibilityTimeout // 360')
+              maxrecv=$(echo "$cfg" | jq -r '.maxReceiveCount // 5')
+              dlqname="${qname}-dlq"
+
+              # Asegura la DLQ {qname}-dlq (misma convención que Terraform, retención 14 días) y
+              # devuelve su ARN por stdout. Sin DLQ, un "mensaje veneno" (fallo persistente) se
+              # reintenta hasta agotar la retención (4 días) y se pierde en silencio.
+              _ensure_dlq() {  # $1 = nombre de la DLQ → imprime el ARN
+                local dq="$1" durl
+                if ! durl=$(aws sqs get-queue-url --queue-name "$dq" --query QueueUrl --output text 2>/dev/null); then
+                  echo "   📮 Creando DLQ $dq (retención 14 días)" 1>&2
+                  durl=$(aws sqs create-queue --queue-name "$dq" \
+                           --attributes "MessageRetentionPeriod=1209600" --query QueueUrl --output text)
+                  sleep 1
+                fi
+                aws sqs get-queue-attributes --queue-url "$durl" \
+                  --attribute-names QueueArn --query 'Attributes.QueueArn' --output text
+              }
+
               if ! qurl=$(aws sqs get-queue-url --queue-name "$qname" --query QueueUrl --output text 2>/tmp/qerr); then
                 if grep -qi "NonExistentQueue\|does not exist" /tmp/qerr; then
-                  echo "   📮 Creando cola SQS $qname (VisibilityTimeout=${vis}s, long polling 20s)"
-                  qurl=$(aws sqs create-queue --queue-name "$qname" \
-                           --attributes "VisibilityTimeout=${vis},ReceiveMessageWaitTimeSeconds=20" \
-                           --query QueueUrl --output text)
+                  # Crea la DLQ primero y luego la cola principal CON redrive (maxReceiveCount).
+                  dlqarn=$(_ensure_dlq "$dlqname")
+                  redrive=$(jq -nc --arg arn "$dlqarn" --arg n "$maxrecv" '{deadLetterTargetArn:$arn, maxReceiveCount:$n}')
+                  attrs=$(jq -nc --arg vis "$vis" --arg rd "$redrive" \
+                            '{VisibilityTimeout:$vis, ReceiveMessageWaitTimeSeconds:"20", RedrivePolicy:$rd}')
+                  echo "   📮 Creando cola SQS $qname (VisibilityTimeout=${vis}s, long polling 20s, DLQ→$dlqname maxReceiveCount=$maxrecv)"
+                  qurl=$(aws sqs create-queue --queue-name "$qname" --attributes "$attrs" --query QueueUrl --output text)
                   sleep 2
                 else
                   echo "❌ Error consultando la cola $qname:"; cat /tmp/qerr
                   echo "   💡 ¿El usuario de CI tiene sqs:GetQueueUrl/CreateQueue/GetQueueAttributes?"
                   exit 1
+                fi
+              else
+                # Cola EXISTENTE: si NO tiene redrive policy (p. ej. la creó una versión previa del
+                # CD sin DLQ), se le añade DLQ + redrive (idempotente). Las colas de Terraform ya la
+                # traen → se dejan intactas (converge en el mismo {qname}-dlq + maxReceiveCount).
+                existing_rd=$(aws sqs get-queue-attributes --queue-url "$qurl" \
+                                --attribute-names RedrivePolicy --query 'Attributes.RedrivePolicy' --output text 2>/dev/null || true)
+                if [ -z "$existing_rd" ] || [ "$existing_rd" = "None" ]; then
+                  dlqarn=$(_ensure_dlq "$dlqname")
+                  redrive=$(jq -nc --arg arn "$dlqarn" --arg n "$maxrecv" '{deadLetterTargetArn:$arn, maxReceiveCount:$n}')
+                  attrs=$(jq -nc --arg rd "$redrive" '{RedrivePolicy:$rd}')
+                  if aws sqs set-queue-attributes --queue-url "$qurl" --attributes "$attrs" 2>/tmp/rderr; then
+                    echo "   🔁 DLQ + redrive añadidos a la cola existente $qname (→$dlqname, maxReceiveCount=$maxrecv)"
+                  else
+                    echo "   ⚠️  No se pudo añadir la DLQ a $qname (¿falta sqs:SetQueueAttributes?): $(cat /tmp/rderr)"
+                  fi
                 fi
               fi
               qarn=$(aws sqs get-queue-attributes --queue-url "$qurl" \

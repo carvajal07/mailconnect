@@ -170,6 +170,39 @@ def _mark_part(tenant_key_value, process_id_value, part, state, stage='send'):
     except Exception as e:
         print(f'No se pudo marcar la parte {part} como {state}: {e}')
 
+
+def _record_send_failure(tenant_key_value, process_id_value, part, unique_id, email, error, date):
+    """Registra en {tenant}_sendStatus un FALLO de envío por destinatario (send_raw_email lanzó),
+    con state=3 (Reject, mismo mapa que ReceptionStatus/SMS/Voz), para que el reporte lo cuente
+    como rechazo en vez de PERDERLO en silencio. Antes EAP enviaba por destinatario en un
+    try/except que solo hacía print(e) → el fallo no dejaba rastro (ni en sendStatus ni por evento
+    SES, porque el envío nunca llegó a SES → no hay messageId real).
+
+    El ÉXITO NO se registra aquí: lo reporta SES por evento (Email_ReceptionStatus) con el
+    messageId real → registrarlo aquí lo DUPLICARÍA. La clave (sendStatusId) y el messageId son
+    DETERMINISTAS por (part, uniqueId): un reproceso SOBRESCRIBE la misma fila (no duplica) y
+    Statistics —que agrega por messageId— lo cuenta como UN rechazo. Best-effort (no rompe el
+    resto del lote)."""
+    if not tenant_key_value or not process_id_value:
+        return
+    try:
+        dynamodb.Table(f'{tenant_key_value}_sendStatus').put_item(Item={
+            'processId': str(process_id_value),
+            'sendStatusId': f'{part}-fail-{unique_id}',
+            # messageId sintético (el envío no llegó a SES): permite que Statistics lo agregue
+            # (descarta las filas SIN messageId). Determinista → un reproceso no lo duplica.
+            'messageId': f'eapfail-{part}-{unique_id}',
+            'uniqueId': str(unique_id),
+            'email': str(email),
+            'date': date,
+            'state': 3,
+            'type1': 'EAP',
+            'type2': ('Fallo de envío: ' + str(error))[:250],
+        })
+    except Exception as e:
+        print(f'No se pudo registrar el fallo de envío EAP a {email}: {e}')
+
+
 def insert_sendDetail(processDetailId,customerName,registers,part,date,state):
     #cuenta los registros para el campo total de la tabla {tenant}_processDetail (tenant=tenant_key(NIT))
     tableName = f'{tenant}_processDetail'
@@ -325,6 +358,10 @@ def lambda_handler(event, context):
         headers = json_body["headers"]
         template_name = json_body["templateName"]
         part = json_body["part"]
+        # OJO: dentro de los bucles de envío `part` se REASIGNA al adjunto MIME
+        # (part = MIMEApplication(...)), así que se conserva el id del sub-lote aquí para el
+        # claim/mark de idempotencia y para registrar los fallos por destinatario.
+        part_id = part
         data = json_body["data"]
         # Formato del adjunto personalizado: DOCX (por defecto) o PDF. El combinador
         # EAP-PDF (Api_V1_Template_Combination-EAP-PDF) sube attachment/{campaña}/{nombre}.pdf
@@ -350,7 +387,7 @@ def lambda_handler(event, context):
         # cualquier redelivery. El combinador ya reclamó la etapa 'combine' de esta misma parte;
         # por eso la clave lleva el sufijo de etapa. Si esta parte ya se reclamó para envío
         # (duplicado SQS), part_claimed=False → se omite el envío en el bloque else.
-        part_claimed = _claim_part(tenant, process_id, part, registers, formatted_date, stage='send')
+        part_claimed = _claim_part(tenant, process_id, part_id, registers, formatted_date, stage='send')
         print(f"Parte {part}: claim de envío = {part_claimed}")
 
         #Consultar la informacion de la plantilla
@@ -568,6 +605,9 @@ def lambda_handler(event, context):
                     '''
                 except Exception as e:
                     print(e)
+                    # El envío a este destinatario falló → registrar el rechazo (state 3) para
+                    # que sea VISIBLE en el reporte, en vez de perderlo en silencio.
+                    _record_send_failure(tenant, process_id, part_id, unique_id, email, e, formatted_date)
         else:
             print("Proceso con personalizacion del asunto")
             for register in data: 
@@ -649,12 +689,14 @@ def lambda_handler(event, context):
                 except Exception as e:
                     #Si alguno de los envios no se puede realizar debo enviarlo a una cola para darle manejo
                     print(e)
+                    # Registrar el rechazo (state 3) para que el fallo sea VISIBLE en el reporte.
+                    _record_send_failure(tenant, process_id, part_id, unique_id, email, e, formatted_date)
                 
 
         
 
         # Parte completada: marca 'Terminado' sobre la fila reclamada para envío (observabilidad).
-        _mark_part(tenant, process_id, part, "Terminado", stage='send')
+        _mark_part(tenant, process_id, part_id, "Terminado", stage='send')
 
         # Envío de MUESTRAS terminado sin error → contar 1 en la campaña (no cuenta si falló).
         if status and is_samples and campaign_id:

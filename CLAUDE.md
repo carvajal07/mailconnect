@@ -1264,6 +1264,13 @@ se puede leer del objeto ya subido a S3.)
         `visibilityTimeout`) y el **event source mapping** cola→lambda (`batchSize` default 10).
         La lambda con trigger `sqs` recibe además el token **`_SQS`** en su rol auto-detectado
         (el poller de Lambda lee la cola con el rol de la FUNCIÓN, aunque su código no use SQS).
+        **DLQ (jul 2026):** crea también la cola de mensajes muertos `{cola}-dlq` (retención 14 días)
+        y le pone a la cola una **redrive policy** con `maxReceiveCount` 5 (override `maxReceiveCount`).
+        Misma convención que Terraform (`infra/terraform/sqs.tf`) → convergen. Una cola EXISTENTE
+        sin redrive recibe la DLQ (best-effort, requiere `sqs:SetQueueAttributes`); las de Terraform
+        (ya con redrive) se dejan intactas. Sin DLQ, un "mensaje veneno" (fallo persistente) se
+        reintenta hasta agotar la retención (4 días) y se pierde en silencio — crítico ahora que el
+        worker SQS de Prepare-batch **propaga** los fallos (ver fix del filtro fail-closed).
       - `sns`: crea el **tópico** + permiso de invocación + suscripción (apuntar el config set
         SES/EUM al tópico sigue siendo manual, por eso no viene pre-llenado).
       - `schedule`: regla **EventBridge** `{funcion}-cron` con `rate()`/`cron()` + permiso + target.
@@ -1274,8 +1281,26 @@ se puede leer del objeto ya subido a S3.)
       `Sms/Wsp/Voice_Send-batch`→sus workers. El usuario de CI necesita además
       `sqs:GetQueueUrl/CreateQueue/GetQueueAttributes` y `lambda:ListEventSourceMappings/
       CreateEventSourceMapping/AddPermission` (+ `sns:CreateTopic/Subscribe/
-      ListSubscriptionsByTopic` y `events:PutRule/PutTargets` si se usan esas llaves) —
+      ListSubscriptionsByTopic` y `events:PutRule/PutTargets` si se usan esas llaves; y
+      `sqs:SetQueueAttributes` para la DLQ de colas existentes) —
       **agregar esos permisos ANTES del próximo push** que toque lambdas con trigger.
+
+### Fix: EAP registra los fallos de envío por destinatario (no más pérdida silenciosa) (jul 2026)
+- **Problema:** `Send-EAP` (canal de adjunto PERSONALIZADO por destinatario — docx/pdf, típicamente
+  documentos importantes) enviaba cada correo en un `try/except` que solo hacía `print(e)`. Un fallo
+  (throttle, dirección inválida, adjunto corrupto) se **tragaba**: sin estado en `sendStatus` y sin
+  evento SES (el envío nunca llegó a SES → no hay messageId) → el destinatario quedaba **invisible**
+  (ni enviado ni rechazado) y sin reintento (EAP "termina" la parte igual).
+- **Fix:** en el `except` por destinatario, `_record_send_failure` escribe una fila **state=3
+  (Reject)** en `{tenant}_sendStatus` con un **messageId sintético DETERMINISTA** por `(part, uniqueId)`
+  — necesario porque `Reports_Statistics` agrega **por messageId y descarta las filas sin él**. Así el
+  fallo se **cuenta como rechazo** en el reporte. El ÉXITO NO se registra aquí (lo reporta SES por
+  evento con el messageId real → registrarlo duplicaría). Clave determinista → un reproceso sobrescribe
+  (no duplica). Cubierto por `08_Pruebas/PruebasSeguridad/test_eap_send_failure.py`.
+- **Bug latente corregido de paso:** en EAP la variable `part` se **reasigna a `MIMEApplication`**
+  dentro del bucle, así que el `_mark_part(...,"Terminado")` (idempotencia, jul 2026) usaba una clave
+  basura. Se captura `part_id = part` antes del bucle y se usa en el claim/mark/registro de fallos.
+  (El **claim** de idempotencia ya era correcto — se hace ANTES del bucle, con `part` aún = id.)
 
 ### Seguridad (URGENTE)
 - [x] Scripts `prueba genera JWT.py` / `prueba jwt.py` limpios: leen `SECRET_KEY` de env (jul 2026).
