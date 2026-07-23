@@ -7,21 +7,22 @@
 #     python/xhtml2pdf/...   python/PIL/...   python/reportlab/...   (etc.)
 # Lambda agrega /opt/python a sys.path, por lo que el import funciona directo.
 #
-# CLAVE (compatibilidad binaria): reportlab/Pillow/lxml/cryptography traen extensiones
-# nativas (.so). Se DEBEN bajar wheels manylinux2014 (glibc 2.17), compatibles con el
-# runtime python3.11 de Lambda (Amazon Linux 2, glibc 2.26). Por eso se fuerza
-# --platform/--only-binary y NO se compila localmente. Para python3.12 (AL2023, glibc
-# 2.34) sirve igual manylinux2014, pero hay que rebuild con PY_VERSION=3.12 (ABI cp312).
+# CLAVE (compatibilidad binaria): Pillow/lxml/cryptography/cffi/python-bidi traen
+# extensiones nativas (.so). Se DEBEN bajar wheels manylinux2014 (glibc 2.17), que son
+# compatibles con el runtime python3.13 de Lambda (Amazon Linux 2023, glibc 2.34) y
+# también con python3.11/3.12. Por eso se fuerza --platform/--only-binary y NO se compila
+# localmente. El ABI (cp313, cp312, cp311…) SÍ es específico: un layer cp313 NO carga en
+# cp311 y viceversa → hay que rebuild con el PY_VERSION del runtime real.
 #
 # Uso:
-#   ./build.sh                      # python3.11, x86_64 (default)
+#   ./build.sh                      # python3.13, x86_64 (default — runtime de las lambdas)
 #   PY_VERSION=3.12 ./build.sh      # otro runtime
 #   ARCH=arm64 ./build.sh           # Graviton (manylinux2014_aarch64)
 #
 # Requiere: pip (con acceso a PyPI) y zip. NO requiere Docker (usa wheels precompilados).
 set -euo pipefail
 
-PY_VERSION="${PY_VERSION:-3.11}"
+PY_VERSION="${PY_VERSION:-3.13}"
 ARCH="${ARCH:-x86_64}"                    # x86_64 | arm64
 OUT="${OUT:-xhtml2pdf-layer.zip}"
 ABI="cp${PY_VERSION//./}"                 # 3.11 -> cp311
