@@ -199,7 +199,18 @@ def lambda_handler(event, context):
         if not cliente:
             return {"statusCode": 403, "body": json.dumps({"error": "Sesión sin identidad de cliente."})}
 
-        id_proceso = (event.get("idProceso") or os.environ.get("ID_PROCESO") or "").strip()
+        # El body puede llegar como objeto (integración no-proxy con mapping template →
+        # event['body']), como string JSON (proxy) o, sin template, como el propio event.
+        # El tenant (nit) SIEMPRE sale del Authorizer (arriba), nunca del body.
+        _b = event.get("body") if isinstance(event, dict) else None
+        if isinstance(_b, str):
+            try:
+                _b = json.loads(_b)
+            except Exception:
+                _b = None
+        payload = _b if isinstance(_b, dict) else (event if isinstance(event, dict) else {})
+        id_proceso = (payload.get("idProceso") or event.get("idProceso")
+                      or os.environ.get("ID_PROCESO") or "").strip()
 
         if not cliente or not id_proceso:
             return {"statusCode": 400, "body": json.dumps({"error": "Faltan 'cliente' o 'idProceso'."})}
