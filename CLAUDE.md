@@ -1250,7 +1250,16 @@ se puede leer del objeto ya subido a S3.)
       `AWSLambdaBasicExecutionRole` (ejecución + logs) + política **full** por token
       (DynFull→DynamoDB, SES, SQS, S3, SNS, Scheduler→EventBridge Scheduler, Bedrock; EUM
       `sms-voice:*`, Social `social-messaging:*` e Invoke `lambda:InvokeFunction` como inline).
-      Roles ya existentes se usan tal cual (no se les tocan políticas). ⚠️ La función nace SIN
+      Roles ya existentes se usan tal cual (no se les tocan políticas).
+- [x] **CD de lambdas — reconciliación del rol en CADA despliegue (jul 2026):** antes de tocar los
+      triggers, el workflow asegura que la función use su **rol de convención** (crea el rol si
+      falta y **cambia el de la función si difiere**), tanto al crear como al **actualizar**. Antes,
+      la rama de actualizar solo tocaba el código → una función vieja con un rol sin el token `_SQS`
+      fallaba al crear el trigger (*"execution role does not have permissions to call ReceiveMessage
+      on SQS"*). Solo reconcilia roles de convención (`Lambda_*`) o ausentes; un rol **personalizado
+      NO se pisa** (se avisa; usa `role-map.json` para mapearlo). Tras crear/cambiar el rol espera la
+      propagación IAM, y la creación del event source mapping **reintenta** ese error transitorio.
+      ⚠️ La función nace SIN
       env vars, SIN layers y SIN triggers (eso sigue manual, ver `DESPLIEGUE.md`). El input
       manual `force_runtime313` migra también las funciones EXISTENTES a python3.13 (ojo:
       layers con binarios de otra versión, p. ej. reportlab/Pillow, dejarían de funcionar).
