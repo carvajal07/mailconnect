@@ -11,6 +11,24 @@
 
 > **✅ Despliegue e infraestructura COMPLETADOS (2026-07-17):** todas las tareas [J] (tablas, GSIs, lambdas, rutas, IAM, mapping templates, provisión de admins) están desplegadas en AWS. Quedan solo, si acaso, tareas de código [C] (§8).
 
+> **🆕 (jul 2026) Ya NO hace falta "crear la función vacía" antes del CD:** `deploy-lambdas.yml`
+> ahora **crea la función si no existe** en AWS — siempre **Python 3.13** (handler
+> `lambda_function.lambda_handler`) y con el **rol por convención** `Lambda_DynFull_...`
+> (auto-detectado de los `boto3.client/resource` del código; override opcional en
+> `04_Backend/lambdas/role-map.json`; si el rol no existe en IAM, el CD también lo crea con
+> sus políticas full por servicio). Donde este documento diga "crear la función vacía",
+> basta con correr el CD (push o manual). **También asegura los TRIGGERS** declarados en
+> `04_Backend/lambdas/trigger-map.json` (pre-llenado con las 9 colas del pipeline): crea la
+> **cola SQS** si no existe + el **event source mapping** cola→lambda (y fuerza el token
+> `_SQS` en el rol), y opcionalmente tópicos **SNS** (tópico + permiso + suscripción) y
+> reglas **EventBridge** (`schedule`). Donde este documento diga "crear la cola + trigger",
+> basta con desplegar esa carpeta por el CD. **Siguen siendo manuales:** variables de
+> entorno, layers, rutas de API Gateway y apuntar los config sets (SES/EUM) a los tópicos
+> SNS. El usuario IAM de CI necesita los permisos extra listados en la cabecera del workflow
+> (`lambda:CreateFunction/CreateEventSourceMapping/AddPermission`, `iam:CreateRole/
+> AttachRolePolicy/PutRolePolicy/PassRole`, `sqs:CreateQueue`, …) — agregarlos ANTES del
+> próximo push que toque lambdas con trigger.
+
 ---
 
 ## 0. TL;DR — el orden correcto
@@ -50,7 +68,8 @@ usa este **body mapping template**:
       "userId": "$context.authorizer.userId",
       "customerId": "$context.authorizer.customerId",
       "customer": "$context.authorizer.customer",
-      "nit": "$context.authorizer.nit"
+      "nit": "$context.authorizer.nit",
+      "tenantRole": "$context.authorizer.tenantRole"
     }
   }
 }
@@ -68,6 +87,13 @@ usa este **body mapping template**:
 > `nit` no llega, las read-lambdas de cliente (Statistics/Bootstrap/Blacklist/state-report) no
 > encuentran las tablas del tenant. **`deploy-api.yml`/`sync_api.py` ya lo inyectan** — si el
 > template está a mano, agrégale la línea `nit`.
+>
+> **⚠️ `tenantRole` (RBAC de sub-rol) — nuevo, obligatorio (jul 2026):** sin esta línea, los
+> gates `Campaign_Approve`/`Reject`, `Schedule_Create` y el **envío REAL** (`Prepare-batch`)
+> ahora hacen **fail-CLOSED** (default menor privilegio) → un owner/approver legítimo recibiría
+> **403** al aprobar o enviar. Antes su ausencia hacía lo contrario (todos tratados como owner →
+> bypass del maker-checker). `sync_api.py` ya la inyecta; si aplicas el template a mano en alguna
+> ruta, **incluye `tenantRole`**. Redespliega el template (`deploy-api.yml`) junto con las lambdas.
 >
 > **No pasar estas rutas a proxy:** las lambdas devuelven el envelope
 > `{status, statusCode, description, data}` en el cuerpo (estilo no-proxy). En proxy
@@ -92,6 +118,19 @@ lo existente (idempotente) + CORS de errores + deploy. Ver **`infra/api/README.m
   reusa los secrets AWS del CD de lambdas (el IAM necesita `apigateway:*` + `lambda:AddPermission`).
 - **Uso:** editas `routes.json`, haces push, y se aplica solo. Preview: `python scripts/sync_api.py --plan`.
 - **Crear rutas nuevas:** agrega una entrada a `routes.json` (path/lambda/flags) → se crea sola.
+- **Catálogo COMPLETO (jul 2026):** `routes.json` era **fuente de verdad parcial** — le faltaban 16
+  rutas que estaban configuradas **a mano** en la consola (o sin crear). Se **back-fillearon** todas
+  para que el catálogo pueda reconstruir la API entera. Nuevas/nunca creadas: `/Assistant/Ask`
+  (pública+proxy), `/Assistant/Copilot`, `/Cascade/Dispatch`, `/Cascade/List`, `/Report/State-report`
+  (esta última venía con un bug: leía `idProceso` del root del evento, no de `event['body']` que
+  anida el mapping template no-proxy → siempre 400; **corregido**). Ya en vivo (configuradas a mano)
+  y ahora en el catálogo: las **9 `/Security/*`** (todas públicas salvo `Refresh-token` que va tras el
+  Authorizer, y `Acount-activation` = GET/proxy/302) y las **2 `/Email/Send-batch-template[-samples]`**
+  (proxy **obligatorio**: la lambda distingue muestras vs real por `event['resource']`).
+  ⚠️ **Reconciliación:** el próximo `deploy-api.yml` re-aplicará esas 11 rutas en vivo. Los flags se
+  verificaron contra el código, y `sync_api` es idempotente (flags correctos = no-op), pero **corre
+  primero `deploy-api.yml` con `plan_only=true`** para revisar el plan antes de aplicar (toca el flujo
+  de login/envíos).
 
 **¿Cuenta nueva → un comando → todo? Todavía NO.** Este flujo cubre la **capa de API Gateway**.
 Un bootstrap completo de cuenta necesita además IaC de: tablas DynamoDB, **crear** las funciones

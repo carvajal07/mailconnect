@@ -1,8 +1,17 @@
+import re
 import boto3
 import uuid
 from datetime import datetime
 
 REGION = 'us-east-1'
+
+
+def _ses_safe(s):
+    """SES exige que TemplateName solo tenga [A-Za-z0-9_-]. Reemplaza cualquier
+    otro caracter (espacios, acentos, signos) por '-' (guion medio) para que
+    create_template no falle (p. ej. un nombre con espacios). Los segmentos del
+    nombre siguen unidos por '_'. Idempotente sobre nombres ya válidos."""
+    return re.sub(r'[^A-Za-z0-9_-]+', '-', str(s)).strip('-') or 'plantilla'
 
 # Inicializar el cliente SES
 ses_client = boto3.client('ses', region_name=REGION)
@@ -168,55 +177,62 @@ def lambda_handler(event, context):
         try:
             #Consultar el nombre de customer para el id enviado
             try:
-                customerName = select_customerName(customerId) 
-            except:
+                customerName = select_customerName(customerId)
+            except Exception as e:
                 status = False
                 statusCode = 404
                 description = "Error consultando el nombre de cliente en la tabla customers"
+                print(e)
 
             #Consultar el consecutivo de la comunicacion para el cliente especificado
-            try:
-                consecutive = consult_consecutive(customerId)
-            except:
-                status = False                    
-                statusCode = 404
-                description = "Error consultando el consecutivo en la tabla campaignControl"
+            if status:
+                try:
+                    consecutive = consult_consecutive(customerId)
+                except Exception as e:
+                    status = False
+                    statusCode = 404
+                    description = "Error consultando el consecutivo en la tabla campaignControl"
+                    print(e)
 
             #Actualizar la informacion del consecutivo de campañas
-            try:
-                update_consecutive(customerId,consecutive)
-            except:
-                status = False
-                statusCode = 404
-                description = "Error actualizando el consecutivo en la tabla campaignControl"
+            if status:
+                try:
+                    update_consecutive(customerId,consecutive)
+                except Exception as e:
+                    status = False
+                    statusCode = 404
+                    description = "Error actualizando el consecutivo en la tabla campaignControl"
+                    print(e)
 
-            #Consultar el nombre de canal para el id enviado
-            try:
-                channelName = select_channelName(channel)
-            except:
-                status = False
-                statusCode = 404
-                description = "Error consultando el nombre de canal en la tabla channel"
-            
-            #Realizar la creacion del template en AWS SES
-            try:
-                # El nombre de la plantilla SES NO lleva el canal: una misma plantilla HTML
-                # puede usarse en varios canales de email (EM/EAU/EAP). Convención:
-                # {customer}_{consecutivo}_{nombre} (debe coincidir con el lookup de Prepare-batch).
-                templateName = f'{customerName}_{consecutive}_{templateName}'
-                response = create_template(templateName,subject,htmlBody,textBody)
-            except:
-                status = False
-                statusCode = 500
-                description = "Error realizando la creacion del template en SES"
+            # Crear el template en SES SOLO si los pasos previos fueron OK. Antes los
+            # try/except NO cortaban el flujo: un fallo temprano seteaba el error pero igual
+            # se llamaba a create_template → la plantilla quedaba creada en SES aunque la
+            # respuesta fuera error. Además se quitó el lookup de canal (select_channelName),
+            # cuyo resultado NUNCA se usaba y solo podía provocar un 404 falso.
+            if status:
+                try:
+                    # El nombre de la plantilla SES NO lleva el canal: una misma plantilla HTML
+                    # puede usarse en varios canales de email (EM/EAU/EAP). Convención:
+                    # {customer}_{consecutivo}_{nombre} (coincide con el lookup de Prepare-batch).
+                    # Se sanean el cliente y el nombre del usuario porque SES rechaza
+                    # espacios/acentos/signos en TemplateName (antes → 500 al crear).
+                    templateName = '{}_{}_{}'.format(_ses_safe(customerName), consecutive, _ses_safe(templateName))
+                    response = create_template(templateName,subject,htmlBody,textBody)
+                except Exception as e:
+                    status = False
+                    statusCode = 500
+                    description = "Error realizando la creacion del template en SES"
+                    print(e)
 
             #Realizar el insert de la trazabilidad de los template
-            try:
-                insert_audit(userId,templateName,'Create')
-            except:
-                status = False
-                statusCode = 500
-                description = "Error realizando el insert de la trazabilidad"
+            if status:
+                try:
+                    insert_audit(userId,templateName,'Create')
+                except Exception as e:
+                    status = False
+                    statusCode = 500
+                    description = "Error realizando el insert de la trazabilidad"
+                    print(e)
 
             # Bitácora global (adminAudit) — visible en el tab de Auditoría del admin.
             if status:

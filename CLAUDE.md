@@ -102,8 +102,8 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `change-password` | `{ user (email), password (nueva), otp? }` + header `Authorization: Bearer` (alternativo) | 200 ok · 401 sin auth/OTP · 400 débil · 404 no existe |
 | `forgot-password` | `{ user (email), ip? }` | 200 siempre (genérico, no revela si el correo existe; envía OTP por correo) |
 | `logout` | `{ user (email) }` | 200 (idempotente) |
-| `Campaign/List` | `{ customerId }` | 200 `data:{campaigns[], count}` (orden desc por fecha; incluye `campaignState`) |
-| `Campaign/Update` | `{ campaignId, campaignName?, channelName?, attachmentType?, dataPath?, template?, from? }` | 200 ok · 409 no-Pendiente · 403 otro cliente · 404 no existe. Solo edita campañas en estado `Pendiente`; toma el cliente del context del Authorizer |
+| `Campaign/List` | `{ customerId }` | 200 `data:{campaigns[], count}` (orden desc por fecha; incluye `campaignState` y `messageTemplateId` de SMS/WSP) |
+| `Campaign/Update` | `{ campaignId, campaignName?, channelName?, attachmentType?, dataPath?, template?, messageTemplateId?, from? }` | 200 ok · 409 no-Pendiente · 403 otro cliente · 404 no existe. Solo edita campañas en estado `Pendiente`; toma el cliente del context del Authorizer. `messageTemplateId` = referencia a la plantilla SMS/WSP (contenido en vivo al enviar) |
 | `Campaign/Delete` | `{ campaignId }` | 200 ok · 400 falta id · 403 otro cliente · 404 no existe. Borra el registro de `campaign` (+ sus `document` best-effort); no borra el CSV ni el historial de procesos. Audita `campaign.delete` |
 | `Campaign/Request-approval` | `{ campaignId }` | 200 ok · 400 (sin muestras) · 403 · 404 · 409. Flujo maker-checker: `approvalStatus none/rejected→pending` (exige `samplesSentCount>0`). Audita `campaign.request-approval` |
 | `Campaign/Approve` | `{ campaignId }` | 200 ok · 403 · 404 · 409 (no pending). `pending→approved` (habilita el envío real). Audita `campaign.approve` |
@@ -114,8 +114,8 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Template/List` | `{ customer }` o `{ customerId }` | 200 `data:{templates:[{name, created}], count}` (SES filtrado por prefijo `{customer}_`) |
 | `Template/Render-pdf` | `{ html o messageTemplateId, variables?, pageSize?, store?, filename? }` | 200 `data:{pdfBase64, filename}` (store=false) · `data:{path, url}` (store=true) · 400 · 403 · 500 (falta layer). Renderiza a PDF el HTML del editor sustituyendo `{{campo}}` (xhtml2pdf). Lo llama el botón "Vista previa PDF" del editor |
 | `Email/Unsubscribe` | **GET/POST público (proxy, sin authorizer)** `?t=<token HMAC>` | 200 página HTML (confirmación / enlace inválido). El token lo firman las lambdas Send con `SECRET_KEY`; inserta en `{customer}_unsubscribe` (PK `email`) |
-| `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, duplicates?, allowDuplicates?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`). `allowDuplicates` = si el envío real NO filtra contactos repetidos |
-| `Database/List` | `{ customerId }` | 200 `data:{files[], count}` (incluye `columns`, `validEmails`, `invalidEmails`) |
+| `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, previewRows?, duplicates?, allowDuplicates?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`). `previewRows` = primeras filas (máx. 5) para la vista previa persistente. `allowDuplicates` = si el envío real NO filtra contactos repetidos |
+| `Database/List` | `{ customerId }` | 200 `data:{files[], count}` (incluye `columns`, `previewRows`, `validEmails`, `invalidEmails`) |
 | `Database/Delete` | `{ databaseFileId }` | 200 ok · 403 otro cliente · 404 no existe. Borra el registro (no el CSV en S3) |
 | `Customer/List` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, realSendEnabled}], count}` |
 | `Customer/Update` | `{ customerId, realSendEnabled (bool) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales |
@@ -148,6 +148,11 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Admin/Balances` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, balance, updatedAt}], totals:{balance}, recentTransactions[], count}` (saldo de todos, menor primero + ledger global) |
 | `Balance/Topup-init` | `{ amount (COP≥20000) }` (tenant del token) | 200 `data:{reference, amountInCents, currency, publicKey, signatureIntegrity, redirectUrl?}` · 400. Firma de integridad Wompi; crea el intento `pending` en el ledger |
 | `Wallet/Wompi-webhook` | **público/proxy sin authorizer** (evento Wompi firmado) | 200 ack. Verifica la firma del evento y acredita **idempotente** por `reference` (pending→approved, `TransactWriteItems`); nunca acredita desde el redirect del navegador |
+| `Assistant/Ask` | **público/proxy sin authorizer** `{ question }` | 200 `{answer}` · 400 vacía · 502 modelo no disponible. Asistente de IA (AWS Bedrock Converse, modelo Claude) con prompt de sistema aterrizado en MailConnect; responde en español, solo sobre la plataforma. Lo usan los botones flotantes de la landing |
+| `Cascade/Dispatch` | `{ name, dataPath, waitMinutes?, successCriterion?, steps:[{channel(EM\|SMS\|WSP\|VOZ), content}] }` | 201 `data:{cascadeRunId, contacts, debited}` · 400 · 402 saldo · 403. Lanza la **cascada omnicanal** (Opción A): crea el run + un contacto por fila, filtra consentimiento del canal 0, encola el paso 0 y debita su costo. Ver `PLAN_CASCADA.md` |
+| `Cascade/List` | `{}` (tenant del token) | 200 `data:{runs:[{cascadeRunId, name, steps, status, counts{total,confirmed,exhausted,inFlight,budget}, createdAt}], count}` |
+| `Cascade/Advance` | (EventBridge cron; sin body) | Tick del motor: por cada contacto vencido lee el estado en `sendStatus`, y confirma/escala/agota/frena por saldo (`decide_next`). Escala encolando el siguiente canal + debitando |
+| `Assistant/Copilot` | `{ action:analyze\|draft\|rewrite, ... }` (portal, tras Authorizer) | **Copiloto de campañas (Opción B).** `analyze` (DETERMINISTA, sin IA): `data:{score, level, issues[], suggestions[], habeasData{ok,present,missing,requiredMissing}, sendTime}` — spam/entregabilidad + checklist Ley 1581 + hora óptima. `draft`/`rewrite` (Bedrock): redacta/mejora copy. Ver `PLAN_COPILOTO.md`. ⚠️ **UI oculta (jul 2026):** el tab **"Copiloto IA"** se quitó del portal (`PortalSidebar`/`PortalPage`) por decisión de producto ("de momento"); la lambda + la ruta `/Assistant/Copilot` quedan **desplegadas pero dormidas** (`CopilotoSection.tsx`/`copilotService.ts` quedan huérfanos). Re-habilitar = volver a agregar el tab + el `case`. |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -175,6 +180,67 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 4. Prepare-batch filtra contra esa tabla en el envío real (chequeo reparado: antes nunca corría).
    ✅ EAP ya reemplaza `{{unsubscribeUrl}}` por destinatario (mismo patrón que EAU; jul 2026).
    Requiere la env `SECRET_KEY` (y `UNSUBSCRIBE_URL`) también en `Send-batch-template-EAP`.
+
+### Landing: login responsive, botones flotantes y asistente IA (jul 2026)
+- **Fix login en móvil:** en la landing el botón "Iniciar sesión" se ocultaba en pantallas
+  ≤640px (clase `nav-hide` → `display:none`) y "desaparecía". Se quitó ese ocultamiento y se
+  compactó el nav (gaps y padding de botones) para que **ambos** botones quepan hasta ~320px.
+- **Botones flotantes (abajo-derecha):** componente `LandingFloating.tsx` (autocontenido, estilos
+  en línea → portable): FAB de **WhatsApp** (enlace `wa.me`) + FAB de **Asistente IA**. Se ocultan
+  mientras el chat está abierto (se cierra con la × del encabezado).
+- **Asistente de IA (AWS Bedrock):** `Api_V1_Assistant_Ask` (pública/proxy + CORS) llama a Bedrock
+  (**Converse API**, modelo Claude) con un **prompt de sistema aterrizado en MailConnect** (qué es,
+  canales, precios, saldo, cumplimiento) y responde en español, SOLO sobre la plataforma; si no
+  sabe, remite a WhatsApp. El chat del front (`LandingFloating` + `assistantService.ts`) degrada con
+  gracia si la lambda no está desplegada (muestra fallback a WhatsApp). Env: `BEDROCK_MODEL_ID`
+  (default `anthropic.claude-3-5-haiku-...`; ⚠️ Bedrock on-demand suele exigir un **inference
+  profile** regional, p. ej. `us.anthropic.claude-3-5-haiku-...`), `BEDROCK_REGION`,
+  `ASSISTANT_MAX_TOKENS`. Cubierto por `08_Pruebas/PruebasSeguridad/test_assistant.py` (Bedrock
+  stubeado). ⚠️ `[J]` (despliegue): habilitar acceso al modelo en Bedrock; IAM `bedrock:InvokeModel`
+  (+ ARN del inference profile si aplica); ruta **pública** `/Assistant/Ask` (proxy, sin authorizer,
+  CORS) + **throttling/WAF** (endpoint público → posible abuso/costo).
+- **Tablas cebra + compactas:** las tablas de **Estadísticas** y **Campañas** pasan a `size="small"`
+  (alto de fila como el de "Movimientos" en Saldos) y filas **cebra** (fondo alterno sutil) para
+  separar cada campaña.
+- **Saldo y recargas:** se quitó el botón **"Recargar"** del header (redundante con "Recargar con
+  Wompi" / "Registrar transferencia" de la tarjeta de saldo). Queda solo "Refrescar".
+
+### Ajustes de plantillas, tarifas y modal de campaña (jul 2026)
+- **SMS/WSP: la plantilla se usa EN VIVO (no snapshot).** Antes, al crear una campaña SMS/WSP
+  se copiaba el TEXTO de la plantilla en `campaign.template` (snapshot); si el cliente editaba
+  luego la plantilla, la campaña seguía enviando el texto viejo. **Ahora la campaña guarda una
+  REFERENCIA** `campaign.messageTemplateId` y `Prepare-batch` resuelve el `body` (SMS) / `hsmName`
+  (WSP) **en vivo** desde la tabla `messageTemplate` al enviar (muestras y real) — igual que el
+  email referencia la plantilla SES por nombre. Helper `resolve_live_message_content(id, customerId,
+  channel)` (fail-safe: sin id / plantilla borrada / de otro tenant → `None` → cae al snapshot
+  `campaign.template`). **Voz** no tiene plantilla referenciada (texto libre) → sigue por snapshot.
+  - Contrato: `Campaign/Create-campaign` y `Campaign/Update` aceptan `messageTemplateId?`;
+    `Campaign/List` lo devuelve. El front (`CampanasSection`) guarda la referencia al elegir la
+    plantilla y muestra la vista previa con el contenido **vigente** (`smsPreview`/`wspPreview`).
+  - ⚠️ `[J]`: `Api_V1_Email_Prepare-batch-template` necesita `dynamodb:GetItem` sobre
+    `messageTemplate`. Sin el permiso NO rompe (fail-safe → usa el snapshot), pero no reflejaría
+    ediciones. Cubierto por `08_Pruebas/PruebasSeguridad/test_message_template_live.py`.
+- **Variables como fichas azules en el editor SMS** (`VariableTextEditor.tsx`): el texto del SMS
+  pasa de un `<TextField multiline>` a un `contentEditable` controlado donde las variables
+  `{{Columna}}` se pintan como **ficha azul NO editable**. Se insertan **en la posición del
+  cursor** (no al final) y **Backspace/Delete pegado a la ficha la borra completa** (no carácter a
+  carácter). El `value` sigue siendo texto plano con tokens `{{Columna}}` (el backend no cambia);
+  el componente serializa (chips→`{{}}`) y parsea (`{{}}`→chips) internamente.
+- **Tarifas por VOLUMEN visibles en el admin (fix "todo en 0"):** al pasar el precio base a
+  escalonado por volumen (`baseX=None`), `TarifasSection` mostraba `?? 0` → todo en 0. Ahora los
+  campos vacíos se ven **vacíos** con placeholder "Por volumen", cada tarjeta de canal muestra la
+  **tabla de tramos** (COP/u por rango de envíos/mes que devuelve `Pricing/List` en `tiers`), y
+  escribir un valor fija un **precio plano (override)**. `ChannelRates = Record<string, number|null>`.
+- **Modal de crear/editar campaña:** más ancho (`maxWidth="lg"`) y **compacto en vertical**
+  (spacing reducido). La nota superior solo explica el **Canal** (se quitó la guía de "Entrega del
+  adjunto"). En **EAU/EAP** el selector "Entrega del adjunto" ya **no ofrece "Sin adjunto"** (solo
+  `ONFILE`/`ONLINE`; el canal exige adjunto).
+- **Plantillas PDF:** al guardar se pide el nombre en un **diálogo** (antes `window.prompt` feo);
+  se quitaron el título "Plantillas PDF" y la descripción para **agrandar el lienzo** del editor.
+- **Calculadora de precios** (`CalculadoraPrecios.xlsx`, raíz): reconstruida completa (11 hojas:
+  Leyenda, Supuestos, EM/EAU/EAP/SMS/WhatsApp/Voz por tramos, Cotizador, "Adjunto URL vs archivo",
+  Resumen). Tarifas calibradas con Mailpro, arrancando en **30 COP** (EM 1er tramo). Es la fuente
+  de los `VOLUME_TIERS` embebidos en `Cost_Estimate`/`Pricing_List`/`Prepare-batch`/`Billing_Summary`.
 
 ### Ajustes de campañas, fechas y duplicados (jul 2026)
 - **Lista de campañas tipo tabla:** `CampanasSection` reordena columnas a
@@ -256,6 +322,48 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   `>0` y `< MIN_TOPUP` (20.000 COP) con un `Alert` + helperText en error (antes el botón solo se
   deshabilitaba sin explicar). Sugiere "Registrar transferencia" (manual, sin mínimo) para montos
   menores. El backend `Topup-init` ya devolvía el 400 con el mensaje del mínimo.
+
+### Idempotencia atómica de los workers de envío (anti-duplicado) (jul 2026)
+- **Problema:** la garantía anti-duplicado del pipeline dependía de que cada worker de envío
+  deduplicara por `(processId, part)`, pero en la práctica NO se cumplía: **SMS/Voz/WhatsApp/EAU
+  no tenían guarda** (una redelivery de SQS reenviaba todo el lote — y en los telefónicos eso
+  cuesta dinero real y llama/escribe a una persona), **EM/EAP y los combinadores** usaban un
+  `scan` + `put` con **uuid ALEATORIO** que NO es atómico (dos entregas concurrentes pasaban ambas
+  la validación → doble envío) y a escala el `scan` de 1 página de 1 MB ni encontraba la fila.
+  **Send-EAP** tenía la guarda en CÓDIGO MUERTO (chequeaba un estado que la escritura comentada
+  nunca producía).
+- **Fix — claim ATÓMICO por etapa:** los 6 workers de envío (`Send-EM/EAU/EAP`, `Sms/Wsp/Voice_
+  Send-batch`) y los 2 combinadores (`Template_Combination` DOCX, `Template_Combination-EAP-PDF`)
+  usan ahora `_claim_part(tenant, processId, part, ..., stage)`: una escritura **condicional
+  `attribute_not_exists`** sobre la clave **DETERMINISTA** `processId#part#stage` en
+  `{tenant}_processDetail`. Solo la PRIMERA entrega gana (envía); la redelivery pierde la condición
+  y se OMITE. `stage` separa `combine` (combinador) de `send` (worker), que comparten
+  `(processId, part)` en la misma tabla. Reemplaza el patrón `scan`+`put(uuid)`. Fail-open solo si
+  falta la llave de tenant/proceso (mensaje viejo en vuelo). El helper está **copiado** en cada
+  lambda (convención del repo, sin imports compartidos).
+- **Fix del combinador DOCX (mis-tenanting):** `Template_Combination` PERDÍA `nit`/`samples`/
+  `documentFormat` al re-emitir a `Send-EAP` → Send-EAP corría con `tenant=''` (escribía en la
+  tabla equivocada) y no contaba muestras ni distinguía el formato. Ahora los **preserva** en la
+  re-emisión (el combinador PDF ya lo hacía).
+- **Checkpoint INTRA-PARTE (reanudación) en EM/EAU:** un `part` del canal trae hasta 250
+  destinatarios que EM envía en chunks de `QUANTITY_BATCH` (50; EAU 25) → varios `send_bulk`. Si
+  uno fallaba a mitad, antes se marcaba TODA la parte en Error y se bloqueaba → los chunks
+  siguientes se **perdían** y un reintento reenviaba desde cero. Ahora `Send-EM`/`Send-EAU` reclaman
+  **por CHUNK** (`_claim_part` con `stage='send#{offset}'`): si el chunk ya salió, se OMITE; si su
+  `send_bulk` falla (SES no entregó nada), se **libera** el claim (`_release_part` = delete) y se
+  re-lanza → la redelivery de SQS **reanuda EXACTAMENTE desde ese chunk**, sin reenviar los ya
+  enviados ni perder los pendientes. La reanudación es **automática por SQS** (no necesita
+  `Admin_Requeue`, que opera al nivel de `procesar_parte`/`processedParts`). El resto de canales
+  (SMS/Voz/WhatsApp/EAP) procesa el `part` como unidad → conserva el claim a nivel de parte
+  (`stage='send'`). Muestras: el conteo se gatea con `any_sent` para no recontar en una redelivery
+  donde todos los chunks ya estaban enviados.
+- **Cobertura:** `08_Pruebas/PruebasSeguridad/test_idempotencia_envio.py` (claim atómico en los 6
+  workers + dedup a nivel handler de SMS/Voz/WhatsApp + reanudación por chunk en EM: falla el 2º
+  chunk y reanuda sin reenviar el 1º). Suite completo en verde. Los mensajes al canal SIEMPRE
+  llevan `part` único en el proceso (`prepare_message`, `part_offset = part*PART_SIZE`).
+  ⚠️ Pendiente relacionado (no en esta tanda): **DLQ** en las colas creadas por el CD (hoy solo en
+  Terraform); sin DLQ, un chunk con error PERSISTENTE se reintenta hasta agotar la retención. EAP
+  sigue tragando los fallos por-destinatario (pérdida silenciosa, otro pendiente).
 
 ### Ajustes operativos de envío y UX (jul 2026)
 - **Fix `ResourceNotFoundException` en el primer envío:** `Prepare-batch` ahora ESPERA a que
@@ -726,7 +834,13 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   - **WSP:** `name` + `hsmName` (plantilla HSM de Meta) + `language` (default `es`) + `params`
     (etiquetas de `{{1}},{{2}}…`). El contenido real vive en Meta; aquí solo el mapeo.
   - **DOCX:** `name` + `s3Path` (.docx subido a S3 con `get-urlS3` documentType=document) +
-    `params` (campos de combinación). La combinación real la hace el backend al enviar (EAP).
+    `params` (campos de combinación, **opcional/legado**). La combinación real la hace el backend
+    al enviar (EAP). ⚠️ **`params` NO se usa en la combinación:** `Template_Combination` reemplaza
+    `{{header}}` recorriendo los **encabezados del CSV** (`key = '{{' + headers[i] + '}}'`), no la
+    lista `params`. Por eso el selector "Campos de combinación" se **quitó del portal**
+    (`DocxTemplatesSection`, jul 2026): confundía (parecía que definía el merge). El cuadro azul
+    ahora indica escribir los datos variables como `{{campo}}` con el **nombre exacto de la columna**
+    de la base. El campo `params` se conserva en el esquema para plantillas viejas.
 - **Gotcha `_get_payload` en Create:** el canal SMS trae un campo `body` que **colisiona** con
   la convención Lambda-proxy (`event['body']`=JSON string). El helper solo trata `event['body']`
   como proxy si **parsea a un dict**; si es texto plano (SMS), `event` ES el payload.
@@ -734,6 +848,20 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   **Plantillas WhatsApp** (componente genérico `MessageTemplatesSection`) y **Plantillas DOCX**
   (`DocxTemplatesSection`, sube el .docx y registra la metadata) — reemplazan el placeholder PDF.
   Al crear campaña SMS/WSP hay un selector "Usar plantilla guardada" que prellena el campo.
+
+### Bases de datos: vista previa persistente + fix de carga Excel (jul 2026)
+- **Vista previa persistente ("ver detalle"):** al registrar una base, el front envía
+  **`previewRows`** (las primeras 5 filas de datos) junto a `columns` (encabezados);
+  `Database/Register-file` las guarda (acotadas: máx. 5 filas × 40 cols, celdas a 500 chars) y
+  `Database/List` las devuelve. Así "ver detalle" muestra **encabezado + primeras filas** aunque
+  la base NO se haya cargado en esta sesión (antes la vista previa solo existía en memoria de la
+  sesión). Bases viejas sin `previewRows` muestran solo las columnas (o el aviso). Cubierto por
+  `test_database.py`.
+- **Fix carga de Excel (.xlsx):** `read-excel-file` v9 devuelve `[{sheet, data:[[...]]}]` (array
+  de hojas), NO un array plano de filas; `readSpreadsheet` (`csv.ts`) asumía filas planas → el
+  `.map` producía filas vacías → "faltan las columnas obligatorias" al subir cualquier Excel.
+  Ahora `readSpreadsheet` soporta ambas formas y toma la 1ª hoja. (Reproducido y verificado con
+  la lib real.)
 
 ### Variables de plantilla desde la base (jul 2026)
 - Al subir una base, `Database/Register-file` guarda ahora **`columns`** (los encabezados del
@@ -833,6 +961,64 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
 - **Refresh token:** `Api_V1_Security_Refresh-token` valida el token vigente y reemite uno con
   los mismos claims y `exp` fresco (sesión deslizante). El front lo renueva en segundo plano
   (`RequireAuth`) cuando el usuario está activo y al token le queda < 1 h.
+
+### Fix de seguridad: RBAC de sub-rol (`tenantRole`) — cierre del bypass del maker-checker (jul 2026)
+- **Problema (ALTO):** el mapping template no-proxy (`scripts/sync_api.py` `CONTEXT_TEMPLATE`) NO
+  reenviaba `tenantRole`. Los gates RBAC de sub-rol —`Campaign_Approve`, `Campaign_Reject`,
+  `Schedule_Create` y el **envío REAL** en `Prepare-batch`— leían `auth.get('tenantRole', 'owner')`:
+  al no llegar el campo, el default `'owner'` trataba a **cualquier** usuario autenticado del
+  tenant (incluido un `operator`) como owner → podía **aprobar/rechazar campañas y disparar envíos
+  reales** (gastar saldo), anulando el control maker-checker.
+- **Fix (2 partes, se despliegan juntas):**
+  1. **Mapping template** reenvía ahora `"tenantRole": "$context.authorizer.tenantRole"` (junto a
+     role/user/userId/customerId/customer/nit). Lo aplica `deploy-api.yml` (se dispara al cambiar
+     `scripts/sync_api.py`).
+  2. **Gates fail-CLOSED:** los 4 consumidores cambian su default de `'owner'` a `'operator'`
+     (menor privilegio) → si `tenantRole` no llega, **deniegan** en vez de asumir owner. El
+     `Authorizer`/`Login` **mantienen** el default `'owner'` para tokens **legacy** sin el claim
+     (compatibilidad: el usuario original de una empresa ES owner), así que un owner/approver
+     legítimo sigue pasando; solo cierra el caso de context ausente.
+- ⚠️ **Orden de despliegue:** ambos workflows (`deploy-api.yml` + `deploy-lambdas.yml`) se disparan
+  en el mismo push a `main`. Corren en paralelo; si las lambdas se actualizan antes que el template,
+  hay una ventana breve en la que un owner recibe 403 al aprobar/enviar (**falla SEGURO**: deniega,
+  nunca escala) que se auto-resuelve al terminar `deploy-api.yml`. Verificar que AMBOS terminen OK.
+- **Cobertura:** `test_mapping_template.py` (guard: el template reenvía todos los claims, incl.
+  `tenantRole`), `test_campaign_approval.py::test_approve_sin_tenantrole_403_failclosed` y
+  `test_prepare_batch_integration.py::{test_split_operator_no_dispara_envio_real,
+  test_split_sin_tenantrole_failclosed}`. Los tests de envío real ahora inyectan
+  `authorizer.tenantRole='owner'` en el context (simulan el owner + template arreglado).
+
+### Fix de seguridad: gate OWNER en la gestión de dominios (jul 2026)
+- **Problema:** `Api_V1_Domain_Add`/`Domain_Delete` se documentaban como **RBAC owner** pero el
+  backend **solo verificaba que hubiera sesión** (cualquier usuario del tenant); el "owner" estaba
+  únicamente en el front (puenteable llamando la API directo). Un `operator` podía **registrar** o
+  —peor— **borrar** un dominio de envío VERIFICADO (rompe la capacidad de envío de la empresa).
+- **Fix:** ambos exigen ahora `tenantRole == 'owner'` (config de cuenta sensible: identidad de
+  envío, DKIM, anti-spoofing) leído del context, **fail-CLOSED** (default menor privilegio si no
+  llega). `Domain/List` (solo lectura) queda sin gate. Requiere el `tenantRole` del mapping template
+  (ver arriba). Cubierto por `test_domains.py::{test_add_operator_403, test_add_sin_tenantrole_403_
+  failclosed, test_delete_operator_403}`.
+
+### Fix de seguridad/cumplimiento: filtro de lista negra FAIL-CLOSED (jul 2026)
+- **Problema (LEGAL + reputación):** `_batch_get_emails` (el helper de `check_blacklist`/
+  `check_unsubscribes` en `Prepare-batch`) hacía `except Exception: return set()` → ante CUALQUIER
+  error (un **throttling** transitorio en un lote grande) devolvía "nadie está filtrado" y el envío
+  seguía **a ciegas** hacia contactos en lista negra / desuscritos (viola Ley 1581 / habeas data y
+  daña la reputación SES **compartida**).
+- **Fix:** el `except` distingue causa. **Estructural** (`ResourceNotFoundException`/
+  `ValidationException`: la tabla no existe o su esquema viejo no permite consultar) → vacío seguro
+  (no hay entradas que filtrar). **Transitorio** (throttling, límite, 5xx, red) → **re-lanza**
+  (fail-closed) para que la parte se REPROCESE, en vez de enviar sin filtrar.
+- **Fix acoplado — el worker SQS ya no traga excepciones:** el branch SQS de `Prepare-batch`
+  (`if 'Records' in event`) estaba dentro del `try/except Exception` del handler, que devolvía un
+  500 → **para SQS eso es una invocación EXITOSA → ACKea y BORRA el mensaje** → la parte se perdía
+  en silencio (incluido el re-lanzamiento del filtro). Ahora, si el evento es SQS, el `except`
+  **propaga** (la invocación falla → SQS redelivery → reproceso idempotente por el claim de parte/
+  chunk → DLQ tras agotar reintentos). La ruta API (proxy) sigue devolviendo el 500 al llamante.
+  Es SEGURO propagar ahora porque el punto de idempotencia atómica ya hace el reproceso sin duplicar.
+  ⚠️ Refuerza la necesidad de **DLQ** en las colas del CD (hoy solo en Terraform) para no reintentar
+  un "mensaje veneno" hasta agotar la retención. Cubierto por `test_prepare_batch.py::
+  {test_filtro_error_transitorio_falla_cerrado, test_worker_sqs_propaga_excepcion_no_ackea}`.
 
 ### Sesión del front
 - El JWT se decodifica en el cliente para conocer `exp`: si venció, `apiClient` corta antes de
@@ -1135,6 +1321,81 @@ se puede leer del objeto ya subido a S3.)
       lambdas cambiadas en cada push a `main` (o manual). Requiere los secrets
       `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (+ `AWS_REGION`) y opcional
       `04_Backend/lambdas/deploy-map.json` si el nombre AWS difiere del de la carpeta.
+- [x] **CD de lambdas — crea la función si NO existe (jul 2026):** ya no hace falta "crear la
+      función vacía" antes del CD. Si la función no está en AWS, el workflow la **crea en
+      Python 3.13** (`lambda_function.lambda_handler`, timeout 60 s, 256 MB) con su **rol por
+      convención**: nombre `Lambda[_DynFull][_SES][_SQS][_S3][_SNS][_Scheduler][_Bedrock][_EUM]
+      [_Social][_Invoke]` **auto-detectado** de los `boto3.client/resource(...)` del código
+      (sin servicios → `Lambda_Basic`; override manual en `04_Backend/lambdas/role-map.json`,
+      ver `role-map.example.json`). Si el rol no existe en IAM lo crea: siempre
+      `AWSLambdaBasicExecutionRole` (ejecución + logs) + política **full** por token
+      (DynFull→DynamoDB, SES, SQS, S3, SNS, Scheduler→EventBridge Scheduler, Bedrock; EUM
+      `sms-voice:*`, Social `social-messaging:*` e Invoke `lambda:InvokeFunction` como inline).
+      Roles ya existentes se usan tal cual (no se les tocan políticas).
+- [x] **CD de lambdas — reconciliación del rol en CADA despliegue (jul 2026):** antes de tocar los
+      triggers, el workflow asegura que la función use su **rol de convención** (crea el rol si
+      falta y **cambia el de la función si difiere**), tanto al crear como al **actualizar**. Antes,
+      la rama de actualizar solo tocaba el código → una función vieja con un rol sin permiso SQS
+      fallaba al crear el trigger (*"execution role does not have permissions to call ReceiveMessage
+      on SQS"*). Solo actúa en carpetas con trigger `sqs`. **No toca** el rol si ya concede SQS (su
+      nombre incluye el token `SQS`, p. ej. `Lambda_DynFull_SQS_Messaging`) → evita churn. Reconcilia
+      (crea el rol de convención + cambia el de la función) si el rol actual es de convención sin SQS
+      (`Lambda_*`), el **auto-generado por AWS** al crear la función en consola (`{fn}-role-xxxx`), o
+      ninguno. Un rol **personalizado deliberado** (nombre no reconocido) NO se pisa (se avisa; usa
+      `role-map.json`). Al crear un rol nuevo espera la propagación IAM **antes** de asignarlo (si no,
+      *"The role ... cannot be assumed by Lambda"*), y el `update-function-configuration` + la creación
+      del event source mapping **reintentan** los errores transitorios de propagación.
+      ⚠️ La función nace SIN
+      env vars, SIN layers y SIN triggers (eso sigue manual, ver `DESPLIEGUE.md`). El input
+      manual `force_runtime313` migra también las funciones EXISTENTES a python3.13 (ojo:
+      layers con binarios de otra versión, p. ej. reportlab/Pillow, dejarían de funcionar).
+      El usuario IAM de CI necesita además `lambda:CreateFunction/GetFunctionConfiguration/
+      UpdateFunctionConfiguration` e `iam:GetRole/CreateRole/AttachRolePolicy/PutRolePolicy/
+      PassRole` (sobre los roles `Lambda_*`).
+- [x] **CD de lambdas — triggers y colas SQS (jul 2026):** en cada despliegue de una carpeta el
+      workflow asegura (idempotente: solo crea lo que falte, lo existente no se toca) los
+      triggers declarados en **`04_Backend/lambdas/trigger-map.json`**:
+      - `sqs`: crea la **cola** si no existe (VisibilityTimeout 360 s + long polling; override
+        `visibilityTimeout`) y el **event source mapping** cola→lambda (`batchSize` default 10).
+        La lambda con trigger `sqs` recibe además el token **`_SQS`** en su rol auto-detectado
+        (el poller de Lambda lee la cola con el rol de la FUNCIÓN, aunque su código no use SQS).
+        **DLQ (jul 2026):** crea también la cola de mensajes muertos `{cola}-dlq` (retención 14 días)
+        y le pone a la cola una **redrive policy** con `maxReceiveCount` 5 (override `maxReceiveCount`).
+        Misma convención que Terraform (`infra/terraform/sqs.tf`) → convergen. Una cola EXISTENTE
+        sin redrive recibe la DLQ (best-effort, requiere `sqs:SetQueueAttributes`); las de Terraform
+        (ya con redrive) se dejan intactas. Sin DLQ, un "mensaje veneno" (fallo persistente) se
+        reintenta hasta agotar la retención (4 días) y se pierde en silencio — crítico ahora que el
+        worker SQS de Prepare-batch **propaga** los fallos (ver fix del filtro fail-closed).
+      - `sns`: crea el **tópico** + permiso de invocación + suscripción (apuntar el config set
+        SES/EUM al tópico sigue siendo manual, por eso no viene pre-llenado).
+      - `schedule`: regla **EventBridge** `{funcion}-cron` con `rate()`/`cron()` + permiso + target.
+      Pre-llenado con las **9 colas reales del pipeline** (batchSize 1 — cada mensaje ya es un
+      lote): `Email_Prepare-batch-part`→Prepare-batch (worker de partes),
+      `Email_Send-batch-template-EM`→Send-EM, `Email_Send-batch-raw-EAU/-EAP`→Send-EAU/EAP,
+      `Template_Combination-EAP`→Template_Combination, `Template_Combination-EAP-PDF`→ídem-PDF,
+      `Sms/Wsp/Voice_Send-batch`→sus workers. El usuario de CI necesita además
+      `sqs:GetQueueUrl/CreateQueue/GetQueueAttributes` y `lambda:ListEventSourceMappings/
+      CreateEventSourceMapping/AddPermission` (+ `sns:CreateTopic/Subscribe/
+      ListSubscriptionsByTopic` y `events:PutRule/PutTargets` si se usan esas llaves; y
+      `sqs:SetQueueAttributes` para la DLQ de colas existentes) —
+      **agregar esos permisos ANTES del próximo push** que toque lambdas con trigger.
+
+### Fix: EAP registra los fallos de envío por destinatario (no más pérdida silenciosa) (jul 2026)
+- **Problema:** `Send-EAP` (canal de adjunto PERSONALIZADO por destinatario — docx/pdf, típicamente
+  documentos importantes) enviaba cada correo en un `try/except` que solo hacía `print(e)`. Un fallo
+  (throttle, dirección inválida, adjunto corrupto) se **tragaba**: sin estado en `sendStatus` y sin
+  evento SES (el envío nunca llegó a SES → no hay messageId) → el destinatario quedaba **invisible**
+  (ni enviado ni rechazado) y sin reintento (EAP "termina" la parte igual).
+- **Fix:** en el `except` por destinatario, `_record_send_failure` escribe una fila **state=3
+  (Reject)** en `{tenant}_sendStatus` con un **messageId sintético DETERMINISTA** por `(part, uniqueId)`
+  — necesario porque `Reports_Statistics` agrega **por messageId y descarta las filas sin él**. Así el
+  fallo se **cuenta como rechazo** en el reporte. El ÉXITO NO se registra aquí (lo reporta SES por
+  evento con el messageId real → registrarlo duplicaría). Clave determinista → un reproceso sobrescribe
+  (no duplica). Cubierto por `08_Pruebas/PruebasSeguridad/test_eap_send_failure.py`.
+- **Bug latente corregido de paso:** en EAP la variable `part` se **reasigna a `MIMEApplication`**
+  dentro del bucle, así que el `_mark_part(...,"Terminado")` (idempotencia, jul 2026) usaba una clave
+  basura. Se captura `part_id = part` antes del bucle y se usa en el claim/mark/registro de fallos.
+  (El **claim** de idempotencia ya era correcto — se hace ANTES del bucle, con `part` aún = id.)
 
 ### Seguridad (URGENTE)
 - [x] Scripts `prueba genera JWT.py` / `prueba jwt.py` limpios: leen `SECRET_KEY` de env (jul 2026).

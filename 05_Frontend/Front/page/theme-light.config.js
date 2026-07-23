@@ -290,23 +290,34 @@ const theme = createTheme({
         },
       },
     },
+    // Tablas: filas compactas (densidad "small" por defecto), encabezado con
+    // color diferenciado (azul-gris de marca) y filas cebra + hover.
+    MuiTable: {
+      defaultProps: {
+        size: 'small',
+      },
+    },
     MuiTableHead: {
       styleOverrides: {
         root: {
-          backgroundColor: colorPalette.background.default,
+          backgroundColor: '#e2ecf6',
           '& .MuiTableCell-head': {
-            fontWeight: 600,
+            fontWeight: 700,
             color: colorPalette.text.primary,
-            borderBottom: `2px solid ${colorPalette.divider}`,
+            backgroundColor: '#e2ecf6',
+            borderBottom: `2px solid ${colorPalette.primary.main}`,
           },
         },
       },
     },
-    MuiTableRow: {
+    MuiTableBody: {
       styleOverrides: {
         root: {
-          '&:hover': {
-            backgroundColor: colorPalette.background.default,
+          '& .MuiTableRow-root:nth-of-type(odd)': {
+            backgroundColor: 'rgba(15, 45, 90, 0.035)',
+          },
+          '& .MuiTableRow-root:hover': {
+            backgroundColor: 'rgba(15, 45, 90, 0.07)',
           },
         },
       },

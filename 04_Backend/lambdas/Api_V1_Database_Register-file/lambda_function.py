@@ -9,10 +9,12 @@ Request:
     {
       customerId, customer, fileName, s3Path,
       totalRecords?, validEmails?, invalidEmails?, duplicates?, allowDuplicates?,
-      delimiter?, channel?, columns?, uploadedBy?
+      delimiter?, channel?, columns?, previewRows?, uploadedBy?
     }
 `columns` es la lista de encabezados del CSV (los campos usables como variables
 `{{campo}}` en las plantillas). El front la toma del análisis del archivo al subirlo.
+`previewRows` son las primeras filas de datos (sin encabezado) para la vista previa
+persistente del "ver detalle" (así se muestra aunque la base no se cargó en esta sesión).
 Respuesta: 201 { data: { databaseFileId } }
 '''
 import uuid
@@ -85,6 +87,15 @@ def lambda_handler(event, context):
     raw_columns = payload.get('columns', [])
     columns = [str(c) for c in raw_columns] if isinstance(raw_columns, list) else []
 
+    # Vista previa persistente: primeras filas (sin encabezado). Se ACOTA (máx. 5 filas y
+    # 40 columnas, celdas a 500 chars) para no inflar el ítem de DynamoDB (límite 400 KB).
+    raw_preview = payload.get('previewRows', [])
+    preview_rows = []
+    if isinstance(raw_preview, list):
+        for row in raw_preview[:5]:
+            if isinstance(row, list):
+                preview_rows.append([str(c)[:500] for c in row[:40]])
+
     # Campos obligatorios (customerId/customer prefieren el context del Authorizer).
     try:
         customer_id = tenant_id or payload['customerId']
@@ -122,6 +133,8 @@ def lambda_handler(event, context):
                 # Encabezados del CSV: los campos que se pueden usar como {{variables}}
                 # en las plantillas. Se guardan como texto para reusarlos sin releer el CSV.
                 'columns': columns,
+                # Primeras filas (sin encabezado) para la vista previa persistente.
+                'previewRows': preview_rows,
                 'uploadedBy': payload.get('uploadedBy', ''),
                 'uploadDate': formatted_date,
                 'status': 'activa'

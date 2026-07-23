@@ -131,8 +131,10 @@ def lambda_handler(event, context):
     if not customer_id:
         return {'status': False, 'statusCode': 403, 'description': 'Sesión sin identidad de cliente.'}
 
-    # RBAC: programar un envío real = acción de envío → owner/approver (default owner si falta).
-    tenant_role = str(auth.get('tenantRole', 'owner') or 'owner')
+    # RBAC: programar un envío real = acción de envío → owner/approver. Fail-CLOSED: si el
+    # context no trae tenantRole, default al MENOR privilegio ('operator') → denegado (el mapping
+    # template reenvía tenantRole y el Authorizer pone 'owner' para tokens legacy; ver Approve).
+    tenant_role = str(auth.get('tenantRole', 'operator') or 'operator')
     if tenant_role not in ('owner', 'approver'):
         return {'status': False, 'statusCode': 403,
                 'description': 'Tu rol no permite programar envíos. Pídelo a un aprobador de tu empresa.'}

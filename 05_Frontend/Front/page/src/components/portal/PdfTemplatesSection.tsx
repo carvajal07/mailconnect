@@ -34,6 +34,7 @@ import { pdfTemplatesService, base64ToPdfBlob, readPdfDrafts, writePdfDrafts } f
 import { messageTemplatesService } from '../../services/messageTemplatesService';
 import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { useFeedback } from '../../hooks/useFeedback';
+import { usePortalData } from '../../context/PortalDataContext';
 
 /**
  * Editor de PLANTILLAS PDF tipo "documento" (a lo Word): barra de formato de texto arriba,
@@ -94,6 +95,9 @@ const TB = ({ title, icon, onClick }: { title: string; icon: ReactNode; onClick:
 
 export const PdfTemplatesSection = () => {
   const { notify, FeedbackSnackbar } = useFeedback();
+  // Al guardar una plantilla PDF se refresca el contexto del portal para que aparezca de
+  // inmediato en el selector de "crear campaña" (canal EAP-PDF) sin recargar.
+  const { refreshMessageTemplates } = usePortalData();
   const pageRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<'A4' | 'Carta'>('A4');
   const [font, setFont] = useState('Arial');
@@ -107,6 +111,8 @@ export const PdfTemplatesSection = () => {
   const [pdfOpen, setPdfOpen] = useState(false);
   const [pdfUrl, setPdfUrl] = useState('');
   const [saving, setSaving] = useState(false);
+  const [nameOpen, setNameOpen] = useState(false);
+  const [nameValue, setNameValue] = useState('');
   const [cloudTemplates, setCloudTemplates] = useState<MessageTemplate[]>([]);
   const [cloudLoading, setCloudLoading] = useState(false);
   const dims = PAGE_SIZES[size];
@@ -147,13 +153,20 @@ export const PdfTemplatesSection = () => {
     '</table><p></p>',
   );
 
-  /** Guarda la plantilla EN EL SISTEMA (backend, compartida) y la refleja en localStorage. */
-  const saveTemplate = async () => {
+  /** Abre el diálogo para nombrar la plantilla (antes usaba window.prompt, feo). */
+  const saveTemplate = () => {
     const html = pageRef.current?.innerHTML || '';
     if (!html.trim()) { notify('El documento está vacío.', 'warning'); return; }
-    const name = window.prompt('Nombre de la plantilla:');
-    if (!name || !name.trim()) return;
-    const clean = name.trim();
+    setNameValue('');
+    setNameOpen(true);
+  };
+
+  /** Guarda la plantilla EN EL SISTEMA (backend, compartida) y la refleja en localStorage. */
+  const confirmSave = async () => {
+    const clean = nameValue.trim();
+    if (!clean) return;
+    const html = pageRef.current?.innerHTML || '';
+    setNameOpen(false);
     setSaving(true);
     const res = await messageTemplatesService.create({
       customerId: getUser()?.customerId ?? '', channel: 'PDF', name: clean, html,
@@ -161,8 +174,13 @@ export const PdfTemplatesSection = () => {
     setSaving(false);
     // Espejo local (respaldo/offline + el form de campaña lo tiene aunque no recargue).
     const d = readPdfDrafts(); d[clean] = html; writePdfDrafts(d);
-    if (isOk(res)) notify(`Plantilla "${clean}" guardada en el sistema.`, 'success');
-    else notify(res.description || 'Se guardó localmente; el guardado en el sistema falló.', 'warning');
+    if (isOk(res)) {
+      notify(`Plantilla "${clean}" guardada en el sistema.`, 'success');
+      // Refresca la lista compartida del portal → aparece ya en "crear campaña" (EAP-PDF).
+      refreshMessageTemplates();
+    } else {
+      notify(res.description || 'Se guardó localmente; el guardado en el sistema falló.', 'warning');
+    }
   };
 
   /** Abre el menú "Cargar" y trae las plantillas PDF del backend (compartidas). */
@@ -221,13 +239,7 @@ export const PdfTemplatesSection = () => {
 
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={1} flexWrap="wrap" gap={1}>
-        <Box>
-          <Typography variant="h4">Plantillas PDF</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Editor de documento tipo Word: da formato al texto, inserta imágenes, tablas y variables.
-          </Typography>
-        </Box>
+      <Stack direction="row" justifyContent="flex-end" alignItems="center" mb={1} flexWrap="wrap" gap={1}>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
           <Button size="small" startIcon={<NoteAddIcon />} onClick={newDoc}>Nueva</Button>
           <Button size="small" startIcon={<FolderOpenIcon />} onClick={(e) => openLoad(e.currentTarget)}>Cargar</Button>
@@ -373,6 +385,26 @@ export const PdfTemplatesSection = () => {
             Descargar PDF
           </Button>
           <Button onClick={closePdf}>Cerrar</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={nameOpen} onClose={() => setNameOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Guardar plantilla PDF</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            fullWidth
+            label="Nombre de la plantilla"
+            placeholder="Ej. Certificado laboral"
+            value={nameValue}
+            onChange={(e) => setNameValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && nameValue.trim()) confirmSave(); }}
+            sx={{ mt: 1 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setNameOpen(false)}>Cancelar</Button>
+          <Button variant="contained" disabled={!nameValue.trim()} onClick={confirmSave}>Guardar</Button>
         </DialogActions>
       </Dialog>
 

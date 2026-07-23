@@ -40,6 +40,9 @@ interface Props {
   emailMode?: EmailMode;
   recipients?: number;
   lockChannel?: boolean;
+  /** Modo de entrega del adjunto (EAU/EAP): ONFILE (adjunto) u ONLINE (enlace). Viene de la
+   *  campaña; hoy cobra igual (hook), pero el estimado ya lo envía para reflejarlo a futuro. */
+  attachmentDelivery?: 'ONFILE' | 'ONLINE';
   /** Saldo disponible del cliente (COP). Si se pasa, se muestra si alcanza para el envío. */
   balance?: number;
   /** Reporta el resultado del estimado (o null al limpiar) para gates externos. */
@@ -50,7 +53,7 @@ const CHANNEL_LABEL: Record<Channel, string> = {
   EMAIL: 'Correo', SMS: 'SMS', WHATSAPP: 'WhatsApp', VOICE: 'Voz',
 };
 
-export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMode = 'EM', recipients: initRecipients, lockChannel = false, balance, onResult }: Props) => {
+export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMode = 'EM', recipients: initRecipients, lockChannel = false, attachmentDelivery = 'ONFILE', balance, onResult }: Props) => {
   const customerId = getUser()?.customerId ?? '';
 
   const [channel, setChannel] = useState<Channel>(initChannel);
@@ -83,6 +86,7 @@ export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMo
       emailMode: channel === 'EMAIL' ? emailMode : undefined,
       attachmentSizeMB: withAttachment ? parseFloat(attachmentSizeMB) || 0 : undefined,
       attachmentType: channel === 'EMAIL' && emailMode === 'EAP' ? attachmentType : undefined,
+      attachmentDelivery: withAttachment ? attachmentDelivery : undefined,
       smsSegments: channel === 'SMS' ? parseInt(smsSegments, 10) || 1 : undefined,
       voiceMinutes: channel === 'VOICE' ? parseFloat(voiceMinutes) || 0.5 : undefined,
     });

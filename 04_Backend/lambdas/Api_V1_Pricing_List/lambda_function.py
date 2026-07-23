@@ -30,15 +30,26 @@ table_rates = dynamodb.Table('pricingRate')
 CURRENCY = 'COP'
 
 # Debe reflejar los DEFAULT_RATES de Api_V1_Cost_Estimate. Si cambian allá, cambian aquí.
+# baseX=None ⇒ el precio se toma del TRAMO por volumen (VOLUME_TIERS); un valor plano
+# guardado en pricingRate para el canal SOBREESCRIBE el tramo (override).
 DEFAULT_RATES = {
     'EMAIL': {
-        'baseEM': 8, 'baseEAU': 15, 'baseEAP': 40,
-        'attachmentPerMB': 5, 'personalizedPdf': 25, 'personalizedDocx': 35,
+        'baseEM': None, 'baseEAU': None, 'baseEAP': None,
+        'attachmentPerMB': 0, 'personalizedPdf': 0, 'personalizedDocx': 0,
     },
-    'SMS': {'baseSms': 60},
-    'WHATSAPP': {'baseMarketing': 90},
-    'VOICE': {'basePerMinute': 120, 'avgMinutes': 0.5},
+    'SMS': {'baseSms': None},
+    'WHATSAPP': {'baseMarketing': None},
+    'VOICE': {'basePerMinute': None, 'avgMinutes': 0.5},
     'COMMON': {'taxRate': 0.19, 'minCampaign': 5000},
+}
+# Precio unitario por TRAMO de volumen (todo incluido). Réplica de Api_V1_Cost_Estimate.
+VOLUME_TIERS = {
+    'EM':       [(1, 30), (2000, 28), (5000, 27), (10000, 25), (20000, 21), (50000, 19), (100000, 14), (200000, 9), (500000, 5), (1000000, 4)],
+    'EAU':      [(1, 45), (2000, 42), (5000, 40), (10000, 37), (20000, 31), (50000, 28), (100000, 21), (200000, 14), (500000, 8), (1000000, 6)],
+    'EAP':      [(1, 60), (2000, 55), (5000, 50), (10000, 46), (20000, 38), (50000, 33), (100000, 24), (200000, 16), (500000, 10), (1000000, 8)],
+    'SMS':      [(1, 55), (2000, 50), (5000, 45), (10000, 40), (20000, 35), (50000, 28), (100000, 22), (200000, 18), (500000, 14), (1000000, 10)],
+    'WHATSAPP': [(1, 130), (2000, 125), (5000, 118), (10000, 110), (20000, 100), (50000, 90), (100000, 82), (200000, 76), (500000, 70), (1000000, 65)],
+    'VOICE':    [(1, 150), (2000, 140), (5000, 130), (10000, 120), (20000, 110), (50000, 95), (100000, 80), (200000, 70), (500000, 60), (1000000, 48)],
 }
 CHANNELS = ('EMAIL', 'SMS', 'WHATSAPP', 'VOICE')
 
@@ -124,6 +135,9 @@ def lambda_handler(event, context):
                 'defaults': defaults,
                 'effective': effective,
                 'overrides': overrides,
+                # Precios escalonados por volumen (todo incluido). Si un canal no tiene
+                # override plano, se cobra por estos tramos (elegidos por nº de envíos).
+                'tiers': {k: [{'min': m, 'unit': u} for m, u in v] for k, v in VOLUME_TIERS.items()},
             }
         }
     except Exception as e:

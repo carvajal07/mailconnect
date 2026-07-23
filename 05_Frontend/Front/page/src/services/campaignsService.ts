@@ -57,6 +57,8 @@ export interface CampaignUpdatePayload {
   attachmentType?: string;
   dataPath?: string;
   template?: string;
+  /** Referencia a la plantilla de mensaje SMS/WSP (para que el envío use el contenido en vivo). */
+  messageTemplateId?: string;
   from?: string;
   documentFormat?: EapDocumentFormat;
 }
@@ -71,12 +73,17 @@ export interface CampaignSummary {
   campaignState: string;
   dataPath: string;
   template: string;
+  /** Referencia a la plantilla de mensaje SMS/WSP guardada (si aplica). El envío resuelve
+   *  el contenido en vivo desde `messageTemplate` con este id; `template` es solo respaldo. */
+  messageTemplateId?: string;
   originEmail: string;
   date: string;
   /** Envíos de muestras ya realizados (máx. 5 por campaña; lo controla el backend). */
   samplesSentCount?: number;
   /** Formato del documento EAP (DOCX/PDF), si aplica. */
   documentFormat?: EapDocumentFormat;
+  /** Modo de entrega del adjunto (NONE/ONFILE/ONLINE), si aplica (EAU/EAP). Afecta la tarifa. */
+  attachmentType?: string;
   /** processId del envío real (lo fija Prepare-batch al enviar). Sirve para el reporte de estado. */
   sendProcessId?: string;
   /** Flujo de aprobación (maker-checker). Ver PLAN_APROBACIONES.md. */
@@ -128,6 +135,8 @@ export interface CampaignPayload {
   attachmentType: string;
   dataPath: string;
   template: string;
+  /** Referencia a la plantilla de mensaje SMS/WSP (contenido resuelto en vivo al enviar). */
+  messageTemplateId?: string;
   from: string;
   /** Documento(s) adjunto(s) para EAU/EAP: lista de { path } (ruta en S3). */
   attachment?: { path: string }[];

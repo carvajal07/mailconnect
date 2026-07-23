@@ -161,6 +161,10 @@ table_process = dynamodb.Table('process')
 table_campaign = dynamodb.Table('campaign')
 table_customer = dynamodb.Table('customer')
 table_database = dynamodb.Table('databaseFile')
+# Plantillas de mensaje SMS/WSP (canales no-SES). El envío resuelve el contenido EN VIVO
+# desde esta tabla (por campaign.messageTemplateId) para reflejar ediciones posteriores a la
+# creación de la campaña; el texto guardado en campaign.template queda solo como respaldo.
+table_message_template = dynamodb.Table('messageTemplate')
 _audit_table = dynamodb.Table('adminAudit')
 
 # --- Cobro PREPAGO (monedero) -------------------------------------------------
@@ -176,12 +180,30 @@ table_rates = dynamodb.Table('pricingRate')
 DEFAULT_TAX_RATE = 0.19          # IVA Colombia
 DEFAULT_MIN_CAMPAIGN = 5000      # mínimo por campaña (COP)
 DEFAULT_RATES = {
-    'EMAIL': {'baseEM': 8, 'baseEAU': 15, 'baseEAP': 40, 'attachmentPerMB': 5, 'personalizedPdf': 25, 'personalizedDocx': 35},
-    'SMS': {'baseSms': 60},
-    'WHATSAPP': {'baseMarketing': 90},
-    'VOICE': {'basePerMinute': 120, 'avgMinutes': 0.5},
+    'EMAIL': {'baseEM': None, 'baseEAU': None, 'baseEAP': None, 'attachmentPerMB': 0, 'personalizedPdf': 0, 'personalizedDocx': 0},
+    'SMS': {'baseSms': None},
+    'WHATSAPP': {'baseMarketing': None},
+    'VOICE': {'basePerMinute': None, 'avgMinutes': 0.5},
     'COMMON': {'taxRate': DEFAULT_TAX_RATE, 'minCampaign': DEFAULT_MIN_CAMPAIGN},
 }
+# Precio unitario por TRAMO de volumen (COP). Réplica de Api_V1_Cost_Estimate.VOLUME_TIERS
+# (mantener en sync). El precio del tramo aplica a TODO el envío (se elige por el total de
+# destinatarios) y es "todo incluido". Si pricingRate trae un valor plano, ese override gana.
+VOLUME_TIERS = {
+    'EM':       [(1, 30), (2000, 28), (5000, 27), (10000, 25), (20000, 21), (50000, 19), (100000, 14), (200000, 9), (500000, 5), (1000000, 4)],
+    'EAU':      [(1, 45), (2000, 42), (5000, 40), (10000, 37), (20000, 31), (50000, 28), (100000, 21), (200000, 14), (500000, 8), (1000000, 6)],
+    'EAP':      [(1, 60), (2000, 55), (5000, 50), (10000, 46), (20000, 38), (50000, 33), (100000, 24), (200000, 16), (500000, 10), (1000000, 8)],
+    'SMS':      [(1, 55), (2000, 50), (5000, 45), (10000, 40), (20000, 35), (50000, 28), (100000, 22), (200000, 18), (500000, 14), (1000000, 10)],
+    'WHATSAPP': [(1, 130), (2000, 125), (5000, 118), (10000, 110), (20000, 100), (50000, 90), (100000, 82), (200000, 76), (500000, 70), (1000000, 65)],
+    'VOICE':    [(1, 150), (2000, 140), (5000, 130), (10000, 120), (20000, 110), (50000, 95), (100000, 80), (200000, 70), (500000, 60), (1000000, 48)],
+}
+# channel de la campaña -> (clave de override plano en la tarifa, clave del tramo por volumen).
+CAMPAIGN_TIER = {
+    'EM': ('baseEM', 'EM'), 'EAU': ('baseEAU', 'EAU'), 'EAP': ('baseEAP', 'EAP'),
+    'SMS': ('baseSms', 'SMS'), 'WSP': ('baseMarketing', 'WHATSAPP'), 'VOZ': ('basePerMinute', 'VOICE'),
+}
+# Hook de precio ONLINE (enlace) vs ONFILE (adjunto). Hoy 1.0 = mismo precio. Réplica.
+ONLINE_FACTOR = 1.0
 # channel de la campaña (EM/EAU/EAP/SMS/WSP/VOZ) -> canal de tarifa del estimador.
 CHANNEL_MAP = {
     'EM': 'EMAIL', 'EAU': 'EMAIL', 'EAP': 'EMAIL',
@@ -196,6 +218,29 @@ def _num(value, default=0.0):
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _tier_unit(tier_key, recipients):
+    """Precio unitario del TRAMO por volumen (el mayor tramo cuyo mínimo no supere a
+    `recipients`). Réplica de Api_V1_Cost_Estimate._tier_unit."""
+    tiers = VOLUME_TIERS.get(tier_key) or []
+    if not tiers:
+        return 0
+    unit = tiers[0][1]
+    for min_qty, price in tiers:
+        if recipients >= min_qty:
+            unit = price
+        else:
+            break
+    return unit
+
+
+def _base_unit(rate, override_key, tier_key, recipients):
+    """Base del canal: override plano de pricingRate si existe; si no, el tramo por volumen."""
+    v = rate.get(override_key)
+    if v is not None:
+        return _num(v)
+    return _tier_unit(tier_key, recipients)
 
 
 def _load_rate(customer_id, channel):
@@ -222,37 +267,33 @@ def _load_rate(customer_id, channel):
     return rate
 
 
-def _campaign_unit(rate, channel_name, document_format):
-    """Tarifa unitaria por destinatario según el canal de la campaña (misma lógica que
-    Billing_Summary/Cost_Estimate). NO incluye el recargo por MB del adjunto (EAU/EAP):
-    misma aproximación que Billing_Summary; la conciliación fina queda para otra fase.
-    Como el estimador del front SÍ suma el adjunto, su total es >= al débito → el gate de
-    saldo del front nunca queda por debajo del cobro real (dirección segura)."""
-    if channel_name == 'EM':
-        return rate['baseEM']
-    if channel_name == 'EAU':
-        return rate['baseEAU']
-    if channel_name == 'EAP':
-        pers = rate['personalizedPdf'] if str(document_format).upper() == 'PDF' else rate['personalizedDocx']
-        return rate['baseEAP'] + pers
-    if channel_name == 'SMS':
-        return rate['baseSms']
-    if channel_name == 'WSP':
-        return rate['baseMarketing']
+def _campaign_unit(rate, channel_name, recipients, document_format=None, delivery='ONFILE'):
+    """Tarifa unitaria por destinatario según el canal y el VOLUMEN (tramo por `recipients`).
+    El precio del tramo es "todo incluido" (misma lógica que Cost_Estimate). Réplica —
+    mantener en sync. Si pricingRate trae un valor plano para el canal, ese override gana.
+    ONLINE (enlace) vs ONFILE (adjunto): hook de precio en EAU/EAP (hoy factor 1.0)."""
+    mapping = CAMPAIGN_TIER.get(channel_name)
+    if not mapping:
+        return 0.0
+    override_key, tier_key = mapping
+    unit = _base_unit(rate, override_key, tier_key, recipients)
     if channel_name == 'VOZ':
-        return rate['basePerMinute'] * rate.get('avgMinutes', 0.5)
-    return 0.0
+        unit = unit * rate.get('avgMinutes', 0.5)
+    if channel_name in ('EAU', 'EAP') and str(delivery).upper() == 'ONLINE' and ONLINE_FACTOR != 1.0:
+        unit = unit * ONLINE_FACTOR
+    return unit
 
 
-def _campaign_cost(customer_id, channel_name, recipients, document_format=None):
+def _campaign_cost(customer_id, channel_name, recipients, document_format=None, delivery='ONFILE'):
     """Costo TOTAL (COP entero, con IVA y mínimo por campaña) de enviar `recipients`
     mensajes del canal dado. Misma fórmula que Api_V1_Cost_Estimate para UNA campaña:
-    subtotal = max(unit × recipients, minCampaign); total = subtotal + IVA."""
+    subtotal = max(unit × recipients, minCampaign); total = subtotal + IVA. El unitario es
+    ESCALONADO por volumen (tramo elegido por `recipients`)."""
     channel = CHANNEL_MAP.get(channel_name)
     if not channel or recipients <= 0:
         return 0
     rate = _load_rate(customer_id, channel)
-    unit = _campaign_unit(rate, channel_name, document_format)
+    unit = _campaign_unit(rate, channel_name, recipients, document_format, delivery)
     subtotal = max(unit * recipients, rate.get('minCampaign', DEFAULT_MIN_CAMPAIGN))
     total = subtotal * (1 + rate.get('taxRate', DEFAULT_TAX_RATE))
     return int(round(total))
@@ -502,24 +543,72 @@ def try_start_real_send(st:'ProcessState',process_id_value:str)->bool:
             return False
         raise
 
-def select_campaign(campaign_name:str)->dict:
+def select_campaign(campaign_name:str, customer_id:str=None)->dict:
     """
     Esta función obtiene los datos de la campaña.
 
     Args:
         campaign_name (str): Nombre de la campana
+        customer_id (str): Si se indica, la campaña DEBE pertenecer a este cliente
+            (aislamiento multi-tenant): se filtra por customerId además del nombre. Así un
+            tenant no puede disparar/cobrar la campaña de OTRO cliente, ni se resuelve por
+            accidente una campaña HOMÓNIMA de otro cliente (el scan por solo-nombre devolvía
+            un Items[0] arbitrario). Si es None (rollout/legado sin el context del Authorizer),
+            se busca solo por nombre (comportamiento previo).
 
     Returns:
         dict: Nombre de la campaña
     """
-    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, samplesSentCount, documentFormat, approvalStatus'  # Lista de campos a consultar
+    projection_campaign_expression = 'campaignId, customerId, consecutive, channel, dataPath, campaignState, originEmail, template, messageTemplateId, samplesSentCount, documentFormat, attachmentType, approvalStatus'  # Lista de campos a consultar
 
-    response_campaign = table_campaign.scan(
-        FilterExpression="campaignName = :value",
-        ExpressionAttributeValues={":value": campaign_name},
-        ProjectionExpression=projection_campaign_expression
-    )
+    if customer_id:
+        response_campaign = table_campaign.scan(
+            FilterExpression="campaignName = :value AND customerId = :cid",
+            ExpressionAttributeValues={":value": campaign_name, ":cid": customer_id},
+            ProjectionExpression=projection_campaign_expression
+        )
+    else:
+        response_campaign = table_campaign.scan(
+            FilterExpression="campaignName = :value",
+            ExpressionAttributeValues={":value": campaign_name},
+            ProjectionExpression=projection_campaign_expression
+        )
     return response_campaign
+
+
+def resolve_live_message_content(message_template_id, customer_id, channel):
+    """Contenido EN VIVO de la plantilla de mensaje (SMS/WSP) referenciada por la campaña.
+
+    La campaña de SMS/WSP guarda una REFERENCIA (`messageTemplateId`) a la plantilla, no solo
+    una copia del texto. Así, si el cliente edita la plantilla DESPUÉS de crear la campaña, el
+    envío usa el texto/HSM ACTUALIZADO (igual que el email, que referencia la plantilla SES por
+    nombre). Devuelve el `body` (SMS) o el `hsmName` (WSP) vigente, o None si no se puede
+    resolver — el llamador cae entonces al respaldo `campaign.template` (snapshot).
+
+    Fail-safe: cualquier problema (sin id, plantilla borrada, de otro tenant, error de DynamoDB)
+    devuelve None y NO rompe el envío.
+    """
+    if not message_template_id:
+        return None
+    try:
+        item = table_message_template.get_item(
+            Key={'messageTemplateId': message_template_id}).get('Item')
+    except Exception as e:
+        print('No se pudo resolver la plantilla de mensaje en vivo (se usa el snapshot): {}'.format(e))
+        return None
+    if not item:
+        return None
+    # Aislamiento multi-tenant: si la plantilla es de otro cliente, ignorarla (usar snapshot).
+    if customer_id and item.get('customerId') and item.get('customerId') != customer_id:
+        print('La plantilla {} no pertenece al cliente de la campaña; se usa el snapshot.'.format(message_template_id))
+        return None
+    if channel == 'SMS':
+        body = str(item.get('body', '') or '')
+        return body if body.strip() else None
+    if channel == 'WSP':
+        hsm = str(item.get('hsmName', '') or '')
+        return hsm if hsm.strip() else None
+    return None
 
 
 def increment_samples_count(st:'ProcessState')->int:
@@ -859,9 +948,18 @@ def _batch_get_emails(table_name:str, keys:list)->set:
     """
     Consulta por lotes qué emails de `keys` existen en la tabla `table_name`
     (cuya PK debe ser 'email'). BatchGetItem admite máximo 100 llaves y no
-    acepta duplicados, así que se deduplica y se trocea. Si la tabla no existe
-    o su esquema no coincide (tablas viejas con otra PK), devuelve vacío y
-    registra el error en lugar de tumbar el envío.
+    acepta duplicados, así que se deduplica y se trocea.
+
+    FILTRO DE CUMPLIMIENTO — FAIL-CLOSED: este helper alimenta la exclusión de lista negra /
+    desuscritos, que es un control LEGAL (Ley 1581 / habeas data) y de reputación SES. Antes,
+    CUALQUIER error devolvía vacío ("continuar sin filtrar") → un throttling transitorio en un
+    lote grande hacía que se enviara A CIEGAS a contactos que debían excluirse. Ahora:
+      - Error ESTRUCTURAL/permanente (la tabla no existe, o su esquema viejo no permite consultar
+        por 'email') → vacío SEGURO: no hay entradas que verificar (se registra para visibilidad;
+        una tabla de esquema viejo debe migrarse).
+      - Error TRANSITORIO (throttling, límite de capacidad, 5xx, red) → NO se pudo verificar →
+        se RE-LANZA. En el worker de partes eso propaga y SQS REPROCESA la parte (redelivery →
+        reproceso idempotente por el claim de parte/chunk), en vez de enviar sin filtrar.
 
     Args:
         table_name (str): Nombre de la tabla (PK 'email')
@@ -882,9 +980,16 @@ def _batch_get_emails(table_name:str, keys:list)->set:
                     found.add(item['email'])
                 # Reintentar las llaves que DynamoDB no alcanzó a procesar.
                 request_items = response.get('UnprocessedKeys') or None
-    except Exception as e:
-        print(f'No se pudo consultar la tabla {table_name} (se continúa sin filtrar): {e}')
-        return set()
+    except ClientError as e:
+        code = e.response.get('Error', {}).get('Code', '')
+        if code in ('ResourceNotFoundException', 'ValidationException'):
+            # Estructural: la tabla no existe o su esquema no permite la consulta → no hay
+            # entradas que filtrar. Seguro devolver vacío (no es un fallo de verificación).
+            print(f'Tabla {table_name} ausente/incompatible ({code}); no hay entradas que filtrar.')
+            return set()
+        # Transitorio: no se pudo verificar el filtro de cumplimiento → FAIL-CLOSED.
+        print(f'No se pudo verificar {table_name} ({code}); se re-lanza para NO enviar sin filtrar.')
+        raise
     return found
 
 def check_blacklist(tenant:str, keys:list)->set:
@@ -1392,6 +1497,8 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
     # debitado se guarda para reembolsar si el troceo falla después (compensación).
     previous_state = response_campaign['Items'][0].get('campaignState', 'Pendiente')
     document_format = response_campaign['Items'][0].get('documentFormat')
+    # Modo de entrega del adjunto (ONFILE=adjunto / ONLINE=enlace). Hoy cobra igual (hook).
+    delivery_mode = response_campaign['Items'][0].get('attachmentType') or 'ONFILE'
     data_path = response_campaign['Items'][0].get('dataPath')
     # ¿La base permite duplicados? Si NO (default), se filtran los contactos repetidos en
     # el envío real (y el cobro se dimensiona sobre contactos distintos).
@@ -1400,7 +1507,7 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
     debited = 0
     try:
         recipients_count = count_base_rows(temp_file, delimiter, allow_duplicates)
-        cost = _campaign_cost(st.customer_id, channel_name, recipients_count, document_format)
+        cost = _campaign_cost(st.customer_id, channel_name, recipients_count, document_format, delivery_mode)
         if cost > 0:
             new_balance = reserve_balance(st, cost, data["campaignName"])
             if new_balance is not None:  # None = tabla de saldos no desplegada (rollout)
@@ -1662,21 +1769,25 @@ def lambda_handler(event, context):
 
         samples = "Send-batch-template-samples" in endpoint
         print("Samples: " + str(samples))
-        response_campaign = select_campaign(campaign_name)
+        # Aislamiento multi-tenant: el cliente del token (Authorizer) es la autoridad sobre a
+        # quién pertenece la campaña. Si el context lo trae, la búsqueda se ACOTA a ese
+        # customerId → un tenant no puede enviar/cobrar la campaña de otro, ni se resuelve por
+        # accidente una campaña homónima de otro cliente. Fail-open de rollout: sin customerId
+        # en el context (rutas aún sin el mapping template) se busca solo por nombre (legado).
+        auth_ctx = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
+        auth_customer_id = str(auth_ctx.get('customerId') or '').strip() or None
+        response_campaign = select_campaign(campaign_name, auth_customer_id)
         print(response_campaign)
         if response_campaign['Items']:
             print(f'La campaña "{campaign_name}" fue encontrada en la BD')
             state = response_campaign['Items'][0]["campaignState"]
 
-            #Solo realizo envio si el estado de la campaña se encuentra en estado "Pendiente" o "Muestras"
-            #Si el estado es "Enviando" o "Terminada" quiere decir que es una campaña que ya no se debe enviar
-            #El estado error se debe revisar como soporte
-
-            #Esta linea siguiente es la productiva
-            #if (state == "Pendiente" or state == "Muestras"):
-
-            #Esta linea siguiente es la de pruebas
-            if (state == "Pendiente" or state == "Muestras" or state == "Error"):
+            # Solo se procesa el envío si la campaña está en un estado enviable
+            # (REAL_SEND_ALLOWED_STATES = Pendiente/Muestras/Error). "Enviando"/"Terminada" ya
+            # no se reenvían; "Error" permite reintentar tras un fallo previo. Fuente única:
+            # la constante REAL_SEND_ALLOWED_STATES (antes había un toggle productiva/pruebas
+            # comentado a mano que era fácil de dejar en el estado equivocado).
+            if state in REAL_SEND_ALLOWED_STATES:
                 print(f'La campaña se encuentra en estado "{state}" y se puede realizar su envio')
                 st.process_id = str(uuid.uuid4())
                 # Ruta temporal para el archivo descargado de S3.
@@ -1693,14 +1804,22 @@ def lambda_handler(event, context):
                 st.channel = channel_name  # define el tipo de contacto (correo vs celular E.164)
                 data_path = response_campaign['Items'][0]["dataPath"]
                 st.from_email = response_campaign['Items'][0]["originEmail"]
+                # Contenido de SMS/WSP: se RESUELVE EN VIVO desde la plantilla referenciada
+                # (campaign.messageTemplateId) para reflejar ediciones posteriores a la creación
+                # de la campaña. Si no hay referencia o no se puede resolver, cae al snapshot
+                # guardado en campaign.template (compat con campañas viejas y con Voz).
+                snapshot_template = response_campaign['Items'][0].get("template", "") or ""
+                message_template_id = response_campaign['Items'][0].get("messageTemplateId") or ""
+                live_content = resolve_live_message_content(message_template_id, st.customer_id, channel_name)
                 # Para SMS el campo 'template' de la campaña guarda el TEXTO del mensaje
                 # (no un template de SES). Para email queda vacío y no se usa.
-                st.sms_body = response_campaign['Items'][0].get("template", "") if channel_name == "SMS" else ""
+                st.sms_body = (live_content if live_content is not None else snapshot_template) if channel_name == "SMS" else ""
                 # Para WhatsApp el campo 'template' guarda el NOMBRE de la plantilla HSM
                 # aprobada por Meta. Para el resto de canales queda vacío y no se usa.
-                st.wsp_template = response_campaign['Items'][0].get("template", "") if channel_name == "WSP" else ""
-                # Para Voz el campo 'template' guarda el TEXTO a leer por TTS.
-                st.voice_message = response_campaign['Items'][0].get("template", "") if channel_name == "VOZ" else ""
+                st.wsp_template = (live_content if live_content is not None else snapshot_template) if channel_name == "WSP" else ""
+                # Para Voz el campo 'template' guarda el TEXTO a leer por TTS (sin plantilla
+                # referenciada: la voz se escribe libre en el form, el snapshot ES la fuente).
+                st.voice_message = snapshot_template if channel_name == "VOZ" else ""
 
                 # Todas las tablas por cliente se nombran con la LLAVE POR NIT (st.tenant =
                 # tenant_key(companyTin)), igual que los buckets S3. Antes se usaba el nombre
@@ -1785,11 +1904,15 @@ def lambda_handler(event, context):
                 try:
                     # Descarga el CSV desde S3 (bucket por NIT, con fallback al viejo por nombre).
                     download_base_csv(st.nit, st.customer_name, data_path, temp_file)
-                except:
+                except Exception as e:
                     update_campaign_status(st, "Error")
-                    description = f'No se pudo realizar la descarga del archivo "{temp_file}" del bucket "{bucket_name} - {data_path}"'
+                    # Antes el mensaje usaba `bucket_name`, variable NO definida en este scope
+                    # → NameError que caía al catch-all y respondía 500 en vez de este 404 útil
+                    # (el fallo más común es que la base no esté en S3). Se arma con datos definidos.
+                    description = f'No se pudo descargar la base "{data_path}" del cliente (NIT {st.nit}) desde S3.'
                     status = False
                     print(description)
+                    print(e)
                     status_code = 404
                 else:
                     # Detectar el delimitador del CSV (el cliente pudo subirlo con ; , tab o |).
@@ -1810,10 +1933,14 @@ def lambda_handler(event, context):
                                             data.get('quantitySamples', ''), campaign_name, channel_name))
                     else:
                         # RBAC: el envío real solo lo puede disparar owner/approver (el
-                        # funcional/operator solo prepara y solicita aprobación). Fail-open
-                        # de rollout: si el context no trae tenantRole, default 'owner'.
+                        # funcional/operator solo prepara y solicita aprobación). Fail-CLOSED: si
+                        # el context no trae tenantRole, default al MENOR privilegio ('operator')
+                        # → denegado. El mapping template (sync_api.py) reenvía tenantRole y el
+                        # Authorizer pone 'owner' para tokens legacy, así que un owner/approver
+                        # legítimo SÍ dispara; el default cierra el bypass (operator tratado como
+                        # owner) que dejaba a cualquiera gastar saldo en un envío real.
                         _trole = str(((event.get('requestContext') or {}).get('authorizer') or {})
-                                     .get('tenantRole', 'owner') or 'owner') if isinstance(event, dict) else 'owner'
+                                     .get('tenantRole', 'operator') or 'operator') if isinstance(event, dict) else 'operator'
                         if _trole not in ('owner', 'approver'):
                             status = False
                             status_code = 403
@@ -1872,6 +1999,15 @@ def lambda_handler(event, context):
         status_code = 402
         print(description)
     except Exception as e:
+        # WORKER SQS (cola de partes): la invocación debe FALLAR (propagar) si algo sale mal, para
+        # que SQS RETENGA el mensaje y lo redelivere (reproceso idempotente por el claim de parte/
+        # chunk) y, tras agotar reintentos, lo mande a la DLQ. Si en cambio devolviéramos un 500,
+        # SQS interpretaría la invocación como EXITOSA y BORRARÍA el mensaje → la parte se perdería
+        # en silencio (incluye el caso en que no se pudo verificar la lista negra → NO se debe
+        # enviar a ciegas: fail-closed). La ruta API (proxy) sí devuelve el 500 al llamante.
+        if isinstance(event, dict) and 'Records' in event:
+            print(f'Fallo procesando parte(s) SQS; se propaga para redelivery/DLQ: {e}')
+            raise
         description = "Error no controlado en el servicio"
         status = False
         status_code = 500

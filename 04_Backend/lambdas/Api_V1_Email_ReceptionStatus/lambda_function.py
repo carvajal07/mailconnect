@@ -280,31 +280,43 @@ def lambda_handler(event, context):
     global timestamp
     global state
 
-    #Obtener el mensaje SNS
-    body = event["Records"][0]["body"]
-    json_body = json.loads(body)
-    print(json_body)
-    #message_sqs = event['Records'][0]["body"]['Message']
-    message = json.loads(json_body['Message'])
+    # Parseo DEFENSIVO del evento SES (SNS→SQS). Antes se indexaba directo
+    # (event["Records"][0], message['eventType'], tags['customer'][0], …) sin manejo de
+    # errores: un evento con estructura inesperada reventaba con KeyError → la invocación
+    # fallaba → reintentos → DLQ, y ese estado NUNCA se registraba (reportes incompletos).
+    # Ahora un evento malformado se registra en log y se DESCARTA con gracia (no es
+    # reintentable). Los errores de ESCRITURA (DynamoDB) se dejan propagar más abajo, para
+    # que un fallo transitorio sí reintente.
+    try:
+        #Obtener el mensaje SNS
+        body = event["Records"][0]["body"]
+        json_body = json.loads(body)
+        print(json_body)
+        #message_sqs = event['Records'][0]["body"]['Message']
+        message = json.loads(json_body['Message'])
 
-    #Extraer el estado de SES y el messageId
-    event_type = message['eventType']
-    message_mail = message['mail']
-    message_id = message_mail['messageId']
-    print("MessageId: " + message_id)
-    print("Event: " + event_type)
-    #Captura de tags
-    tags = message_mail['tags']
-    customer_name = tags['customer'][0]
-    # Llave de las tablas por cliente: el tag 'nit' (tenant_key) que ponen las lambdas Send.
-    # Fallback defensivo al nombre saneado para eventos antiguos sin el tag (best-effort).
-    tenant = tenant_key((tags.get('nit') or [''])[0]) or tenant_key(customer_name)
-    campaing_id = tags['campaingId'][0]
-    process_id = tags['processId'][0]
+        #Extraer el estado de SES y el messageId
+        event_type = message['eventType']
+        message_mail = message['mail']
+        message_id = message_mail['messageId']
+        print("MessageId: " + message_id)
+        print("Event: " + event_type)
+        #Captura de tags
+        tags = message_mail['tags']
+        customer_name = tags['customer'][0]
+        # Llave de las tablas por cliente: el tag 'nit' (tenant_key) que ponen las lambdas Send.
+        # Fallback defensivo al nombre saneado para eventos antiguos sin el tag (best-effort).
+        tenant = tenant_key((tags.get('nit') or [''])[0]) or tenant_key(customer_name)
+        campaing_id = tags['campaingId'][0]
+        process_id = tags['processId'][0]
 
-    # Mapear el estado de SES a un nombre legible
-    state = state_ses_mapping.get(event_type,0) #Estado desconocido
-    timestamp = message_mail['timestamp']
+        # Mapear el estado de SES a un nombre legible
+        state = state_ses_mapping.get(event_type,0) #Estado desconocido
+        timestamp = message_mail['timestamp']
+    except Exception as e:
+        print("ReceptionStatus: evento SES ignorado (estructura inesperada): {}".format(e))
+        print(event)
+        return
     print("Customer: " + customer_name)
     ###################
     #Mas probables

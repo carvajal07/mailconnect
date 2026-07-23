@@ -201,6 +201,16 @@ def lambda_handler(event, context):
     customer = auth.get('customer') or ''
     if not customer_id:
         return {'status': False, 'statusCode': 403, 'description': 'Sesión sin identidad de cliente.'}
+    # RBAC: registrar/verificar un dominio o correo de envío es CONFIGURACIÓN DE CUENTA sensible
+    # (identidad de envío, DKIM, anti-spoofing) → solo OWNER. Antes el backend NO validaba el
+    # sub-rol (el "owner" era solo del front, puenteable llamando la API directo) → cualquier
+    # usuario del tenant podía agregar dominios. Fail-CLOSED: si no llega tenantRole, default al
+    # menor privilegio → denegado. El mapping template reenvía tenantRole y el Authorizer pone
+    # 'owner' para tokens legacy, así que un owner legítimo SÍ pasa.
+    tenant_role = str(auth.get('tenantRole', 'operator') or 'operator')
+    if tenant_role != 'owner':
+        return {'status': False, 'statusCode': 403,
+                'description': 'Solo el propietario de la cuenta puede gestionar los dominios de envío.'}
 
     # Valor recibido: acepta `identity` (canónico) o los alias legacy `domain` / `email`.
     raw = str(payload.get('identity') or payload.get('domain') or payload.get('email') or '').strip().lower()

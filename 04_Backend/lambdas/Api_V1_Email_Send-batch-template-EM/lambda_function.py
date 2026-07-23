@@ -114,6 +114,60 @@ def insert_process_detail(registers:int,part:int,date:str,state:str)->None:
         }
     )
 
+def _claim_part(tenant_key_value:str, process_id_value:str, part:int, registers:int, date:str, stage:str='send')->bool:
+    """Reclama ATÓMICAMENTE el derecho a enviar (processId, part) para esta ETAPA.
+
+    Reemplaza el patrón anterior validate_process_detail(scan) + insert_process_detail(put con
+    uuid ALEATORIO), que NO era atómico: dos entregas concurrentes del mismo mensaje SQS
+    (entrega at-least-once, o vencimiento del visibility timeout en un lote grande) hacían el
+    scan (ninguna veía nada) y ambas hacían put con uuid distinto → el lote se enviaba DOS
+    veces. Además el scan leía solo la primera página de 1 MB y a escala podía no encontrar la
+    fila. Aquí la clave es DETERMINISTA (`processId#part#stage`) y la escritura condicional
+    `attribute_not_exists`: solo la PRIMERA invocación gana (True → envía); la redelivery pierde
+    la condición (False → NO reenvía). Fail-open SOLO si falta la llave de tenant/proceso."""
+    if not tenant_key_value or not process_id_value or part is None:
+        return True
+    table = dynamodb.Table(f'{tenant_key_value}_processDetail')
+    detail_id = f'{process_id_value}#{part}#{stage}'
+    try:
+        table.put_item(
+            Item={'processDetailId': detail_id, 'processId': process_id_value, 'part': part,
+                  'registers': registers, 'date': date, 'stateProcess': 'Procesando', 'stage': stage},
+            ConditionExpression='attribute_not_exists(processDetailId)')
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return False
+        raise
+
+
+def _mark_part(tenant_key_value:str, process_id_value:str, part:int, state:str, stage:str='send')->None:
+    """Marca el estado final de (processId, part, stage) sobre la MISMA fila determinista que
+    reclamó _claim_part. Best-effort (el envío ya se hizo; no se revierte por esto)."""
+    if not tenant_key_value or not process_id_value or part is None:
+        return
+    try:
+        dynamodb.Table(f'{tenant_key_value}_processDetail').update_item(
+            Key={'processDetailId': f'{process_id_value}#{part}#{stage}'},
+            UpdateExpression='SET stateProcess = :s',
+            ExpressionAttributeValues={':s': state})
+    except Exception as e:
+        print(f'No se pudo marcar la parte {part} como {state}: {e}')
+
+
+def _release_part(tenant_key_value:str, process_id_value:str, part:int, stage:str='send')->None:
+    """Libera (borra) el claim de un chunk cuyo envío FALLÓ, para que una redelivery lo
+    REINTENTE. Se usa cuando la llamada a SES lanza excepción (no entregó nada): sin liberar, el
+    chunk quedaría reclamado y la reanudación lo saltaría → pérdida. Best-effort."""
+    if not tenant_key_value or not process_id_value or part is None:
+        return
+    try:
+        dynamodb.Table(f'{tenant_key_value}_processDetail').delete_item(
+            Key={'processDetailId': f'{process_id_value}#{part}#{stage}'})
+    except Exception as e:
+        print(f'No se pudo liberar el claim del chunk {stage} de la parte {part}: {e}')
+
+
 def count_sample_send(campaign_id:str)->None:
     """Cuenta 1 envío de MUESTRA (atómico) en la campaña, SOLO cuando el envío salió bien.
     Se llama desde el worker tras un envío exitoso (no en Prepare-batch), para que una
@@ -341,16 +395,9 @@ def lambda_handler(event:dict, context:dict):
         registers = len(data)
         print(f"Cantidad registros a procesar: {registers}")
         
-        #Validar el estado de la parte a procesar (Si se encuentra procesando o terminada puede ser un error de mensajes duplicados)
-        #Debo generar error para evitar realizar envios duplicados
-        response_process_detail = validate_process_detail(part)
-        if response_process_detail['Items']:
-            state = response_process_detail['Items'][0]["stateProcess"]
-            print(f"La parte {part} del proceso {process_id} ya se encuentra procesando o ha finalizado")
-            print(f"El id: {process_detail_id} se encuentra en estado {state}")
-            raise ValueError("La parte ya ha sido procesada")
-        print("Inicia actualización del estado a procesando")
-        insert_process_detail(registers,part,formatted_date,"Procesando")
+        # La idempotencia se hace por CHUNK en el bloque de envío (no a nivel de parte), para
+        # poder REANUDAR un envío parcial sin reenviar los sub-lotes ya enviados (ver abajo).
+        print(f"Parte {part}: {registers} registros a enviar en chunks de {QUANTITY_BATCH}")
     except Exception as e:
         print(e)
         print("Error en la lectura de los datos de entrada")
@@ -376,15 +423,38 @@ def lambda_handler(event:dict, context:dict):
         }]
 
         print(f"Encabezados de personalizacion ({headers})")
-        #Realizar la asignacion de variables y datos para la personalizacion 
+        #Realizar la asignacion de variables y datos para la personalizacion
 
-        for start in range(0, registers, QUANTITY_BATCH):            
+        # Envío por CHUNKS con idempotencia + REANUDACIÓN (checkpoint intra-parte). Cada chunk
+        # [start..end) se reclama de forma ATÓMICA (clave DETERMINISTA processId#part#send#{start}
+        # vía _claim_part): si ya fue enviado (por otra entrega o un intento previo que falló más
+        # adelante), se OMITE — no se reenvía. Si la llamada a SES del chunk FALLA (no entregó
+        # nada), se LIBERA su claim y se RE-LANZA: la redelivery de SQS reanuda EXACTAMENTE desde
+        # ese chunk, sin repetir los ya enviados ni perder los pendientes. Antes, un fallo a mitad
+        # marcaba TODA la parte en 'Error' y la bloqueaba → los chunks siguientes se perdían y un
+        # reintento reenviaba desde cero. Compromiso (igual que antes, pero de grano fino): favorece
+        # "sin duplicados" (reputación SES) → una caída DURA entre reclamar y enviar deja ese único
+        # chunk (≤QUANTITY_BATCH) sin enviar.
+        any_sent = False
+        for start in range(0, registers, QUANTITY_BATCH):
             end = start + QUANTITY_BATCH
-            print(f"Procesando registros {start} a {end}")
-            send_bulk(data, headers, start, end, default_tags)
+            chunk_len = min(end, registers) - start
+            if not _claim_part(tenant, process_id, part, chunk_len, formatted_date, stage=f'send#{start}'):
+                print(f"Chunk {start} de la parte {part} ya enviado; se omite (reanudación).")
+                continue
+            try:
+                print(f"Procesando registros {start} a {end}")
+                send_bulk(data, headers, start, end, default_tags)
+                any_sent = True
+            except Exception as e:
+                # La llamada a SES falló (no entregó nada): libera el claim del chunk para que la
+                # redelivery lo reintente, y re-lanza para que SQS reprocese la parte (reanuda).
+                _release_part(tenant, process_id, part, stage=f'send#{start}')
+                print(f"Error enviando el chunk {start} de la parte {part} del proceso {process_id}: {e}")
+                raise
 
         print("Proceso de envios finalizado")
-        insert_process_detail(registers,part,formatted_date,"Terminado")
-        # Envío de MUESTRAS terminado OK → contar 1 en la campaña (no cuenta si falla antes).
-        if is_samples and campaign_id:
+        # Muestras: contar 1 SOLO si esta invocación envió algo nuevo (any_sent). En una redelivery
+        # donde todos los chunks ya estaban enviados no se recuenta (any_sent=False).
+        if is_samples and campaign_id and any_sent:
             count_sample_send(campaign_id)

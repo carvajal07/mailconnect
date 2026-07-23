@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import {
   Box,
   Button,
@@ -27,6 +27,7 @@ import {
   IconButton,
   Tooltip,
 } from '@mui/material';
+import { ThemeProvider, useTheme, createTheme } from '@mui/material/styles';
 import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ApartmentIcon from '@mui/icons-material/Apartment';
@@ -55,6 +56,10 @@ interface CampaignForm {
   channelName: string;
   attachmentType: string;
   template: string;
+  // Referencia a la plantilla de mensaje SMS/WSP elegida. Se envía a la campaña para que el
+  // ENVÍO resuelva el contenido EN VIVO (si el cliente edita la plantilla luego, se refleja).
+  // `template` guarda una copia (snapshot) para la vista previa y como respaldo.
+  messageTemplateId: string;
   from: string;
   dataPath: string;
   // Solo EAP: formato del documento (DOCX = combinación Word, PDF = campos personalizados).
@@ -75,6 +80,7 @@ const emptyForm = (from = DEFAULT_FROM): CampaignForm => ({
   channelName: 'EM',
   attachmentType: 'NONE',
   template: '',
+  messageTemplateId: '',
   from,
   dataPath: '',
   documentFormat: 'DOCX',
@@ -98,6 +104,18 @@ const APPROVAL_META: Record<string, { label: string; color: 'info' | 'warning' |
 };
 
 export const CampanasSection = () => {
+  // Tema COMPACTO para el modal de campaña: fuerza size="small" en todos los campos/listas
+  // (menor alto) sin tener que anotarlo campo por campo. Se aplica solo dentro del diálogo.
+  const baseTheme = useTheme();
+  const compactTheme = useMemo(() => createTheme(baseTheme, {
+    components: {
+      MuiTextField: { defaultProps: { size: 'small' } },
+      MuiFormControl: { defaultProps: { size: 'small' } },
+      MuiSelect: { defaultProps: { size: 'small' } },
+      MuiInputLabel: { defaultProps: { size: 'small' } },
+    },
+  }), [baseTheme]);
+
   // El cliente (empresa) se toma de la sesión, no se captura en formularios.
   const customer = getUser()?.customer ?? '';
   const customerId = getUser()?.customerId ?? '';
@@ -132,8 +150,10 @@ export const CampanasSection = () => {
   const [attachmentPath, setAttachmentPath] = useState('');
   const [attachmentName, setAttachmentName] = useState('');
   const [attachmentUploading, setAttachmentUploading] = useState(false);
-  // EAP-PDF: nombre de la plantilla del editor (mc_pdf_drafts) elegida como adjunto.
+  // EAP-PDF: clave de la plantilla elegida y su HTML. El HTML se guarda SOLO en memoria al
+  // seleccionar (no se sube a S3); la subida se hace al CREAR la campaña (handleSubmit).
   const [pdfTemplateName, setPdfTemplateName] = useState('');
+  const [pdfTemplateHtml, setPdfTemplateHtml] = useState('');
 
   const loadCampaigns = refreshCampaigns;
 
@@ -167,6 +187,7 @@ export const CampanasSection = () => {
     setAttachmentPath('');
     setAttachmentName('');
     setPdfTemplateName('');
+    setPdfTemplateHtml('');
   };
 
   const handleOpenDialog = () => {
@@ -186,6 +207,7 @@ export const CampanasSection = () => {
       channelName: c.channel ?? 'EM',
       attachmentType: 'NONE',
       template: c.template ?? '',
+      messageTemplateId: c.messageTemplateId ?? '',
       from: c.originEmail ?? DEFAULT_FROM,
       dataPath: c.dataPath ?? '',
       documentFormat: (c.documentFormat as EapDocFormat) ?? 'DOCX',
@@ -245,20 +267,34 @@ export const CampanasSection = () => {
   ];
 
   /** Id de la plantilla que corresponde al contenido actual de la campaña (para el selector).
-   *  Se deriva del template guardado: SMS compara por texto (body), WSP por nombre HSM.
-   *  '' si no coincide con ninguna guardada (p. ej. al editar una plantilla ya borrada). */
-  const currentMsgTemplateId = isSms
-    ? smsTemplates.find((t) => t.body === formData.template)?.messageTemplateId ?? ''
-    : isWsp
-      ? wspTemplates.find((t) => t.hsmName === formData.template)?.messageTemplateId ?? ''
-      : '';
+   *  Se prefiere la REFERENCIA guardada (messageTemplateId) si aún existe; si no, se deriva del
+   *  texto guardado (SMS por body, WSP por nombre HSM) para campañas viejas sin referencia.
+   *  '' si no coincide con ninguna guardada (p. ej. si la plantilla fue borrada). */
+  const currentMsgTemplateId = ((): string => {
+    if (!isSms && !isWsp) return '';
+    if (formData.messageTemplateId && msgTemplates.some((t) => t.messageTemplateId === formData.messageTemplateId)) {
+      return formData.messageTemplateId;
+    }
+    return isSms
+      ? smsTemplates.find((t) => t.body === formData.template)?.messageTemplateId ?? ''
+      : wspTemplates.find((t) => t.hsmName === formData.template)?.messageTemplateId ?? '';
+  })();
 
-  /** Elige una plantilla guardada (SMS/WSP) → fija el contenido de la campaña. */
+  // Contenido VIGENTE de la plantilla referenciada (para la vista previa): si la plantilla
+  // existe, muestra su texto/HSM ACTUAL (refleja ediciones), no el snapshot guardado en la
+  // campaña. Así lo que se ve aquí coincide con lo que se enviará (resuelto en vivo).
+  const selectedMsgTemplate = msgTemplates.find((t) => t.messageTemplateId === currentMsgTemplateId);
+  const smsPreview = selectedMsgTemplate?.body ?? formData.template;
+  const wspPreview = selectedMsgTemplate?.hsmName ?? formData.template;
+
+  /** Elige una plantilla guardada (SMS/WSP) → guarda la REFERENCIA (para envío en vivo) y una
+   *  copia del contenido (snapshot para la vista previa y respaldo). */
   const selectMsgTemplate = (id: string) => {
     const t = msgTemplates.find((m) => m.messageTemplateId === id);
     if (!t) return;
     // SMS guarda el texto (body); WSP guarda el nombre de la plantilla HSM.
-    handleInputChange('template', t.channel === 'WSP' ? (t.hsmName ?? '') : (t.body ?? ''));
+    const snapshot = t.channel === 'WSP' ? (t.hsmName ?? '') : (t.body ?? '');
+    setFormData((prev) => ({ ...prev, template: snapshot, messageTemplateId: id }));
   };
 
   const handleInputChange = (field: keyof CampaignForm, value: string) => {
@@ -273,7 +309,7 @@ export const CampanasSection = () => {
         if (value !== 'EAP') next.documentFormat = 'DOCX';
         // Cada canal usa un tipo de plantilla distinto (SES / body SMS / HSM / texto voz):
         // al cambiar de canal se limpia para no arrastrar un valor incompatible.
-        if (value !== prev.channelName) next.template = '';
+        if (value !== prev.channelName) { next.template = ''; next.messageTemplateId = ''; }
       }
       return next;
     });
@@ -310,17 +346,16 @@ export const CampanasSection = () => {
 
   /**
    * EAP-PDF: elige una plantilla PDF (del BACKEND `messageTemplate` canal PDF, o un borrador
-   * local de respaldo) y sube su HTML a S3 como el adjunto de la campaña. El combinador
-   * EAP-PDF baja ese HTML y renderiza un PDF por destinatario. Reutiliza attachmentPath/Name
-   * (y su validación) igual que el .docx. La `key` codifica la fuente: `c:{id}` backend, `l:{name}` local.
+   * local de respaldo). SOLO guarda la selección + su HTML en memoria — NO sube nada a S3.
+   * La subida del HTML se hace al CREAR la campaña (uploadPdfTemplateHtml en handleSubmit);
+   * el combinador EAP-PDF lo baja y renderiza un PDF por destinatario al enviar (muestras/real).
+   * La `key` codifica la fuente: `c:{id}` backend, `l:{name}` local.
    */
-  const selectPdfTemplate = async (key: string) => {
+  const selectPdfTemplate = (key: string) => {
     setPdfTemplateName(key);
-    if (!key) { resetAttachment(); setPdfTemplateName(''); return; }
-    if (!customer) {
-      notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
-      return;
-    }
+    // Cambiar de plantilla invalida cualquier HTML/ruta ya resuelto.
+    setAttachmentPath('');
+    if (!key) { setPdfTemplateHtml(''); setAttachmentName(''); return; }
     let html = '';
     let label = 'plantilla';
     if (key.startsWith('c:')) {
@@ -331,27 +366,35 @@ export const CampanasSection = () => {
       label = key.slice(2);
       html = readPdfDrafts()[label] ?? '';
     }
-    if (!html) { notify('No se encontró la plantilla PDF seleccionada.', 'error'); return; }
-    setAttachmentUploading(true);
+    if (!html) {
+      notify('No se encontró la plantilla PDF seleccionada.', 'error');
+      setPdfTemplateName(''); setPdfTemplateHtml(''); setAttachmentName('');
+      return;
+    }
+    setPdfTemplateHtml(html);
+    setAttachmentName(`${label} (plantilla PDF)`);
+  };
+
+  /** Sube a S3 el HTML de la plantilla PDF seleccionada y devuelve su ruta (o null si falla).
+   *  Se llama al CREAR la campaña, no al seleccionar. */
+  const uploadPdfTemplateHtml = async (): Promise<string | null> => {
+    if (!pdfTemplateHtml) return null;
+    if (!customer) { notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning'); return null; }
+    const label = (attachmentName || 'plantilla').replace(/\s*\(plantilla PDF\)\s*$/, '');
     const safe = label.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'plantilla';
     const fileName = `plantilla-pdf-${safe}-${Date.now()}.html`;
-    const file = new File([html], fileName, { type: 'text/html' });
+    const file = new File([pdfTemplateHtml], fileName, { type: 'text/html' });
+    setAttachmentUploading(true);
     const presign = await campaignsService.presignUrl({ customer, nit: getUser()?.nit ?? '', documentName: fileName, documentType: 'attachment' });
     if (!isOk(presign) || !presign.data?.url || !presign.data?.path) {
       setAttachmentUploading(false);
-      setPdfTemplateName('');
-      return notify(presign.description || 'No se pudo crear la URL para la plantilla PDF.', 'error');
+      notify(presign.description || 'No se pudo crear la URL para la plantilla PDF.', 'error');
+      return null;
     }
     const ok = await campaignsService.uploadToS3(presign.data.url, file);
     setAttachmentUploading(false);
-    if (ok) {
-      setAttachmentPath(presign.data.path);
-      setAttachmentName(`${label} (plantilla PDF)`);
-      notify('Plantilla PDF lista para la campaña.', 'success');
-    } else {
-      setPdfTemplateName('');
-      notify('No se pudo subir la plantilla PDF a S3.', 'error');
-    }
+    if (!ok) { notify('No se pudo subir la plantilla PDF a S3.', 'error'); return null; }
+    return presign.data.path;
   };
 
   const handleSubmit = async () => {
@@ -369,13 +412,27 @@ export const CampanasSection = () => {
       return;
     }
     // EAU/EAP exigen un documento adjunto (el backend lo valida y devuelve 400 sin él).
-    if (!editingId && isAttachment && !attachmentPath) {
-      notify(isEapPdf
-        ? 'Selecciona una plantilla PDF del editor antes de crear la campaña.'
-        : 'Para EAU/EAP debes subir el documento adjunto antes de crear la campaña.', 'warning');
-      return;
+    // EAP-PDF: basta con haber SELECCIONADO la plantilla (su HTML está en memoria); el
+    // resto de canales de adjunto exigen el archivo ya subido.
+    if (!editingId && isAttachment) {
+      if (isEapPdf && !pdfTemplateHtml) {
+        notify('Selecciona una plantilla PDF del editor antes de crear la campaña.', 'warning');
+        return;
+      }
+      if (!isEapPdf && !attachmentPath) {
+        notify('Para EAU/EAP debes subir el documento adjunto antes de crear la campaña.', 'warning');
+        return;
+      }
     }
     setSubmitting(true);
+    // EAP-PDF: la subida del HTML se hace AHORA (al crear), no al seleccionar la plantilla.
+    let pdfPath = attachmentPath;
+    if (!editingId && isEapPdf && !attachmentPath) {
+      const uploaded = await uploadPdfTemplateHtml();
+      if (!uploaded) { setSubmitting(false); return; } // el helper ya notificó el error
+      pdfPath = uploaded;
+      setAttachmentPath(uploaded);
+    }
     const res = editingId
       ? await campaignsService.update({
           campaignId: editingId,
@@ -384,6 +441,8 @@ export const CampanasSection = () => {
           attachmentType: formData.attachmentType,
           dataPath: formData.dataPath,
           template: formData.template,
+          // Referencia de plantilla SMS/WSP (o '' para limpiarla si el canal ya no la usa).
+          messageTemplateId: (isSms || isWsp) ? formData.messageTemplateId : '',
           from: formData.from,
           documentFormat: isEap ? formData.documentFormat : undefined,
         })
@@ -394,9 +453,12 @@ export const CampanasSection = () => {
           attachmentType: formData.attachmentType,
           dataPath: formData.dataPath,
           template: formData.template,
+          // Referencia de plantilla SMS/WSP → el envío resuelve el contenido en vivo.
+          messageTemplateId: (isSms || isWsp) ? formData.messageTemplateId || undefined : undefined,
           from: formData.from,
           // Documento adjunto (solo EAU/EAP): el backend espera una lista de { path }.
-          attachment: isAttachment && attachmentPath ? [{ path: attachmentPath }] : undefined,
+          // Para EAP-PDF, pdfPath es la ruta recién subida en este submit.
+          attachment: isAttachment && pdfPath ? [{ path: pdfPath }] : undefined,
           // Formato del documento EAP (DOCX combinación Word / PDF campos personalizados).
           documentFormat: isEap ? formData.documentFormat : undefined,
           // EAP siempre es personalizado por destinatario.
@@ -517,12 +579,13 @@ export const CampanasSection = () => {
       </TableContainer>
 
       {/* Dialog para crear campaña */}
-      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
+      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="lg" fullWidth>
         <DialogTitle>{editingId ? 'Editar Campaña' : 'Crear Campaña'}</DialogTitle>
         <DialogContent>
-          <Box sx={{ mt: 2 }}>
-            <Stack spacing={2}>
-              <Alert severity="info" icon={<InfoOutlinedIcon />}>
+          <ThemeProvider theme={compactTheme}>
+          <Box sx={{ mt: 1 }}>
+            <Stack spacing={1.25}>
+              <Alert severity="info" icon={<InfoOutlinedIcon />} sx={{ py: 0.5 }}>
                 <Typography variant="body2" component="div">
                   <strong>Canal</strong> — cómo se envía:
                 </Typography>
@@ -532,13 +595,6 @@ export const CampanasSection = () => {
                   <li><strong>EAP</strong>: correo con <em>adjunto personalizado</em> por destinatario. Dos tipos: <strong>Word (.docx)</strong> combinación de correspondencia, o <strong>PDF</strong> con campos personalizados.</li>
                   <li><strong>SMS</strong> / <strong>WSP</strong>: mensaje de texto / plantilla de WhatsApp (sin adjunto).</li>
                   <li><strong>VOZ</strong>: llamada telefónica que lee un mensaje por texto a voz (sin adjunto).</li>
-                </Box>
-                <Typography variant="body2" component="div" sx={{ mt: 0.5 }}>
-                  <strong>Entrega del adjunto</strong> (solo EAU/EAP):
-                </Typography>
-                <Box component="ul" sx={{ m: 0.5, pl: 2.5 }}>
-                  <li><strong>Archivo adjunto en el correo</strong>: el documento viaja pegado al correo.</li>
-                  <li><strong>Enlace / botón de descarga</strong>: el correo lleva un enlace para descargarlo (no lo adjunta).</li>
                 </Box>
               </Alert>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -580,7 +636,7 @@ export const CampanasSection = () => {
                     label="Entrega del adjunto"
                     onChange={(e) => handleInputChange('attachmentType', e.target.value)}
                   >
-                    <MenuItem value="NONE">Sin adjunto</MenuItem>
+                    {!isAttachment && <MenuItem value="NONE">Sin adjunto</MenuItem>}
                     <MenuItem value="ONFILE">Archivo adjunto en el correo</MenuItem>
                     <MenuItem value="ONLINE">Enlace / botón de descarga</MenuItem>
                   </Select>
@@ -610,8 +666,8 @@ export const CampanasSection = () => {
               )}
 
               {/* Documento adjunto (solo EAU/EAP). El backend exige el adjunto para estos canales.
-                  EAP-PDF: se elige una plantilla del editor (mc_pdf_drafts) y se sube su HTML.
-                  EAU / EAP-DOCX: se sube el archivo (docx/pdf). */}
+                  EAP-PDF: se ELIGE una plantilla (backend o borrador local); su HTML se sube a S3
+                  al CREAR la campaña, no al seleccionar. EAU / EAP-DOCX: se sube el archivo. */}
               {isAttachment && !editingId && isEapPdf && (
                 <Box sx={{ p: 1.5, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
                   <FormControl fullWidth disabled={attachmentUploading}>
@@ -633,8 +689,9 @@ export const CampanasSection = () => {
                       <Chip color="success" label={attachmentName} onDelete={resetAttachment} />
                     ) : (
                       <Typography variant="caption" color="text.secondary">
-                        Diseña y guarda tu plantilla en la pestaña <strong>Plantillas PDF</strong>; aquí se
-                        renderiza un PDF por destinatario sustituyendo las variables <code>{'{{campo}}'}</code>.
+                        Elige una plantilla ya guardada en <strong>Plantillas PDF</strong> (se seleccionan al
+                        instante; el PDF se genera por destinatario al enviar, sustituyendo las variables
+                        <code>{'{{campo}}'}</code>).
                       </Typography>
                     )}
                   </Stack>
@@ -691,9 +748,9 @@ export const CampanasSection = () => {
                       multiline
                       minRows={3}
                       label="Texto de la plantilla (solo lectura)"
-                      value={formData.template}
+                      value={smsPreview}
                       InputProps={{ readOnly: true }}
-                      helperText={`~${Math.max(1, Math.ceil(formData.template.length / 160))} segmento(s). En SMS la columna 2 del CSV es el celular (E.164, +57…). Edita el texto en "Plantillas SMS".`}
+                      helperText={`~${Math.max(1, Math.ceil(smsPreview.length / 160))} segmento(s). El envío usa SIEMPRE la versión vigente de la plantilla: si la editas en "Plantillas SMS", la campaña reflejará el cambio. En SMS la columna 2 del CSV es el celular (E.164, +57…).`}
                     />
                   )}
                 </>
@@ -718,9 +775,9 @@ export const CampanasSection = () => {
                     <TextField
                       fullWidth
                       label="Plantilla HSM seleccionada (solo lectura)"
-                      value={formData.template}
+                      value={wspPreview}
                       InputProps={{ readOnly: true }}
-                      helperText="Nombre de la plantilla de Meta. Los parámetros {{1}}, {{2}}… salen de las columnas del CSV desde 'Nombre'. La columna 2 es el celular (E.164, +57…)."
+                      helperText="Nombre de la plantilla de Meta. El envío usa la referencia vigente. Los parámetros {{1}}, {{2}}… salen de las columnas del CSV desde 'Nombre'. La columna 2 es el celular (E.164, +57…)."
                     />
                   )}
                 </>
@@ -791,7 +848,9 @@ export const CampanasSection = () => {
                                 // Correo verificado completo: fija la dirección exacta como remitente.
                                 handleInputChange('from', v.slice(6));
                               } else {
-                                const mailbox = formData.from.split('@')[0] || DEFAULT_MAILBOX;
+                                // Al pasar a un DOMINIO: si venías de un correo verificado (nombre fijo,
+                                // p. ej. tu nombre), se resetea al nombre por defecto en vez de arrastrarlo.
+                                const mailbox = fromIsEmail ? DEFAULT_MAILBOX : (formData.from.split('@')[0] || DEFAULT_MAILBOX);
                                 handleInputChange('from', `${mailbox}@${v}`);
                               }
                             }}
@@ -851,6 +910,7 @@ export const CampanasSection = () => {
               </FormControl>
             </Stack>
           </Box>
+          </ThemeProvider>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseDialog} disabled={submitting}>

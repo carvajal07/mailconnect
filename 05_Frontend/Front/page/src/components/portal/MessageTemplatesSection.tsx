@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import {
   Box,
   Paper,
@@ -32,6 +32,8 @@ import { usePortalData } from '../../context/PortalDataContext';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
+import { VariableTextEditor } from './VariableTextEditor';
+import type { VariableTextEditorHandle } from './VariableTextEditor';
 
 /**
  * Sección de plantillas de mensaje para SMS y WhatsApp (WSP). Un mismo componente
@@ -65,6 +67,7 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
   const [language, setLanguage] = useState('es');
   // Parámetros (campos de combinación): SOLO se agregan desde la base (no texto libre).
   const [params, setParams] = useState<string[]>([]);
+  const smsEditor = useRef<VariableTextEditorHandle>(null);
 
   const load = useCallback(() => refreshMessageTemplates(), [refreshMessageTemplates]);
 
@@ -174,17 +177,22 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
 
           {isSms ? (
             <>
-              <TextField
-                label="Texto del SMS"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                multiline
-                minRows={3}
-                fullWidth
-                placeholder="Hola {{Nombre}}, tu mensaje aquí…"
-                helperText={`${body.length} caracteres · ~${segments} segmento(s). Inserta variables con el selector de la base.`}
-              />
-              <DatabaseFieldPicker compact onInsert={(f) => setBody((b) => `${b}{{${f}}}`)} />
+              <Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                  Texto del SMS
+                </Typography>
+                <VariableTextEditor
+                  ref={smsEditor}
+                  value={body}
+                  onChange={setBody}
+                  minRows={3}
+                  placeholder="Hola {{Nombre}}, tu mensaje aquí…"
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                  {`${body.length} caracteres · ~${segments} segmento(s). Las variables se insertan como fichas azules en el cursor; el retroceso borra la ficha completa.`}
+                </Typography>
+              </Box>
+              <DatabaseFieldPicker compact onInsert={(f) => smsEditor.current?.insertVariable(f)} />
             </>
           ) : (
             <>

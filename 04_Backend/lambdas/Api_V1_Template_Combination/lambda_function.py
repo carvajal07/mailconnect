@@ -8,6 +8,7 @@ import json
 import uuid
 import csv
 import io
+from botocore.exceptions import ClientError
 
 REGION = 'us-east-1'
 URL_SQS_EAP = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-raw-EAP'
@@ -122,6 +123,30 @@ def validate_process_detail(part:int)->dict:
     )
     return response_process_detail
 
+
+def _claim_part(tenant_key_value, process_id_value, part, registers, date, stage='combine'):
+    """Reclama ATÓMICAMENTE el derecho a COMBINAR (processId, part). El combinador es la ETAPA
+    'combine' del flujo EAP; Send-EAP es la etapa 'send'. Ambas comparten (processId, part) en
+    {tenant}_processDetail, por eso la clave lleva el sufijo de etapa (`processId#part#combine`)
+    y NO chocan. Escritura condicional `attribute_not_exists`: solo la PRIMERA entrega combina
+    (True); una redelivery de SQS pierde la condición (False → NO recombina ni re-emite el lote,
+    evitando duplicar el envío aguas abajo). Reemplaza el scan+put con uuid aleatorio (no
+    atómico). Fail-open SOLO si falta la llave de tenant/proceso."""
+    if not tenant_key_value or not process_id_value or part is None:
+        return True
+    table = dynamodb.Table(f'{tenant_key_value}_processDetail')
+    detail_id = f'{process_id_value}#{part}#{stage}'
+    try:
+        table.put_item(
+            Item={'processDetailId': detail_id, 'processId': process_id_value, 'part': part,
+                  'registers': registers, 'date': date, 'stateProcess': 'Creando adjuntos', 'stage': stage},
+            ConditionExpression='attribute_not_exists(processDetailId)')
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return False
+        raise
+
 def download_attachments_data(campaign_id:str)->str:
     projection_document_expression = 'documentPath'  # Lista de campos a consultar
 
@@ -201,6 +226,11 @@ def lambda_handler(event, context):
         template_name = json_body["templateName"]
         part = json_body["part"]
         data = json_body["data"]
+        # Se preservan para re-emitirlos a Send-EAP (antes se PERDÍAN → Send-EAP quedaba sin
+        # nit (tenanting incorrecto), sin saber si eran muestras (conteo) ni el formato del
+        # adjunto). is_samples/document_format viajan desde Prepare-batch (build_ctx).
+        is_samples = bool(json_body.get("samples", False))
+        document_format = str(json_body.get("documentFormat", "DOCX") or "DOCX").upper()
         registers = len(data)
         print(f"Customer: {customer_name}")
         print(f"Customer id: {customer_id}")
@@ -218,16 +248,13 @@ def lambda_handler(event, context):
         statusCode = 500
         description = "Error no controlado en el servicio"
     else:        
-        #Validar el estado de la parte a procesar (Si se encuentra procesando, creando adjuntos o terminada puede ser un error de mensajes duplicados)
-        #Debo generar error para evitar realizar envios duplicados
-        response_process_detail = validate_process_detail(part)
-        if response_process_detail['Items']:
-            state = response_process_detail['Items'][0]["stateProcess"]
-            print(f"La parte {part} del proceso {process_id} ya se encuentra procesando o ha finalizado")
-            print(f"El id: {process_detail_id} se encuentra en estado {state}")
-            raise ValueError("La parte ya ha sido procesada")
-        
-        insert_process_detail(registers,part,formatted_date,"Creando adjuntos")
+        # IDEMPOTENCIA (etapa 'combine'): reclamo ATÓMICO de (processId, part). Reemplaza el
+        # scan+put con uuid aleatorio (no atómico): dos entregas concurrentes podían combinar y
+        # re-emitir el mismo lote dos veces → doble envío aguas abajo. Si otra entrega ya reclamó
+        # la combinación (redelivery de SQS), se omite (no recombina ni re-emite).
+        if not _claim_part(tenant, process_id, part, registers, formatted_date, stage='combine'):
+            print(f"La parte {part} del proceso {process_id} ya fue reclamada (combine); se omite (duplicado SQS).")
+            return
         bucket_name = tenant_bucket(nit, 'document') if nit else f'{customer_name.lower()}.document'
         template_file = download_attachments_data(campaign_id)
         # Carga la plantilla DOCX original
@@ -285,12 +312,20 @@ def lambda_handler(event, context):
         body = {
             "customerId":customer_id,
             "customerName":customer_name,
+            # nit → tenanting correcto en Send-EAP ({tenant}_processDetail / _sendStatus). Antes se
+            # perdía y Send-EAP escribía con tenant vacío (fuga/mis-tenant). samples → conteo de
+            # muestras correcto. documentFormat → extensión del adjunto (PDF vs DOCX). attachment
+            # → modo de adjunto. Todos venían en el mensaje y se re-emiten sin perderse.
+            "nit":nit,
             "processId":process_id,
             "campaignId":campaign_id,
+            "attachment":attachment,
             "fromEmail":from_email,
             "headers":headers,
             "templateName":template_name,
             "part":part,
+            "samples":is_samples,
+            "documentFormat":document_format,
             "data":data
         }
         send_sqs(URL_SQS_EAP,body)

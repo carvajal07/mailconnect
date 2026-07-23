@@ -101,14 +101,26 @@ def env(monkeypatch):
         yield module, channel_url, part_url
 
 
-def _api_event(resource='/Email/Send-batch-template'):
-    return {
+def _api_event(resource='/Email/Send-batch-template', auth_customer_id=None, tenant_role='owner'):
+    evt = {
         'resource': resource,
         'body': json.dumps({
             'customerName': 'empresa', 'campaignName': 'Promo', 'userId': 'U1',
             'template': 'T', 'templateVersion': 1,
         }),
     }
+    # El envío real exige tenantRole owner/approver (gate RBAC). El mapping template reenvía
+    # $context.authorizer.tenantRole; aquí se simula (owner por defecto). El customerId del token
+    # solo se inyecta si se indica (multi-tenant); si no, Prepare-batch cae al body. Pasar
+    # tenant_role=None simula que tenantRole NO llega → el gate hace fail-CLOSED (403).
+    authz = {}
+    if tenant_role is not None:
+        authz['tenantRole'] = tenant_role
+    if auth_customer_id is not None:
+        authz['customerId'] = auth_customer_id
+    if authz:
+        evt['requestContext'] = {'authorizer': authz}
+    return evt
 
 
 def _drain(sqs, url):
@@ -270,3 +282,50 @@ def test_split_deshabilitado_da_403(env):
     body = json.loads(resp['body'])
     assert body['status'] is False and body['status_code'] == 403
     assert _campaign()['campaignState'] == 'Pendiente'  # ni Error ni Enviando
+
+
+def test_split_respeta_tenant_del_token(env):
+    # Aislamiento multi-tenant: con el customerId correcto en el token (CU1, dueño de la
+    # campaña 'Promo') el envío procede normalmente.
+    pb, channel_url, part_url = env
+    resp = pb.lambda_handler(_api_event(auth_customer_id='CU1'), None)
+    assert json.loads(resp['body'])['status_code'] == 200
+    assert _campaign()['campaignState'] == 'Enviando'
+
+
+def test_split_rechaza_campana_de_otro_tenant(env):
+    # Un usuario de OTRO cliente (customerId distinto en el token) NO puede disparar el envío
+    # de esta campaña por su nombre: la búsqueda acotada por customerId no la encuentra → 404,
+    # la campaña NO se toca (sigue 'Pendiente') y no se encola nada (ni se cobra saldo).
+    pb, channel_url, part_url = env
+    resp = pb.lambda_handler(_api_event(auth_customer_id='CU_OTRO'), None)
+    body = json.loads(resp['body'])
+    assert body['status'] is False and body['status_code'] == 404
+    assert _campaign()['campaignState'] == 'Pendiente'
+    sqs = boto3.client('sqs', region_name='us-east-1')
+    assert _drain(sqs, part_url) == []
+    assert _drain(sqs, channel_url) == []
+
+
+def test_split_operator_no_dispara_envio_real(env):
+    # RBAC (maker-checker): un operator —o cualquier request al que NO le llegue tenantRole—
+    # NO puede disparar el envío real → 403 fail-CLOSED, la campaña sigue 'Pendiente' y no se
+    # encola ni se cobra nada. Cierra el bypass en el que se trataba a todos como owner.
+    pb, channel_url, part_url = env
+    resp = pb.lambda_handler(_api_event(tenant_role='operator'), None)
+    body = json.loads(resp['body'])
+    assert body['status'] is False and body['status_code'] == 403
+    assert _campaign()['campaignState'] == 'Pendiente'
+    sqs = boto3.client('sqs', region_name='us-east-1')
+    assert _drain(sqs, part_url) == []
+    assert _drain(sqs, channel_url) == []
+
+
+def test_split_sin_tenantrole_failclosed(env):
+    # Fail-CLOSED explícito: sin tenantRole en el context (mapping template viejo) el envío real
+    # se DENIEGA (403), no se trata al usuario como owner.
+    pb, channel_url, part_url = env
+    resp = pb.lambda_handler(_api_event(tenant_role=None), None)
+    body = json.loads(resp['body'])
+    assert body['status'] is False and body['status_code'] == 403
+    assert _campaign()['campaignState'] == 'Pendiente'

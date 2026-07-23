@@ -3,12 +3,88 @@ name: Desplegar Lambdas
 # Despliega automáticamente a AWS SOLO las lambdas que cambiaron.
 # - En cada push a main: detecta las carpetas modificadas bajo 04_Backend/lambdas
 #   y actualiza el código de esas funciones.
-# - Manual (workflow_dispatch): puedes desplegar una función puntual o todas.
+# - Manual (workflow_dispatch): puedes desplegar una función puntual, todas, o
+#   "desde una carpeta en adelante" (input 'from', orden alfabético) para
+#   REANUDAR un despliegue que falló a mitad.
+# - Si la función NO existe en AWS, el workflow la CREA:
+#     · Runtime SIEMPRE python3.13 (handler lambda_function.lambda_handler).
+#     · Rol de ejecución según la convención de abajo. Si el rol tampoco existe
+#       en IAM, también lo crea con sus políticas.
 #
-# Requisitos (una sola vez), en Settings → Secrets and variables → Actions:
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (usuario IAM con lambda:UpdateFunctionCode)
-#   AWS_REGION (opcional; por defecto us-east-1)
+# ── Convención de roles ──────────────────────────────────────────────────────
+# El nombre del rol se AUTO-DETECTA de los clientes boto3 del código de cada
+# lambda (o se fija a mano en 04_Backend/lambdas/role-map.json:
+# { "NombreCarpeta": "NombreRol" }).
+#   · Siempre inicia con "Lambda" → política AWSLambdaBasicExecutionRole
+#     (permisos de ejecución + logs en CloudWatch).
+#   · Después, tokens separados por "_"; cada token = acceso FULL a un servicio:
+#       DynFull   → AmazonDynamoDBFullAccess
+#       SES       → AmazonSESFullAccess
+#       SQS       → AmazonSQSFullAccess
+#       S3        → AmazonS3FullAccess
+#       SNS       → AmazonSNSFullAccess
+#       Scheduler → AmazonEventBridgeSchedulerFullAccess (EventBridge Scheduler)
+#       Bedrock   → AmazonBedrockFullAccess (asistente IA)
+#       EUM       → inline sms-voice:* (End User Messaging: SMS y Voz)
+#       Social    → inline social-messaging:* (End User Messaging Social: WhatsApp)
+#       Invoke    → inline lambda:InvokeFunction (invocar otras lambdas)
+#       Basic     → ninguna extra (solo ejecución/logs; lambdas sin AWS, ej. Authorizer)
+#   · Orden fijo de tokens: DynFull, SES, SQS, S3, SNS, Scheduler, Bedrock,
+#     EUM, Social, Invoke.
+#   Ejemplos: Lambda_DynFull_SES_SQS_S3 · Lambda_DynFull_SQS · Lambda_S3
+#   Si el rol YA existe en IAM se usa tal cual (no se le tocan las políticas).
+#   RECONCILIACIÓN en cada despliegue (crear Y actualizar): antes de tocar los triggers, la
+#   función se pone en su rol de convención (se crea el rol si falta y se CAMBIA el de la
+#   función si difiere) — así una función vieja con un rol sin el token _SQS no falla al crear
+#   el trigger ("execution role does not have permissions to call ReceiveMessage"). Solo se
+#   reconcilian roles de convención (Lambda_*) o ausentes; un rol personalizado NO se pisa
+#   (se avisa) — usa role-map.json para mapear un folder a un rol propio.
+#
+# ── Triggers y colas SQS (04_Backend/lambdas/trigger-map.json) ──────────────
+# En CADA despliegue de una carpeta, el workflow asegura (idempotente) los
+# triggers declarados para ella en trigger-map.json:
+#   { "NombreCarpeta": { "sqs": "NombreCola", "batchSize": 1 } }
+#     · Crea la cola SQS si no existe (VisibilityTimeout 360 s + long polling)
+#       y el event source mapping cola→lambda si falta. batchSize default 10.
+#     · DLQ: crea también la cola de mensajes muertos `{NombreCola}-dlq`
+#       (retención 14 días) y le pone a la cola una redrive policy con
+#       maxReceiveCount 5 (override `maxReceiveCount`). Misma convención que
+#       Terraform → convergen. Una cola EXISTENTE sin redrive recibe la DLQ
+#       (best-effort); las de Terraform (ya con redrive) se dejan intactas.
+#       Sin DLQ, un "mensaje veneno" se reintenta hasta agotar la retención
+#       (4 días) y se pierde en silencio.
+#     · Una lambda disparada por SQS LEE la cola con su PROPIO rol, así que el
+#       trigger fuerza el token _SQS en el rol auto-detectado al crearla.
+#   { "NombreCarpeta": { "sns": "NombreTopico" } }
+#     · Crea el tópico SNS si no existe, da permiso a SNS de invocar la lambda
+#       y la suscribe. OJO: apuntar el config set (SES/EUM) al tópico sigue
+#       siendo manual — por eso no viene pre-llenado.
+#   { "NombreCarpeta": { "schedule": "rate(5 minutes)" } }
+#     · Crea/actualiza una regla de EventBridge (`{funcion}-cron`) con esa
+#       expresión rate()/cron() y permiso + target hacia la lambda.
+#   (Se pueden combinar varias llaves en la misma entrada.)
+# Si la cola/tópico/regla o el trigger ya existen, no se tocan (solo se crea
+# lo que falte). Lo que ya está en AWS queda igual.
+#
+# ── Requisitos (una sola vez) ────────────────────────────────────────────────
+# En Settings → Secrets and variables → Actions:
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (+ AWS_REGION opcional; default us-east-1)
+# El usuario IAM de CI necesita ahora:
+#   lambda:GetFunctionConfiguration, lambda:UpdateFunctionCode,
+#   lambda:UpdateFunctionConfiguration, lambda:CreateFunction,
+#   lambda:ListEventSourceMappings, lambda:CreateEventSourceMapping,
+#   lambda:AddPermission,
+#   iam:GetRole, iam:CreateRole, iam:AttachRolePolicy, iam:PutRolePolicy,
+#   iam:PassRole (sobre los roles Lambda_*), sts:GetCallerIdentity,
+#   sqs:GetQueueUrl, sqs:CreateQueue, sqs:GetQueueAttributes,
+#   sqs:SetQueueAttributes (para añadir la DLQ/redrive a colas existentes; best-effort),
+#   (si usas triggers SNS)  sns:CreateTopic, sns:Subscribe, sns:ListSubscriptionsByTopic,
+#   (si usas 'schedule')    events:PutRule, events:PutTargets.
 # Alternativa más segura: rol OIDC (ver nota al final del archivo).
+#
+# ⚠️ Al CREAR una función esta nace SIN variables de entorno y SIN layers — eso
+# sigue configurándose aparte (DESPLIEGUE.md). Los triggers SÍ se crean si están
+# declarados en trigger-map.json (ver arriba).
 #
 # Nombre de la función en AWS = nombre de la carpeta, salvo que exista un mapeo en
 # 04_Backend/lambdas/deploy-map.json  ->  { "NombreCarpeta": "NombreFuncionAWS" }
@@ -29,20 +105,40 @@ on:
         type: boolean
         required: false
         default: false
+      from:
+        description: 'Desplegar SOLO desde esta carpeta EN ADELANTE (orden alfabético). Ej: Api_V1_Sms_Send-batch. Útil para reanudar un despliegue que falló a mitad. Implica "all" (todas desde esa). Vacío = sin filtro.'
+        required: false
+        default: ''
+      force_runtime313:
+        description: 'Migrar también las funciones EXISTENTES a python3.13 (⚠️ layers con binarios de otra versión de Python dejarían de funcionar)'
+        type: boolean
+        required: false
+        default: false
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
   LAMBDAS_DIR: 04_Backend/lambdas
+  LAMBDA_RUNTIME: python3.13
+  NEW_FN_TIMEOUT: '60'   # segundos (solo funciones nuevas)
+  NEW_FN_MEMORY: '256'   # MB (solo funciones nuevas)
 
 jobs:
   deploy:
-    name: Actualizar código de Lambdas
+    name: Actualizar/crear Lambdas
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 2 # para poder comparar con el commit anterior en push
+
+      # Mismo Python que el runtime de las lambdas: si algún requirements.txt
+      # bundlea dependencias con binarios (reportlab/Pillow…), los wheels
+      # instalados deben ser de la MISMA versión de CPython que la función.
+      - name: Python 3.13 (igual al runtime de las lambdas)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
 
       - name: Configurar credenciales de AWS
         uses: aws-actions/configure-aws-credentials@v4
@@ -57,6 +153,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           FN_INPUT: ${{ github.event.inputs.function }}
           ALL_INPUT: ${{ github.event.inputs.all }}
+          FROM_INPUT: ${{ github.event.inputs.from }}
           BEFORE: ${{ github.event.before }}
           SHA: ${{ github.sha }}
         run: |
@@ -67,10 +164,11 @@ jobs:
             if [ -n "${FN_INPUT}" ]; then
               # Acepta lista separada por coma o espacio.
               printf '%s' "$FN_INPUT" | tr ', ' '\n' | grep -v '^$' | sort -u > folders.txt
-            elif [ "${ALL_INPUT}" = "true" ]; then
+            elif [ "${ALL_INPUT}" = "true" ] || [ -n "${FROM_INPUT}" ]; then
+              # 'all' o 'from' (que implica "todas desde X en adelante") → lista completa.
               ls -1 "$DIR" > folders.txt
             else
-              echo "Nada que hacer: indica 'function' o marca 'all'." ; : > folders.txt
+              echo "Nada que hacer: indica 'function', marca 'all', o usa 'from'." ; : > folders.txt
             fi
           else
             # push: carpetas de lambda cambiadas entre el commit anterior y este
@@ -80,15 +178,34 @@ jobs:
               | sort -u > folders.txt || true
           fi
 
-          echo "Carpetas candidatas:"; cat folders.txt || true
+          # Filtro 'from': deja SOLO las carpetas alfabéticamente >= FROM_INPUT (mismo orden en
+          # que se despliegan). Sirve para REANUDAR un despliegue desde donde falló. Se ordena y
+          # compara con la MISMA collation (locale del runner) que el resto del workflow.
+          if [ -n "${FROM_INPUT}" ]; then
+            sort folders.txt | awk -v f="${FROM_INPUT}" '$0 >= f' > folders.from
+            mv folders.from folders.txt
+            echo "Filtro 'from=${FROM_INPUT}': se despliega desde esa carpeta en adelante."
+          fi
+
+          echo "Carpetas candidatas (en orden de despliegue):"; cat folders.txt || true
           echo "count=$(wc -l < folders.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
 
       - name: Desplegar
         if: steps.targets.outputs.count != '0'
+        env:
+          FORCE313: ${{ github.event.inputs.force_runtime313 || 'false' }}
         run: |
           set -euo pipefail
           DIR="$LAMBDAS_DIR"
           MAP="$DIR/deploy-map.json"
+          ROLE_MAP="$DIR/role-map.json"
+          TRIGGER_MAP="$DIR/trigger-map.json"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          echo "### Despliegue de lambdas" >> "$SUMMARY"
+          echo "" >> "$SUMMARY"
+          echo "| Carpeta | Función AWS | Acción | Runtime | Rol | Triggers |" >> "$SUMMARY"
+          echo "|---|---|---|---|---|---|" >> "$SUMMARY"
 
           resolve_name() {
             local folder="$1"
@@ -98,6 +215,335 @@ jobs:
               [ -n "$mapped" ] && { echo "$mapped"; return; }
             fi
             echo "$folder"
+          }
+
+          # ── Convención de roles (ver cabecera del archivo) ──────────────
+          managed_arn() {  # token → política administrada de AWS (vacío si es inline)
+            case "$1" in
+              DynFull)   echo "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess" ;;
+              SES)       echo "arn:aws:iam::aws:policy/AmazonSESFullAccess" ;;
+              SQS)       echo "arn:aws:iam::aws:policy/AmazonSQSFullAccess" ;;
+              S3)        echo "arn:aws:iam::aws:policy/AmazonS3FullAccess" ;;
+              SNS)       echo "arn:aws:iam::aws:policy/AmazonSNSFullAccess" ;;
+              Scheduler) echo "arn:aws:iam::aws:policy/AmazonEventBridgeSchedulerFullAccess" ;;
+              Bedrock)   echo "arn:aws:iam::aws:policy/AmazonBedrockFullAccess" ;;
+              *)         echo "" ;;
+            esac
+          }
+
+          inline_actions() {  # tokens sin política administrada → acciones inline
+            case "$1" in
+              EUM)    echo "sms-voice:*" ;;
+              Social) echo "social-messaging:*" ;;
+              Invoke) echo "lambda:InvokeFunction" ;;
+              *)      echo "" ;;
+            esac
+          }
+
+          detect_role() {  # deduce el rol de los boto3.client|resource() del código
+            # $2 = 1 si la lambda es disparada por SQS (el poller lee la cola con el
+            #      rol de la FUNCIÓN, así que necesita _SQS aunque su código no lo use)
+            local src="$1" force_sqs="${2:-0}" svcs name="Lambda"
+            svcs=$(grep -rhoaE "boto3\.(client|resource)\(\s*[\"'][a-z0-9-]+[\"']" "$src" --include='*.py' 2>/dev/null \
+                     | sed -E "s/.*[\"']([a-z0-9-]+)[\"']\$/\1/" | sort -u || true)
+            has() { printf '%s\n' "$svcs" | grep -qx "$1"; }
+            if has dynamodb; then name="${name}_DynFull"; fi
+            if has ses || has sesv2; then name="${name}_SES"; fi
+            if has sqs || [ "$force_sqs" = "1" ]; then name="${name}_SQS"; fi
+            if has s3; then name="${name}_S3"; fi
+            if has sns; then name="${name}_SNS"; fi
+            if has scheduler; then name="${name}_Scheduler"; fi
+            if has bedrock-runtime || has bedrock; then name="${name}_Bedrock"; fi
+            if has pinpoint-sms-voice-v2 || has sms-voice; then name="${name}_EUM"; fi
+            if has socialmessaging; then name="${name}_Social"; fi
+            if has lambda; then name="${name}_Invoke"; fi
+            if [ "$name" = "Lambda" ]; then name="Lambda_Basic"; fi
+            echo "$name"
+          }
+
+          role_for() {  # override en role-map.json > auto-detección
+            local folder="$1" src="$2" mapped="" force_sqs=0
+            if [ -f "$ROLE_MAP" ]; then
+              mapped=$(jq -r --arg k "$folder" '.[$k] // empty' "$ROLE_MAP")
+            fi
+            if [ -n "$mapped" ]; then echo "$mapped"; return; fi
+            if [ -f "$TRIGGER_MAP" ] && [ -n "$(jq -r --arg k "$folder" '.[$k].sqs // empty' "$TRIGGER_MAP" 2>/dev/null)" ]; then
+              force_sqs=1
+            fi
+            detect_role "$src" "$force_sqs"
+          }
+
+          add_perm() {  # permiso de invocación sobre la lambda (idempotente)
+            # $1=función $2=statement-id $3=principal $4=source-arn
+            local out
+            if out=$(aws lambda add-permission --function-name "$1" --statement-id "$2" \
+                       --action lambda:InvokeFunction --principal "$3" --source-arn "$4" 2>&1); then
+              return 0
+            fi
+            echo "$out" | grep -q "ResourceConflictException" && return 0
+            echo "❌ add-permission a $1 falló: $out"; return 1
+          }
+
+          TRIGGER_NOTE="-"
+          ensure_triggers() {  # crea colas/tópicos/reglas + triggers declarados en trigger-map.json
+            local folder="$1" fn="$2" cfg
+            TRIGGER_NOTE="-"
+            [ -f "$TRIGGER_MAP" ] || return 0
+            cfg=$(jq -c --arg k "$folder" '.[$k] // empty' "$TRIGGER_MAP" 2>/dev/null || true)
+            [ -n "$cfg" ] || return 0
+            local fn_arn="arn:aws:lambda:${AWS_REGION}:${ACCOUNT_ID}:function:${fn}"
+            TRIGGER_NOTE=""
+
+            # ── SQS: cola + event source mapping ──
+            local qname
+            qname=$(echo "$cfg" | jq -r '.sqs // empty')
+            if [ -n "$qname" ]; then
+              local batch vis maxrecv qurl qarn uuid out dlqname dlqarn redrive attrs existing_rd
+              batch=$(echo "$cfg" | jq -r '.batchSize // 10')
+              vis=$(echo "$cfg" | jq -r '.visibilityTimeout // 360')
+              maxrecv=$(echo "$cfg" | jq -r '.maxReceiveCount // 5')
+              dlqname="${qname}-dlq"
+
+              # Asegura la DLQ {qname}-dlq (misma convención que Terraform, retención 14 días) y
+              # devuelve su ARN por stdout. Sin DLQ, un "mensaje veneno" (fallo persistente) se
+              # reintenta hasta agotar la retención (4 días) y se pierde en silencio.
+              _ensure_dlq() {  # $1 = nombre de la DLQ → imprime el ARN
+                local dq="$1" durl
+                if ! durl=$(aws sqs get-queue-url --queue-name "$dq" --query QueueUrl --output text 2>/dev/null); then
+                  echo "   📮 Creando DLQ $dq (retención 14 días)" 1>&2
+                  durl=$(aws sqs create-queue --queue-name "$dq" \
+                           --attributes "MessageRetentionPeriod=1209600" --query QueueUrl --output text)
+                  sleep 1
+                fi
+                aws sqs get-queue-attributes --queue-url "$durl" \
+                  --attribute-names QueueArn --query 'Attributes.QueueArn' --output text
+              }
+
+              if ! qurl=$(aws sqs get-queue-url --queue-name "$qname" --query QueueUrl --output text 2>/tmp/qerr); then
+                if grep -qi "NonExistentQueue\|does not exist" /tmp/qerr; then
+                  # Crea la DLQ primero y luego la cola principal CON redrive (maxReceiveCount).
+                  dlqarn=$(_ensure_dlq "$dlqname")
+                  redrive=$(jq -nc --arg arn "$dlqarn" --arg n "$maxrecv" '{deadLetterTargetArn:$arn, maxReceiveCount:$n}')
+                  attrs=$(jq -nc --arg vis "$vis" --arg rd "$redrive" \
+                            '{VisibilityTimeout:$vis, ReceiveMessageWaitTimeSeconds:"20", RedrivePolicy:$rd}')
+                  echo "   📮 Creando cola SQS $qname (VisibilityTimeout=${vis}s, long polling 20s, DLQ→$dlqname maxReceiveCount=$maxrecv)"
+                  qurl=$(aws sqs create-queue --queue-name "$qname" --attributes "$attrs" --query QueueUrl --output text)
+                  sleep 2
+                else
+                  echo "❌ Error consultando la cola $qname:"; cat /tmp/qerr
+                  echo "   💡 ¿El usuario de CI tiene sqs:GetQueueUrl/CreateQueue/GetQueueAttributes?"
+                  exit 1
+                fi
+              else
+                # Cola EXISTENTE: si NO tiene redrive policy (p. ej. la creó una versión previa del
+                # CD sin DLQ), se le añade DLQ + redrive (idempotente). Las colas de Terraform ya la
+                # traen → se dejan intactas (converge en el mismo {qname}-dlq + maxReceiveCount).
+                existing_rd=$(aws sqs get-queue-attributes --queue-url "$qurl" \
+                                --attribute-names RedrivePolicy --query 'Attributes.RedrivePolicy' --output text 2>/dev/null || true)
+                if [ -z "$existing_rd" ] || [ "$existing_rd" = "None" ]; then
+                  dlqarn=$(_ensure_dlq "$dlqname")
+                  redrive=$(jq -nc --arg arn "$dlqarn" --arg n "$maxrecv" '{deadLetterTargetArn:$arn, maxReceiveCount:$n}')
+                  attrs=$(jq -nc --arg rd "$redrive" '{RedrivePolicy:$rd}')
+                  if aws sqs set-queue-attributes --queue-url "$qurl" --attributes "$attrs" 2>/tmp/rderr; then
+                    echo "   🔁 DLQ + redrive añadidos a la cola existente $qname (→$dlqname, maxReceiveCount=$maxrecv)"
+                  else
+                    echo "   ⚠️  No se pudo añadir la DLQ a $qname (¿falta sqs:SetQueueAttributes?): $(cat /tmp/rderr)"
+                  fi
+                fi
+              fi
+              qarn=$(aws sqs get-queue-attributes --queue-url "$qurl" \
+                       --attribute-names QueueArn --query 'Attributes.QueueArn' --output text)
+              uuid=$(aws lambda list-event-source-mappings --function-name "$fn" \
+                       --event-source-arn "$qarn" --query 'EventSourceMappings[0].UUID' --output text)
+              if [ "$uuid" = "None" ] || [ -z "$uuid" ]; then
+                echo "   🔗 Creando trigger SQS $qname → $fn (batch $batch)"
+                local esm_ok=0 i
+                for i in 1 2 3 4 5 6; do
+                  if out=$(aws lambda create-event-source-mapping --function-name "$fn" \
+                             --event-source-arn "$qarn" --batch-size "$batch" 2>&1); then
+                    esm_ok=1; break
+                  fi
+                  # El rol recién asignado (reconcile_role) puede tardar en propagar los permisos
+                  # SQS que el poller necesita → reintentar SOLO ese error transitorio.
+                  if echo "$out" | grep -qi "does not have permissions\|cannot be assumed"; then
+                    echo "   ⏳ El rol de $fn aún propaga permisos SQS (intento $i); reintento en 10s..."
+                    sleep 10
+                  else
+                    break
+                  fi
+                done
+                if [ "$esm_ok" != "1" ]; then
+                  echo "❌ No se pudo crear el trigger SQS $qname → $fn:"
+                  echo "$out"
+                  echo "   💡 El ROL de la función necesita permisos SQS (token _SQS: sqs:ReceiveMessage/"
+                  echo "      DeleteMessage/GetQueueAttributes). reconcile_role debió asignarlo; si persiste,"
+                  echo "      revisa role-map.json o el rol de la función."
+                  exit 1
+                fi
+              else
+                echo "   🔗 Trigger SQS $qname → $fn ya existe"
+              fi
+              TRIGGER_NOTE="SQS:$qname"
+            fi
+
+            # ── SNS: tópico + permiso + suscripción ──
+            local topic
+            topic=$(echo "$cfg" | jq -r '.sns // empty')
+            if [ -n "$topic" ]; then
+              local tarn sub
+              tarn=$(aws sns create-topic --name "$topic" --query TopicArn --output text)  # idempotente
+              add_perm "$fn" "sns-${topic}" sns.amazonaws.com "$tarn"
+              sub=$(aws sns list-subscriptions-by-topic --topic-arn "$tarn" \
+                      --query "Subscriptions[?Endpoint=='${fn_arn}'] | [0].SubscriptionArn" --output text)
+              if [ "$sub" = "None" ] || [ -z "$sub" ]; then
+                echo "   🔗 Suscribiendo $fn al tópico SNS $topic"
+                aws sns subscribe --topic-arn "$tarn" --protocol lambda \
+                  --notification-endpoint "$fn_arn" >/dev/null
+              else
+                echo "   🔗 Suscripción SNS $topic → $fn ya existe"
+              fi
+              TRIGGER_NOTE="${TRIGGER_NOTE:+$TRIGGER_NOTE }SNS:$topic"
+            fi
+
+            # ── EventBridge: regla rate()/cron() → lambda ──
+            local sched
+            sched=$(echo "$cfg" | jq -r '.schedule // empty')
+            if [ -n "$sched" ]; then
+              local rule="${fn}-cron" rule_arn
+              echo "   🔗 Asegurando regla EventBridge $rule ($sched) → $fn"
+              rule_arn=$(aws events put-rule --name "$rule" --schedule-expression "$sched" \
+                           --query RuleArn --output text)
+              add_perm "$fn" "events-${rule}" events.amazonaws.com "$rule_arn"
+              aws events put-targets --rule "$rule" \
+                --targets "Id"="1","Arn"="$fn_arn" >/dev/null
+              TRIGGER_NOTE="${TRIGGER_NOTE:+$TRIGGER_NOTE }cron:$sched"
+            fi
+            [ -n "$TRIGGER_NOTE" ] || TRIGGER_NOTE="-"
+          }
+
+          ROLE_JUST_CREATED=0
+          ensure_role() {  # crea el rol si no existe, con las políticas que dicta su nombre
+            local role="$1"
+            ROLE_JUST_CREATED=0
+            if aws iam get-role --role-name "$role" >/dev/null 2>&1; then
+              echo "   🔑 Rol existente: $role (se usa tal cual)"
+              return 0
+            fi
+            case "$role" in
+              Lambda_*) ;;
+              *) echo "❌ El rol '$role' no cumple la convención (debe iniciar con 'Lambda_')."; return 1 ;;
+            esac
+            echo "   🔑 Creando rol $role"
+            cat > /tmp/trust.json <<'TRUST'
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": { "Service": "lambda.amazonaws.com" },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          }
+          TRUST
+            aws iam create-role --role-name "$role" \
+              --assume-role-policy-document file:///tmp/trust.json \
+              --description "Ejecucion de Lambdas MailConnect (auto-creado por deploy-lambdas). Cada token del nombre = acceso full a ese servicio." >/dev/null
+            aws iam attach-role-policy --role-name "$role" \
+              --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            echo "      + AWSLambdaBasicExecutionRole (ejecución + logs)"
+            local t arn actions
+            for t in $(echo "${role#Lambda_}" | tr '_' ' '); do
+              if [ "$t" = "Basic" ]; then continue; fi
+              arn=$(managed_arn "$t")
+              actions=$(inline_actions "$t")
+              if [ -n "$arn" ]; then
+                aws iam attach-role-policy --role-name "$role" --policy-arn "$arn"
+                echo "      + ${arn##*/}"
+              elif [ -n "$actions" ]; then
+                printf '{ "Version": "2012-10-17", "Statement": [ { "Effect": "Allow", "Action": [ "%s" ], "Resource": "*" } ] }' "$actions" > /tmp/inline.json
+                aws iam put-role-policy --role-name "$role" --policy-name "${t}Full" \
+                  --policy-document file:///tmp/inline.json
+                echo "      + inline ${t}Full ($actions)"
+              else
+                echo "❌ Token de rol desconocido: '$t'. Válidos: DynFull SES SQS S3 SNS Scheduler Bedrock EUM Social Invoke Basic"
+                return 1
+              fi
+            done
+            ROLE_JUST_CREATED=1
+          }
+
+          reconcile_role() {  # $1=folder $2=fn → asegura que la función pueda LEER su cola (SQS).
+            # La rama de ACTUALIZAR solo tocaba el código: una función vieja podía quedarse con un
+            # rol SIN permiso SQS y fallar al crear el trigger ("execution role does not have
+            # permissions to call ReceiveMessage"). Aquí, SOLO para carpetas con trigger sqs, se
+            # verifica que el rol de EJECUCIÓN conceda SQS y, si le falta, se reconcilia — ANTES de
+            # tocar los triggers.
+            local folder="$1" fn="$2" src role role_arn cur cur_name has_sqs="" sw k
+            src="$DIR/$folder"
+            # Solo hace falta reconciliar cuando hay trigger SQS: el poller de la cola LEE con el
+            # rol de EJECUCIÓN. SNS/schedule invocan por resource-policy (add-permission), no por el
+            # rol → no requieren reconciliación (no se tocan las lambdas de API sin trigger).
+            [ -f "$TRIGGER_MAP" ] && has_sqs=$(jq -r --arg k "$folder" '.[$k].sqs // empty' "$TRIGGER_MAP" 2>/dev/null)
+            [ -n "$has_sqs" ] || return 0
+
+            cur=$(aws lambda get-function-configuration --function-name "$fn" --query Role --output text 2>/dev/null || true)
+            cur_name="${cur##*/}"
+            # Si el rol ACTUAL ya concede SQS (su nombre de convención incluye el token SQS, p. ej.
+            # Lambda_DynFull_SQS_Messaging), el trigger funcionará SIN cambiar nada → NO se toca.
+            # Esto evita el churn de crear un rol equivalente solo por diferencia de nombre
+            # (Messaging vs EUM) y el error de propagación al asignar un rol recién creado.
+            case "$cur_name" in
+              *_SQS|*_SQS_*)
+                echo "   🔑 $fn ya usa un rol con SQS ($cur_name); el trigger funcionará. No se cambia."
+                return 0 ;;
+            esac
+
+            role=$(role_for "$folder" "$src")           # rol de convención (incluye _SQS por el trigger)
+            role_arn="arn:aws:iam::${ACCOUNT_ID}:role/${role}"
+            case "$cur_name" in
+              Lambda_*|"${fn}-role-"*|"")
+                # Se reconcilia al rol de convención (que sí tiene SQS) cuando el rol actual es:
+                #  - de convención sin SQS (Lambda_*),
+                #  - el AUTO-GENERADO por AWS al crear la función en la consola ({fn}-role-xxxx)
+                #    → NO es un rol deliberado, es el default de AWS,
+                #  - o ninguno.
+                ensure_role "$role" || return 1
+                # Rol recién creado → IAM tarda en propagarlo; ESPERAR antes de asignarlo o falla
+                # con "The role defined for the function cannot be assumed by Lambda".
+                if [ "$ROLE_JUST_CREATED" = "1" ]; then
+                  echo "   ⏳ Rol $role recién creado; esperando propagación IAM antes de asignarlo..."
+                  sleep 12
+                fi
+                echo "   🔑 Rol de $fn: ${cur_name:-ninguno} → $role (le faltaba SQS; reconciliando)"
+                # La función debe estar ESTABLE (LastUpdateStatus=Successful) antes del cambio de
+                # config, y se REINTENTA ante el conflicto transitorio O la propagación del rol.
+                aws lambda wait function-updated-v2 --function-name "$fn" 2>/dev/null || true
+                sw=0
+                for k in 1 2 3 4 5 6; do
+                  if aws lambda update-function-configuration --function-name "$fn" --role "$role_arn" >/dev/null 2>/tmp/cfgerr; then
+                    sw=1; break
+                  fi
+                  if grep -qi "ResourceConflictException\|update is in progress\|cannot be assumed" /tmp/cfgerr; then
+                    echo "   ⏳ La función se actualiza o el rol IAM aún propaga (intento $k); reintento en 8s..."
+                    sleep 8
+                    aws lambda wait function-updated-v2 --function-name "$fn" 2>/dev/null || true
+                  else
+                    echo "❌ No se pudo cambiar el rol de $fn:"; cat /tmp/cfgerr; return 1
+                  fi
+                done
+                [ "$sw" = "1" ] || { echo "❌ No se pudo cambiar el rol de $fn tras varios intentos."; return 1; }
+                aws lambda wait function-updated-v2 --function-name "$fn"
+                echo "   ⏳ Esperando propagación IAM de los permisos SQS del nuevo rol..."
+                sleep 10 ;;
+              *)
+                # Rol PERSONALIZADO deliberado (nombre no reconocido: ni Lambda_*, ni el auto-
+                # generado {fn}-role-xxxx): no se pisa (podría tener SQS por una política attachada
+                # aunque el nombre no lo diga, o ser un rol a medida del equipo). Si el trigger falla
+                # por permisos, dale SQS a ese rol o mapea el folder en role-map.json.
+                echo "   ⚠️  $fn usa un rol personalizado ($cur_name); no se cambia. Si el trigger SQS"
+                echo "      falla por permisos, dale SQS a ese rol o usa role-map.json." ;;
+            esac
           }
 
           while read -r folder; do
@@ -128,15 +574,80 @@ jobs:
             fi
             ( cd "$work" && zip -qr /tmp/lambda.zip . -x '*.pyc' '__pycache__/*' 'requirements.txt' )
 
-            echo "🚀  Actualizando $fn"
-            if aws lambda update-function-code \
-                 --function-name "$fn" \
-                 --zip-file fileb:///tmp/lambda.zip \
-                 --publish >/dev/null; then
+            if cfg=$(aws lambda get-function-configuration --function-name "$fn" \
+                       --query Runtime --output text 2>&1); then
+              # ── La función existe → actualizar código (y runtime si se pidió) ──
+              runtime="$cfg"
+              if [ "$FORCE313" = "true" ] && [ "$runtime" != "$LAMBDA_RUNTIME" ]; then
+                echo "♻️   Migrando runtime de $fn: $runtime → $LAMBDA_RUNTIME"
+                aws lambda update-function-configuration --function-name "$fn" \
+                  --runtime "$LAMBDA_RUNTIME" >/dev/null
+                aws lambda wait function-updated-v2 --function-name "$fn"
+                runtime="$LAMBDA_RUNTIME"
+              elif [ "$runtime" != "$LAMBDA_RUNTIME" ]; then
+                echo "ℹ️   $fn corre en $runtime; para migrarla a $LAMBDA_RUNTIME ejecuta el workflow manual con 'force_runtime313'."
+              fi
+              echo "🚀  Actualizando código de $fn"
+              aws lambda update-function-code \
+                --function-name "$fn" \
+                --zip-file fileb:///tmp/lambda.zip \
+                --publish >/dev/null
+              # ESPERAR a que termine la actualización del código (LastUpdateStatus=Successful).
+              # update-function-code deja la función "InProgress"; si acto seguido reconcile_role
+              # hace update-function-configuration (cambio de rol) —o se crea el trigger— AWS lanza
+              # ResourceConflictException ("An update is in progress for resource ..."). El waiter
+              # lo evita: no se toca la config ni los triggers hasta que la función esté estable.
+              aws lambda wait function-updated-v2 --function-name "$fn"
               echo "✅  $fn actualizada."
+              # Antes de tocar triggers: asegurar que la función use su ROL de convención. Un
+              # trigger SQS exige que el rol de EJECUCIÓN pueda ReceiveMessage; una función vieja
+              # puede tener un rol sin el token _SQS → sin esto, el event source mapping falla.
+              reconcile_role "$folder" "$fn"
+              ensure_triggers "$folder" "$fn"
+              echo "| $folder | $fn | actualizada | $runtime | $(role_for "$folder" "$src") | $TRIGGER_NOTE |" >> "$SUMMARY"
             else
-              echo "❌  Falló $fn (¿existe la función? ¿nombre correcto en deploy-map.json?)"
-              exit 1
+              if ! echo "$cfg" | grep -q "ResourceNotFoundException"; then
+                echo "❌  Error consultando $fn:"; echo "$cfg"; exit 1
+              fi
+              # ── La función NO existe → crearla (python3.13 + rol por convención) ──
+              role=$(role_for "$folder" "$src")
+              echo "🆕  $fn no existe en AWS. Se crea en $LAMBDA_RUNTIME con rol $role"
+              ensure_role "$role"
+              role_arn="arn:aws:iam::${ACCOUNT_ID}:role/${role}"
+              if [ "$ROLE_JUST_CREATED" = "1" ]; then
+                echo "   ⏳ Esperando propagación del rol IAM recién creado..."
+                sleep 10
+              fi
+              created=0
+              for i in 1 2 3 4 5 6 7 8; do
+                if out=$(aws lambda create-function \
+                           --function-name "$fn" \
+                           --runtime "$LAMBDA_RUNTIME" \
+                           --handler lambda_function.lambda_handler \
+                           --role "$role_arn" \
+                           --timeout "$NEW_FN_TIMEOUT" \
+                           --memory-size "$NEW_FN_MEMORY" \
+                           --description "MailConnect (auto-creada por deploy-lambdas)" \
+                           --zip-file fileb:///tmp/lambda.zip \
+                           --publish 2>&1); then
+                  created=1
+                  break
+                fi
+                if echo "$out" | grep -qi "cannot be assumed"; then
+                  echo "   ⏳ El rol aún se está propagando (intento $i); reintento en 8s..."
+                  sleep 8
+                else
+                  echo "❌  Falló la creación de $fn:"; echo "$out"; exit 1
+                fi
+              done
+              if [ "$created" != "1" ]; then
+                echo "❌  No se pudo crear $fn: el rol nunca terminó de propagarse."; exit 1
+              fi
+              aws lambda wait function-active-v2 --function-name "$fn"
+              echo "✅  $fn CREADA ($LAMBDA_RUNTIME, rol $role)."
+              ensure_triggers "$folder" "$fn"
+              echo "   ⚠️  Recuerda configurar aparte: variables de entorno y layers (ver DESPLIEGUE.md)."
+              echo "| $folder | $fn | 🆕 creada | $LAMBDA_RUNTIME | $role | $TRIGGER_NOTE |" >> "$SUMMARY"
             fi
             rm -rf "$work" /tmp/lambda.zip
           done < folders.txt

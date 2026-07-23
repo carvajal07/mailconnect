@@ -108,11 +108,18 @@ def test_renderiza_por_destinatario_y_reemite(combiner):
 
 
 def test_dedup_parte_repetida(combiner):
-    mod, _, _, _ = combiner
+    mod, sqs, q, _ = combiner
     ev = _event([['1', 'a@x.com', 'Ana', 'Bogotá']], part=3)
+    # Primera entrega: reclama la parte (claim atómico 'combine'), genera y re-emite.
     assert mod.lambda_handler(ev, None)['statusCode'] == 200
-    with pytest.raises(ValueError):
-        mod.lambda_handler(ev, None)
+    # Redelivery de la MISMA parte: el claim atómico ya no gana → se OMITE de forma idempotente
+    # (statusCode 200, SIN raise, para que SQS borre el duplicado en vez de reintentarlo).
+    res2 = mod.lambda_handler(ev, None)
+    assert res2['statusCode'] == 200
+    # Garantía clave: pese a las DOS entregas, solo UN mensaje llegó a Send-EAP (no se duplica
+    # el envío aguas abajo).
+    msgs = sqs.receive_message(QueueUrl=q, MaxNumberOfMessages=10, WaitTimeSeconds=0).get('Messages', [])
+    assert len(msgs) == 1
 
 
 def test_sin_plantilla_404(combiner):

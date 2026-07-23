@@ -1,0 +1,5 @@
+{
+  "_comment": "Copia este archivo como role-map.json SOLO si alguna lambda necesita un rol distinto al que el CD auto-detecta de su codigo (boto3.client/resource). Formato: NombreCarpeta -> NombreRol. Convencion: inicia con 'Lambda' (ejecucion + logs) y cada token separado por '_' da acceso FULL a un servicio, en este orden: DynFull, SES, SQS, S3, SNS, Scheduler, Bedrock, EUM, Social, Invoke (o 'Basic' si no usa servicios AWS). Si el rol no existe en IAM, el CD lo crea con esas politicas; si ya existe, lo usa tal cual.",
+  "_ejemplo_1": "Api_V1_Email_Prepare-batch-template -> Lambda_DynFull_SES_SQS_S3 (es lo que ya auto-detecta; solo mapear si quieres OTRO rol)",
+  "Api_V1_Ejemplo_Con-sns": "Lambda_DynFull_SNS"
+}

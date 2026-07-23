@@ -92,6 +92,14 @@ const BLOCK_ICONS: Record<BlockType, ReactNode> = {
   spacer: <HeightIcon fontSize="small" />,
 };
 
+/**
+ * SES solo admite [A-Za-z0-9_-] en el TemplateName. Se sanea el nombre EN VIVO
+ * (los espacios pasan a guion medio `-`, el resto se elimina) para que "Publicar"
+ * no falle en SES (antes: un nombre con espacios rompía la creación). El backend
+ * aplica el mismo saneo como defensa adicional.
+ */
+const sanitizeTemplateName = (s: string) => s.replace(/\s+/g, '-').replace(/[^A-Za-z0-9_-]/g, '');
+
 /** Línea indicadora de dónde caerá el bloque al arrastrarlo (tipo MailPro/Topol). */
 const DropLine = () => (
   <Box sx={{ height: 4, mx: 2, my: 0.5, borderRadius: 2, bgcolor: 'primary.main', boxShadow: '0 0 0 3px rgba(0,117,190,.18)' }} />
@@ -861,7 +869,13 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         <DialogTitle>Publicar plantilla</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
-            <TextField label="Nombre de la plantilla" value={meta.templateName} onChange={(e) => setMeta((m) => ({ ...m, templateName: e.target.value }))} fullWidth />
+            <TextField
+              label="Nombre de la plantilla"
+              value={meta.templateName}
+              onChange={(e) => setMeta((m) => ({ ...m, templateName: sanitizeTemplateName(e.target.value) }))}
+              fullWidth
+              helperText="Solo letras, números, guion (-) y guion bajo (_). Los espacios se convierten en guion (-)."
+            />
             <TextField label="Asunto" value={meta.subject} onChange={(e) => setMeta((m) => ({ ...m, subject: e.target.value }))} fullWidth />
             <Divider />
             <Typography variant="caption" color="text.secondary">
