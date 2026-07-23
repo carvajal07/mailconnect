@@ -195,6 +195,17 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   SOLO para esa carpeta, sin preflight → MUI intacto; alias `@` → `src/pdfsketch`). **El export
   pasó de XML a JSON**: envelope `{schema:'pdfsketch@1', document}` (`json/documentJson.ts`),
   que es lo que se guarda en el backend y lo que consume el motor.
+  - **Paridad con el Diseñador (jul 2026):** la sección es un **lanzador** (tarjetas de plantillas
+    + "Nuevo diseño") y el editor abre a **pantalla completa** (overlay, barra Guardar/Vista
+    previa/Cerrar con confirm si hay cambios). **Tema claro/oscuro sincronizado** con el
+    ThemeContext del portal (tokens `.light` del sketch). **Reglas estilo Diseñador**
+    (`Rulers.tsx` reescrito: ticks por unidad + paleta por tema) con **unidades mm/cm/pt/px/in**
+    (`utils/displayUnits.ts`, selector en la StatusBar; cursor y tamaño de hoja formateados en la
+    unidad). StatusBar suma **1:1** y **Ajustar a la ventana** (uiStore `fitTick/requestFit`).
+    La hoja dibuja sus **márgenes** punteados (`Sheet.tsx`). **Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y**
+    por teclado (keydown del Canvas; la selección múltiple marquee+shift ya existía). El tab
+    "Estilos" pasa a **"Recursos"** con sección de **Colores** del documento (CRUD en
+    `documentStore`: addColor/updateColor/removeColor; clic aplica a la selección).
 - **Nivel FULL — "Diseñador PDF"** (`DesignerPdfSection` → chunk lazy `DesignerStudio`): el
   **DocumentDesigner** completo copiado a `src/designer/` (+ satélites `ScriptProcessor/config`,
   `DataProcessor/engine/JsonPath`, `tokens.css`; `allowJs` activado en tsconfig). Abre como

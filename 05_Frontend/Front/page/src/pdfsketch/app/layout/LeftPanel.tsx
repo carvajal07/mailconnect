@@ -27,7 +27,7 @@ export default function LeftPanel() {
         <TabBtn
           active={tab === 'styles'}
           icon={Palette}
-          label="Estilos"
+          label="Recursos"
           onClick={() => setTab('styles')}
         />
         <TabBtn

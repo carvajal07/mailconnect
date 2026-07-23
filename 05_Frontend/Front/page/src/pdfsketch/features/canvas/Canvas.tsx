@@ -11,7 +11,7 @@ import TextEditorOverlay from './TextEditorOverlay';
 import BarcodeCreateDialog from './BarcodeCreateDialog';
 import TableCreateDialog from './TableCreateDialog';
 import { useCanvasDraw } from './useCanvasDraw';
-import { useDocumentStore } from '@/store/documentStore';
+import { useDocumentStore, useDocumentHistory } from '@/store/documentStore';
 import { useUIStore } from '@/store/uiStore';
 import { useToolStore } from '@/store/toolStore';
 import { useSelectionStore } from '@/store/selectionStore';
@@ -28,6 +28,9 @@ export default function Canvas() {
   const zoom = useUIStore((s) => s.zoom);
   const setZoom = useUIStore((s) => s.setZoom);
   const setCursor = useUIStore((s) => s.setCursor);
+  const unit = useUIStore((s) => s.unit);
+  const theme = useUIStore((s) => s.theme);
+  const fitTick = useUIStore((s) => s.fitTick);
   const activeTool = useToolStore((s) => s.active);
   const setActiveTool = useToolStore((s) => s.setActive);
   const clearSelection = useSelectionStore((s) => s.clear);
@@ -103,6 +106,20 @@ export default function Canvas() {
       const tag = target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (target?.isContentEditable) return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        // Deshacer / Rehacer por teclado (Ctrl+Z · Ctrl+Shift+Z)
+        e.preventDefault();
+        const hist = useDocumentHistory().getState();
+        if (e.shiftKey) hist.redo();
+        else hist.undo();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+        // Rehacer por teclado (Ctrl+Y)
+        e.preventDefault();
+        useDocumentHistory().getState().redo();
+        return;
+      }
       if (e.code === 'Space') {
         e.preventDefault();
         setSpaceDown(true);
@@ -139,6 +156,12 @@ export default function Canvas() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setZoom, draw.cancel]);
+
+  // "Ajustar a la ventana" pedido desde la barra de estado (uiStore.requestFit).
+  useEffect(() => {
+    if (fitTick > 0) fitToViewport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitTick]);
 
   function fitToViewport() {
     if (!page) return;
@@ -507,6 +530,8 @@ export default function Canvas() {
             originX={offset.x}
             originY={offset.y}
             pxPerMm={zoom * MM_TO_PX}
+            unit={unit}
+            theme={theme}
           />
         </Layer>
       </Stage>
