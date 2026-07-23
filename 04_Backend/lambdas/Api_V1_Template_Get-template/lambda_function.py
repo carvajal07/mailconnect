@@ -14,9 +14,9 @@ table_templateAudit = dynamodb.Table('templateAudit')
 
 def _ses_safe(s):
     """SES exige que TemplateName solo tenga [A-Za-z0-9_-]. Create-template sanea el
-    nombre así al crearlo, por lo que la verificación de propiedad usa el MISMO saneo
-    sobre el prefijo del cliente para que siga coincidiendo."""
-    return re.sub(r'[^A-Za-z0-9_-]+', '_', str(s)).strip('_') or 'plantilla'
+    nombre así al crearlo (espacios/acentos → '-'), por lo que la verificación de
+    propiedad usa el MISMO saneo sobre el prefijo del cliente para que coincida."""
+    return re.sub(r'[^A-Za-z0-9_-]+', '-', str(s)).strip('-') or 'plantilla'
 
 
 def _authorizer(event):

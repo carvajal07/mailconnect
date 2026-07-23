@@ -8,9 +8,10 @@ REGION = 'us-east-1'
 
 def _ses_safe(s):
     """SES exige que TemplateName solo tenga [A-Za-z0-9_-]. Reemplaza cualquier
-    otro caracter (espacios, acentos, signos) por '_' para que create_template no
-    falle (p. ej. un nombre con espacios). Idempotente sobre nombres ya válidos."""
-    return re.sub(r'[^A-Za-z0-9_-]+', '_', str(s)).strip('_') or 'plantilla'
+    otro caracter (espacios, acentos, signos) por '-' (guion medio) para que
+    create_template no falle (p. ej. un nombre con espacios). Los segmentos del
+    nombre siguen unidos por '_'. Idempotente sobre nombres ya válidos."""
+    return re.sub(r'[^A-Za-z0-9_-]+', '-', str(s)).strip('-') or 'plantilla'
 
 # Inicializar el cliente SES
 ses_client = boto3.client('ses', region_name=REGION)
