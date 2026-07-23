@@ -53,13 +53,31 @@
     { "path": "/Domain/List",              "lambda": "Api_V1_Domain_List" },
     { "path": "/Domain/Delete",            "lambda": "Api_V1_Domain_Delete" },
     { "path": "/Report/Statistics",        "lambda": "Api_V1_Reports_Statistics" },
+    { "path": "/Report/State-report",      "lambda": "Api_V1_Reports_state-report" },
     { "path": "/Cost/Estimate",            "lambda": "Api_V1_Cost_Estimate" },
     { "path": "/Balance/Get",              "lambda": "Api_V1_Balance_Get" },
     { "path": "/Balance/Topup-init",       "lambda": "Api_V1_Balance_Topup-init" },
     { "path": "/Balance/Topup-manual-request", "lambda": "Api_V1_Balance_Topup-manual-request" },
     { "path": "/Portal/Bootstrap",         "lambda": "Api_V1_Portal_Bootstrap" },
+    { "path": "/Cascade/Dispatch",         "lambda": "Api_V1_Cascade_Dispatch" },
+    { "path": "/Cascade/List",             "lambda": "Api_V1_Cascade_List" },
+    { "path": "/Assistant/Copilot",        "lambda": "Api_V1_Assistant_Copilot" },
+
+    { "path": "/Email/Send-batch-template",         "lambda": "Api_V1_Email_Prepare-batch-template", "proxy": true },
+    { "path": "/Email/Send-batch-template-samples", "lambda": "Api_V1_Email_Prepare-batch-template", "proxy": true },
+
+    { "path": "/Security/Login",             "lambda": "Api_V1_Security_Login",             "auth": false },
+    { "path": "/Security/Register",          "lambda": "Api_V1_Security_Register",          "auth": false },
+    { "path": "/Security/Logout",            "lambda": "Api_V1_Security_Logout",            "auth": false },
+    { "path": "/Security/Change-password",   "lambda": "Api_V1_Security_Change-password",   "auth": false },
+    { "path": "/Security/Create-otp",        "lambda": "Api_V1_Security_Create-otp",        "auth": false },
+    { "path": "/Security/Validate-otp",      "lambda": "Api_V1_Security_Validate-otp",      "auth": false },
+    { "path": "/Security/Recovery-password", "lambda": "Api_V1_Security_Recovery-password", "auth": false },
+    { "path": "/Security/Refresh-token",     "lambda": "Api_V1_Security_Refresh-token" },
+    { "path": "/Security/Acount-activation", "lambda": "Api_V1_Security_Acount-activation", "method": "GET", "auth": false, "proxy": true, "cors": false },
 
     { "path": "/Email/Unsubscribe",        "lambda": "Api_V1_Email_Unsubscribe", "method": "ANY", "auth": false, "proxy": true, "cors": false },
-    { "path": "/Wallet/Wompi-webhook",     "lambda": "Api_V1_Wallet_Wompi-webhook", "auth": false, "proxy": true, "cors": false }
+    { "path": "/Wallet/Wompi-webhook",     "lambda": "Api_V1_Wallet_Wompi-webhook", "auth": false, "proxy": true, "cors": false },
+    { "path": "/Assistant/Ask",            "lambda": "Api_V1_Assistant_Ask", "auth": false, "proxy": true }
   ]
 }

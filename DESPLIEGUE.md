@@ -118,6 +118,19 @@ lo existente (idempotente) + CORS de errores + deploy. Ver **`infra/api/README.m
   reusa los secrets AWS del CD de lambdas (el IAM necesita `apigateway:*` + `lambda:AddPermission`).
 - **Uso:** editas `routes.json`, haces push, y se aplica solo. Preview: `python scripts/sync_api.py --plan`.
 - **Crear rutas nuevas:** agrega una entrada a `routes.json` (path/lambda/flags) → se crea sola.
+- **Catálogo COMPLETO (jul 2026):** `routes.json` era **fuente de verdad parcial** — le faltaban 16
+  rutas que estaban configuradas **a mano** en la consola (o sin crear). Se **back-fillearon** todas
+  para que el catálogo pueda reconstruir la API entera. Nuevas/nunca creadas: `/Assistant/Ask`
+  (pública+proxy), `/Assistant/Copilot`, `/Cascade/Dispatch`, `/Cascade/List`, `/Report/State-report`
+  (esta última venía con un bug: leía `idProceso` del root del evento, no de `event['body']` que
+  anida el mapping template no-proxy → siempre 400; **corregido**). Ya en vivo (configuradas a mano)
+  y ahora en el catálogo: las **9 `/Security/*`** (todas públicas salvo `Refresh-token` que va tras el
+  Authorizer, y `Acount-activation` = GET/proxy/302) y las **2 `/Email/Send-batch-template[-samples]`**
+  (proxy **obligatorio**: la lambda distingue muestras vs real por `event['resource']`).
+  ⚠️ **Reconciliación:** el próximo `deploy-api.yml` re-aplicará esas 11 rutas en vivo. Los flags se
+  verificaron contra el código, y `sync_api` es idempotente (flags correctos = no-op), pero **corre
+  primero `deploy-api.yml` con `plan_only=true`** para revisar el plan antes de aplicar (toca el flujo
+  de login/envíos).
 
 **¿Cuenta nueva → un comando → todo? Todavía NO.** Este flujo cubre la **capa de API Gateway**.
 Un bootstrap completo de cuenta necesita además IaC de: tablas DynamoDB, **crear** las funciones
