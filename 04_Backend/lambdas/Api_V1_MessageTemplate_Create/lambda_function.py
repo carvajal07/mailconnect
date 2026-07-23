@@ -31,6 +31,23 @@ _audit_table = dynamodb.Table('adminAudit')
 VALID_CHANNELS = ('SMS', 'WSP', 'DOCX', 'PDF')
 
 
+def _json_field(value):
+    """Normaliza un campo JSON (sketchJson/templateJson) a string JSON compacto.
+    Acepta dict (lo serializa) o string (valida que parsee); inválido/vacío → ''."""
+    if isinstance(value, dict):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except Exception:
+            return ''
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            return value if isinstance(parsed, dict) else ''
+        except Exception:
+            return ''
+    return ''
+
+
 def _audit_event(event, action, target, detail):
     """Bitácora (adminAudit) best-effort. El actor sale del context del Authorizer."""
     try:
@@ -108,11 +125,19 @@ def lambda_handler(event, context):
     hsm_name = str(payload.get('hsmName', '')).strip()
     language = str(payload.get('language', 'es')).strip() or 'es'
     s3_path = str(payload.get('s3Path', '')).strip()
-    html = str(payload.get('html', ''))  # PDF: HTML del editor (con {{variables}})
+    html = str(payload.get('html', ''))  # PDF (editor básico): HTML del editor (con {{variables}})
     params = payload.get('params', [])
     if not isinstance(params, list):
         params = []
     params = [str(p) for p in params]
+
+    # PDF acepta TRES formatos según el editor que la creó (se guardan como string JSON
+    # para evitar los Decimal de DynamoDB al releer):
+    #   - html         → editor básico tipo Word (Render-pdf / xhtml2pdf)
+    #   - sketchJson   → editor medio pdfsketch (Render-engine la traduce al renderizar)
+    #   - templateJson → diseñador full DocumentDesigner (Render-engine directo)
+    sketch_json = _json_field(payload.get('sketchJson'))
+    template_json = _json_field(payload.get('templateJson'))
 
     if channel == 'SMS' and not body.strip():
         return {'status': False, 'statusCode': 400, 'description': 'La plantilla SMS necesita el texto (body).'}
@@ -120,8 +145,9 @@ def lambda_handler(event, context):
         return {'status': False, 'statusCode': 400, 'description': 'La plantilla WhatsApp necesita el nombre HSM.'}
     if channel == 'DOCX' and not s3_path:
         return {'status': False, 'statusCode': 400, 'description': 'La plantilla DOCX necesita el s3Path del archivo.'}
-    if channel == 'PDF' and not html.strip():
-        return {'status': False, 'statusCode': 400, 'description': 'La plantilla PDF necesita el HTML del editor.'}
+    if channel == 'PDF' and not html.strip() and not sketch_json and not template_json:
+        return {'status': False, 'statusCode': 400,
+                'description': 'La plantilla PDF necesita el contenido del editor (html, sketchJson o templateJson).'}
 
     now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -158,6 +184,8 @@ def lambda_handler(event, context):
         'language': language,
         's3Path': s3_path,
         'html': html,
+        'sketchJson': sketch_json,
+        'templateJson': template_json,
         'params': params,
         'created': created,
         'updated': now,
