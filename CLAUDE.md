@@ -559,10 +559,85 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 - ⚠️ `[J]` ✅ (desplegado): crear la cola `Voice_Send-batch` + trigger y habilitar el origen de voz en End User
   Messaging (número con capacidad de voz).
 
+### Cascada omnicanal — "entrega garantizada al menor costo" (jul 2026, MVP)
+> El **diferenciador killer**: el cliente define UN mensaje lógico (no un canal) — una base,
+> un **orden de canales** (Correo → WhatsApp → SMS → Voz, o el que elija) con el contenido por
+> canal, un **criterio de éxito** (entregado/leído), un **timeout** por paso y un **tope de
+> presupuesto**. La plataforma intenta el canal preferido/más barato y **escala sola** hasta
+> **confirmar entrega/lectura**, respetando **saldo** y **consentimiento**. Reutiliza TODO el
+> plumbing existente (workers de los 4 canales, recibos `sendStatus`/`ReceptionStatus`, monedero,
+> tarifas, blacklist/unsubscribe) — la cascada es solo la capa de reglas encima.
+- **Tablas:** `cascadeRun` (PK `cascadeRunId` + GSI `customerId-index`: definición + contadores +
+  status `draft|running|paused|done|canceled`) y `cascadeContact` (PK `cascadeContactId` + GSI
+  `cascadeRunId-index`: estado por persona). Se crean on-demand.
+- **Máquina de estados por contacto:** `pending → awaiting → (confirmed | escalar→pending… | exhausted)`.
+- **Lambdas:** `Api_V1_Cascade_{Create,Start,Status,List,Cancel}` (rutas cliente) + **`Api_V1_Cascade_Tick`**
+  (SIN ruta; lo dispara un **cron EventBridge** cada ~5 min y `Start` con un `invoke` para arranque
+  inmediato).
+  - `Create`: valida + **materializa los contactos** desde el CSV de la base (`emailCol`/`phoneCol`/
+    `nameCol` mapean columnas; dedup por email|celular; tope `CASCADE_MAX_CONTACTS`=5000). Estado `draft`.
+  - `Tick` (motor): por contacto `pending` → resuelve el canal del paso (salta canales sin dirección o
+    suprimidos), verifica presupuesto, **reserva saldo** (débito atómico), **encola 1 fila** al queue del
+    canal (`Email_Send-batch-template-EM` / `Sms_Send-batch` / `Wsp_Send-batch` / `Voice_Send-batch`) con
+    `uniqueId = cascadeContactId` y `processId = csc-{contactId}-{step}`, y pasa a `awaiting`. Por contacto
+    `awaiting` → **lee el resultado** de `{tenant}_sendStatus` (email: 2 saltos vía `{tenant}_sendDetail`):
+    entregado/leído (según `confirmOn`) → `confirmed`; falló o venció el timeout → **escala** al siguiente
+    canal (o `exhausted`). Claim con `UpdateItem` condicional (idempotente: sin doble envío entre ticks).
+    Saldo insuficiente → run `paused` (reintenta al recargar). Costo por mensaje = tarifa unitaria del canal
+    + IVA (misma `DEFAULT_RATES` de Cost_Estimate, replicada — **si cambian allá, replicar aquí**).
+  - `Status`: recalcula contadores desde los contactos (fuente de verdad) + `byChannel` + muestra.
+- **Confirmación:** estados 1 enviado · 2 entregado · 3 rechazado · 4 abierto/leído (WSP) · 5 clic · 6 rebote.
+  `confirmOn='delivered'` → éxito si estado ∈ {2,4,5,7}; `='read'` → {4,5} (SMS/Voz no tienen "leído" →
+  entregado cuenta). Falla → {3,6}.
+- **Personalización:** el worker recibe `headers=['Identificacion','Contacto']+columns` y
+  `row=[contactId, contacto]+filaCSV` → los `{{campo}}` de la base resolven en todos los canales (WSP toma
+  `row[2:]` como params del HSM). Cubierto por `08_Pruebas/PruebasSeguridad/test_cascade.py` (9 pruebas).
+- **Front:** sección **"Entrega garantizada"** (`CascadaSection`, tab tras Programar envíos, RBAC
+  **owner/approver**): tabla de cascadas (canales en orden, estado, confirmados/total, costo) con
+  Iniciar/Cancelar/Ver; diálogo **Nueva cascada** (base + mapeo de columnas email/celular/nombre
+  autodetectado, **constructor del orden de canales** con contenido por paso + reordenar, confirmOn
+  entregado/leído, timeout, presupuesto) y **monitor** (embudo confirmados/en-curso/agotados, por canal,
+  muestra de contactos). `cascadeService.ts`.
+- ⚠️ `[J]` (despliegue): tablas `cascadeRun`/`cascadeContact` (las crea `Create` on-demand); crear las 6
+  funciones vacías; **regla EventBridge `rate(5 minutes)` → `Api_V1_Cascade_Tick`**; rutas
+  `/Cascade/{Create,Start,Status,List,Cancel}` (authorizer + CORS, ya en `routes.json`); IAM: DynamoDB sobre
+  `cascadeRun`/`cascadeContact`/`databaseFile`/`customerBalance`/`walletTransaction`/`pricingRate`/
+  `{tenant}_sendStatus`/`_sendDetail`/`_processDetail`/`_blackList`/`_unsubscribe`, S3 `GetObject` (base),
+  SQS `SendMessage` a las 4 colas de envío, y `lambda:InvokeFunction` sobre `Api_V1_Cascade_Tick` (para `Start`).
+
+### Registro por NIT + equipo del cliente (jul 2026, SEGURIDAD)
+> **Bug crítico corregido:** antes `Register` **reutilizaba el `customerId`** si el NIT ya existía
+> (`if exist_companyTin: customerId = get_customerId(...)`). Como **todo el aislamiento multi-tenant
+> es por `customerId`/`nit` del token**, cualquiera que conociera el NIT de una empresa (semi-público)
+> se registraba con un correo nuevo y quedaba **dentro de ese tenant como `owner`**: veía campañas,
+> saldo, bases, plantillas y podía **enviar a nombre de la empresa gastando su saldo**. El flag
+> `realSendEnabled` no protegía (la víctima activa ya lo tenía en `true` y el intruso heredaba el
+> mismo `customerId`).
+- **Fix:** `Register` ahora **rechaza (409)** el auto-registro bajo un NIT ya registrado
+  (`CompanyAlreadyRegistered`). Un NIT = una empresa = un solo auto-registro (el que registra queda
+  `owner`). Cubierto por `test_seguridad.py::test_registro_nit_existente_409`.
+- **Equipo del cliente (provisioning por el dueño):** el `owner` suma usuarios de SU empresa desde el
+  portal — lambdas `Api_V1_User_{Create,List,Delete}` (rutas cliente, **owner-only** por `tenantRole`):
+  - `Create`: crea el usuario con `tenantRole` **operator** (funcional: prepara/prueba) o **approver**
+    (aprueba/envía), **tope `MAX_TEAM_USERS`=2** (sin contar al owner), correo único. Queda **activo**
+    pero con contraseña **no usable** (hash aleatorio + `mustSetPassword`): define su clave con
+    "¿Olvidaste tu contraseña?" (OTP) → el front dispara ese correo tras crearlo (reutiliza el flujo
+    de recuperación; el dueño nunca maneja contraseñas ajenas).
+  - `List`: usuarios del tenant (+ `max`/`canAdd`). `Delete`: borra un usuario del tenant (no un owner
+    ni a sí mismo). Auditado (`user.create`/`user.delete`). Cubierto por `test_user_team.py` (10).
+  - **Front:** tab **"Usuarios"** (`UsuariosSection`, solo owner) — tabla del equipo + agregar (rol +
+    tope) + eliminar + reenviar el correo de "definir contraseña". `usersService.ts`. `RegisterPage`
+    muestra el 409 "empresa ya registrada".
+  - ⚠️ `[J]`: desplegar `Api_V1_User_{Create,List,Delete}` (crear vacías) + rutas `/User/{Create,List,
+    Delete}` (authorizer + CORS + mapping template con `customerId`/`nit`/`userId`/**`tenantRole`**).
+    IAM: `Scan/GetItem/PutItem/DeleteItem` sobre `user`/`userData`, `PutItem` sobre `adminAudit`.
+    Env `MAX_TEAM_USERS` (default 2). Estas rutas NO son admin (son del owner del tenant).
+
 ### Roles (admin/client) (jul 2026)
 - **Modelo:** dos roles — **`admin`** (personal interno de MailConnect: gestiona clientes,
   tarifas, config global) y **`client`** (default, usuario de una empresa). Dentro de un cliente
-  no hay sub-roles todavía (futuro: owner/member).
+  hay **sub-roles** (`tenantRole`): **owner** (dueño; suma usuarios, gestiona saldo, todo),
+  **approver** (aprueba/envía real), **operator** (prepara/prueba).
 - **Backend:** campo `role` en la tabla `user` (default `client` en `Register`). `Login` lo
   embebe en el JWT y lo devuelve en `data.role`; `Authorizer`/`Authorizer2` lo reenvían en el
   context (`event.requestContext.authorizer.role`); `Refresh-token` lo preserva. Los endpoints

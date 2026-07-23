@@ -23,6 +23,8 @@ export const TAB_ACCESS: Record<string, TenantRole[]> = {
   cascada: ['owner', 'approver'],
   // Configuración de dominios de envío (identidades SES): sensible → solo owner.
   dominios: ['owner'],
+  // Gestión del equipo (crear/eliminar usuarios de la empresa): solo el dueño.
+  usuarios: ['owner'],
 };
 
 /** ¿El rol puede acceder al tab? (tab no listado en la matriz → visible para todos). */

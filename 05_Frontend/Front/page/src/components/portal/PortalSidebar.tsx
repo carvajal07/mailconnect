@@ -19,6 +19,7 @@ import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import AltRouteIcon from '@mui/icons-material/AltRoute';
 import ScheduleSendIcon from '@mui/icons-material/ScheduleSend';
+import AltRouteIcon from '@mui/icons-material/AltRoute';
 import RateReviewIcon from '@mui/icons-material/RateReview';
 import HowToRegIcon from '@mui/icons-material/HowToReg';
 import StorageIcon from '@mui/icons-material/Storage';
@@ -26,6 +27,7 @@ import BlockIcon from '@mui/icons-material/Block';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+import GroupIcon from '@mui/icons-material/Group';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import DnsIcon from '@mui/icons-material/Dns';
 import type { ReactNode } from 'react';
@@ -51,6 +53,7 @@ export const PORTAL_TABS: PortalTab[] = [
   { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },
   { id: 'cascada', label: 'Cascada omnicanal', icon: <AltRouteIcon /> },
   { id: 'programar', label: 'Programar envíos', icon: <ScheduleSendIcon /> },
+  { id: 'cascada', label: 'Entrega garantizada', icon: <AltRouteIcon /> },
   { id: 'muestras', label: 'Muestras', icon: <RateReviewIcon /> },
   { id: 'aprobaciones', label: 'Aprobaciones', icon: <HowToRegIcon /> },
   { id: 'listanegra', label: 'Lista negra', icon: <BlockIcon /> },
@@ -58,6 +61,7 @@ export const PORTAL_TABS: PortalTab[] = [
   { id: 'estadisticas', label: 'Estadísticas', icon: <BarChartIcon /> },
   { id: 'saldo', label: 'Saldo y recargas', icon: <AccountBalanceWalletIcon /> },
   { id: 'dominios', label: 'Dominios', icon: <DnsIcon /> },
+  { id: 'usuarios', label: 'Usuarios', icon: <GroupIcon /> },
   { id: 'cuenta', label: 'Mi cuenta', icon: <AccountCircleIcon /> },
 ];
 

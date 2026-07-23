@@ -193,6 +193,10 @@ def valid_email(email):
     return not response['Items']
 
 
+class CompanyAlreadyRegistered(Exception):
+    """El NIT ya pertenece a una empresa registrada → no se permite auto-unirse."""
+
+
 def exist_companyTin(companyTin):
     response = table_customer.scan(
         FilterExpression="companyTin = :value",
@@ -330,9 +334,15 @@ def lambda_handler(event, context):
                     salt = str(uuid.uuid4())
                     hashed_password = _hash_password(password, salt)
 
-                    # Cliente (customer) por NIT: reutilizar o crear
+                    # Cliente (customer) por NIT: crear SOLO si el NIT es nuevo.
+                    # SEGURIDAD (aislamiento multi-tenant): un NIT ya registrado NO se
+                    # reutiliza. Antes se tomaba el customerId del dueño → cualquiera que
+                    # conociera el NIT se registraba y quedaba dentro del tenant de otra
+                    # empresa como owner (veía campañas/saldo/bases y podía enviar a su
+                    # nombre). Ahora el auto-registro con un NIT existente se RECHAZA (409);
+                    # el dueño suma a su equipo desde el portal (User/Create, tope 2).
                     if exist_companyTin(companyTin):
-                        customerId = get_customerId(companyTin)
+                        raise CompanyAlreadyRegistered()
                     else:
                         customerId = str(uuid.uuid4())
                         table_customer.put_item(
@@ -414,6 +424,11 @@ def lambda_handler(event, context):
                     status = False
                     statusCode = 409
                     description = "Email ya se encuentra registrado"
+            except CompanyAlreadyRegistered:
+                status = False
+                statusCode = 409
+                description = ("Esta empresa (NIT) ya está registrada. Pídele al administrador "
+                               "de tu empresa que te cree el usuario desde el portal.")
             except Exception as e:
                 print("Error en registro: {}".format(e))
                 status = False
