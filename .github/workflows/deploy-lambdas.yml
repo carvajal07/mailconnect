@@ -456,66 +456,71 @@ jobs:
             ROLE_JUST_CREATED=1
           }
 
-          ROLE_SWAPPED=0
-          reconcile_role() {  # $1=folder $2=fn → asegura que la función USE su rol de convención.
+          reconcile_role() {  # $1=folder $2=fn → asegura que la función pueda LEER su cola (SQS).
             # La rama de ACTUALIZAR solo tocaba el código: una función vieja podía quedarse con un
-            # rol sin el token _SQS y fallar al crear el trigger ("execution role does not have
-            # permissions to call ReceiveMessage"). Aquí se calcula el rol esperado (incluye _SQS
-            # si la carpeta tiene trigger sqs), se crea si falta, y se cambia el de la función si
-            # difiere — ANTES de tocar los triggers.
-            local folder="$1" fn="$2" src role role_arn cur cur_name has_sqs=""
+            # rol SIN permiso SQS y fallar al crear el trigger ("execution role does not have
+            # permissions to call ReceiveMessage"). Aquí, SOLO para carpetas con trigger sqs, se
+            # verifica que el rol de EJECUCIÓN conceda SQS y, si le falta, se reconcilia — ANTES de
+            # tocar los triggers.
+            local folder="$1" fn="$2" src role role_arn cur cur_name has_sqs="" sw k
             src="$DIR/$folder"
-            ROLE_SWAPPED=0
-            # Solo hace falta reconciliar el rol cuando hay un trigger SQS: el poller de la cola
-            # LEE con el rol de EJECUCIÓN de la función. SNS/schedule invocan por resource-policy
-            # (add-permission), no por el rol → no requieren reconciliación. Así no se tocan los
-            # roles de las lambdas de API (sin trigger).
+            # Solo hace falta reconciliar cuando hay trigger SQS: el poller de la cola LEE con el
+            # rol de EJECUCIÓN. SNS/schedule invocan por resource-policy (add-permission), no por el
+            # rol → no requieren reconciliación (no se tocan las lambdas de API sin trigger).
             [ -f "$TRIGGER_MAP" ] && has_sqs=$(jq -r --arg k "$folder" '.[$k].sqs // empty' "$TRIGGER_MAP" 2>/dev/null)
             [ -n "$has_sqs" ] || return 0
-            role=$(role_for "$folder" "$src")
-            ensure_role "$role" || return 1
-            role_arn="arn:aws:iam::${ACCOUNT_ID}:role/${role}"
+
             cur=$(aws lambda get-function-configuration --function-name "$fn" --query Role --output text 2>/dev/null || true)
             cur_name="${cur##*/}"
-            if [ "$cur" != "$role_arn" ]; then
-              case "$cur_name" in
-                Lambda_*|"")
-                  # Rol gestionado por la convención (o ninguno): se reconcilia al esperado.
-                  echo "   🔑 Rol de $fn: ${cur_name:-ninguno} → $role (reconciliando a la convención)"
-                  # La función debe estar ESTABLE antes de update-function-configuration (si no,
-                  # ResourceConflictException por un update-function-code reciente). Se espera y,
-                  # por si el estado tarda en reflejarse, se REINTENTA ante ese conflicto.
-                  aws lambda wait function-updated-v2 --function-name "$fn" 2>/dev/null || true
-                  local sw=0 k
-                  for k in 1 2 3 4 5; do
-                    if aws lambda update-function-configuration --function-name "$fn" --role "$role_arn" >/dev/null 2>/tmp/cfgerr; then
-                      sw=1; break
-                    fi
-                    if grep -qi "ResourceConflictException\|update is in progress" /tmp/cfgerr; then
-                      echo "   ⏳ La función aún se está actualizando (intento $k); reintento en 6s..."
-                      sleep 6
-                      aws lambda wait function-updated-v2 --function-name "$fn" 2>/dev/null || true
-                    else
-                      echo "❌ No se pudo cambiar el rol de $fn:"; cat /tmp/cfgerr; return 1
-                    fi
-                  done
-                  [ "$sw" = "1" ] || { echo "❌ No se pudo cambiar el rol de $fn tras varios intentos."; return 1; }
-                  aws lambda wait function-updated-v2 --function-name "$fn"
-                  ROLE_SWAPPED=1 ;;
-                *)
-                  # Rol personalizado (no-convención): no se pisa. Si el trigger SQS falla por
-                  # permisos, hay que darle SQS a ese rol o mapear el folder en role-map.json.
-                  echo "   ⚠️  $fn usa un rol NO-convención ($cur_name); no se cambia. Si el trigger SQS"
-                  echo "      falla por permisos, agrégale SQS a ese rol o mapea el folder en role-map.json." ;;
-              esac
-            else
-              echo "   🔑 $fn ya usa su rol de convención ($role)."
-            fi
-            # Tras crear o cambiar el rol, IAM tarda en propagar para el poller de SQS.
-            if [ "$ROLE_JUST_CREATED" = "1" ] || [ "$ROLE_SWAPPED" = "1" ]; then
-              echo "   ⏳ Esperando propagación IAM del rol de $fn..."
-              sleep 10
-            fi
+            # Si el rol ACTUAL ya concede SQS (su nombre de convención incluye el token SQS, p. ej.
+            # Lambda_DynFull_SQS_Messaging), el trigger funcionará SIN cambiar nada → NO se toca.
+            # Esto evita el churn de crear un rol equivalente solo por diferencia de nombre
+            # (Messaging vs EUM) y el error de propagación al asignar un rol recién creado.
+            case "$cur_name" in
+              *_SQS|*_SQS_*)
+                echo "   🔑 $fn ya usa un rol con SQS ($cur_name); el trigger funcionará. No se cambia."
+                return 0 ;;
+            esac
+
+            role=$(role_for "$folder" "$src")           # rol de convención (incluye _SQS por el trigger)
+            role_arn="arn:aws:iam::${ACCOUNT_ID}:role/${role}"
+            case "$cur_name" in
+              Lambda_*|"")
+                ensure_role "$role" || return 1
+                # Rol recién creado → IAM tarda en propagarlo; ESPERAR antes de asignarlo o falla
+                # con "The role defined for the function cannot be assumed by Lambda".
+                if [ "$ROLE_JUST_CREATED" = "1" ]; then
+                  echo "   ⏳ Rol $role recién creado; esperando propagación IAM antes de asignarlo..."
+                  sleep 12
+                fi
+                echo "   🔑 Rol de $fn: ${cur_name:-ninguno} → $role (le faltaba SQS; reconciliando)"
+                # La función debe estar ESTABLE (LastUpdateStatus=Successful) antes del cambio de
+                # config, y se REINTENTA ante el conflicto transitorio O la propagación del rol.
+                aws lambda wait function-updated-v2 --function-name "$fn" 2>/dev/null || true
+                sw=0
+                for k in 1 2 3 4 5 6; do
+                  if aws lambda update-function-configuration --function-name "$fn" --role "$role_arn" >/dev/null 2>/tmp/cfgerr; then
+                    sw=1; break
+                  fi
+                  if grep -qi "ResourceConflictException\|update is in progress\|cannot be assumed" /tmp/cfgerr; then
+                    echo "   ⏳ La función se actualiza o el rol IAM aún propaga (intento $k); reintento en 8s..."
+                    sleep 8
+                    aws lambda wait function-updated-v2 --function-name "$fn" 2>/dev/null || true
+                  else
+                    echo "❌ No se pudo cambiar el rol de $fn:"; cat /tmp/cfgerr; return 1
+                  fi
+                done
+                [ "$sw" = "1" ] || { echo "❌ No se pudo cambiar el rol de $fn tras varios intentos."; return 1; }
+                aws lambda wait function-updated-v2 --function-name "$fn"
+                echo "   ⏳ Esperando propagación IAM de los permisos SQS del nuevo rol..."
+                sleep 10 ;;
+              *)
+                # Rol personalizado SIN token SQS en el nombre: no se pisa (podría tener SQS por una
+                # política attachada aunque el nombre no lo diga). Si el trigger falla por permisos,
+                # dale SQS a ese rol o mapea el folder en role-map.json.
+                echo "   ⚠️  $fn usa un rol NO-convención sin token SQS ($cur_name); no se cambia. Si el"
+                echo "      trigger SQS falla por permisos, dale SQS a ese rol o usa role-map.json." ;;
+            esac
           }
 
           while read -r folder; do
