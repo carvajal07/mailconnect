@@ -34,8 +34,14 @@ def mods():
         yield add, lst, dele
 
 
-def _auth(body, cid='CU1', customer='ACME'):
-    return {**body, 'requestContext': {'authorizer': {'customerId': cid, 'customer': customer}}}
+def _auth(body, cid='CU1', customer='ACME', trole='owner'):
+    # Gestionar dominios de envío es OWNER-only (config de cuenta). El usuario por defecto de
+    # estas pruebas es el owner; el mapping template reenvía tenantRole al lambda. Pasar
+    # trole='operator'/None simula un no-owner o un context sin el claim → el gate deniega (403).
+    authz = {'customerId': cid, 'customer': customer}
+    if trole is not None:
+        authz['tenantRole'] = trole
+    return {**body, 'requestContext': {'authorizer': authz}}
 
 
 def test_add_devuelve_registros_dns(mods):
@@ -64,6 +70,28 @@ def test_add_sin_sesion_403(mods):
     add, _, _ = mods
     resp = add.lambda_handler({'domain': 'x.com', 'requestContext': {'authorizer': {}}}, None)
     assert resp['statusCode'] == 403
+
+
+def test_add_operator_403(mods):
+    # RBAC: gestionar dominios es OWNER-only. Un operator (o cualquier no-owner) NO puede agregar.
+    add, _, _ = mods
+    assert add.lambda_handler(_auth({'domain': 'empresa.com'}, trole='operator'), None)['statusCode'] == 403
+    # approver tampoco (aprobar campañas ≠ configurar la cuenta).
+    assert add.lambda_handler(_auth({'domain': 'empresa.com'}, trole='approver'), None)['statusCode'] == 403
+
+
+def test_add_sin_tenantrole_403_failclosed(mods):
+    # Fail-CLOSED: sin tenantRole en el context (mapping viejo) NO se trata al usuario como owner.
+    add, _, _ = mods
+    assert add.lambda_handler(_auth({'domain': 'empresa.com'}, trole=None), None)['statusCode'] == 403
+
+
+def test_delete_operator_403(mods):
+    # Borrar un dominio (rompe el envío) es OWNER-only: un operator NO puede, aunque exista.
+    add, _, dele = mods
+    r = add.lambda_handler(_auth({'domain': 'empresa.com'}), None)   # owner crea
+    did = r['data']['domainId']
+    assert dele.lambda_handler(_auth({'domainId': did}, trole='operator'), None)['statusCode'] == 403
 
 
 def test_add_duplicado_409(mods):

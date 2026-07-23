@@ -42,6 +42,12 @@ PLAN = '--plan' in sys.argv or os.environ.get('DRY_RUN') == '1'
 # event.requestContext.authorizer.*. El tenant es OBLIGATORIO: las lambdas
 # multi-tenant deniegan (403) si el context no llega, así que este template debe
 # estar desplegado ANTES de esas lambdas o las rutas de cliente responderán 403.
+# ⚠️ tenantRole (owner|approver|operator) también se reenvía: sin él, los gates RBAC de
+# sub-rol (Campaign_Approve/Reject, Schedule_Create, envío real en Prepare-batch) veían el
+# campo ausente y (por su default) trataban a CUALQUIER usuario como owner → un operator
+# podía aprobar/rechazar/enviar (bypass del maker-checker). Esas lambdas ahora hacen
+# fail-CLOSED (default menor privilegio) si tenantRole no llega, así que ESTE template debe
+# estar sincronizado para que un owner/approver legítimo conserve sus permisos.
 CONTEXT_TEMPLATE = (
     '{\n'
     '  "body": $input.json(\'$\'),\n'
@@ -52,7 +58,8 @@ CONTEXT_TEMPLATE = (
     '      "userId": "$context.authorizer.userId",\n'
     '      "customerId": "$context.authorizer.customerId",\n'
     '      "customer": "$context.authorizer.customer",\n'
-    '      "nit": "$context.authorizer.nit"\n'
+    '      "nit": "$context.authorizer.nit",\n'
+    '      "tenantRole": "$context.authorizer.tenantRole"\n'
     '    }\n'
     '  }\n'
     '}'

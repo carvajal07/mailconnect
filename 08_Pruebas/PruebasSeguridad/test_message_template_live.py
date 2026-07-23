@@ -116,9 +116,12 @@ def _drain(url):
 
 def _real_event():
     # El campo `template` del evento es irrelevante para SMS: el contenido sale de la campaña.
-    return {'resource': '/Email/Send-batch-template', 'body': json.dumps({
-        'customerName': 'empresa', 'campaignName': 'PromoSMS', 'userId': 'U1',
-        'template': 'ignorado', 'templateVersion': 1})}
+    # tenantRole owner en el context: el envío real exige owner/approver (gate RBAC).
+    return {'resource': '/Email/Send-batch-template',
+            'requestContext': {'authorizer': {'tenantRole': 'owner'}},
+            'body': json.dumps({
+                'customerName': 'empresa', 'campaignName': 'PromoSMS', 'userId': 'U1',
+                'template': 'ignorado', 'templateVersion': 1})}
 
 
 def _run_real_send_and_get_bodies(pb, sms_url, part_url):

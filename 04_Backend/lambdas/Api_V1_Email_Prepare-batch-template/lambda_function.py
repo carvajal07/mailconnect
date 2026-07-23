@@ -948,9 +948,18 @@ def _batch_get_emails(table_name:str, keys:list)->set:
     """
     Consulta por lotes qué emails de `keys` existen en la tabla `table_name`
     (cuya PK debe ser 'email'). BatchGetItem admite máximo 100 llaves y no
-    acepta duplicados, así que se deduplica y se trocea. Si la tabla no existe
-    o su esquema no coincide (tablas viejas con otra PK), devuelve vacío y
-    registra el error en lugar de tumbar el envío.
+    acepta duplicados, así que se deduplica y se trocea.
+
+    FILTRO DE CUMPLIMIENTO — FAIL-CLOSED: este helper alimenta la exclusión de lista negra /
+    desuscritos, que es un control LEGAL (Ley 1581 / habeas data) y de reputación SES. Antes,
+    CUALQUIER error devolvía vacío ("continuar sin filtrar") → un throttling transitorio en un
+    lote grande hacía que se enviara A CIEGAS a contactos que debían excluirse. Ahora:
+      - Error ESTRUCTURAL/permanente (la tabla no existe, o su esquema viejo no permite consultar
+        por 'email') → vacío SEGURO: no hay entradas que verificar (se registra para visibilidad;
+        una tabla de esquema viejo debe migrarse).
+      - Error TRANSITORIO (throttling, límite de capacidad, 5xx, red) → NO se pudo verificar →
+        se RE-LANZA. En el worker de partes eso propaga y SQS REPROCESA la parte (redelivery →
+        reproceso idempotente por el claim de parte/chunk), en vez de enviar sin filtrar.
 
     Args:
         table_name (str): Nombre de la tabla (PK 'email')
@@ -971,9 +980,16 @@ def _batch_get_emails(table_name:str, keys:list)->set:
                     found.add(item['email'])
                 # Reintentar las llaves que DynamoDB no alcanzó a procesar.
                 request_items = response.get('UnprocessedKeys') or None
-    except Exception as e:
-        print(f'No se pudo consultar la tabla {table_name} (se continúa sin filtrar): {e}')
-        return set()
+    except ClientError as e:
+        code = e.response.get('Error', {}).get('Code', '')
+        if code in ('ResourceNotFoundException', 'ValidationException'):
+            # Estructural: la tabla no existe o su esquema no permite la consulta → no hay
+            # entradas que filtrar. Seguro devolver vacío (no es un fallo de verificación).
+            print(f'Tabla {table_name} ausente/incompatible ({code}); no hay entradas que filtrar.')
+            return set()
+        # Transitorio: no se pudo verificar el filtro de cumplimiento → FAIL-CLOSED.
+        print(f'No se pudo verificar {table_name} ({code}); se re-lanza para NO enviar sin filtrar.')
+        raise
     return found
 
 def check_blacklist(tenant:str, keys:list)->set:
@@ -1917,10 +1933,14 @@ def lambda_handler(event, context):
                                             data.get('quantitySamples', ''), campaign_name, channel_name))
                     else:
                         # RBAC: el envío real solo lo puede disparar owner/approver (el
-                        # funcional/operator solo prepara y solicita aprobación). Fail-open
-                        # de rollout: si el context no trae tenantRole, default 'owner'.
+                        # funcional/operator solo prepara y solicita aprobación). Fail-CLOSED: si
+                        # el context no trae tenantRole, default al MENOR privilegio ('operator')
+                        # → denegado. El mapping template (sync_api.py) reenvía tenantRole y el
+                        # Authorizer pone 'owner' para tokens legacy, así que un owner/approver
+                        # legítimo SÍ dispara; el default cierra el bypass (operator tratado como
+                        # owner) que dejaba a cualquiera gastar saldo en un envío real.
                         _trole = str(((event.get('requestContext') or {}).get('authorizer') or {})
-                                     .get('tenantRole', 'owner') or 'owner') if isinstance(event, dict) else 'owner'
+                                     .get('tenantRole', 'operator') or 'operator') if isinstance(event, dict) else 'operator'
                         if _trole not in ('owner', 'approver'):
                             status = False
                             status_code = 403
@@ -1979,6 +1999,15 @@ def lambda_handler(event, context):
         status_code = 402
         print(description)
     except Exception as e:
+        # WORKER SQS (cola de partes): la invocación debe FALLAR (propagar) si algo sale mal, para
+        # que SQS RETENGA el mensaje y lo redelivere (reproceso idempotente por el claim de parte/
+        # chunk) y, tras agotar reintentos, lo mande a la DLQ. Si en cambio devolviéramos un 500,
+        # SQS interpretaría la invocación como EXITOSA y BORRARÍA el mensaje → la parte se perdería
+        # en silencio (incluye el caso en que no se pudo verificar la lista negra → NO se debe
+        # enviar a ciegas: fail-closed). La ruta API (proxy) sí devuelve el 500 al llamante.
+        if isinstance(event, dict) and 'Records' in event:
+            print(f'Fallo procesando parte(s) SQS; se propaga para redelivery/DLQ: {e}')
+            raise
         description = "Error no controlado en el servicio"
         status = False
         status_code = 500

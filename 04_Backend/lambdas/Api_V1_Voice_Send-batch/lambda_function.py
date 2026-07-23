@@ -66,6 +66,45 @@ def _personalize(text, headers, row):
     return _VAR.sub(lambda m: str(values.get(m.group(1), m.group(0))), text)
 
 
+def _claim_part(tenant, process_id, part, registers, date, stage='send'):
+    """Reclama ATÓMICAMENTE el derecho a procesar (processId, part) en esta ETAPA.
+
+    Clave DETERMINISTA `processId#part#stage` + escritura condicional
+    `attribute_not_exists`: la PRIMERA invocación gana (True → debe llamar); una
+    redelivery/duplicado de SQS pierde la condición (False → NO rellamar). Cierra la
+    ventana que permitía repetir todo el lote de llamadas (una llamada duplicada suena en
+    el teléfono de una persona real y cuesta). Fail-open SOLO si falta tenant/processId."""
+    if not tenant or not process_id or part is None:
+        return True
+    table = dynamodb.Table(f'{tenant}_processDetail')
+    detail_id = f'{process_id}#{part}#{stage}'
+    try:
+        table.put_item(
+            Item={'processDetailId': detail_id, 'processId': process_id, 'part': part,
+                  'registers': registers, 'date': date, 'stateProcess': 'Procesando', 'stage': stage},
+            ConditionExpression='attribute_not_exists(processDetailId)')
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            print(f'Parte {part} del proceso {process_id} ya reclamada ({stage}); se omite (duplicado SQS).')
+            return False
+        raise
+
+
+def _mark_part(tenant, process_id, part, state, stage='send'):
+    """Marca el estado final de (processId, part, stage) sobre la MISMA fila determinista.
+    Best-effort."""
+    if not tenant or not process_id or part is None:
+        return
+    try:
+        dynamodb.Table(f'{tenant}_processDetail').update_item(
+            Key={'processDetailId': f'{process_id}#{part}#{stage}'},
+            UpdateExpression='SET stateProcess = :s',
+            ExpressionAttributeValues={':s': state})
+    except Exception as e:
+        print(f'No se pudo marcar la parte {part} como {state}: {e}')
+
+
 def _record_status(tenant, process_id, rows):
     """Inserta los estados de envío en la tabla ÚNICA {tenant}_sendStatus por lotes
     (tenant=tenant_key(NIT)). processId es la PK (una partición por proceso) y sendStatusId la SK."""
@@ -93,11 +132,17 @@ def lambda_handler(event, context):
         tenant = tenant_key(body.get('nit', ''))   # llave de {tenant}_sendStatus
         process_id = body.get('processId', '')
         campaign_id = body.get('campaignId', '')
+        part = body.get('part')                    # id de sub-lote ÚNICO en el proceso (idempotencia)
         is_samples = bool(body.get('samples', False))  # muestras → contar si sale bien
         headers = body.get('headers', [])
         voice_message = body.get('voiceMessage', '') or ''
         data = body.get('data', [])
-        print(f'VOZ lote: cliente={customer_name} nit={tenant} proceso={process_id} registros={len(data)}')
+        print(f'VOZ lote: cliente={customer_name} nit={tenant} proceso={process_id} parte={part} registros={len(data)}')
+
+        # IDEMPOTENCIA: reclama (processId, part) atómicamente ANTES de llamar. Una redelivery
+        # del mismo mensaje se omite → no se repiten las llamadas (dinero + robocall duplicado).
+        if not _claim_part(tenant, process_id, part, len(data), now):
+            continue
 
 
         status_rows = []
@@ -150,6 +195,9 @@ def lambda_handler(event, context):
                 _record_status(tenant, process_id, status_rows)
             except Exception as e:
                 print('No se pudieron registrar los estados de voz: {}'.format(e))
+
+        # Parte completada: marca 'Terminado' sobre la fila reclamada (observabilidad).
+        _mark_part(tenant, process_id, part, 'Terminado')
 
         # Muestras: si al menos una llamada del lote se realizó OK, contar 1 en la campaña.
         if is_samples and campaign_id and any(r.get('state') == STATE_SENT for r in status_rows):

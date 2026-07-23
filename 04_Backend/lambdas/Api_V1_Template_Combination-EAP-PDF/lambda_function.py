@@ -31,6 +31,7 @@ import uuid
 from datetime import datetime
 
 import boto3
+from botocore.exceptions import ClientError
 
 REGION = 'us-east-1'
 URL_SQS_EAP = os.environ.get(
@@ -169,6 +170,29 @@ def insert_process_detail(tenant, process_id, registers, part, date, state):
     })
 
 
+def _claim_part(tenant, process_id, part, registers, date, stage='combine'):
+    """Reclama ATÓMICAMENTE la etapa 'combine' de (processId, part). Clave DETERMINISTA
+    `processId#part#combine` + escritura condicional `attribute_not_exists`: solo la PRIMERA
+    entrega combina y re-emite (True); una redelivery de SQS pierde la condición (False → NO
+    recombina ni re-emite → no duplica el envío aguas abajo). Reemplaza el scan+put con uuid
+    aleatorio (no atómico). El sufijo de etapa evita chocar con el claim 'send' de Send-EAP,
+    que comparte (processId, part) en la misma tabla. Fail-open si falta tenant/proceso."""
+    if not tenant or not process_id or part is None:
+        return True
+    table = dynamodb.Table('{}_processDetail'.format(tenant))
+    detail_id = '{}#{}#{}'.format(process_id, part, stage)
+    try:
+        table.put_item(
+            Item={'processDetailId': detail_id, 'processId': process_id, 'part': part,
+                  'registers': registers, 'date': date, 'stateProcess': 'Creando adjuntos', 'stage': stage},
+            ConditionExpression='attribute_not_exists(processDetailId)')
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return False
+        raise
+
+
 def download_template_html(campaign_id, bucket_name):
     """Baja el HTML de la plantilla PDF (documentPath del registro `document`)."""
     response = table_document.scan(
@@ -229,14 +253,12 @@ def lambda_handler(event, context):
         print('Error leyendo el mensaje: {}'.format(e))
         return {'status': False, 'statusCode': 500, 'description': 'Error no controlado en el servicio'}
 
-    # Dedup por parte (evita adjuntos duplicados ante reentrega SQS).
-    existing = validate_process_detail(tenant, process_id, part)
-    if existing.get('Items'):
-        state = existing['Items'][0].get('stateProcess')
-        print('La parte {} del proceso {} ya está en estado {} — se ignora (dedup)'.format(part, process_id, state))
-        raise ValueError('La parte ya ha sido procesada')
-
-    insert_process_detail(tenant, process_id, registers, part, formatted_date, 'Creando adjuntos')
+    # IDEMPOTENCIA (etapa 'combine'): reclamo ATÓMICO de (processId, part). Reemplaza el scan+put
+    # (no atómico): ante redelivery de SQS, solo la PRIMERA entrega combina y re-emite; la
+    # duplicada se omite → no se generan adjuntos ni se re-emite el lote dos veces.
+    if not _claim_part(tenant, process_id, part, registers, formatted_date, stage='combine'):
+        print('La parte {} del proceso {} ya fue reclamada (combine); se omite (duplicado SQS).'.format(part, process_id))
+        return {'status': True, 'statusCode': 200, 'description': 'Parte ya procesada (duplicado); se omite.'}
 
     bucket_name = tenant_bucket(nit) if nit else '{}.document'.format(customer_name.lower())
     template_html = download_template_html(campaign_id, bucket_name)

@@ -43,6 +43,13 @@ def lambda_handler(event, context):
     domain_id = payload.get('domainId')
     if not customer_id:
         return {'status': False, 'statusCode': 403, 'description': 'Sesión sin identidad de cliente.'}
+    # RBAC: borrar un dominio/correo de envío es aún más sensible (un dominio VERIFICADO borrado
+    # rompe la capacidad de envío de la empresa) → solo OWNER. Fail-CLOSED (ver Domain_Add): el
+    # backend NO validaba el sub-rol; cualquier usuario del tenant podía borrar dominios.
+    tenant_role = str(auth.get('tenantRole', 'operator') or 'operator')
+    if tenant_role != 'owner':
+        return {'status': False, 'statusCode': 403,
+                'description': 'Solo el propietario de la cuenta puede eliminar los dominios de envío.'}
     if not domain_id:
         return {'status': False, 'statusCode': 400, 'description': 'Indica el domainId.'}
 

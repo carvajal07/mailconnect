@@ -323,6 +323,48 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   deshabilitaba sin explicar). Sugiere "Registrar transferencia" (manual, sin mínimo) para montos
   menores. El backend `Topup-init` ya devolvía el 400 con el mensaje del mínimo.
 
+### Idempotencia atómica de los workers de envío (anti-duplicado) (jul 2026)
+- **Problema:** la garantía anti-duplicado del pipeline dependía de que cada worker de envío
+  deduplicara por `(processId, part)`, pero en la práctica NO se cumplía: **SMS/Voz/WhatsApp/EAU
+  no tenían guarda** (una redelivery de SQS reenviaba todo el lote — y en los telefónicos eso
+  cuesta dinero real y llama/escribe a una persona), **EM/EAP y los combinadores** usaban un
+  `scan` + `put` con **uuid ALEATORIO** que NO es atómico (dos entregas concurrentes pasaban ambas
+  la validación → doble envío) y a escala el `scan` de 1 página de 1 MB ni encontraba la fila.
+  **Send-EAP** tenía la guarda en CÓDIGO MUERTO (chequeaba un estado que la escritura comentada
+  nunca producía).
+- **Fix — claim ATÓMICO por etapa:** los 6 workers de envío (`Send-EM/EAU/EAP`, `Sms/Wsp/Voice_
+  Send-batch`) y los 2 combinadores (`Template_Combination` DOCX, `Template_Combination-EAP-PDF`)
+  usan ahora `_claim_part(tenant, processId, part, ..., stage)`: una escritura **condicional
+  `attribute_not_exists`** sobre la clave **DETERMINISTA** `processId#part#stage` en
+  `{tenant}_processDetail`. Solo la PRIMERA entrega gana (envía); la redelivery pierde la condición
+  y se OMITE. `stage` separa `combine` (combinador) de `send` (worker), que comparten
+  `(processId, part)` en la misma tabla. Reemplaza el patrón `scan`+`put(uuid)`. Fail-open solo si
+  falta la llave de tenant/proceso (mensaje viejo en vuelo). El helper está **copiado** en cada
+  lambda (convención del repo, sin imports compartidos).
+- **Fix del combinador DOCX (mis-tenanting):** `Template_Combination` PERDÍA `nit`/`samples`/
+  `documentFormat` al re-emitir a `Send-EAP` → Send-EAP corría con `tenant=''` (escribía en la
+  tabla equivocada) y no contaba muestras ni distinguía el formato. Ahora los **preserva** en la
+  re-emisión (el combinador PDF ya lo hacía).
+- **Checkpoint INTRA-PARTE (reanudación) en EM/EAU:** un `part` del canal trae hasta 250
+  destinatarios que EM envía en chunks de `QUANTITY_BATCH` (50; EAU 25) → varios `send_bulk`. Si
+  uno fallaba a mitad, antes se marcaba TODA la parte en Error y se bloqueaba → los chunks
+  siguientes se **perdían** y un reintento reenviaba desde cero. Ahora `Send-EM`/`Send-EAU` reclaman
+  **por CHUNK** (`_claim_part` con `stage='send#{offset}'`): si el chunk ya salió, se OMITE; si su
+  `send_bulk` falla (SES no entregó nada), se **libera** el claim (`_release_part` = delete) y se
+  re-lanza → la redelivery de SQS **reanuda EXACTAMENTE desde ese chunk**, sin reenviar los ya
+  enviados ni perder los pendientes. La reanudación es **automática por SQS** (no necesita
+  `Admin_Requeue`, que opera al nivel de `procesar_parte`/`processedParts`). El resto de canales
+  (SMS/Voz/WhatsApp/EAP) procesa el `part` como unidad → conserva el claim a nivel de parte
+  (`stage='send'`). Muestras: el conteo se gatea con `any_sent` para no recontar en una redelivery
+  donde todos los chunks ya estaban enviados.
+- **Cobertura:** `08_Pruebas/PruebasSeguridad/test_idempotencia_envio.py` (claim atómico en los 6
+  workers + dedup a nivel handler de SMS/Voz/WhatsApp + reanudación por chunk en EM: falla el 2º
+  chunk y reanuda sin reenviar el 1º). Suite completo en verde. Los mensajes al canal SIEMPRE
+  llevan `part` único en el proceso (`prepare_message`, `part_offset = part*PART_SIZE`).
+  ⚠️ Pendiente relacionado (no en esta tanda): **DLQ** en las colas creadas por el CD (hoy solo en
+  Terraform); sin DLQ, un chunk con error PERSISTENTE se reintenta hasta agotar la retención. EAP
+  sigue tragando los fallos por-destinatario (pérdida silenciosa, otro pendiente).
+
 ### Ajustes operativos de envío y UX (jul 2026)
 - **Fix `ResourceNotFoundException` en el primer envío:** `Prepare-batch` ahora ESPERA a que
   las tablas por cliente (`{tenant}_processDetail/_sendDetail/_sendStatus/_unsubscribe/_blackList`)
@@ -839,6 +881,64 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   los mismos claims y `exp` fresco (sesión deslizante). El front lo renueva en segundo plano
   (`RequireAuth`) cuando el usuario está activo y al token le queda < 1 h.
 
+### Fix de seguridad: RBAC de sub-rol (`tenantRole`) — cierre del bypass del maker-checker (jul 2026)
+- **Problema (ALTO):** el mapping template no-proxy (`scripts/sync_api.py` `CONTEXT_TEMPLATE`) NO
+  reenviaba `tenantRole`. Los gates RBAC de sub-rol —`Campaign_Approve`, `Campaign_Reject`,
+  `Schedule_Create` y el **envío REAL** en `Prepare-batch`— leían `auth.get('tenantRole', 'owner')`:
+  al no llegar el campo, el default `'owner'` trataba a **cualquier** usuario autenticado del
+  tenant (incluido un `operator`) como owner → podía **aprobar/rechazar campañas y disparar envíos
+  reales** (gastar saldo), anulando el control maker-checker.
+- **Fix (2 partes, se despliegan juntas):**
+  1. **Mapping template** reenvía ahora `"tenantRole": "$context.authorizer.tenantRole"` (junto a
+     role/user/userId/customerId/customer/nit). Lo aplica `deploy-api.yml` (se dispara al cambiar
+     `scripts/sync_api.py`).
+  2. **Gates fail-CLOSED:** los 4 consumidores cambian su default de `'owner'` a `'operator'`
+     (menor privilegio) → si `tenantRole` no llega, **deniegan** en vez de asumir owner. El
+     `Authorizer`/`Login` **mantienen** el default `'owner'` para tokens **legacy** sin el claim
+     (compatibilidad: el usuario original de una empresa ES owner), así que un owner/approver
+     legítimo sigue pasando; solo cierra el caso de context ausente.
+- ⚠️ **Orden de despliegue:** ambos workflows (`deploy-api.yml` + `deploy-lambdas.yml`) se disparan
+  en el mismo push a `main`. Corren en paralelo; si las lambdas se actualizan antes que el template,
+  hay una ventana breve en la que un owner recibe 403 al aprobar/enviar (**falla SEGURO**: deniega,
+  nunca escala) que se auto-resuelve al terminar `deploy-api.yml`. Verificar que AMBOS terminen OK.
+- **Cobertura:** `test_mapping_template.py` (guard: el template reenvía todos los claims, incl.
+  `tenantRole`), `test_campaign_approval.py::test_approve_sin_tenantrole_403_failclosed` y
+  `test_prepare_batch_integration.py::{test_split_operator_no_dispara_envio_real,
+  test_split_sin_tenantrole_failclosed}`. Los tests de envío real ahora inyectan
+  `authorizer.tenantRole='owner'` en el context (simulan el owner + template arreglado).
+
+### Fix de seguridad: gate OWNER en la gestión de dominios (jul 2026)
+- **Problema:** `Api_V1_Domain_Add`/`Domain_Delete` se documentaban como **RBAC owner** pero el
+  backend **solo verificaba que hubiera sesión** (cualquier usuario del tenant); el "owner" estaba
+  únicamente en el front (puenteable llamando la API directo). Un `operator` podía **registrar** o
+  —peor— **borrar** un dominio de envío VERIFICADO (rompe la capacidad de envío de la empresa).
+- **Fix:** ambos exigen ahora `tenantRole == 'owner'` (config de cuenta sensible: identidad de
+  envío, DKIM, anti-spoofing) leído del context, **fail-CLOSED** (default menor privilegio si no
+  llega). `Domain/List` (solo lectura) queda sin gate. Requiere el `tenantRole` del mapping template
+  (ver arriba). Cubierto por `test_domains.py::{test_add_operator_403, test_add_sin_tenantrole_403_
+  failclosed, test_delete_operator_403}`.
+
+### Fix de seguridad/cumplimiento: filtro de lista negra FAIL-CLOSED (jul 2026)
+- **Problema (LEGAL + reputación):** `_batch_get_emails` (el helper de `check_blacklist`/
+  `check_unsubscribes` en `Prepare-batch`) hacía `except Exception: return set()` → ante CUALQUIER
+  error (un **throttling** transitorio en un lote grande) devolvía "nadie está filtrado" y el envío
+  seguía **a ciegas** hacia contactos en lista negra / desuscritos (viola Ley 1581 / habeas data y
+  daña la reputación SES **compartida**).
+- **Fix:** el `except` distingue causa. **Estructural** (`ResourceNotFoundException`/
+  `ValidationException`: la tabla no existe o su esquema viejo no permite consultar) → vacío seguro
+  (no hay entradas que filtrar). **Transitorio** (throttling, límite, 5xx, red) → **re-lanza**
+  (fail-closed) para que la parte se REPROCESE, en vez de enviar sin filtrar.
+- **Fix acoplado — el worker SQS ya no traga excepciones:** el branch SQS de `Prepare-batch`
+  (`if 'Records' in event`) estaba dentro del `try/except Exception` del handler, que devolvía un
+  500 → **para SQS eso es una invocación EXITOSA → ACKea y BORRA el mensaje** → la parte se perdía
+  en silencio (incluido el re-lanzamiento del filtro). Ahora, si el evento es SQS, el `except`
+  **propaga** (la invocación falla → SQS redelivery → reproceso idempotente por el claim de parte/
+  chunk → DLQ tras agotar reintentos). La ruta API (proxy) sigue devolviendo el 500 al llamante.
+  Es SEGURO propagar ahora porque el punto de idempotencia atómica ya hace el reproceso sin duplicar.
+  ⚠️ Refuerza la necesidad de **DLQ** en las colas del CD (hoy solo en Terraform) para no reintentar
+  un "mensaje veneno" hasta agotar la retención. Cubierto por `test_prepare_batch.py::
+  {test_filtro_error_transitorio_falla_cerrado, test_worker_sqs_propaga_excepcion_no_ackea}`.
+
 ### Sesión del front
 - El JWT se decodifica en el cliente para conocer `exp`: si venció, `apiClient` corta antes de
   llamar a la API y cualquier 401/403 del Authorizer limpia la sesión y redirige a `/login`
@@ -1164,6 +1264,13 @@ se puede leer del objeto ya subido a S3.)
         `visibilityTimeout`) y el **event source mapping** cola→lambda (`batchSize` default 10).
         La lambda con trigger `sqs` recibe además el token **`_SQS`** en su rol auto-detectado
         (el poller de Lambda lee la cola con el rol de la FUNCIÓN, aunque su código no use SQS).
+        **DLQ (jul 2026):** crea también la cola de mensajes muertos `{cola}-dlq` (retención 14 días)
+        y le pone a la cola una **redrive policy** con `maxReceiveCount` 5 (override `maxReceiveCount`).
+        Misma convención que Terraform (`infra/terraform/sqs.tf`) → convergen. Una cola EXISTENTE
+        sin redrive recibe la DLQ (best-effort, requiere `sqs:SetQueueAttributes`); las de Terraform
+        (ya con redrive) se dejan intactas. Sin DLQ, un "mensaje veneno" (fallo persistente) se
+        reintenta hasta agotar la retención (4 días) y se pierde en silencio — crítico ahora que el
+        worker SQS de Prepare-batch **propaga** los fallos (ver fix del filtro fail-closed).
       - `sns`: crea el **tópico** + permiso de invocación + suscripción (apuntar el config set
         SES/EUM al tópico sigue siendo manual, por eso no viene pre-llenado).
       - `schedule`: regla **EventBridge** `{funcion}-cron` con `rate()`/`cron()` + permiso + target.
@@ -1174,8 +1281,26 @@ se puede leer del objeto ya subido a S3.)
       `Sms/Wsp/Voice_Send-batch`→sus workers. El usuario de CI necesita además
       `sqs:GetQueueUrl/CreateQueue/GetQueueAttributes` y `lambda:ListEventSourceMappings/
       CreateEventSourceMapping/AddPermission` (+ `sns:CreateTopic/Subscribe/
-      ListSubscriptionsByTopic` y `events:PutRule/PutTargets` si se usan esas llaves) —
+      ListSubscriptionsByTopic` y `events:PutRule/PutTargets` si se usan esas llaves; y
+      `sqs:SetQueueAttributes` para la DLQ de colas existentes) —
       **agregar esos permisos ANTES del próximo push** que toque lambdas con trigger.
+
+### Fix: EAP registra los fallos de envío por destinatario (no más pérdida silenciosa) (jul 2026)
+- **Problema:** `Send-EAP` (canal de adjunto PERSONALIZADO por destinatario — docx/pdf, típicamente
+  documentos importantes) enviaba cada correo en un `try/except` que solo hacía `print(e)`. Un fallo
+  (throttle, dirección inválida, adjunto corrupto) se **tragaba**: sin estado en `sendStatus` y sin
+  evento SES (el envío nunca llegó a SES → no hay messageId) → el destinatario quedaba **invisible**
+  (ni enviado ni rechazado) y sin reintento (EAP "termina" la parte igual).
+- **Fix:** en el `except` por destinatario, `_record_send_failure` escribe una fila **state=3
+  (Reject)** en `{tenant}_sendStatus` con un **messageId sintético DETERMINISTA** por `(part, uniqueId)`
+  — necesario porque `Reports_Statistics` agrega **por messageId y descarta las filas sin él**. Así el
+  fallo se **cuenta como rechazo** en el reporte. El ÉXITO NO se registra aquí (lo reporta SES por
+  evento con el messageId real → registrarlo duplicaría). Clave determinista → un reproceso sobrescribe
+  (no duplica). Cubierto por `08_Pruebas/PruebasSeguridad/test_eap_send_failure.py`.
+- **Bug latente corregido de paso:** en EAP la variable `part` se **reasigna a `MIMEApplication`**
+  dentro del bucle, así que el `_mark_part(...,"Terminado")` (idempotencia, jul 2026) usaba una clave
+  basura. Se captura `part_id = part` antes del bucle y se usa en el claim/mark/registro de fallos.
+  (El **claim** de idempotencia ya era correcto — se hace ANTES del bucle, con `part` aún = id.)
 
 ### Seguridad (URGENTE)
 - [x] Scripts `prueba genera JWT.py` / `prueba jwt.py` limpios: leen `SECRET_KEY` de env (jul 2026).
