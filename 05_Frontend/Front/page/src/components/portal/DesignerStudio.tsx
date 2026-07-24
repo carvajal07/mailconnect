@@ -160,6 +160,8 @@ export default function DesignerStudio() {
       });
       if (isOk(res) && res.data?.pdfBase64) {
         setPreviewUrl(URL.createObjectURL(base64ToPdfBlob(res.data.pdfBase64)));
+      } else if (res.statusCode === 404 || res.statusCode === 403 || res.statusCode === 0) {
+        notify('La vista previa usa el motor /Template/Render-engine, que aún no está disponible. Pídele a tu administrador que despliegue esa ruta (es distinta de /Template/Render-pdf).', 'error');
       } else {
         notify(res.description || 'No se pudo generar el PDF.', 'error');
       }
