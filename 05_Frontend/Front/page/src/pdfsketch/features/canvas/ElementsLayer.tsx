@@ -3,6 +3,7 @@ import { Group } from 'react-konva';
 import type Konva from 'konva';
 import RectElement from './elements/RectElement';
 import CircleElement from './elements/CircleElement';
+import TriangleElement from './elements/TriangleElement';
 import LineLikeElement from './elements/LineLikeElement';
 import TextElement from './elements/TextElement';
 import DataFieldElement from './elements/DataFieldElement';
@@ -243,6 +244,17 @@ function renderElement(
     case 'circle':
       return (
         <CircleElement
+          key={key}
+          el={el}
+          zoom={zoom}
+          onSelect={onSelect}
+          onChange={(p) => onUpdate(el.id, p)}
+          draggable={draggable}
+        />
+      );
+    case 'triangle':
+      return (
+        <TriangleElement
           key={key}
           el={el}
           zoom={zoom}

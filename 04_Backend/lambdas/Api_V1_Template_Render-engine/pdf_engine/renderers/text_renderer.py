@@ -98,7 +98,32 @@ def render_text(
     elif transform == "capitalize":
         content = content.title()
 
-    para = RLParagraph(_escape_xml(content), rl_style)
+    # ── Interletra (letterSpacing) — Platypus Paragraph no la soporta, así que
+    # cuando el estilo la declara se hace un layout MANUAL: wrap por palabras con
+    # stringWidth + charSpace y drawString(charSpace=...) por línea. ──
+    letter_spacing = getattr(ts, "letter_spacing", 0) or 0
+    if letter_spacing:
+        _render_text_charspace(
+            canvas, content, font_name, font_size, letter_spacing,
+            color, alignment_str, line_height,
+            x + padding_left, y + padding_bottom, w - padding_left - padding_right,
+            h - padding_top - padding_bottom, ts,
+        )
+        return
+
+    # ── Decoraciones del ESTILO (subrayado/tachado/super-sub) → mini-XML de
+    # ReportLab Paragraph (antes se ignoraban en el elemento `text`). ──
+    markup = _escape_xml(content)
+    if getattr(ts, "underline", False):
+        markup = "<u>{}</u>".format(markup)
+    if getattr(ts, "strikethrough", False):
+        markup = "<strike>{}</strike>".format(markup)
+    if getattr(ts, "superscript", False):
+        markup = "<super>{}</super>".format(markup)
+    elif getattr(ts, "subscript", False):
+        markup = "<sub>{}</sub>".format(markup)
+
+    para = RLParagraph(markup, rl_style)
 
     inner_w = w - padding_left - padding_right
     inner_h = h - padding_top - padding_bottom
@@ -134,3 +159,73 @@ def _escape_xml(text: str) -> str:
             .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;"))
+
+
+def _render_text_charspace(
+    canvas: Canvas,
+    content: str,
+    font_name: str,
+    font_size: float,
+    letter_spacing_pt: float,
+    color,
+    alignment_str: str,
+    line_height: float,
+    x: float,
+    y: float,
+    inner_w: float,
+    inner_h: float,
+    ts,
+) -> None:
+    """Layout manual con interletra: wrap por palabras midiendo con stringWidth +
+    charSpace y dibujo con drawString(charSpace=...). Alineación left/center/right
+    (justify cae a left). Dibuja también subrayado/tachado del estilo."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    if inner_w <= 0 or inner_h <= 0:
+        return
+
+    def width_of(s: str) -> float:
+        return stringWidth(s, font_name, font_size) + letter_spacing_pt * max(0, len(s))
+
+    # Wrap simple por palabras respetando saltos de línea explícitos
+    lines: list[str] = []
+    for raw_line in content.split("\n"):
+        words = raw_line.split(" ")
+        cur = ""
+        for wd in words:
+            candidate = wd if not cur else cur + " " + wd
+            if cur and width_of(candidate) > inner_w:
+                lines.append(cur)
+                cur = wd
+            else:
+                cur = candidate
+        lines.append(cur)
+
+    leading = font_size * line_height
+    canvas.saveState()
+    canvas.setFont(font_name, font_size)
+    canvas.setFillColor(color)
+    canvas.setStrokeColor(color)
+
+    # Primera línea arriba del cuadro (coordenadas PDF: y crece hacia arriba)
+    baseline = y + inner_h - font_size
+    for ln in lines:
+        if baseline < y - leading:
+            break  # no cabe más
+        lw = width_of(ln)
+        if alignment_str == "center":
+            lx = x + max(0, (inner_w - lw) / 2)
+        elif alignment_str == "right":
+            lx = x + max(0, inner_w - lw)
+        else:
+            lx = x
+        canvas.drawString(lx, baseline, ln, charSpace=letter_spacing_pt)
+        if getattr(ts, "underline", False):
+            canvas.setLineWidth(max(0.5, font_size / 14.0))
+            canvas.line(lx, baseline - 1.5, lx + lw, baseline - 1.5)
+        if getattr(ts, "strikethrough", False):
+            canvas.setLineWidth(max(0.5, font_size / 14.0))
+            mid = baseline + font_size * 0.3
+            canvas.line(lx, mid, lx + lw, mid)
+        baseline -= leading
+    canvas.restoreState()

@@ -5,14 +5,15 @@ import {
   ChevronDown, ChevronRight, PaintBucket, Palette, Pencil, Pilcrow, Plus,
   Slash, Square, Trash2, Type,
 } from 'lucide-react';
-import { useDocumentStore, type StyleKey } from '@/store/documentStore';
+import { useDocumentStore, applyTextStyleProps, applyParagraphStyleProps, applyFillStyleProps, type StyleKey } from '@/store/documentStore';
 import { useSelectionStore } from '@/store/selectionStore';
 import type {
   TextStyle, ParagraphStyle, BorderStyle, LineStyle, FillStyle,
-  ElementModel, TextEl, RectEl, CircleEl, LineEl, PenEl, FlowableEl,
+  ElementModel, RectEl, CircleEl, LineEl, PenEl, FlowableEl,
   LineDashStyle,
 } from '@/types/document';
 import StyleEditorModal, { type StyleEditorTarget } from './StyleEditorModal';
+import { hexWithOpacity } from '@/utils/konvaFill';
 
 function getDashPattern(lineDash: LineDashStyle): number[] | undefined {
   switch (lineDash) {
@@ -28,9 +29,9 @@ function getDashPattern(lineDash: LineDashStyle): number[] | undefined {
 const APPLICABLE: Record<StyleKey, ElementModel['type'][]> = {
   textStyles:      ['text', 'dataField'],
   paragraphStyles: ['text'],
-  borderStyles:    ['rect', 'circle', 'frame', 'flowable'],
+  borderStyles:    ['rect', 'circle', 'triangle', 'frame', 'flowable'],
   lineStyles:      ['line', 'pen'],
-  fillStyles:      ['rect', 'circle', 'frame', 'flowable'],
+  fillStyles:      ['rect', 'circle', 'triangle', 'frame', 'flowable'],
 };
 
 const KEY_LABELS: Record<StyleKey, string> = {
@@ -99,35 +100,14 @@ const STYLE_KEYS: StyleKey[] = [
 function applyStyle(el: ElementModel, key: StyleKey, style: unknown, update: (id: string, p: Partial<ElementModel>) => void) {
   switch (key) {
     case 'textStyles': {
-      const s = style as TextStyle;
-      if (el.type === 'text') {
-        update(el.id, {
-          fontSize: s.fontSize,
-          fontFamily: s.fontId,
-          fontWeight: s.subFont === 'Bold' || s.subFont === 'BoldItalic' ? 700 : 400,
-          fontStyle: s.subFont === 'Italic' || s.subFont === 'BoldItalic' ? 'italic' : 'normal',
-          color: s.fillStyleId || (el as TextEl).color,
-        } as Partial<TextEl>);
-      } else if (el.type === 'dataField') {
-        update(el.id, {
-          fontSize: s.fontSize,
-          fontFamily: s.fontId,
-          color: s.fillStyleId || (el as { color: string }).color,
-        });
-      }
+      // Applier compartido con updateStyle (vinculación en vivo por textStyleId).
+      const next = applyTextStyleProps(el, style as TextStyle);
+      if (next !== el) update(el.id, next);
       break;
     }
     case 'paragraphStyles': {
-      const s = style as ParagraphStyle;
-      if (el.type === 'text') {
-        const alignMap: Record<string, TextEl['align']> = {
-          Left: 'left', Center: 'center', Right: 'right', Justify: 'justify-block',
-        };
-        update(el.id, {
-          align: alignMap[s.hAlign] ?? 'left',
-          lineHeight: s.lineSpacing,
-        } as Partial<TextEl>);
-      }
+      const next = applyParagraphStyleProps(el, style as ParagraphStyle);
+      if (next !== el) update(el.id, next);
       break;
     }
     case 'borderStyles': {
@@ -137,7 +117,7 @@ function applyStyle(el: ElementModel, key: StyleKey, style: unknown, update: (id
       const base = { stroke: s.colorId, strokeWidth: s.lineWidth, dash, borderStyleId: s.id };
       if (el.type === 'rect' || el.type === 'frame') {
         update(el.id, { ...base, cornerRadius } as Partial<RectEl>);
-      } else if (el.type === 'circle') {
+      } else if (el.type === 'circle' || el.type === 'triangle') {
         update(el.id, base as Partial<CircleEl>);
       } else if (el.type === 'flowable') {
         update(el.id, base as Partial<FlowableEl>);
@@ -158,10 +138,8 @@ function applyStyle(el: ElementModel, key: StyleKey, style: unknown, update: (id
       break;
     }
     case 'fillStyles': {
-      const s = style as FillStyle;
-      if (el.type === 'rect' || el.type === 'circle' || el.type === 'frame' || el.type === 'flowable') {
-        update(el.id, { fill: s.colorId } as Partial<RectEl>);
-      }
+      const next = applyFillStyleProps(el, style as FillStyle);
+      if (next !== el) update(el.id, next);
       break;
     }
   }
@@ -220,7 +198,7 @@ export default function StylesPanel() {
 
   function applyColorToSelection(rgb: string) {
     for (const el of selectedElements) {
-      if (el.type === 'rect' || el.type === 'circle' || el.type === 'frame' || el.type === 'flowable') {
+      if (el.type === 'rect' || el.type === 'circle' || el.type === 'triangle' || el.type === 'frame' || el.type === 'flowable') {
         updateElement(el.id, { fill: rgb } as Partial<ElementModel>);
       } else if (el.type === 'text' || el.type === 'dataField') {
         updateElement(el.id, { color: rgb } as Partial<ElementModel>);
@@ -307,7 +285,7 @@ export default function StylesPanel() {
                       className="text-[9px] font-semibold px-1 rounded opacity-0 group-hover:opacity-100"
                       style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
                       title={`Aplicar "${c.name}" a la selección`}
-                      onClick={(e) => { e.stopPropagation(); applyColorToSelection(c.rgb); }}
+                      onClick={(e) => { e.stopPropagation(); applyColorToSelection(hexWithOpacity(c.rgb, (c.alpha ?? 255) / 255)); }}
                     >
                       Aplicar
                     </button>

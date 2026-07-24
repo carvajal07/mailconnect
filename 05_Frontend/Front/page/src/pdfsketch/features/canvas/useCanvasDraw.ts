@@ -14,9 +14,10 @@ import type {
   PenEl,
   RectEl,
   TextEl,
+  TriangleEl,
 } from '@/types/document';
 
-export type DrawTool = 'rect' | 'circle' | 'line' | 'pen' | 'text' | 'frame';
+export type DrawTool = 'rect' | 'circle' | 'triangle' | 'line' | 'pen' | 'text' | 'frame';
 
 export interface Draft {
   tool: DrawTool;
@@ -29,7 +30,7 @@ export interface Draft {
 }
 
 export function isDrawTool(t: Tool): t is DrawTool {
-  return t === 'rect' || t === 'circle' || t === 'line' || t === 'pen' || t === 'text' || t === 'frame';
+  return t === 'rect' || t === 'circle' || t === 'triangle' || t === 'line' || t === 'pen' || t === 'text' || t === 'frame';
 }
 
 interface Args {
@@ -177,7 +178,7 @@ function draftToElement(d: Draft, zIndex: number, name: string): ElementModel | 
     zIndex,
   };
 
-  if (d.tool === 'rect' || d.tool === 'circle') {
+  if (d.tool === 'rect' || d.tool === 'circle' || d.tool === 'triangle') {
     const end = d.constrain ? applyConstrain(d.startMm, d.currentMm) : d.currentMm;
     const { x, y, w, h } = bboxFromTwoPoints(d.startMm, end);
     if (w < 0.5 && h < 0.5) return null;
@@ -195,6 +196,20 @@ function draftToElement(d: Draft, zIndex: number, name: string): ElementModel | 
         stroke: '#111111',
         strokeWidth: 0.25,
         cornerRadius: 0,
+      };
+      return el;
+    }
+    if (d.tool === 'triangle') {
+      const el: TriangleEl = {
+        ...baseCommon,
+        type: 'triangle',
+        x,
+        y,
+        width,
+        height,
+        fill: 'transparent',
+        stroke: '#111111',
+        strokeWidth: 0.25,
       };
       return el;
     }

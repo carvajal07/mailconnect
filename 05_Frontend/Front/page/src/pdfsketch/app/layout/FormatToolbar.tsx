@@ -7,16 +7,18 @@ import {
   Bold,
   Italic,
   Strikethrough,
+  Subscript,
+  Superscript,
   Underline,
 } from 'lucide-react';
 import { useDocumentStore } from '@/store/documentStore';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useActiveEditorStore } from '@/store/activeEditorStore';
-import type { CircleEl, ElementModel, LineEl, PenEl, RectEl, TextEl } from '@/types/document';
+import type { CircleEl, ElementModel, LineEl, PenEl, RectEl, TextEl, TriangleEl } from '@/types/document';
 
 type Align = TextEl['align'];
-type ShapeEl = RectEl | CircleEl | LineEl | PenEl;
-type FillableEl = RectEl | CircleEl;
+type ShapeEl = RectEl | CircleEl | TriangleEl | LineEl | PenEl;
+type FillableEl = RectEl | CircleEl | TriangleEl;
 
 const FONT_FAMILIES = ['Inter', 'JetBrains Mono', 'Arial', 'Helvetica', 'Times New Roman', 'Courier New'];
 const FONT_VARIANTS = ['Regular', 'Medium', 'Semi-Bold', 'Bold', 'Italic'];
@@ -47,12 +49,12 @@ export default function FormatToolbar() {
     return pages.flatMap((p) => p.elements).filter(
       (e): e is ShapeEl =>
         idSet.has(e.id) &&
-        (e.type === 'rect' || e.type === 'circle' || e.type === 'line' || e.type === 'pen'),
+        (e.type === 'rect' || e.type === 'circle' || e.type === 'triangle' || e.type === 'line' || e.type === 'pen'),
     );
   }, [pages, selectedIds]);
 
   const fillableShapes = useMemo<FillableEl[]>(
-    () => selectedShapes.filter((e): e is FillableEl => e.type === 'rect' || e.type === 'circle'),
+    () => selectedShapes.filter((e): e is FillableEl => e.type === 'rect' || e.type === 'circle' || e.type === 'triangle'),
     [selectedShapes],
   );
 
@@ -242,6 +244,22 @@ export default function FormatToolbar() {
         onClick={() => editing
           ? editorApi!.exec('strikeThrough')
           : applyText({ textDecoration: decoration === 'line-through' ? undefined : 'line-through' })}
+      />
+      {/* Super / subíndice — al editar aplica a la selección (execCommand);
+          sin editor, no hay equivalente a nivel de elemento (se ignora). */}
+      <Toggle icon={Superscript} label="Superíndice (en edición)" disabled={!editing}
+        onClick={() => editorApi?.exec('superscript')}
+      />
+      <Toggle icon={Subscript} label="Subíndice (en edición)" disabled={!editing}
+        onClick={() => editorApi?.exec('subscript')}
+      />
+      {/* Interletra (pt): al editar, a la selección; si no, al elemento entero */}
+      <span className="text-[10px] text-muted" title="Interletra (pt)">A↔</span>
+      <NumberField
+        disabled={textCtrlDisabled}
+        value={editing ? undefined : ((textCommon('letterSpacing') as number | undefined) ?? 0)}
+        onCommit={(v) => editing ? editorApi!.setLetterSpacing(v) : applyText({ letterSpacing: v })}
+        width={48}
       />
       {/* Color de texto (al editar, a la selección; si no, al elemento) */}
       <label

@@ -1,8 +1,8 @@
 import { useDocumentStore } from '@/store/documentStore';
-import type { CircleEl, RectEl } from '@/types/document';
+import type { CircleEl, RectEl, TriangleEl } from '@/types/document';
 import { SectionTitle, Row, ColorInput, NumberInput, SliderRow } from '../shared';
 
-type ShapeEl = RectEl | CircleEl;
+type ShapeEl = RectEl | CircleEl | TriangleEl;
 
 interface Props {
   el: ShapeEl;

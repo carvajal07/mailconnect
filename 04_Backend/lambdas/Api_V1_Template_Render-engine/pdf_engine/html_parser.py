@@ -35,6 +35,7 @@ class InlineStyle:
     bold: bool = False
     italic: bool = False
     underline: bool = False
+    strikethrough: bool = False
     color: Optional[str] = None        # hex string e.g. "#246ed6"
     font_size_override: Optional[float] = None  # pt
     superscript: bool = False
@@ -47,6 +48,7 @@ class InlineStyle:
             bold=other.bold or self.bold,
             italic=other.italic or self.italic,
             underline=other.underline or self.underline,
+            strikethrough=other.strikethrough or self.strikethrough,
             color=other.color if other.color is not None else self.color,
             font_size_override=(
                 other.font_size_override
@@ -120,8 +122,11 @@ def _parse_css(style_attr: str) -> InlineStyle:
             result.bold = True
         elif prop == "font-style" and value == "italic":
             result.italic = True
-        elif prop == "text-decoration" and "underline" in value:
-            result.underline = True
+        elif prop == "text-decoration":
+            if "underline" in value:
+                result.underline = True
+            if "line-through" in value:
+                result.strikethrough = True
         elif prop == "vertical-align":
             if value == "super":
                 result.superscript = True
@@ -220,6 +225,9 @@ class _ContentHTMLParser(HTMLParser):
 
         elif tag == "u":
             self._push_style(InlineStyle(underline=True))
+
+        elif tag in ("s", "strike", "del"):
+            self._push_style(InlineStyle(strikethrough=True))
 
         elif tag == "ul":
             self._list_stack.append("ul")

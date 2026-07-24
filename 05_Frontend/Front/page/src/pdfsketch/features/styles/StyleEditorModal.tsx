@@ -777,9 +777,7 @@ export function LineStyleFields({ draft, patch }: { draft: LineStyle; patch: (p:
 export function TextStyleFields({ draft, patch }: { draft: TextStyle; patch: (p: Partial<TextStyle>) => void }) {
   return (
     <>
-      <Row label="Tamaño (pt)">
-        <NumInput value={draft.fontSize} min={1} onChange={(v) => patch({ fontSize: v })} />
-      </Row>
+      <Divider label="Fuente" />
       <Row label="Fuente">
         <input className="field" value={draft.fontId} onChange={(e) => patch({ fontId: e.target.value })} placeholder="Arial" />
       </Row>
@@ -790,8 +788,51 @@ export function TextStyleFields({ draft, patch }: { draft: TextStyle; patch: (p:
           ))}
         </select>
       </Row>
+      <Row label="Tamaño (pt)">
+        <NumInput value={draft.fontSize} min={1} onChange={(v) => patch({ fontSize: v })} />
+      </Row>
       <Row label="Color">
         <ColorInput value={draft.fillStyleId || '#000000'} onChange={(v) => patch({ fillStyleId: v })} />
+      </Row>
+
+      <Divider label="Reglas" />
+      <Row label="Interletra (pt)">
+        <NumInput value={draft.letterSpacing ?? 0} min={-5} step={0.1} onChange={(v) => patch({ letterSpacing: v })} />
+      </Row>
+      <Row label="Interlineado (×)">
+        <NumInput value={draft.lineHeight ?? 1.2} min={0.5} max={5} step={0.1} onChange={(v) => patch({ lineHeight: v })} />
+      </Row>
+      <Row label="Transformación">
+        <select className="field" value={draft.textTransform ?? 'none'}
+          onChange={(e) => patch({ textTransform: e.target.value as TextStyle['textTransform'] })}>
+          <option value="none">Ninguna</option>
+          <option value="uppercase">MAYÚSCULAS</option>
+          <option value="lowercase">minúsculas</option>
+          <option value="capitalize">Capitalizar</option>
+        </select>
+      </Row>
+
+      <Divider label="Super / Sub" />
+      <Row label="Superíndice">
+        <input type="checkbox" checked={!!draft.superscript}
+          onChange={(e) => patch({ superscript: e.target.checked, subscript: e.target.checked ? false : draft.subscript })} />
+      </Row>
+      <Row label="Subíndice">
+        <input type="checkbox" checked={!!draft.subscript}
+          onChange={(e) => patch({ subscript: e.target.checked, superscript: e.target.checked ? false : draft.superscript })} />
+      </Row>
+      <Row label="Tamaño super/sub (%)">
+        <NumInput value={draft.superSubSize ?? 58} min={10} max={100} step={1} onChange={(v) => patch({ superSubSize: v })} />
+      </Row>
+
+      <Divider label="Líneas" />
+      <Row label="Subrayado">
+        <input type="checkbox" checked={!!draft.underline}
+          onChange={(e) => patch({ underline: e.target.checked })} />
+      </Row>
+      <Row label="Tachado">
+        <input type="checkbox" checked={!!draft.strikethrough}
+          onChange={(e) => patch({ strikethrough: e.target.checked })} />
       </Row>
     </>
   );
@@ -833,6 +874,51 @@ export function ParagraphStyleFields({ draft, patch }: { draft: ParagraphStyle; 
         <NumInput value={draft.spaceAfter} min={0} step={0.5} onChange={(v) => patch({ spaceAfter: v })} />
       </Row>
 
+      <Divider label="Listas" />
+      <Row label="Estilo de lista">
+        <select className="field" value={draft.listStyle ?? 'none'}
+          onChange={(e) => patch({ listStyle: e.target.value as ParagraphStyle['listStyle'] })}>
+          <option value="none">Ninguna</option>
+          <option value="bullet">Viñetas</option>
+          <option value="numbered">Numerada</option>
+          <option value="letter">Letras</option>
+        </select>
+      </Row>
+      {draft.listStyle === 'bullet' && (
+        <Row label="Viñeta">
+          <div className="flex items-center gap-1 flex-wrap">
+            {['•', '○', '■', '□', '❖', '➢', '✓'].map((ch) => (
+              <button key={ch} type="button"
+                onClick={() => patch({ bulletChar: ch })}
+                className="w-6 h-6 rounded text-sm"
+                style={(draft.bulletChar ?? '•') === ch
+                  ? { background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent)' }
+                  : { background: 'var(--bg-3)', border: '1px solid var(--line-2)', color: 'var(--ink)' }}>
+                {ch}
+              </button>
+            ))}
+            <input className="field" style={{ width: 44 }} maxLength={3}
+              value={draft.bulletChar ?? '•'}
+              onChange={(e) => patch({ bulletChar: e.target.value || '•' })} />
+          </div>
+        </Row>
+      )}
+      {(draft.listStyle === 'numbered' || draft.listStyle === 'letter') && (
+        <Row label="Formato">
+          <select className="field" value={draft.numberFormat ?? '0.'}
+            onChange={(e) => patch({ numberFormat: e.target.value })}>
+            <option value="0.">1. / a.</option>
+            <option value="0)">1) / a)</option>
+            <option value="(0)">(1) / (a)</option>
+          </select>
+        </Row>
+      )}
+      {draft.listStyle && draft.listStyle !== 'none' && (
+        <Row label="Sangría lista (mm)">
+          <NumInput value={draft.listIndent ?? 5} min={0} step={0.5} onChange={(v) => patch({ listIndent: v })} />
+        </Row>
+      )}
+
       <Divider label="Flujo (saltos de línea/página)" />
       <Row label="No cortar líneas">
         <select className="field" value={draft.keepLinesTogether} onChange={(e) => patch({ keepLinesTogether: e.target.value as 'Yes' | 'No' })}>
@@ -858,13 +944,150 @@ export function ParagraphStyleFields({ draft, patch }: { draft: ParagraphStyle; 
   );
 }
 
-/* ─── FillStyle fields ─── */
+/* ─── FillStyle fields (paridad Diseñador: none/sólido/degradado + opacidad) ─── */
+
+const FILL_TYPE_LABELS: { value: NonNullable<FillStyle['fillType']>; label: string }[] = [
+  { value: 'none',   label: 'Ninguno (transparente)' },
+  { value: 'solid',  label: 'Sólido' },
+  { value: 'linear', label: 'Degradado lineal' },
+  { value: 'radial', label: 'Degradado radial' },
+];
+
+function defaultGradient(kind: 'linear' | 'radial'): NonNullable<FillStyle['gradient']> {
+  return {
+    kind,
+    angle: 180,
+    cx: 50,
+    cy: 50,
+    stops: [
+      { offset: 0, color: '#ffffff', opacity: 1 },
+      { offset: 100, color: '#3b82f6', opacity: 1 },
+    ],
+  };
+}
 
 export function FillStyleFields({ draft, patch }: { draft: FillStyle; patch: (p: Partial<FillStyle>) => void }) {
+  const type = draft.fillType ?? 'solid';
+  const grad = draft.gradient;
+  const isGradient = type === 'linear' || type === 'radial';
+
+  const setGrad = (p: Partial<NonNullable<FillStyle['gradient']>>) => {
+    const base = grad ?? defaultGradient(type === 'radial' ? 'radial' : 'linear');
+    patch({ gradient: { ...base, ...p, kind: type === 'radial' ? 'radial' : 'linear' } });
+  };
+
+  const stops = grad?.stops ?? [];
+  const gradCss = isGradient && stops.length
+    ? (type === 'radial'
+      ? `radial-gradient(circle at ${grad?.cx ?? 50}% ${grad?.cy ?? 50}%, ${[...stops].sort((a, b) => a.offset - b.offset).map((s) => `${s.color} ${s.offset}%`).join(', ')})`
+      : `linear-gradient(${grad?.angle ?? 180}deg, ${[...stops].sort((a, b) => a.offset - b.offset).map((s) => `${s.color} ${s.offset}%`).join(', ')})`)
+    : undefined;
+
   return (
-    <Row label="Color">
-      <ColorInput value={draft.colorId || '#ffffff'} onChange={(v) => patch({ colorId: v })} />
-    </Row>
+    <>
+      <Row label="Tipo de relleno">
+        <select className="field" value={type}
+          onChange={(e) => {
+            const t = e.target.value as NonNullable<FillStyle['fillType']>;
+            const p: Partial<FillStyle> = { fillType: t };
+            if ((t === 'linear' || t === 'radial')) {
+              p.gradient = { ...(draft.gradient ?? defaultGradient(t)), kind: t };
+            }
+            patch(p);
+          }}>
+          {FILL_TYPE_LABELS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </Row>
+
+      {/* Vista previa */}
+      <div className="h-12 rounded" style={{
+        border: '1px solid var(--line-2)',
+        background: type === 'none'
+          ? 'repeating-conic-gradient(#bbb 0% 25%, #fff 0% 50%) 0 0 / 10px 10px'
+          : gradCss ?? (draft.colorId || '#ffffff'),
+        opacity: type === 'solid' ? (draft.opacity ?? 1) : 1,
+      }} />
+
+      {type === 'solid' && (
+        <Row label="Color">
+          <ColorInput value={draft.colorId || '#ffffff'} onChange={(v) => patch({ colorId: v })} />
+        </Row>
+      )}
+
+      {isGradient && (
+        <>
+          {type === 'linear' && (
+            <Row label="Ángulo (°)">
+              <div className="flex items-center gap-1">
+                {([['↑', 0], ['↗', 45], ['→', 90], ['↘', 135], ['↓', 180], ['↙', 225], ['←', 270], ['↖', 315]] as const).map(([sym, deg]) => (
+                  <button key={deg} type="button" title={`${deg}°`}
+                    onClick={() => setGrad({ angle: deg })}
+                    className="w-6 h-6 rounded text-11"
+                    style={(grad?.angle ?? 180) === deg
+                      ? { background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent)' }
+                      : { background: 'var(--bg-3)', border: '1px solid var(--line-2)', color: 'var(--ink-2)' }}>
+                    {sym}
+                  </button>
+                ))}
+                <input className="field" style={{ width: 52 }} type="number" min={0} max={359}
+                  value={grad?.angle ?? 180}
+                  onChange={(e) => setGrad({ angle: ((Number(e.target.value) % 360) + 360) % 360 })} />
+              </div>
+            </Row>
+          )}
+          {type === 'radial' && (
+            <>
+              <Row label="Centro X (%)">
+                <NumInput value={grad?.cx ?? 50} min={0} max={100} step={1} onChange={(v) => setGrad({ cx: v })} />
+              </Row>
+              <Row label="Centro Y (%)">
+                <NumInput value={grad?.cy ?? 50} min={0} max={100} step={1} onChange={(v) => setGrad({ cy: v })} />
+              </Row>
+            </>
+          )}
+
+          <Divider label="Paradas del degradado" />
+          {stops.map((st, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(st.color) ? st.color : '#888888'}
+                onChange={(e) => setGrad({ stops: stops.map((s, j) => (j === i ? { ...s, color: e.target.value } : s)) })}
+                className="w-7 h-7 cursor-pointer rounded border-0 p-0 bg-transparent shrink-0" />
+              <input className="field" style={{ width: 60 }} type="number" min={0} max={100} title="Posición (%)"
+                value={st.offset}
+                onChange={(e) => setGrad({ stops: stops.map((s, j) => (j === i ? { ...s, offset: Math.max(0, Math.min(100, Number(e.target.value))) } : s)) })} />
+              <input className="field" style={{ width: 60 }} type="number" min={0} max={1} step={0.05} title="Opacidad (0–1)"
+                value={st.opacity ?? 1}
+                onChange={(e) => setGrad({ stops: stops.map((s, j) => (j === i ? { ...s, opacity: Math.max(0, Math.min(1, Number(e.target.value))) } : s)) })} />
+              <button type="button" title="Eliminar parada"
+                disabled={stops.length <= 2}
+                onClick={() => setGrad({ stops: stops.filter((_, j) => j !== i) })}
+                className="w-6 h-6 flex items-center justify-center rounded text-red-400 disabled:opacity-30"
+                style={{ background: 'var(--bg-3)', border: '1px solid var(--line-2)' }}>
+                ×
+              </button>
+            </div>
+          ))}
+          <button type="button"
+            onClick={() => setGrad({ stops: [...stops, { offset: 50, color: '#888888', opacity: 1 }] })}
+            className="h-7 rounded text-11"
+            style={{ background: 'var(--bg-3)', border: '1px solid var(--line-2)', color: 'var(--ink-2)' }}>
+            + Añadir parada
+          </button>
+        </>
+      )}
+
+      {type !== 'none' && (
+        <Row label="Opacidad">
+          <div className="flex items-center gap-2">
+            <input type="range" min={0} max={1} step={0.01} value={draft.opacity ?? 1}
+              onChange={(e) => patch({ opacity: Number(e.target.value) })} className="flex-1" />
+            <span className="text-11 w-10 text-right" style={{ color: 'var(--muted)' }}>
+              {Math.round((draft.opacity ?? 1) * 100)}%
+            </span>
+          </div>
+        </Row>
+      )}
+    </>
   );
 }
 

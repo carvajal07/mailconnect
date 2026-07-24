@@ -8,6 +8,7 @@ export type ElementType =
   | 'text'
   | 'rect'
   | 'circle'
+  | 'triangle'
   | 'line'
   | 'pen'
   | 'image'
@@ -16,6 +17,28 @@ export type ElementType =
   | 'dataField'
   | 'frame'
   | 'flowable';
+
+/** Transformación de mayúsculas del texto (paridad con el Diseñador). */
+export type TextTransform = 'none' | 'uppercase' | 'lowercase' | 'capitalize';
+
+/** Desplazamiento de línea base: superíndice / subíndice. */
+export type BaselineShift = 'super' | 'sub';
+
+/** Estilo de lista de un párrafo (paridad con el Diseñador). */
+export type ListStyle = 'none' | 'bullet' | 'numbered' | 'letter';
+
+/**
+ * Degradado de relleno (paridad con el FillStyleEditor del Diseñador).
+ * `linear` usa `angle` (grados, 0 = ↑, 90 = →); `radial` usa `cx`/`cy` (% 0–100).
+ * Los stops llevan `offset` 0–100 (%), color hex y opacidad 0–1.
+ */
+export interface FillGradient {
+  kind: 'linear' | 'radial';
+  angle?: number;
+  cx?: number;
+  cy?: number;
+  stops: { offset: number; color: string; opacity?: number }[];
+}
 
 export interface BaseEl {
   id: string;
@@ -42,6 +65,10 @@ export interface TextSpan {
   fontWeight?: number;
   fontStyle?: 'normal' | 'italic';
   textDecoration?: 'underline' | 'line-through';
+  /** Superíndice/subíndice del fragmento (tamaño ~58% + desplazamiento de baseline). */
+  baselineShift?: BaselineShift;
+  /** Interletra en pt (se suma al avance de cada carácter). */
+  letterSpacing?: number;
   color?: string;
 }
 
@@ -57,6 +84,23 @@ export interface TextEl extends BaseEl {
   align: 'left' | 'center' | 'right' | 'justify-left' | 'justify-center' | 'justify-right' | 'justify-block';
   lineHeight: number;
   color: string;
+  /** Interletra por defecto del elemento, en pt. */
+  letterSpacing?: number;
+  /** Transformación de mayúsculas (se aplica al render, no muta el texto). */
+  textTransform?: TextTransform;
+  // ── Propiedades de PÁRRAFO (mm salvo indicación) — las aplica un ParagraphStyle ──
+  leftIndent?: number;
+  rightIndent?: number;
+  firstLineIndent?: number;
+  spaceBefore?: number;      // entre párrafos (antes)
+  spaceAfter?: number;       // entre párrafos (después)
+  listStyle?: ListStyle;     // viñetas / numeración
+  listIndent?: number;       // sangría del marcador de lista (mm)
+  bulletChar?: string;       // carácter de viñeta (default •)
+  numberFormat?: string;     // formato de número: '0.' | '0)' | '(0)'
+  // ── Vínculos a recursos (actualización EN VIVO al editar el estilo) ──
+  textStyleId?: string;
+  paragraphStyleId?: string;
 }
 
 export interface RectEl extends BaseEl {
@@ -67,6 +111,12 @@ export interface RectEl extends BaseEl {
   cornerRadius: number;
   dash?: number[];
   borderStyleId?: string;
+  /** Opacidad del relleno 0–1 (default 1). */
+  opacity?: number;
+  /** Degradado — si está presente anula el `fill` sólido. */
+  fillGradient?: FillGradient;
+  /** Vínculo al FillStyle aplicado (actualización en vivo). */
+  fillStyleId?: string;
 }
 
 export interface CircleEl extends BaseEl {
@@ -76,6 +126,22 @@ export interface CircleEl extends BaseEl {
   strokeWidth: number;
   dash?: number[];
   borderStyleId?: string;
+  opacity?: number;
+  fillGradient?: FillGradient;
+  fillStyleId?: string;
+}
+
+/** Triángulo (apunta hacia arriba) — paridad con la forma `triangle` del Diseñador. */
+export interface TriangleEl extends BaseEl {
+  type: 'triangle';
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  dash?: number[];
+  borderStyleId?: string;
+  opacity?: number;
+  fillGradient?: FillGradient;
+  fillStyleId?: string;
 }
 
 export interface LineEl extends BaseEl {
@@ -187,6 +253,7 @@ export type ElementModel =
   | TextEl
   | RectEl
   | CircleEl
+  | TriangleEl
   | LineEl
   | PenEl
   | ImageEl
@@ -221,6 +288,8 @@ export interface ColorToken {
   id: string;
   name: string;
   rgb: string;
+  /** Opacidad 0–255 (paridad con el ColorEditor del Diseñador). Default 255. */
+  alpha?: number;
 }
 
 export interface TextStyle {
@@ -231,6 +300,21 @@ export interface TextStyle {
   subFont: string;
   fillStyleId: string;
   ancestorId?: string;
+  // ── Paridad con el TextStyleEditor del Diseñador (campos RENDERIZABLES) ──
+  /** Subrayado / tachado (tab «Líneas»). */
+  underline?: boolean;
+  strikethrough?: boolean;
+  /** Interletra en pt (tab «Reglas»; el Diseñador la guarda en mm — aquí pt como el resto del texto). */
+  letterSpacing?: number;
+  /** Interlineado (multiplicador; tab «Reglas»). */
+  lineHeight?: number;
+  /** Transformación de mayúsculas (tab «Reglas»). */
+  textTransform?: TextTransform;
+  /** Superíndice / subíndice (tab «Super/Sub»). */
+  superscript?: boolean;
+  subscript?: boolean;
+  /** Tamaño relativo del super/subíndice en % (tab «Super/Sub», default 58). */
+  superSubSize?: number;
 }
 
 export interface ParagraphStyle {
@@ -249,6 +333,11 @@ export interface ParagraphStyle {
   keepLinesTogether: 'No' | 'Yes';
   dontWrap: boolean;
   hAlign: 'Left' | 'Center' | 'Right' | 'Justify';
+  // ── Paridad con el ParagraphStyleEditor del Diseñador (tab «Listas») ──
+  listStyle?: ListStyle;
+  listIndent?: number;       // mm
+  bulletChar?: string;       // '•' '○' '■' '□' '❖' '➢' '✓' o personalizado
+  numberFormat?: string;     // '0.' | '0)' | '(0)'
 }
 
 export interface BorderParts {
@@ -294,6 +383,13 @@ export interface FillStyle {
   id: string;
   name: string;
   colorId: string;
+  // ── Paridad con el FillStyleEditor del Diseñador (tipos RENDERIZABLES) ──
+  /** Tipo de relleno. Default (ausente) = 'solid'. */
+  fillType?: 'none' | 'solid' | 'linear' | 'radial';
+  /** Opacidad 0–1 (default 1). */
+  opacity?: number;
+  /** Degradado (para fillType linear/radial). */
+  gradient?: FillGradient;
 }
 
 export interface ImageAsset {

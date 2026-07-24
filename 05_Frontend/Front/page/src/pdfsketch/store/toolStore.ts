@@ -6,6 +6,7 @@ export type Tool =
   | 'text'
   | 'rect'
   | 'circle'
+  | 'triangle'
   | 'line'
   | 'pen'
   | 'image'

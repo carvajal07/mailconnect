@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { temporal } from 'zundo';
-import type { DocumentModel, ElementModel, Page, TextStyle, ParagraphStyle, BorderStyle, LineStyle, FillStyle, LineDashStyle } from '@/types/document';
+import type { DocumentModel, ElementModel, Page, TextStyle, ParagraphStyle, BorderStyle, LineStyle, FillStyle, LineDashStyle, TextEl } from '@/types/document';
 import { nextId } from '@/utils/id';
 
 function getDashPattern(lineDash: LineDashStyle): number[] | undefined {
@@ -27,6 +27,68 @@ function applyLineStyleProps(el: ElementModel, style: LineStyle): ElementModel {
   if (style.colorId) Object.assign(base, { stroke: style.colorId });
   if (el.type === 'line') return { ...el, ...base, dash: style.dash } as ElementModel;
   return { ...el, ...base } as ElementModel;
+}
+
+/** Copia las props de un TextStyle sobre un elemento de texto/dataField (vinculación en vivo). */
+export function applyTextStyleProps(el: ElementModel, s: TextStyle): ElementModel {
+  if (el.type === 'text') {
+    const patch: Partial<TextEl> = {
+      fontSize: s.fontSize,
+      fontFamily: s.fontId,
+      fontWeight: s.subFont === 'Bold' || s.subFont === 'BoldItalic' ? 700 : 400,
+      fontStyle: s.subFont === 'Italic' || s.subFont === 'BoldItalic' ? 'italic' : 'normal',
+      color: s.fillStyleId || el.color,
+      textDecoration: s.underline ? 'underline' : s.strikethrough ? 'line-through' : undefined,
+      letterSpacing: s.letterSpacing ?? undefined,
+      textTransform: s.textTransform ?? 'none',
+      textStyleId: s.id,
+    };
+    if (s.lineHeight) patch.lineHeight = s.lineHeight;
+    return { ...el, ...patch };
+  }
+  if (el.type === 'dataField') {
+    return { ...el, fontSize: s.fontSize, fontFamily: s.fontId, color: s.fillStyleId || el.color };
+  }
+  return el;
+}
+
+/** Copia las props de un ParagraphStyle sobre un elemento de texto (vinculación en vivo). */
+export function applyParagraphStyleProps(el: ElementModel, s: ParagraphStyle): ElementModel {
+  if (el.type !== 'text') return el;
+  const alignMap: Record<string, TextEl['align']> = {
+    Left: 'left', Center: 'center', Right: 'right', Justify: 'justify-block',
+  };
+  const patch: Partial<TextEl> = {
+    align: alignMap[s.hAlign] ?? 'left',
+    lineHeight: s.lineSpacing,
+    leftIndent: s.leftIndent,
+    rightIndent: s.rightIndent,
+    firstLineIndent: s.firstLineLeftIndent,
+    spaceBefore: s.spaceBefore,
+    spaceAfter: s.spaceAfter,
+    listStyle: s.listStyle ?? 'none',
+    listIndent: s.listIndent,
+    bulletChar: s.bulletChar,
+    numberFormat: s.numberFormat,
+    paragraphStyleId: s.id,
+  };
+  return { ...el, ...patch };
+}
+
+/** Copia las props de un FillStyle (sólido/degradado/opacidad) sobre una forma. */
+export function applyFillStyleProps(el: ElementModel, s: FillStyle): ElementModel {
+  if (el.type !== 'rect' && el.type !== 'circle' && el.type !== 'triangle'
+    && el.type !== 'frame' && el.type !== 'flowable') return el;
+  const isGradient = s.fillType === 'linear' || s.fillType === 'radial';
+  const patch = {
+    fill: s.fillType === 'none' ? 'transparent' : (s.colorId || '#ffffff'),
+    fillGradient: isGradient && s.gradient
+      ? { ...s.gradient, kind: s.fillType as 'linear' | 'radial' }
+      : undefined,
+    opacity: s.opacity ?? 1,
+    fillStyleId: s.id,
+  };
+  return { ...el, ...patch } as ElementModel;
 }
 
 export type StyleKey = 'textStyles' | 'paragraphStyles' | 'borderStyles' | 'lineStyles' | 'fillStyles';
@@ -106,7 +168,7 @@ interface DocumentState {
 
   // Colores del documento (paleta reusable — sección Recursos)
   addColor: (name: string, rgb: string) => void;
-  updateColor: (id: string, patch: Partial<{ name: string; rgb: string }>) => void;
+  updateColor: (id: string, patch: Partial<{ name: string; rgb: string; alpha: number }>) => void;
   removeColor: (id: string) => void;
 
   /** Renombra un item de cualquier lista de assets (colores, fuentes, imágenes,
@@ -343,6 +405,33 @@ export const useDocumentStore = create<DocumentState>()(
                 elements: p.elements.map((e) =>
                   'lineStyleId' in e && (e as { lineStyleId?: string }).lineStyleId === id
                     ? applyLineStyleProps(e, fullStyle as LineStyle)
+                    : e,
+                ),
+              }));
+            } else if (key === 'textStyles') {
+              pages = pages.map((p) => ({
+                ...p,
+                elements: p.elements.map((e) =>
+                  'textStyleId' in e && (e as { textStyleId?: string }).textStyleId === id
+                    ? applyTextStyleProps(e, fullStyle as TextStyle)
+                    : e,
+                ),
+              }));
+            } else if (key === 'paragraphStyles') {
+              pages = pages.map((p) => ({
+                ...p,
+                elements: p.elements.map((e) =>
+                  'paragraphStyleId' in e && (e as { paragraphStyleId?: string }).paragraphStyleId === id
+                    ? applyParagraphStyleProps(e, fullStyle as ParagraphStyle)
+                    : e,
+                ),
+              }));
+            } else if (key === 'fillStyles') {
+              pages = pages.map((p) => ({
+                ...p,
+                elements: p.elements.map((e) =>
+                  'fillStyleId' in e && (e as { fillStyleId?: string }).fillStyleId === id
+                    ? applyFillStyleProps(e, fullStyle as FillStyle)
                     : e,
                 ),
               }));

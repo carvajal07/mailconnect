@@ -43,7 +43,12 @@ export default function StylePropsPanel() {
           <input className="field" value={c.name}
             onChange={(e) => updateColor(c.id, { name: e.target.value })} />
         </Row>
-        <ColorFields rgb={c.rgb} onChange={(rgb) => updateColor(c.id, { rgb })} />
+        <ColorFields
+          rgb={c.rgb}
+          alpha={c.alpha ?? 255}
+          onChange={(rgb) => updateColor(c.id, { rgb })}
+          onAlpha={(alpha) => updateColor(c.id, { alpha })}
+        />
       </div>
     );
   }
@@ -82,7 +87,12 @@ export default function StylePropsPanel() {
 
 /* ─── Editor de color: HTML (hex) + RGB + CMYK ─── */
 
-function ColorFields({ rgb, onChange }: { rgb: string; onChange: (hex: string) => void }) {
+function ColorFields({ rgb, alpha, onChange, onAlpha }: {
+  rgb: string;
+  alpha: number;
+  onChange: (hex: string) => void;
+  onAlpha: (alpha: number) => void;
+}) {
   const { r, g, b } = hexToRgb(rgb);
   const { c, m, y, k } = rgbToCmyk(r, g, b);
   const safe = /^#[0-9a-fA-F]{6}$/.test(rgb) ? rgb : '#000000';
@@ -122,6 +132,15 @@ function ColorFields({ rgb, onChange }: { rgb: string; onChange: (hex: string) =
       <Row label="Azul (B)">
         <NumInput value={b} min={0} max={255} step={1} onChange={(v) => setRgb(r, g, clamp(v, 0, 255))} />
       </Row>
+
+      <div className="text-[10px] font-semibold pt-1" style={{ color: 'var(--muted)' }}>Opacidad</div>
+      <div className="flex items-center gap-2">
+        <input type="range" min={0} max={255} step={1} value={alpha}
+          onChange={(e) => onAlpha(Number(e.target.value))} className="flex-1" />
+        <span className="text-11 w-10 text-right" style={{ color: 'var(--muted)' }}>
+          {Math.round((alpha / 255) * 100)}%
+        </span>
+      </div>
 
       <div className="text-[10px] font-semibold pt-1" style={{ color: 'var(--muted)' }}>CMYK (%)</div>
       <Row label="Cian (C)">

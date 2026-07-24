@@ -99,6 +99,7 @@ function renderTypeProps(el: ElementModel) {
   switch (el.type) {
     case 'rect':
     case 'circle':
+    case 'triangle':
       return <ShapeProps el={el} />;
     case 'text':
       return <TextProps el={el} />;

@@ -2,6 +2,7 @@ import { Ellipse } from 'react-konva';
 import type Konva from 'konva';
 import type { CircleEl } from '@/types/document';
 import { MM_TO_PX } from '@/utils/units';
+import { konvaFillProps } from '@/utils/konvaFill';
 
 interface Props {
   el: CircleEl;
@@ -11,12 +12,27 @@ interface Props {
   draggable: boolean;
 }
 
+/** Los gradientes de la elipse se calculan sobre el bbox pero el nodo Konva usa
+ *  el CENTRO como origen → se desplazan -rx/-ry para que coincidan. */
+function centerGradientProps(props: Record<string, unknown>, rx: number, ry: number) {
+  const shift = (p: unknown) => {
+    const pt = p as { x: number; y: number } | undefined;
+    return pt ? { x: pt.x - rx, y: pt.y - ry } : pt;
+  };
+  const out = { ...props };
+  for (const k of ['fillLinearGradientStartPoint', 'fillLinearGradientEndPoint',
+    'fillRadialGradientStartPoint', 'fillRadialGradientEndPoint'] as const) {
+    if (out[k]) out[k] = shift(out[k]);
+  }
+  return out;
+}
+
 export default function CircleElement({ el, zoom, onSelect, onChange, draggable }: Props) {
   const s = MM_TO_PX * zoom;
   const rx = (el.width / 2) * s;
   const ry = (el.height / 2) * s;
   // Sin relleno → el interior no intercepta el mouse (marquee iniciable dentro).
-  const hollow = el.fill === 'transparent';
+  const hollow = el.fill === 'transparent' && !el.fillGradient;
   return (
     <Ellipse
       id={el.id}
@@ -26,7 +42,7 @@ export default function CircleElement({ el, zoom, onSelect, onChange, draggable 
       radiusX={rx}
       radiusY={ry}
       rotation={el.rotation}
-      fill={el.fill}
+      {...centerGradientProps(konvaFillProps(el.fill, el.fillGradient, el.opacity, el.width * s, el.height * s), rx, ry)}
       stroke={el.stroke}
       strokeWidth={el.strokeWidth * s}
       dash={el.dash?.map((v) => v * s)}

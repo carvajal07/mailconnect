@@ -28,6 +28,7 @@ import { useDocumentStore } from '@/store/documentStore';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useUIStore } from '@/store/uiStore';
 import type { DocumentModel, ElementModel } from '@/types/document';
+import { Triangle as TriangleIcon } from 'lucide-react';
 
 type AssetList = 'colors' | 'fonts' | 'images' | 'tables' | 'rowSets' | 'cells';
 
@@ -278,6 +279,7 @@ function iconFor(n: TreeNode) {
       case 'text': return Type;
       case 'rect': return Square;
       case 'circle': return Circle;
+      case 'triangle': return TriangleIcon;
       case 'line': return Minus;
       case 'pen': return Edit3;
       case 'image': return ImageIcon;
@@ -320,7 +322,7 @@ function iconFor(n: TreeNode) {
 }
 
 const TYPE_LABELS: Record<string, string> = {
-  text: 'Texto', rect: 'Rectángulo', circle: 'Círculo', line: 'Línea',
+  text: 'Texto', rect: 'Rectángulo', circle: 'Círculo', triangle: 'Triángulo', line: 'Línea',
   pen: 'Lápiz', image: 'Imagen', table: 'Tabla', qr: 'QR',
   dataField: 'Campo', frame: 'Área', flowable: 'Sub-área',
 };
