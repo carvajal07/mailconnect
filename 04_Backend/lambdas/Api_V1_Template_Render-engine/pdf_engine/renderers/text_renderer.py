@@ -77,6 +77,9 @@ def render_text(
     line_height = inline_ts.get("lineHeight", ts.line_height)
     color = registry.rl_color(inline_ts.get("color", ts.color))
 
+    space_before = mm(para_cfg.get("spaceBefore", 0))
+    space_after = mm(para_cfg.get("spaceAfter", 0))
+    first_line_indent = mm(para_cfg.get("firstLineIndent", 0))
     rl_style = RLParagraphStyle(
         name="text_el",
         fontName=font_name,
@@ -85,8 +88,9 @@ def render_text(
         textColor=color,
         alignment=_ALIGN_MAP.get(alignment_str, TA_LEFT),
         wordWrap="CJK",
-        spaceBefore=mm(para_cfg.get("spaceBefore", 0)),
-        spaceAfter=mm(para_cfg.get("spaceAfter", 0)),
+        spaceBefore=space_before,
+        spaceAfter=space_after,
+        firstLineIndent=first_line_indent,
     )
 
     # Apply text transforms
@@ -111,33 +115,47 @@ def render_text(
         )
         return
 
-    # ── Decoraciones del ESTILO (subrayado/tachado/super-sub) → mini-XML de
-    # ReportLab Paragraph (antes se ignoraban en el elemento `text`). ──
-    markup = _escape_xml(content)
-    if getattr(ts, "underline", False):
-        markup = "<u>{}</u>".format(markup)
-    if getattr(ts, "strikethrough", False):
-        markup = "<strike>{}</strike>".format(markup)
-    if getattr(ts, "superscript", False):
-        markup = "<super>{}</super>".format(markup)
-    elif getattr(ts, "subscript", False):
-        markup = "<sub>{}</sub>".format(markup)
-
-    para = RLParagraph(markup, rl_style)
+    # Decoraciones del ESTILO (subrayado/tachado/super-sub) → mini-XML de ReportLab.
+    def _wrap_decor(markup: str) -> str:
+        if getattr(ts, "underline", False):
+            markup = "<u>{}</u>".format(markup)
+        if getattr(ts, "strikethrough", False):
+            markup = "<strike>{}</strike>".format(markup)
+        if getattr(ts, "superscript", False):
+            markup = "<super>{}</super>".format(markup)
+        elif getattr(ts, "subscript", False):
+            markup = "<sub>{}</sub>".format(markup)
+        return markup
 
     inner_w = w - padding_left - padding_right
     inner_h = h - padding_top - padding_bottom
     if inner_w <= 0 or inner_h <= 0:
         return
 
-    # Vertical alignment: adjust y offset
-    para_w, para_h = para.wrap(inner_w, inner_h)
+    # Un PÁRRAFO por línea (\n): así el spaceBefore/spaceAfter separa los párrafos
+    # y el firstLineIndent aplica a cada uno. Antes todo era UN solo Paragraph con
+    # los saltos colapsados a espacios → "el texto quedaba todo seguido".
+    # El primer párrafo no lleva spaceBefore (el hueco es ENTRE párrafos, no arriba
+    # del bloque) → así el alto medido coincide con lo pintado y no se empuja el texto.
+    first_style = RLParagraphStyle("text_el_first", parent=rl_style, spaceBefore=0)
+    lines = content.split("\n")
+    paras = [
+        RLParagraph(_wrap_decor(_escape_xml(ln)) or "&nbsp;", first_style if i == 0 else rl_style)
+        for i, ln in enumerate(lines)
+    ]
+
+    # Alto total = suma de cada párrafo + el hueco entre párrafos (ReportLab colapsa
+    # el gap a max(spaceAfter_prev, spaceBefore_next); aquí ambos son iguales).
+    heights = [p.wrap(inner_w, inner_h)[1] for p in paras]
+    gap = max(space_before, space_after)
+    total_h = sum(heights) + gap * max(0, len(paras) - 1)
+
     if vertical_str == _VALIGN_MIDDLE:
-        v_offset = (inner_h - para_h) / 2
+        v_offset = (inner_h - total_h) / 2
     elif vertical_str == _VALIGN_BOTTOM:
         v_offset = 0
     else:
-        v_offset = inner_h - para_h
+        v_offset = inner_h - total_h
 
     v_offset = max(0, v_offset)
     frame_y = y + padding_bottom + v_offset
@@ -146,12 +164,12 @@ def render_text(
         x + padding_left,
         frame_y,
         inner_w,
-        para_h,
+        min(inner_h, total_h) if total_h > 0 else inner_h,
         leftPadding=0, rightPadding=0,
         topPadding=0, bottomPadding=0,
         showBoundary=0,
     )
-    frame.addFromList([para], canvas)
+    frame.addFromList(paras, canvas)
 
 
 def _escape_xml(text: str) -> str:

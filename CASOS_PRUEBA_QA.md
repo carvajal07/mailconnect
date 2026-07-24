@@ -1,7 +1,7 @@
 # Casos de Prueba (CP) — QA MailConnect
 
 > Lista de casos de prueba **funcionales / de calidad** para lo construido hasta ahora,
-> incluido el **portal de pagos (prepago)** que está planificado (ver `PLAN_PREPAGO.md`).
+> incluido el **portal de pagos (prepago)** que está planificado (ver la sección Prepago en `CLAUDE.md`).
 > Formato para ejecución manual por QA. Complementa las pruebas automáticas de
 > `08_Pruebas/PruebasSeguridad/` (pytest+moto).
 
@@ -173,7 +173,7 @@
 
 ---
 
-## 10. 🧩 Portal de pagos — Prepago (PLANIFICADO, ver `PLAN_PREPAGO.md`)
+## 10. 🧩 Portal de pagos — Prepago (implementado; ver la sección Prepago en `CLAUDE.md`)
 
 > CPs para cuando se implemente el MVP prepago. Hoy **no** existen estas pantallas/endpoints.
 
@@ -234,7 +234,7 @@
 ---
 
 ### Notas para QA
-- Los CP marcados 🧩 dependen de implementar el **MVP prepago** (`PLAN_PREPAGO.md`).
+- Los CP marcados 🧩 dependen del **MVP prepago** (implementado; ver `CLAUDE.md`).
 - Para los CP de **recepción** (WhatsApp/SMS/Voz) y **webhook Wompi**, usar payloads simulados
   (o `08_Pruebas/PruebasSeguridad/test_wsp_reception.py` como referencia del formato).
 - Muchos CP tienen su equivalente automático en `08_Pruebas/PruebasSeguridad/`; esta lista cubre

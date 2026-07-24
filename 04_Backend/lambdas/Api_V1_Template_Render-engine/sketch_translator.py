@@ -141,7 +141,11 @@ class _Translator:
         elements = []
         for el in page.get("elements") or []:
             out = self.translate_element(el)
-            if out:
+            # translate_element puede devolver VARIOS elementos (p. ej. una línea
+            # discontinua → un rect por cada segmento del guion).
+            if isinstance(out, list):
+                elements.extend(out)
+            elif out:
                 elements.append(out)
 
         self.pages.append({
@@ -237,6 +241,7 @@ class _Translator:
                     "alignment": _ALIGN_MAP.get(el.get("align") or "left", "left"),
                     "paddingTop": 0, "paddingRight": 0, "paddingBottom": 0,
                     "paddingLeft": self.mm(el.get("leftIndent") or 0),
+                    "firstLineIndent": self.mm(el.get("firstLineIndent") or 0),
                     "spaceBefore": self.mm(el.get("spaceBefore") or 0),
                     "spaceAfter": self.mm(el.get("spaceAfter") or 0),
                 },
@@ -274,11 +279,18 @@ class _Translator:
         inner = "".join(parts)
         list_style = el.get("listStyle") or "none"
         if list_style != "none":
-            # Cada línea (<br>) es un ítem de la lista; el motor renderiza <ul>/<ol>.
+            # Cada línea (<br>) es un ítem de la lista. Se emite el TIPO y el FORMATO
+            # como atributos para que el motor pinte el marcador correcto (viñeta,
+            # número o letra); antes numeradas/letras caían a <ol> genérico y el
+            # motor no les dibujaba marcador (solo las de viñeta).
             items = inner.split("<br>")
-            tag = "ul" if list_style == "bullet" else "ol"
             lis = "".join("<li>{}</li>".format(i) for i in items if i.strip())
-            return "<{t}>{lis}</{t}>".format(t=tag, lis=lis)
+            if list_style == "bullet":
+                bullet = _esc(el.get("bulletChar") or "•")
+                return '<ul data-bullet="{b}">{lis}</ul>'.format(b=bullet, lis=lis)
+            fmt = _esc(el.get("numberFormat") or "0.")
+            kind = "letter" if list_style == "letter" else "numbered"
+            return '<ol data-list="{k}" data-format="{f}">{lis}</ol>'.format(k=kind, f=fmt, lis=lis)
         # Párrafos separados por <br>. La alineación del elemento viaja en el
         # style del <p> (el motor la parsea; antes se perdía y todo salía a la izq.).
         align = self._align_css(el)
@@ -335,47 +347,67 @@ class _Translator:
         })
         return base
 
-    def _line(self, el: dict, base: dict) -> dict:
+    def _line(self, el: dict, base: dict):
         # El motor no dibuja líneas sueltas: se emite un rectángulo DELGADO centrado
         # en el segmento y ROTADO su ángulo (las diagonales se ven como línea, no
         # como el bloque del bounding box). `points` = [x1,y1,x2,y2] relativos al
         # (x,y) del elemento, en unidades del documento (igual que Konva).
+        # Si la línea es DISCONTINUA (`dash`), se emite un rect por cada segmento
+        # del guion (el motor no tiene stroke discontinuo para formas rellenas).
         stroke_mm = max(self._stroke_mm(el) or 0.25, 0.25)
+        color = el.get("stroke") or "#000000"
+        rot_extra = base.get("rotation") or 0
+        visible = base.get("visible", True)
+        dash = el.get("dash")
         pts = el.get("points") or []
         if len(pts) >= 4:
             ox, oy = self.mm(el.get("x")), self.mm(el.get("y"))
             x1, y1 = ox + self.mm(pts[0]), oy + self.mm(pts[1])
             x2, y2 = ox + self.mm(pts[2]), oy + self.mm(pts[3])
-            dx, dy = x2 - x1, y2 - y1
-            length = math.hypot(dx, dy)
-            if length >= 0.01:
-                # Ángulo horario en pantalla (Y hacia abajo) = convención de rotación
-                # del editor; se suma la rotación propia del elemento si la tiene.
-                angle = math.degrees(math.atan2(dy, dx))
-                base.update({
-                    "x": (x1 + x2) / 2.0 - length / 2.0,
-                    "y": (y1 + y2) / 2.0 - stroke_mm / 2.0,
-                    "width": length,
-                    "height": stroke_mm,
-                    "rotation": angle + (base.get("rotation") or 0),
-                })
-                base.update({
-                    "type": "shape", "shape": "rectangle",
-                    "fill": {"type": "solid", "color": el.get("stroke") or "#000000", "opacity": 1},
-                    "border": None,
-                })
-                return base
-        # Sin points (docs viejos): aproximación por el bounding box.
-        if base["height"] <= base["width"]:
-            base["height"] = max(base["height"], stroke_mm)
         else:
-            base["width"] = max(base["width"], stroke_mm)
-        base.update({
+            # Sin points (docs viejos): aproximación por el bounding box.
+            x1, y1 = self.mm(el.get("x")), self.mm(el.get("y"))
+            x2, y2 = x1 + self.mm(el.get("width")), y1 + self.mm(el.get("height"))
+        dx, dy = x2 - x1, y2 - y1
+        length = math.hypot(dx, dy)
+        if length < 0.01:
+            base.update({"type": "shape", "shape": "rectangle",
+                         "fill": {"type": "solid", "color": color, "opacity": 1}, "border": None})
+            return base
+        angle = math.degrees(math.atan2(dy, dx)) + rot_extra
+        ux, uy = dx / length, dy / length
+
+        if isinstance(dash, list) and len(dash) >= 2:
+            on_len = max(self.mm(dash[0]), 0.2)
+            off_len = max(self.mm(dash[1]), 0.2)
+            segments, pos, guard = [], 0.0, 0
+            while pos < length and guard < 500:
+                guard += 1
+                seg = min(on_len, length - pos)
+                mid = pos + seg / 2.0
+                segments.append(self._line_rect(
+                    x1 + ux * mid, y1 + uy * mid, seg, stroke_mm, angle, color, visible))
+                pos += on_len + off_len
+            return segments or None
+
+        # Continua: un solo rect centrado en el punto medio, rotado.
+        return self._line_rect(
+            x1 + ux * (length / 2.0), y1 + uy * (length / 2.0),
+            length, stroke_mm, angle, color, visible)
+
+    def _line_rect(self, cx: float, cy: float, length: float, thickness: float,
+                   rotation: float, color: str, visible: bool = True) -> dict:
+        """Un rectángulo relleno DELGADO centrado en (cx,cy), rotado, que representa
+        un tramo de línea (o un guion de una línea discontinua)."""
+        return {
+            "id": self._id("el"),
+            "x": cx - length / 2.0, "y": cy - thickness / 2.0,
+            "width": length, "height": max(thickness, 0.2),
+            "rotation": rotation, "visible": visible, "condition": None,
             "type": "shape", "shape": "rectangle",
-            "fill": {"type": "solid", "color": el.get("stroke") or "#000000", "opacity": 1},
+            "fill": {"type": "solid", "color": color, "opacity": 1},
             "border": None,
-        })
-        return base
+        }
 
     def _image(self, el: dict, base: dict) -> dict | None:
         src = el.get("src") or ""

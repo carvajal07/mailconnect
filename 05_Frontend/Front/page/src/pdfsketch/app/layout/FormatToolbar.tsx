@@ -111,6 +111,20 @@ export default function FormatToolbar() {
     for (const el of selectedTexts) updateElement(el.id, patch);
   }
 
+  /** Color a nivel de ELEMENTO (contenedor seleccionado, sin editar): recolorea
+   *  TODO el texto. Como en el render `span.color ?? el.color`, un span con color
+   *  propio ignora el del elemento → hay que LIMPIAR el color de los spans para que
+   *  tomen el nuevo color del elemento (si no, cambiar el color "no hace nada"). */
+  function applyTextColor(color: string) {
+    for (const el of selectedTexts) {
+      const patch: Partial<TextEl> = { color };
+      if (el.spans?.length) {
+        patch.spans = el.spans.map((sp) => (sp.color === undefined ? sp : { ...sp, color: undefined }));
+      }
+      updateElement(el.id, patch);
+    }
+  }
+
   const fontFamily = (textCommon('fontFamily') as string | undefined) ?? '';
   const fontWeight = textCommon('fontWeight') as number | undefined;
   const fontStyle = textCommon('fontStyle') as TextEl['fontStyle'] | undefined;
@@ -284,7 +298,7 @@ export default function FormatToolbar() {
           type="color"
           disabled={textCtrlDisabled}
           value={textColor}
-          onChange={(e) => editing ? editorApi!.setColor(e.target.value) : applyText({ color: e.target.value })}
+          onChange={(e) => editing ? editorApi!.setColor(e.target.value) : applyTextColor(e.target.value)}
           className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
         />
       </label>
@@ -437,7 +451,7 @@ function SizeCombo({
         style={{ opacity: disabled ? 0.5 : 1 }}
       >
         {/* Flechas ▲▼ (steppers) */}
-        <div className="flex flex-col justify-center border-r border-line-2" style={{ width: 15 }}>
+        <div className="flex flex-col justify-center border-r border-line-2" style={{ width: 16 }}>
           <button
             type="button" disabled={disabled} title="Aumentar tamaño"
             onMouseDown={(e) => e.preventDefault()}
@@ -472,16 +486,17 @@ function SizeCombo({
             if (e.key === 'ArrowDown') { e.preventDefault(); step(-1); }
           }}
           className="bg-transparent text-center font-mono text-11 outline-none disabled:cursor-not-allowed"
-          style={{ width: 30 }}
+          style={{ width: 42 }}
         />
-        {/* Segmento de unidad (convierte el valor) */}
+        {/* Segmento de unidad (convierte el valor). Ancho holgado + padding para que
+            la flecha nativa del desplegable NO quede pegada a la unidad. */}
         <select
           disabled={disabled}
           value={unit}
           onChange={(e) => onUnitChange(e.target.value as SizeUnit)}
           title="Unidad del tamaño (convierte el valor)"
-          className="bg-bg-4 border-l border-line-2 text-11 px-0.5 outline-none cursor-pointer disabled:cursor-not-allowed"
-          style={{ width: 34 }}
+          className="bg-bg-4 border-l border-line-2 text-11 outline-none cursor-pointer disabled:cursor-not-allowed"
+          style={{ width: 48, paddingLeft: 5, paddingRight: 2 }}
         >
           {SIZE_UNITS.map((u) => (
             <option key={u} value={u}>{u}</option>

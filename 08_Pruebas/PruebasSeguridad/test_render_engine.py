@@ -467,3 +467,107 @@ def test_render_con_rotacion_de_texto_y_tabla(mod):
     ]}]}
     res = mod.lambda_handler(_ctx({'sketch': {'schema': 'pdfsketch@1', 'document': doc}}), None)
     assert _pdf_bytes(res)[:5] == b'%PDF-'
+
+
+# ── Viñetas / listas: numeradas y letras (fixes ago 2026) ────────────────────
+
+def test_parser_lista_numerada_y_letras(mod):
+    from pdf_engine.html_parser import parse_content
+    paras = [p for p in parse_content(
+        '<ol data-list="numbered" data-format="0)"><li>uno</li><li>dos</li></ol>'
+    ) if not p.is_empty()]
+    assert [p.list_index for p in paras] == [1, 2]
+    assert all(p.list_type == 'numbered' and p.number_format == '0)' for p in paras)
+
+    letras = [p for p in parse_content(
+        '<ol data-list="letter" data-format="0."><li>a</li><li>b</li><li>c</li></ol>'
+    ) if not p.is_empty()]
+    assert [p.list_type for p in letras] == ['letter', 'letter', 'letter']
+    assert [p.list_index for p in letras] == [1, 2, 3]
+
+
+def test_marcador_de_lista_numerada_y_letra(mod):
+    from pdf_engine.html_parser import Paragraph
+    from pdf_engine.renderers.contentarea_renderer import _list_marker
+    assert _list_marker(Paragraph(list_type='bullet', bullet_char='●')) == '●'
+    assert _list_marker(Paragraph(list_type='numbered', list_index=3, number_format='0.')) == '3.'
+    assert _list_marker(Paragraph(list_type='numbered', list_index=2, number_format='0)')) == '2)'
+    assert _list_marker(Paragraph(list_type='letter', list_index=1, number_format='0.')) == 'a.'
+    assert _list_marker(Paragraph(list_type='letter', list_index=3, number_format='0)')) == 'c)'
+
+
+def test_render_listas_numeradas_letras_smoke(mod):
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 'n', 'type': 'text', 'x': 10, 'y': 10, 'width': 120, 'height': 40,
+         'text': 'uno\ndos\ntres', 'align': 'left', 'fontFamily': 'Helvetica',
+         'fontSize': 12, 'color': '#111111', 'fontWeight': 400, 'lineHeight': 1.3,
+         'listStyle': 'numbered', 'numberFormat': '0)'},
+        {'id': 'l', 'type': 'text', 'x': 10, 'y': 60, 'width': 120, 'height': 40,
+         'text': 'a\nb', 'align': 'left', 'fontFamily': 'Helvetica',
+         'fontSize': 12, 'color': '#111111', 'fontWeight': 400, 'lineHeight': 1.3,
+         'listStyle': 'letter', 'numberFormat': '0.'},
+    ]}]}
+    res = mod.lambda_handler(_ctx({'sketch': {'schema': 'pdfsketch@1', 'document': doc}}), None)
+    assert _pdf_bytes(res)[:5] == b'%PDF-'
+
+
+# ── Párrafo: sangría de primera línea + espacio antes/después (fix ago 2026) ──
+
+def test_traductor_texto_emite_first_line_indent(mod):
+    from sketch_translator import translate_sketch
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 't', 'type': 'text', 'x': 10, 'y': 10, 'width': 120, 'height': 40,
+         'text': 'p1\np2', 'align': 'left', 'fontFamily': 'Helvetica', 'fontSize': 12,
+         'color': '#111111', 'fontWeight': 400, 'lineHeight': 1.3,
+         'firstLineIndent': 8, 'spaceBefore': 3, 'spaceAfter': 3, 'leftIndent': 5},
+    ]}]}
+    el = translate_sketch(doc)['templateJson']['pages'][0]['elements'][0]
+    assert el['type'] == 'text'
+    ps = el['paragraphStyle']
+    assert round(ps['firstLineIndent'], 1) == 8.0
+    assert round(ps['spaceBefore'], 1) == 3.0 and round(ps['paddingLeft'], 1) == 5.0
+
+
+def test_render_texto_multiparrafo_no_colapsa(mod):
+    # Un texto con 3 líneas y espaciado NO debe quedar "todo seguido": se emite un
+    # párrafo por línea (smoke: el PDF se genera sin error).
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 't', 'type': 'text', 'x': 10, 'y': 10, 'width': 150, 'height': 80,
+         'text': 'Primero\nSegundo\nTercero', 'align': 'left', 'fontFamily': 'Helvetica',
+         'fontSize': 12, 'color': '#111111', 'fontWeight': 400, 'lineHeight': 1.3,
+         'firstLineIndent': 6, 'spaceBefore': 4, 'spaceAfter': 4},
+    ]}]}
+    res = mod.lambda_handler(_ctx({'sketch': {'schema': 'pdfsketch@1', 'document': doc}}), None)
+    assert _pdf_bytes(res)[:5] == b'%PDF-'
+
+
+# ── Líneas discontinuas → segmentos (fix ago 2026) ───────────────────────────
+
+def test_traductor_linea_discontinua_varios_segmentos(mod):
+    from sketch_translator import translate_sketch
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 'l', 'type': 'line', 'x': 10, 'y': 10, 'width': 40, 'height': 0,
+         'points': [0, 0, 40, 0], 'stroke': '#111111', 'strokeWidth': 0.5,
+         'dash': [4, 4], 'rotation': 0},
+    ]}]}
+    els = translate_sketch(doc)['templateJson']['pages'][0]['elements']
+    # 40mm con guiones 4on/4off → ~5 segmentos (rects), no un solo bloque.
+    assert len(els) >= 4
+    assert all(e['type'] == 'shape' and e['shape'] == 'rectangle' for e in els)
+    # Cada guion mide ~4mm de largo (no los 40mm de la línea completa).
+    assert all(e['width'] <= 4.5 for e in els)
+
+
+def test_traductor_linea_continua_un_solo_rect(mod):
+    from sketch_translator import translate_sketch
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 'l', 'type': 'line', 'x': 10, 'y': 10, 'width': 40, 'height': 0,
+         'points': [0, 0, 40, 0], 'stroke': '#111111', 'strokeWidth': 0.5, 'rotation': 0},
+    ]}]}
+    els = translate_sketch(doc)['templateJson']['pages'][0]['elements']
+    assert len(els) == 1 and round(els[0]['width'], 1) == 40.0

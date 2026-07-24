@@ -18,6 +18,11 @@
 > - **`PENDIENTES.md`** (raíz) → **backlog por bloques** (salido de la revisión
 >   profunda de jul 2026): seguridad, despliegues `[J]` que desbloquean features ya
 >   construidas, cierre del Estudio PDF, producto, tableros y panel admin.
+>
+> _Depuración de docs (ago 2026): se eliminaron 6 planes de features YA construidas
+> cuyo detalle vive en este archivo y lo accionable en `PENDIENTES.md`/`DESPLIEGUE.md`
+> — PLAN_APROBACIONES, PLAN_PREAGREGACION, PLAN_PREPAGO, PLAN_CACHE, PLAN_COPILOTO y
+> PLAN_CASCADA. Se conserva `PLAN_MVP.md` (plan maestro con el gate de piloto abierto)._
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
@@ -152,10 +157,10 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Balance/Topup-init` | `{ amount (COP≥20000) }` (tenant del token) | 200 `data:{reference, amountInCents, currency, publicKey, signatureIntegrity, redirectUrl?}` · 400. Firma de integridad Wompi; crea el intento `pending` en el ledger |
 | `Wallet/Wompi-webhook` | **público/proxy sin authorizer** (evento Wompi firmado) | 200 ack. Verifica la firma del evento y acredita **idempotente** por `reference` (pending→approved, `TransactWriteItems`); nunca acredita desde el redirect del navegador |
 | `Assistant/Ask` | **público/proxy sin authorizer** `{ question }` | 200 `{answer}` · 400 vacía · 502 modelo no disponible. Asistente de IA (AWS Bedrock Converse, modelo Claude) con prompt de sistema aterrizado en MailConnect; responde en español, solo sobre la plataforma. Lo usan los botones flotantes de la landing |
-| `Cascade/Dispatch` | `{ name, dataPath, waitMinutes?, successCriterion?, steps:[{channel(EM\|SMS\|WSP\|VOZ), content}] }` | 201 `data:{cascadeRunId, contacts, debited}` · 400 · 402 saldo · 403. Lanza la **cascada omnicanal** (Opción A): crea el run + un contacto por fila, filtra consentimiento del canal 0, encola el paso 0 y debita su costo. Ver `PLAN_CASCADA.md` |
+| `Cascade/Dispatch` | `{ name, dataPath, waitMinutes?, successCriterion?, steps:[{channel(EM\|SMS\|WSP\|VOZ), content}] }` | 201 `data:{cascadeRunId, contacts, debited}` · 400 · 402 saldo · 403. Lanza la **cascada omnicanal** (Opción A): crea el run + un contacto por fila, filtra consentimiento del canal 0, encola el paso 0 y debita su costo. |
 | `Cascade/List` | `{}` (tenant del token) | 200 `data:{runs:[{cascadeRunId, name, steps, status, counts{total,confirmed,exhausted,inFlight,budget}, createdAt}], count}` |
 | `Cascade/Advance` | (EventBridge cron; sin body) | Tick del motor: por cada contacto vencido lee el estado en `sendStatus`, y confirma/escala/agota/frena por saldo (`decide_next`). Escala encolando el siguiente canal + debitando |
-| `Assistant/Copilot` | `{ action:analyze\|draft\|rewrite, ... }` (portal, tras Authorizer) | **Copiloto de campañas (Opción B).** `analyze` (DETERMINISTA, sin IA): `data:{score, level, issues[], suggestions[], habeasData{ok,present,missing,requiredMissing}, sendTime}` — spam/entregabilidad + checklist Ley 1581 + hora óptima. `draft`/`rewrite` (Bedrock): redacta/mejora copy. Ver `PLAN_COPILOTO.md`. ⚠️ **UI oculta (jul 2026):** el tab **"Copiloto IA"** se quitó del portal (`PortalSidebar`/`PortalPage`) por decisión de producto ("de momento"); la lambda + la ruta `/Assistant/Copilot` quedan **desplegadas pero dormidas** (`CopilotoSection.tsx`/`copilotService.ts` quedan huérfanos). Re-habilitar = volver a agregar el tab + el `case`. |
+| `Assistant/Copilot` | `{ action:analyze\|draft\|rewrite, ... }` (portal, tras Authorizer) | **Copiloto de campañas (Opción B).** `analyze` (DETERMINISTA, sin IA): `data:{score, level, issues[], suggestions[], habeasData{ok,present,missing,requiredMissing}, sendTime}` — spam/entregabilidad + checklist Ley 1581 + hora óptima. `draft`/`rewrite` (Bedrock): redacta/mejora copy. ⚠️ **UI oculta (jul 2026):** el tab **"Copiloto IA"** se quitó del portal (`PortalSidebar`/`PortalPage`) por decisión de producto ("de momento"); la lambda + la ruta `/Assistant/Copilot` quedan **desplegadas pero dormidas** (`CopilotoSection.tsx`/`copilotService.ts` quedan huérfanos). Re-habilitar = volver a agregar el tab + el `case`. |
 
 > **Flujo de recuperación:** `forgot-password` genera y envía un OTP → la pantalla de reseteo
 > del front llama a `change-password` con `{ user, password, otp }`. `change-password` valida
@@ -1081,8 +1086,38 @@ Fixes de fidelidad en `sketch_translator.py` + `pdf_engine` (motor estándar):
   parser, render con rotación).
 - ⚠️ Lo que SIGUE pendiente del Estudio (ver `PENDIENTES.md` Bloque 3): usar estas
   plantillas en campañas EAP-PDF (el selector solo lee `html` y el combinador solo
-  renderiza HTML), vista previa con datos de muestra, `dash`, `pen`/`flowable`,
+  renderiza HTML), vista previa con datos de muestra, `pen`/`flowable`,
   opacidad/crop de imágenes, `fallback` del dataField.
+
+### Estudio PDF (3ª tanda, ago 2026): UI del tamaño, líneas punteadas, viñetas, párrafo, color
+Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
+- **Selector de tamaño de fuente** (`FormatToolbar.tsx`, `SizeCombo`): se ensanchó el
+  input del número (no se veía) y se le dio aire a la flecha del `<select>` de unidad
+  (quedaba pegada a la unidad).
+- **Líneas punteadas** ahora funcionan en lienzo y PDF. Lienzo (`LineLikeElement.tsx`):
+  el `dash` se ESCALA a px (`d * s`) — antes `[4,4]` px se veía casi continuo al hacer
+  zoom. PDF (`sketch_translator._line`): la línea discontinua se emite como **un rect por
+  cada guion** (segmentos rotados), porque el motor no tiene stroke discontinuo para
+  formas rellenas; `translate_element` puede devolver **una LISTA** de elementos y
+  `add_page` la aplana.
+- **Viñetas** (listas): en el lienzo (`richText.ts`) el marcador se dibuja en una
+  **canaleta a la izquierda** del texto (antes caía ENCIMA cuando `leftIndent`=0 →
+  "sobrepuestas"). En el PDF, las listas **numeradas y de letras** ya pintan su marcador
+  (antes solo las de viñeta): el traductor emite `<ul data-bullet>` / `<ol data-list=
+  numbered|letter data-format>`, el `html_parser` lee el tipo/formato + numera los ítems
+  (`list_index`), y `contentarea_renderer._list_marker` arma `1.`/`a)`/`•` según
+  corresponda.
+- **Párrafo con sangría + espacio antes/después** en el PDF (`text_renderer`): el
+  contenido se parte en **un párrafo por línea** (`\n`) aplicando `spaceBefore`/
+  `spaceAfter`/`firstLineIndent` (antes era UN solo `Paragraph` → el texto salía "todo
+  seguido"). El traductor emite `firstLineIndent` en el `paragraphStyle`.
+- **Color de texto desde el contenedor** (`FormatToolbar.tsx`): al cambiar el color con
+  el ELEMENTO seleccionado (sin editar), se **limpia el color de los spans** para que
+  tomen el color del elemento (en el render `span.color ?? el.color`, un span con color
+  propio ignoraba el del elemento → "no hacía nada").
+- **Cobertura**: pruebas nuevas en `test_render_engine.py` (parser de listas numeradas/
+  letras, `_list_marker`, render smoke, `firstLineIndent`, multipárrafo, dash a
+  segmentos, línea continua) + ajuste de `test_paridad_estilos.py`.
 
 ### Fix de seguridad: RBAC de sub-rol (`tenantRole`) — cierre del bypass del maker-checker (jul 2026)
 - **Problema (ALTO):** el mapping template no-proxy (`scripts/sync_api.py` `CONTEXT_TEMPLATE`) NO

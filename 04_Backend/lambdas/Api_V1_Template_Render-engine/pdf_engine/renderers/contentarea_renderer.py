@@ -420,14 +420,26 @@ def _make_rl_style(
     )
 
 
+def _list_marker(para: Paragraph) -> str:
+    """Marcador del ítem: viñeta (carácter), número o letra según el tipo/formato.
+    Antes solo se dibujaban las viñetas (bullet=''  para numeradas/letras → nada)."""
+    if para.list_type == "bullet":
+        return para.bullet_char or "•"
+    n = para.list_index or 1
+    if para.list_type == "letter":
+        val = chr(96 + ((n - 1) % 26) + 1)  # a, b, c, …
+    else:
+        val = str(n)
+    return (para.number_format or "0.").replace("0", val)
+
+
 def _make_list_item(xml_text: str, base_style: RLParagraphStyle, para: Paragraph):
-    bullet = "•" if para.list_type == "bullet" else ""
     style = RLParagraphStyle(
         "li",
         parent=base_style,
         leftIndent=mm(5 * max(para.list_depth, 1)),
         bulletIndent=mm(5 * max(para.list_depth, 1) - 4),
-        bulletText=bullet,
+        bulletText=_list_marker(para),
     )
     return RLParagraph(xml_text, style)
 
