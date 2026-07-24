@@ -1,4 +1,4 @@
-import { Rect, Group, Line } from 'react-konva';
+import { Rect, Group } from 'react-konva';
 import type { Page } from '@/types/document';
 import { MM_TO_PX } from '@/utils/units';
 import { useUIStore } from '@/store/uiStore';
@@ -11,32 +11,16 @@ interface Props {
   offsetY: number;
 }
 
-/** Separación de la grilla en mm. */
-const GRID_MM = 10;
-
 /**
  * Hoja blanca del documento con sombra ligera. El tamaño en px se
- * calcula con MM_TO_PX * zoom.
+ * calcula con MM_TO_PX * zoom. (La grilla se dibuja a nivel de TODO el
+ * lienzo en Canvas.tsx, no aquí.)
  */
 export default function Sheet({ page, zoom, offsetX, offsetY }: Props) {
-  const showGrid = useUIStore((s) => s.showGrid);
   const showMargins = useUIStore((s) => s.showMargins);
   const s = MM_TO_PX * zoom;
   const w = page.size.width * s;
   const h = page.size.height * s;
-
-  // Líneas de la grilla (cada GRID_MM, dentro de la hoja).
-  const gridLines: number[][] = [];
-  if (showGrid) {
-    for (let x = GRID_MM; x < page.size.width; x += GRID_MM) {
-      const px = x * s;
-      gridLines.push([px, 0, px, h]);
-    }
-    for (let y = GRID_MM; y < page.size.height; y += GRID_MM) {
-      const py = y * s;
-      gridLines.push([0, py, w, py]);
-    }
-  }
 
   const hasMargin =
     page.margin.top > 0 || page.margin.right > 0 || page.margin.bottom > 0 || page.margin.left > 0;
@@ -56,10 +40,6 @@ export default function Sheet({ page, zoom, offsetX, offsetY }: Props) {
         strokeWidth={1}
         listening={false}
       />
-      {/* grilla */}
-      {showGrid && gridLines.map((pts, i) => (
-        <Line key={i} points={pts} stroke="rgba(59,130,246,0.22)" strokeWidth={1} listening={false} />
-      ))}
       {/* márgenes de la hoja (guía punteada fina, desactivable) */}
       {showMargins && hasMargin && (
         <Rect

@@ -69,6 +69,10 @@ function VarNode({ keyName, value, path, depth, usedPaths, onInsert }: NodeProps
         title={isExpandable ? path : `Doble clic para insertar {{${keyName}}} · o arrastra`}
         onDragStart={(e) => {
           e.dataTransfer.setData('text/x-binding-path', path);
+          // text/plain hace que el navegador trate el arrastre como TEXTO →
+          // sobre el editor (contentEditable) pinta el caret | letra a letra.
+          // El drop real lo intercepta el editor e inserta la ficha {{campo}}.
+          e.dataTransfer.setData('text/plain', `{{${path}}}`);
           e.dataTransfer.effectAllowed = 'copy';
         }}
         onClick={() => { if (isExpandable) setOpen((o) => !o); }}

@@ -136,8 +136,11 @@ export function layoutSpans(
     const isLastLine = li === lines.length - 1;
     const slack = Math.max(0, containerWidthPx - line.width);
     const wsToks = line.toks.filter((t) => /^\s+$/.test(t.text));
-    // Justificar sólo las líneas que NO son la última (Word/InDesign) y que tengan espacios.
-    const doJustify = isJustify && !isLastLine && slack > 0 && wsToks.length > 0;
+    // justify-left/center/right: la última línea se alinea (Word/InDesign).
+    // justify-block ("Justificar bloque"): TODAS las líneas se estiran, incluida
+    // la última — es lo que lo distingue de justify-left.
+    const doJustify = isJustify && slack > 0 && wsToks.length > 0
+      && (!isLastLine || align === 'justify-block');
     const extraPerGap = doJustify ? slack / wsToks.length : 0;
 
     let x: number;

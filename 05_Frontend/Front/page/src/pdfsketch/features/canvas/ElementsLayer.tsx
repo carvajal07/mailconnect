@@ -12,9 +12,10 @@ import TableElement from './elements/TableElement';
 import FrameElement from './elements/FrameElement';
 import FlowableElement from './elements/FlowableElement';
 import type { ElementModel, Page } from '@/types/document';
-import { useDocumentStore, useDocumentHistory } from '@/store/documentStore';
+import { useDocumentStore } from '@/store/documentStore';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useToolStore } from '@/store/toolStore';
+import { useUIStore } from '@/store/uiStore';
 import { MM_TO_PX } from '@/utils/units';
 
 interface Props {
@@ -26,14 +27,24 @@ interface Props {
   preview?: boolean;
 }
 
+/** Umbral magnético del snap, en px de pantalla. */
+const SNAP_PX = 6;
+/** Paso de la grilla en mm (mismo que el dibujo de la grilla). */
+const GRID_MM = 10;
+
 /**
  * Capa de elementos posicionada en el offset de la hoja.
  * Los elementos guardan sus coordenadas en mm (modelo), aquí se convierten a px.
  *
- * El arrastre de una selección MÚLTIPLE se maneja aquí, a nivel del <Group>: los
- * eventos de drag de cada elemento burbujean hasta el grupo; al mover el ancla
- * movemos el resto de la selección en tándem y confirmamos TODO en una sola
- * operación (updateElements) = un único paso de undo.
+ * ── Multiselección (cómo funciona de verdad) ─────────────────────────────────
+ * El Transformer de Konva 9 tiene `_proxyDrag`: al arrastrar UN nodo adjunto,
+ * él mismo pone a los DEMÁS nodos de la selección en su propio drag nativo
+ * (todos siguen el puntero solos). Por eso aquí NO se mueve nada durante el
+ * arrastre — cualquier movimiento adicional (imperativo o vía store) pelea con
+ * ese drag nativo y produce saltos/separaciones. Lo único que hacemos es:
+ *   1. suprimir los commits individuales x/y de los nodos de la selección, y
+ *   2. al PRIMER dragend, confirmar TODAS las posiciones en una sola operación
+ *      (updateElements) = un único paso de undo.
  */
 export default function ElementsLayer({ page, zoom, offsetX, offsetY, preview = false }: Props) {
   const updateElement = useDocumentStore((s) => s.updateElement);
@@ -45,11 +56,7 @@ export default function ElementsLayer({ page, zoom, offsetX, offsetY, preview = 
   const activeTool = useToolStore((s) => s.active);
   const draggable = !preview && activeTool === 'select';
 
-  const dragRef = useRef<{
-    anchorId: string;
-    preDrag: Map<string, { x: number; y: number }>; // posiciones en mm al iniciar
-    moved: boolean;
-  } | null>(null);
+  const multiDragRef = useRef<{ ids: string[]; committed: boolean } | null>(null);
   const pendingCollapse = useRef<string | null>(null);
 
   function handleSelect(id: string, additive: boolean) {
@@ -68,74 +75,89 @@ export default function ElementsLayer({ page, zoom, offsetX, offsetY, preview = 
 
   const onUpdate = preview
     ? (_id: string, _patch: Partial<ElementModel>) => {}
-    : (id: string, patch: Partial<ElementModel>) => updateElement(id, patch);
+    : (id: string, patch: Partial<ElementModel>) => {
+        const d = multiDragRef.current;
+        // Durante un arrastre múltiple, TODOS los nodos de la selección están en
+        // drag (proxy del Transformer) y cada uno dispara su propio onDragEnd →
+        // se suprimen esos commits x/y individuales; el commit único lo hace el
+        // handler del Group.
+        if (d && d.ids.includes(id)) {
+          const keys = Object.keys(patch);
+          if (keys.length > 0 && keys.every((k) => k === 'x' || k === 'y')) return;
+        }
+        updateElement(id, patch);
+      };
   const onEdit = preview ? (_id: string) => {} : (id: string) => setEditing(id);
   const activeEditId = preview ? null : editingId;
 
   const elements = [...page.elements].sort((a, b) => a.zIndex - b.zIndex);
 
-  // ── Arrastre de selección MÚLTIPLE ─────────────────────────────────────────
-  // El movimiento del grupo es autoritativo desde el STORE (no manipulación
-  // imperativa de nodos, que se pisaba con el arrastre nativo del Transformer y
-  // hacía que los elementos se separaran). Durante el arrastre se pausa el
-  // historial; al soltar se registra UN solo paso de undo (restaurar→final).
-  function selectedPositionsMm(): Map<string, { x: number; y: number }> {
-    const sel = useSelectionStore.getState().selectedIds;
-    const els = useDocumentStore.getState().doc.pages.flatMap((p) => p.elements);
-    const m = new Map<string, { x: number; y: number }>();
-    for (const sid of sel) {
-      const el = els.find((x) => x.id === sid);
-      if (el) m.set(sid, { x: el.x, y: el.y });
-    }
-    return m;
-  }
-
   function onDragStart(e: Konva.KonvaEventObject<DragEvent>) {
     if (preview) return;
     pendingCollapse.current = null; // es un arrastre, no un clic-colapso
+    // Los startDrag en cascada del proxy del Transformer también burbujean aquí.
+    if (multiDragRef.current) return;
     const id = (e.target as Konva.Node).id();
     const sel = useSelectionStore.getState().selectedIds;
-    if (!id || !sel.includes(id) || sel.length <= 1) { dragRef.current = null; return; }
-    dragRef.current = { anchorId: id, preDrag: selectedPositionsMm(), moved: false };
+    if (id && sel.includes(id) && sel.length > 1) {
+      multiDragRef.current = { ids: [...sel], committed: false };
+    }
   }
 
   function onDragMove(e: Konva.KonvaEventObject<DragEvent>) {
-    const d = dragRef.current;
-    if (!d) return;
+    // Snap magnético: solo para el arrastre de UN elemento (en multi, cada nodo
+    // sigue el puntero por su cuenta y ajustar el ancla los desalinearía).
+    if (preview || multiDragRef.current) return;
+    if (!useUIStore.getState().showSnap) return;
     const node = e.target as Konva.Node;
-    if (node.id() !== d.anchorId) return;
-    const a0 = d.preDrag.get(d.anchorId);
-    if (!a0) return;
-    const sc = MM_TO_PX * zoom;
-    const dx = node.x() / sc - a0.x;
-    const dy = node.y() / sc - a0.y;
-    if (!d.moved) { useDocumentHistory().getState().pause(); d.moved = true; }
-    const patches: { id: string; patch: Partial<ElementModel> }[] = [];
-    for (const [sid, p] of d.preDrag) {
-      patches.push({ id: sid, patch: { x: p.x + dx, y: p.y + dy } as Partial<ElementModel> });
-    }
-    updateElements(patches);
+    const el = page.elements.find((x) => x.id === node.id());
+    if (!el || el.type === 'line' || el.type === 'pen') return; // sin bbox real en x/y
+
+    const s = MM_TO_PX * zoom;
+    const w = el.width * s;
+    const h = el.height * s;
+    const withGrid = useUIStore.getState().showGrid;
+    const gridStep = withGrid ? GRID_MM * s : undefined;
+
+    // Objetivos: bordes de hoja + líneas de margen (en coords del Group = hoja).
+    const targetsX = [0, page.size.width * s, page.margin.left * s, (page.size.width - page.margin.right) * s];
+    const targetsY = [0, page.size.height * s, page.margin.top * s, (page.size.height - page.margin.bottom) * s];
+
+    const snapAxis = (v: number, size: number, targets: number[]): number => {
+      let bestD = SNAP_PX;
+      let bestV = v;
+      const consider = (target: number, edge: number) => {
+        const d = Math.abs(target - edge);
+        if (d < bestD) { bestD = d; bestV = v + (target - edge); }
+      };
+      for (const t of targets) { consider(t, v); consider(t, v + size); }
+      if (gridStep) {
+        consider(Math.round(v / gridStep) * gridStep, v);
+        consider(Math.round((v + size) / gridStep) * gridStep, v + size);
+      }
+      return bestV;
+    };
+
+    const nx = snapAxis(node.x(), w, targetsX);
+    const ny = snapAxis(node.y(), h, targetsY);
+    if (nx !== node.x() || ny !== node.y()) node.position({ x: nx, y: ny });
   }
 
   function onDragEnd(e: Konva.KonvaEventObject<DragEvent>) {
-    const d = dragRef.current;
-    dragRef.current = null;
-    if (!d || !d.moved) return; // arrastre simple → lo confirma el propio elemento
-    const node = e.target as Konva.Node;
-    const a0 = d.preDrag.get(d.anchorId);
+    const d = multiDragRef.current;
+    if (!d || d.committed) return;
+    d.committed = true;
+    const stage = (e.target as Konva.Node).getStage();
     const sc = MM_TO_PX * zoom;
-    const dx = a0 ? node.x() / sc - a0.x : 0;
-    const dy = a0 ? node.y() / sc - a0.y : 0;
-    const restore: { id: string; patch: Partial<ElementModel> }[] = [];
-    const final: { id: string; patch: Partial<ElementModel> }[] = [];
-    for (const [sid, p] of d.preDrag) {
-      restore.push({ id: sid, patch: { x: p.x, y: p.y } as Partial<ElementModel> });
-      final.push({ id: sid, patch: { x: p.x + dx, y: p.y + dy } as Partial<ElementModel> });
+    const patches: { id: string; patch: Partial<ElementModel> }[] = [];
+    for (const sid of d.ids) {
+      const n = stage?.findOne('#' + sid);
+      if (n) patches.push({ id: sid, patch: { x: n.x() / sc, y: n.y() / sc } as Partial<ElementModel> });
     }
-    // Volver al estado previo (aún pausado) y registrar el final como UN paso.
-    updateElements(restore);
-    useDocumentHistory().getState().resume();
-    updateElements(final);
+    if (patches.length) updateElements(patches);
+    // Los dragend de los demás nodos llegan síncronos en este mismo mouseup;
+    // se limpia el ref DESPUÉS para que sus commits individuales sigan suprimidos.
+    setTimeout(() => { multiDragRef.current = null; }, 0);
   }
 
   function onGroupMouseUp() {

@@ -216,6 +216,17 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
     // foco está en un contentEditable.
   }
 
+  /* ── pegar SIEMPRE como texto plano ──
+   * El HTML pegado de otras apps (Word/Docs/web) trae estilos que el modelo de
+   * spans no puede representar completos → en el editor se veían y al salir se
+   * perdían (inconsistente). Comportamiento elegido: el texto pegado adopta el
+   * formato del punto donde se pega (como pegar sin formato). */
+  function handlePaste(e: React.ClipboardEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text/plain');
+    if (text) document.execCommand('insertText', false, text);
+  }
+
   return (
     <div
       ref={containerRef}
@@ -235,14 +246,8 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
         onKeyDown={handleKeyDown}
         onKeyUp={saveSelection}
         onMouseUp={saveSelection}
+        onPaste={handlePaste}
         onBlur={() => { if (!cancelRef.current) saveSelection(); }}
-        onDragOver={(e) => {
-          // permite el "cursor de texto" nativo siguiendo al puntero durante el arrastre
-          if (e.dataTransfer.types.includes('text/x-binding-path')) {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'copy';
-          }
-        }}
         onDrop={(e) => {
           const binding = e.dataTransfer.getData('text/x-binding-path');
           if (!binding) return;
