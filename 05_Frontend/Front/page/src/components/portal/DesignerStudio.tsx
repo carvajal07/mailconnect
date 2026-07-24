@@ -105,8 +105,10 @@ export default function DesignerStudio() {
     }
   };
 
-  const handleDelete = async (t: MessageTemplate) => {
-    if (!window.confirm(`¿Eliminar la plantilla "${t.name}"?`)) return;
+  // Confirmación de borrado con diálogo MUI (no el confirm feo del navegador).
+  const [toDelete, setToDelete] = useState<MessageTemplate | null>(null);
+
+  const doDelete = async (t: MessageTemplate) => {
     const res = await messageTemplatesService.delete(t.messageTemplateId);
     if (isOk(res)) {
       notify('Plantilla eliminada.', 'success');
@@ -115,6 +117,8 @@ export default function DesignerStudio() {
       notify(res.description || 'No se pudo eliminar.', 'error');
     }
   };
+
+  const handleDelete = (t: MessageTemplate) => setToDelete(t);
 
   // onSave del editor → pedir nombre (si es nueva) y persistir.
   const handleEditorSave = (templateJson: TemplateJson) => {
@@ -178,7 +182,7 @@ export default function DesignerStudio() {
   return (
     <Box>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Diseñador PDF</Typography>
+        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Plantillas PDF profesionales</Typography>
         <Box sx={{ flex: 1 }} />
         <IconButton size="small" onClick={() => void refreshList()} title="Refrescar">
           <RefreshIcon fontSize="small" />
@@ -212,7 +216,7 @@ export default function DesignerStudio() {
                   </CardContent>
                 </CardActionArea>
                 <Stack direction="row" justifyContent="flex-end" sx={{ px: 1, pb: 1 }}>
-                  <IconButton size="small" onClick={() => void handleDelete(t)} title="Eliminar">
+                  <IconButton size="small" onClick={() => handleDelete(t)} title="Eliminar">
                     <DeleteIcon fontSize="small" />
                   </IconButton>
                 </Stack>
@@ -276,6 +280,23 @@ export default function DesignerStudio() {
             Descargar
           </Button>
           <Button onClick={closePreview}>Cerrar</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Confirmación de eliminación — diálogo MUI */}
+      <Dialog open={!!toDelete} onClose={() => setToDelete(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Eliminar plantilla</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            ¿Eliminar la plantilla “{toDelete?.name}”? Esta acción no se puede deshacer.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setToDelete(null)}>Cancelar</Button>
+          <Button variant="contained" color="error"
+            onClick={() => { const t = toDelete; setToDelete(null); if (t) void doDelete(t); }}>
+            Eliminar
+          </Button>
         </DialogActions>
       </Dialog>
 

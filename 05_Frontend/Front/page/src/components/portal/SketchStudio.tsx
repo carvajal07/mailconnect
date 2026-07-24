@@ -311,7 +311,7 @@ export default function SketchStudio() {
     <Box>
       {/* ── Lanzador: plantillas guardadas ── */}
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Estudio PDF</Typography>
+        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Plantillas PDF avanzadas</Typography>
         <Box sx={{ flex: 1 }} />
         <IconButton size="small" onClick={() => void refreshList()} title="Refrescar">
           <RefreshIcon fontSize="small" />
@@ -332,7 +332,7 @@ export default function SketchStudio() {
 
       {templates.length === 0 && !loadingList ? (
         <Typography variant="body2" color="text.secondary">
-          No hay diseños del Estudio PDF guardados todavía. Crea el primero con «Nuevo diseño».
+          No hay plantillas avanzadas guardadas todavía. Crea el primero con «Nuevo diseño».
         </Typography>
       ) : (
         <Grid container spacing={2}>
@@ -375,7 +375,7 @@ export default function SketchStudio() {
           {/* Barra MailConnect */}
           <Stack direction="row" spacing={1} alignItems="center"
             sx={{ px: 1.5, py: 0.75, borderBottom: '1px solid', borderColor: 'divider' }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Estudio PDF</Typography>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Plantillas PDF avanzadas</Typography>
             {saveName && <Chip size="small" variant="outlined" label={saveName} />}
             {templateId && <Chip size="small" color="info" variant="outlined" label="guardada" />}
             <Box sx={{ flex: 1 }} />

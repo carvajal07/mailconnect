@@ -12,7 +12,7 @@ export function DesignerPdfSection() {
       fallback={(
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, p: 4 }}>
           <CircularProgress size={22} />
-          <Typography variant="body2" color="text.secondary">Cargando el Diseñador PDF…</Typography>
+          <Typography variant="body2" color="text.secondary">Cargando las plantillas PDF profesionales…</Typography>
         </Box>
       )}
     >

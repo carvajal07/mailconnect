@@ -11,8 +11,8 @@ function Sep() {
 /** Botón "en caja" del estilo de la barra del Diseñador PDF.
  *  ⚠️ El padding va INLINE: el reset `.mc-sketch button { padding: 0 }` tiene
  *  más especificidad que las utilidades `px-*` de Tailwind y las anula. */
-function BoxBtn({ onClick, title, active, children }: {
-  onClick: () => void; title?: string; active?: boolean; children: ReactNode;
+function BoxBtn({ onClick, title, active, compact, children }: {
+  onClick: () => void; title?: string; active?: boolean; compact?: boolean; children: ReactNode;
 }) {
   return (
     <button
@@ -21,7 +21,9 @@ function BoxBtn({ onClick, title, active, children }: {
       title={title}
       className="h-[22px] rounded flex items-center gap-1.5 text-11 whitespace-nowrap"
       style={{
-        padding: '0 12px',
+        // compact: menos padding para que en portátiles quepa todo (incl. el
+        // estado de guardado al final de la barra).
+        padding: compact ? '0 7px' : '0 12px',
         ...(active
           ? { background: 'var(--accent-soft)', color: 'var(--accent)', border: '1px solid var(--accent)' }
           : { background: 'var(--bg-1)', color: 'var(--ink-2)', border: '1px solid var(--line)' }),
@@ -128,16 +130,16 @@ export default function StatusBar() {
 
       <div className="flex-1" />
 
-      {/* ── Zoom + ajustes ── */}
-      <div className="flex items-center gap-2">
-        <BoxBtn onClick={() => setZoom(zoom - 0.1)} title="Reducir zoom"><Minus size={11} /></BoxBtn>
-        <span className="font-mono w-11 text-center tabular-nums" style={{ color: 'var(--ink)' }}>
+      {/* ── Zoom + ajustes (compactos: deben caber en un portátil) ── */}
+      <div className="flex items-center gap-1">
+        <BoxBtn compact onClick={() => setZoom(zoom - 0.1)} title="Reducir zoom"><Minus size={11} /></BoxBtn>
+        <span className="font-mono w-10 text-center tabular-nums" style={{ color: 'var(--ink)' }}>
           {Math.round(zoom * 100)}%
         </span>
-        <BoxBtn onClick={() => setZoom(zoom + 0.1)} title="Aumentar zoom"><Plus size={11} /></BoxBtn>
-        <BoxBtn onClick={() => setZoom(1)} title="Zoom real (100%)">1:1</BoxBtn>
-        <BoxBtn onClick={requestFit} title="Ajustar la hoja a la ventana">Ajustar</BoxBtn>
-        <BoxBtn onClick={requestFitWidth} title="Ajustar al ancho de la hoja">Ancho</BoxBtn>
+        <BoxBtn compact onClick={() => setZoom(zoom + 0.1)} title="Aumentar zoom"><Plus size={11} /></BoxBtn>
+        <BoxBtn compact onClick={() => setZoom(1)} title="Zoom real (100%)">1:1</BoxBtn>
+        <BoxBtn compact onClick={requestFit} title="Ajustar la hoja a la ventana">Ajustar</BoxBtn>
+        <BoxBtn compact onClick={requestFitWidth} title="Ajustar al ancho de la hoja">Ancho</BoxBtn>
       </div>
 
       <Sep />
