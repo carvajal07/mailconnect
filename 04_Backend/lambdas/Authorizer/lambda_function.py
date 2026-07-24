@@ -1,5 +1,6 @@
 import os
 
+import boto3
 import jwt  # PyJWT (mismo layer/lib que usa Login)
 
 # Autorizador de API Gateway para MailConnect.
@@ -12,6 +13,23 @@ import jwt  # PyJWT (mismo layer/lib que usa Login)
 #   expiró, o si SECRET_KEY no está configurada (deniega por defecto).
 
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
+
+# Revocación server-side: el token lleva el id de su sesión (claim `sid`, tabla
+# `session`); si la sesión no existe o está inactiva (logout, cambio de contraseña),
+# se deniega aunque la firma sea válida. Requiere permiso dynamodb:GetItem sobre
+# `session` en el rol de esta lambda.
+_table_session = boto3.resource('dynamodb').Table('session')
+
+
+def _session_active(sid):
+    """¿La sesión del token existe y sigue activa? Ante error de lectura se
+    DENIEGA (fail-closed): mejor pedir re-login que aceptar un token revocado."""
+    try:
+        item = _table_session.get_item(Key={'sessionId': str(sid)}).get('Item')
+    except Exception as e:
+        print('Authorizer: no se pudo leer la sesión: {}'.format(e))
+        return False
+    return bool(item) and bool(item.get('active'))
 
 
 def _extract_token(event):
@@ -79,6 +97,13 @@ def lambda_handler(event, context):
         print("Authorizer: el token no contiene 'user'.")
         raise Exception('Unauthorized')
 
+    # Revocación: el token debe traer su sesión (`sid`) y esta debe seguir activa.
+    # Tokens sin `sid` (formato anterior) se rechazan: basta volver a iniciar sesión.
+    sid = decoded.get('sid')
+    if not sid or not _session_active(sid):
+        print("Authorizer: sesión revocada o token sin 'sid'.")
+        raise Exception('Unauthorized')
+
     # Reenviar la identidad del tenant en el context. API Gateway la expone a las
     # lambdas como event.requestContext.authorizer.<clave> (proxy) o, en no-proxy,
     # se inyecta al body con un mapping template ($context.authorizer.customerId).
@@ -94,5 +119,7 @@ def lambda_handler(event, context):
         'role': str(decoded.get('role', 'client') or 'client'),
         # Sub-rol de empresa (RBAC): owner|approver|operator. Default owner.
         'tenantRole': str(decoded.get('tenantRole', 'owner') or 'owner'),
+        # Id de la sesión (revocación): útil para cerrar ESTA sesión en particular.
+        'sid': str(sid),
     }
     return _build_policy(user, 'Allow', resource, context=ctx)

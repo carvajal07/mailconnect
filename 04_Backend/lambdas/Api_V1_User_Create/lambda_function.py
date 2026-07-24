@@ -30,7 +30,7 @@ table_userData = dynamodb.Table('userData')
 _audit_table = dynamodb.Table('adminAudit')
 
 MAX_TEAM_USERS = int(os.environ.get('MAX_TEAM_USERS', '2'))   # sin contar al owner
-PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '100000'))
+PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '600000'))
 TEAM_ROLES = ('operator', 'approver')
 PATRON_EMAIL = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
 

@@ -44,7 +44,17 @@ def _audit(action, actor, detail, customer='', target=''):
     except Exception as e:
         print('No se pudo registrar auditoría: {}'.format(e))
 
-PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '100000'))
+PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '600000'))
+
+# ── Bloqueo progresivo por intentos fallidos de login ────────────────────────
+# Al 2º fallo se avisa que queda 1 intento; al 3º la cuenta se bloquea 5 min.
+# Si tras habilitarse vuelve a fallar → 1 hora; si se repite → 24 horas (y se
+# mantiene en 24 h para los siguientes). Un login CORRECTO con la cuenta ya
+# desbloqueada limpia el contador y la escalera. Durante un bloqueo vigente se
+# rechaza el ingreso aunque la contraseña sea correcta (si no, el bloqueo no
+# frenaría la fuerza bruta que acierta).
+LOCK_THRESHOLD = int(os.environ.get('LOGIN_LOCK_THRESHOLD', '3'))
+LOCK_DURATIONS_SECONDS = (5 * 60, 60 * 60, 24 * 60 * 60)
 
 # GSI de `user` por email (PK 'email'). El login busca SIEMPRE por Query O(1) al índice
 # (escalable por defecto). Si el GSI no existe, el login FALLA (no cae a Scan de tabla
@@ -74,11 +84,89 @@ def _verify_password(password, stored_hash, salt):
     return hmac.compare_digest(legacy, stored)
 
 
-def _is_legacy_hash(stored_hash):
-    return not str(stored_hash or '').startswith('pbkdf2$')
+def _needs_rehash(stored_hash):
+    """True si el hash guardado es el viejo sha256 o un pbkdf2 con MENOS iteraciones
+    que las actuales. El formato auto-descriptivo 'pbkdf2$<iter>$<hex>' permite subir
+    el costo sin migración: se re-hashea en el siguiente login exitoso."""
+    stored = str(stored_hash or '')
+    if not stored.startswith('pbkdf2$'):
+        return True
+    try:
+        return int(stored.split('$', 2)[1]) < PBKDF2_ITERATIONS
+    except Exception:
+        return True
 
 
-def generate_jwt(username, customer_id="", customer="", user_id="", role="client", nit="", tenant_role="owner"):
+def _lock_state(item):
+    """(bloqueadaHasta epoch, etapa de bloqueo) del item de usuario; 0/0 si no hay."""
+    try:
+        lock_until = int(item.get('lockUntil', 0) or 0)
+    except Exception:
+        lock_until = 0
+    try:
+        stage = int(item.get('lockStage', 0) or 0)
+    except Exception:
+        stage = 0
+    return lock_until, stage
+
+
+def _lock_message(seconds):
+    if seconds >= 86400:
+        return 'Cuenta bloqueada por 24 horas por intentos fallidos.'
+    if seconds >= 3600:
+        return 'Cuenta bloqueada por 1 hora por intentos fallidos.'
+    return 'Cuenta bloqueada por 5 minutos por intentos fallidos.'
+
+
+def _remaining_text(seconds):
+    minutes = max(1, int((seconds + 59) // 60))
+    if minutes >= 60:
+        return '{} hora(s)'.format((minutes + 59) // 60)
+    return '{} minuto(s)'.format(minutes)
+
+
+def _apply_lock(user_id, stage):
+    """Aplica el bloqueo de la etapa dada (0→5 min, 1→1 h, 2+→24 h). Deja el contador
+    en cero: al expirar el bloqueo, UN solo fallo escala a la siguiente etapa."""
+    duration = LOCK_DURATIONS_SECONDS[min(stage, len(LOCK_DURATIONS_SECONDS) - 1)]
+    table_user.update_item(
+        Key={'userId': user_id},
+        UpdateExpression='SET lockUntil = :u, lockStage = :s, failedLoginAttempts = :z',
+        ExpressionAttributeValues={':u': int(time.time()) + duration, ':s': stage + 1, ':z': 0})
+    return True, _lock_message(duration)
+
+
+def _register_failed_attempt(user_id, stage):
+    """Cuenta un fallo y aplica el bloqueo progresivo. Devuelve (bloqueado, aviso).
+    El contador es atómico (ADD) para no perder fallos concurrentes."""
+    if stage > 0:
+        # Ya hubo un bloqueo previo (expirado): un solo fallo escala al siguiente nivel.
+        return _apply_lock(user_id, stage)
+    resp = table_user.update_item(
+        Key={'userId': user_id},
+        UpdateExpression='ADD failedLoginAttempts :one',
+        ExpressionAttributeValues={':one': 1},
+        ReturnValues='UPDATED_NEW')
+    attempts = int(resp.get('Attributes', {}).get('failedLoginAttempts', 1))
+    if attempts >= LOCK_THRESHOLD:
+        return _apply_lock(user_id, 0)
+    if attempts == LOCK_THRESHOLD - 1:
+        return False, ' Te queda 1 intento antes de que la cuenta se bloquee temporalmente.'
+    return False, ''
+
+
+def _reset_lock(user_id):
+    """Login correcto (cuenta desbloqueada): limpia contador y escalera. Best-effort."""
+    try:
+        table_user.update_item(
+            Key={'userId': user_id},
+            UpdateExpression='SET failedLoginAttempts = :z, lockStage = :z REMOVE lockUntil',
+            ExpressionAttributeValues={':z': 0})
+    except Exception as e:
+        print('No se pudo resetear el contador de intentos: {}'.format(e))
+
+
+def generate_jwt(username, customer_id="", customer="", user_id="", role="client", nit="", tenant_role="owner", session_id=""):
     # Información de la carga útil. Se embeben la identidad del tenant (customerId,
     # customer, nit), el userId y el rol como claims: el Authorizer los reenvía en el
     # context y las lambdas pueden confiar en ellos (multi-tenant + roles) en vez del body.
@@ -97,6 +185,9 @@ def generate_jwt(username, customer_id="", customer="", user_id="", role="client
         # Sub-rol dentro de la empresa (RBAC): owner|approver|operator. Default owner
         # (compatibilidad con cuentas antiguas). El Authorizer lo reenvía en el context.
         'tenantRole': tenant_role or 'owner',
+        # Id de la sesión en la tabla `session` (revocación server-side): el Authorizer
+        # deniega tokens cuya sesión ya no está activa (logout / cambio de contraseña).
+        'sid': str(session_id or ''),
         'iat': now_ts,
         'exp': now_ts + JWT_TTL_SECONDS,  # Expira en 1 día
     }
@@ -141,8 +232,8 @@ def _client_info(event):
     return ip, device
 
 
-def create_Session(userId,ipAddress,device,numberAttemps):
-    sessionId = str(uuid.uuid4())
+def create_Session(userId, ipAddress, device, numberAttemps, session_id=None):
+    sessionId = session_id or str(uuid.uuid4())
     # Obtener la fecha y hora actual
     now = datetime.now()
     # Formatear la fecha y hora según un formato específico
@@ -181,7 +272,8 @@ def select_name(userDataId):
 def _find_user_by_email(email):
     """Busca el usuario por email con Query O(1) al GSI `USER_EMAIL_GSI` (PK 'email').
     Escalable por defecto; si el GSI no existe, propaga el error (no cae a Scan)."""
-    proj = 'userId, userHash, userSalt, active, customerId, userDataId, #r, tenantRole'
+    proj = ('userId, userHash, userSalt, active, customerId, userDataId, #r, tenantRole, '
+            'failedLoginAttempts, lockUntil, lockStage')
     names = {'#r': 'role'}  # 'role' es palabra reservada → alias
     resp = table_user.query(
         IndexName=USER_EMAIL_GSI,
@@ -240,27 +332,38 @@ def lambda_handler(event, context):
     else:
         # Verificar si se encontró el elemento
         if responseUser['Items']:
-            
-            isActive = responseUser['Items'][0]['active']
-            #isBlocked = response['Items'][0]['isBlocked']
-            isBlocked = False
+            item_user = responseUser['Items'][0]
+            isActive = item_user['active']
+
+            # Estado del bloqueo progresivo por intentos fallidos (ver LOCK_THRESHOLD).
+            lock_until, lock_stage = _lock_state(item_user)
+            now_epoch = int(time.time())
 
             if (isActive):
-                if (isBlocked):
+                if now_epoch < lock_until:
+                    # Bloqueo vigente: se rechaza aunque la contraseña sea correcta.
                     status = False
-                    statusCode = 400
-                    description = "Usuario bloqueado"
+                    statusCode = 429
+                    description = ('Cuenta bloqueada temporalmente por intentos fallidos. '
+                                   'Intenta de nuevo en {}.'.format(_remaining_text(lock_until - now_epoch)))
+                    ip_audit, _ = _client_info(event)
+                    _audit('security.lockout', user,
+                           'Intento con la cuenta bloqueada (IP {})'.format(ip_audit))
                 else:
                     #validar la contraseña enviada
                     password = event.get('password', '')
-                    userHash = responseUser['Items'][0]['userHash']
-                    salt = responseUser['Items'][0]['userSalt']
+                    userHash = item_user['userHash']
+                    salt = item_user['userSalt']
 
                     if _verify_password(password, userHash, salt):
-                        userId = responseUser['Items'][0]['userId']
-                        # Rehash transparente: si el hash guardado es el viejo (sha256),
-                        # se regenera con PBKDF2 + nuevo salt en este login exitoso.
-                        if _is_legacy_hash(userHash):
+                        userId = item_user['userId']
+                        # Login correcto con la cuenta desbloqueada: limpia el contador
+                        # de fallos y la escalera de bloqueos (si había).
+                        if item_user.get('failedLoginAttempts') or lock_stage or lock_until:
+                            _reset_lock(userId)
+                        # Rehash transparente: hash viejo (sha256) o pbkdf2 con menos
+                        # iteraciones que las actuales → se regenera en este login.
+                        if _needs_rehash(userHash):
                             try:
                                 new_salt = str(uuid.uuid4())
                                 table_user.update_item(
@@ -271,37 +374,59 @@ def lambda_handler(event, context):
                                 )
                             except Exception as _e:
                                 print('No se pudo re-hashear (se continúa): {}'.format(_e))
-                        customerId = responseUser['Items'][0]['customerId']
+                        customerId = item_user['customerId']
                         # Rol del usuario (default 'client' si el usuario es antiguo/no lo tiene).
-                        role = responseUser['Items'][0].get('role', 'client') or 'client'
+                        role = item_user.get('role', 'client') or 'client'
                         # Sub-rol de empresa (default 'owner' para cuentas antiguas).
-                        tenantRole = responseUser['Items'][0].get('tenantRole', 'owner') or 'owner'
+                        tenantRole = item_user.get('tenantRole', 'owner') or 'owner'
                         customer, companyTin, realSendEnabled = select_client(customerId)
-                        userDataId = responseUser['Items'][0]['userDataId']
+                        userDataId = item_user['userDataId']
                         name = select_name(userDataId)
-                        # Token con los claims del tenant + rol (multi-tenant + roles vía Authorizer).
-                        # companyTin (NIT) va como claim `nit`: es la llave de los recursos por cliente.
-                        token = generate_jwt(user, customerId, customer, userId, role, companyTin, tenantRole)
-                        # Registrar la sesión. No debe romper el login si falla
-                        # (p. ej. permisos de la tabla), por eso va en su propio try.
+                        # La sesión se registra ANTES de emitir el token y es OBLIGATORIA:
+                        # el token lleva su sessionId (claim `sid`) y el Authorizer deniega
+                        # tokens cuya sesión no está activa (revocación server-side). Sin
+                        # registro de sesión NO se emite token (sería irrevocable).
                         try:
                             ipAddress, device = _client_info(event)
-                            create_Session(userId, ipAddress, device, 1)
+                            session_id = str(uuid.uuid4())
+                            create_Session(userId, ipAddress, device, 1, session_id)
                         except Exception as session_error:
                             print("No se pudo registrar la sesion: {}".format(session_error))
-                        status = True
-                        statusCode = 200
-                        description = "Usuario correcto"
-                        ip_audit, _ = _client_info(event)
-                        _audit('security.login', user,
-                               'Ingreso exitoso (IP {})'.format(ip_audit), customer)
-                        _audit('security.token', user,
-                               'Token emitido en el login (IP {})'.format(ip_audit), customer, userId)
+                            status = False
+                            statusCode = 500
+                            description = 'No se pudo iniciar la sesión. Intenta de nuevo.'
+                            token = ""
+                        else:
+                            # Token con los claims del tenant + rol + sesión (sid).
+                            # companyTin (NIT) va como claim `nit`: llave de los recursos por cliente.
+                            token = generate_jwt(user, customerId, customer, userId, role,
+                                                 companyTin, tenantRole, session_id)
+                            status = True
+                            statusCode = 200
+                            description = "Usuario correcto"
+                            ip_audit, _ = _client_info(event)
+                            _audit('security.login', user,
+                                   'Ingreso exitoso (IP {})'.format(ip_audit), customer)
+                            _audit('security.token', user,
+                                   'Token emitido en el login (IP {})'.format(ip_audit), customer, userId)
                     else:
+                        # Contraseña incorrecta: cuenta el fallo y aplica el bloqueo
+                        # progresivo (best-effort: si la escritura falla, igual se niega).
+                        blocked, aviso = False, ''
+                        try:
+                            blocked, aviso = _register_failed_attempt(item_user['userId'], lock_stage)
+                        except Exception as lock_error:
+                            print('No se pudo registrar el intento fallido: {}'.format(lock_error))
                         status = False
-                        statusCode = 404
-                        description = 'Usuario o contraseña incorrectos'
                         ip_audit, _ = _client_info(event)
+                        if blocked:
+                            statusCode = 429
+                            description = aviso
+                            _audit('security.lockout', user,
+                                   '{} (IP {})'.format(aviso, ip_audit))
+                        else:
+                            statusCode = 404
+                            description = 'Usuario o contraseña incorrectos.' + aviso
                         _audit('security.login', user,
                                'Contraseña incorrecta (IP {})'.format(ip_audit))
             else:

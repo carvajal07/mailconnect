@@ -15,6 +15,9 @@
 >   del MVP, brechas (gaps) por severidad, plan por fases con responsables, y el
 >   diseño de los canales **SMS / WhatsApp / Voz**. El roadmap de §5 de este archivo
 >   queda subordinado a ese plan.
+> - **`PENDIENTES.md`** (raíz) → **backlog por bloques** (salido de la revisión
+>   profunda de jul 2026): seguridad, despliegues `[J]` que desbloquean features ya
+>   construidas, cierre del Estudio PDF, producto, tableros y panel admin.
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
@@ -998,6 +1001,88 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
 - **Refresh token:** `Api_V1_Security_Refresh-token` valida el token vigente y reemite uno con
   los mismos claims y `exp` fresco (sesión deslizante). El front lo renueva en segundo plano
   (`RequireAuth`) cuando el usuario está activo y al token le queda < 1 h.
+
+### Endurecimiento de autenticación: bloqueo de login, revocación de tokens, 2ª barrera admin, PBKDF2 600k (jul 2026)
+- **Bloqueo progresivo de intentos de login** (`Api_V1_Security_Login`): contador
+  atómico `failedLoginAttempts` + `lockUntil`/`lockStage` en la tabla `user`. Al 2º
+  fallo el 404 avisa *"te queda 1 intento"*; al 3º → **429** y bloqueo **5 min**; al
+  expirar, UN nuevo fallo escala a **1 h** y el siguiente a **24 h** (se mantiene).
+  Login correcto con la cuenta DESBLOQUEADA resetea contador y escalera; con bloqueo
+  vigente ni la clave correcta entra. Audita `security.lockout`. El front muestra la
+  descripción del backend en 404/429 (`LoginPage`).
+- **Revocación real de tokens (claim `sid`)**: `Login` crea la sesión ANTES de emitir
+  el token (ahora es OBLIGATORIA: sin registro de sesión no hay token) y embebe su
+  `sessionId` como claim **`sid`**. `Authorizer`/`Authorizer2` validan que la sesión
+  exista y esté ACTIVA (GetItem a `session`, fail-closed; tokens sin `sid` = formato
+  viejo → denegados, basta re-loguear). `Logout` ya desactivaba las sesiones (ahora sí
+  revoca de verdad); `Change-password` también las desactiva (`_revoke_sessions`).
+  `Refresh-token` exige sesión activa y **preserva `sid` y `tenantRole`** — fix de
+  seguridad: antes el refresco PERDÍA `tenantRole` y el Authorizer aplicaba su default
+  `owner` → un operator quedaba ESCALADO a owner al renovar. ⚠️ La revocación es
+  efectiva al expirar el **cache del Authorizer** en API Gateway (bajar TTL a 60–300 s).
+  ⚠️ `[J]`: IAM `dynamodb:GetItem session` en ambos Authorizers y Refresh-token;
+  `Scan/UpdateItem session` en Change-password; al desplegar, los tokens vigentes (sin
+  `sid`) quedan inválidos → re-login de todos los usuarios.
+- **Front — sesión por pestaña**: el token/usuario pasan de localStorage a
+  **`sessionStorage`** → cerrar la pestaña/ventana/navegador elimina la sesión del
+  cliente. Para no perderla al abrir una pestaña nueva, las pestañas se comparten la
+  sesión con un **handshake efímero** por localStorage (`mc_session_req`/`_share`,
+  storage events; `RequireAuth` espera ese handshake antes de redirigir al login) y el
+  logout se **difunde** a las demás pestañas (`mc_logout_broadcast`).
+- **Segunda barrera del gate admin**: las 21 lambdas admin (`Admin_*`, `Customer_*`,
+  `Pricing_*`, `Config_*`, `User_SetRole/SetTenantRole`, `Billing_Summary`,
+  `Balance_Topup-manual`) revalidan la **FIRMA del JWT** (HS256 con `SECRET_KEY`,
+  verificación manual con stdlib — sin layer PyJWT) y exigen claim `role=admin`; el
+  context del Authorizer solo ya NO basta (falsificable si una ruta no-proxy queda sin
+  mapping template). El token llega por el header (proxy) o por el campo **`authToken`**
+  que el mapping template ahora inyecta (`$input.params('Authorization')`,
+  `scripts/sync_api.py`). Sin la env `SECRET_KEY` la lambda cae al modo "solo context"
+  (rollout compatible). ⚠️ `[J]`: configurar `SECRET_KEY` en las 21 lambdas admin +
+  correr `deploy-api.yml`. Guard: `test_mapping_template.py`; helper de pruebas
+  `helpers_auth.make_token` (los tests admin ahora firman su token).
+- **PBKDF2 600.000 iteraciones** (default OWASP) en Login/Register/Change-password/
+  User_Create. Compatibilidad: el formato `pbkdf2$<iter>$<hex>` es auto-descriptivo →
+  los hashes viejos (100k o sha256) verifican igual y se **re-hashean transparente** en
+  el siguiente login exitoso (`_needs_rehash`). En pruebas la env `PBKDF2_ITERATIONS`
+  baja el costo; el default real lo verifica `test_pbkdf2_default_600k`.
+- **Cobertura**: `test_login_lockout.py` (progresión 5min→1h→24h, aviso del intento
+  restante, reset por login correcto, bloqueo aunque la clave sea correcta),
+  `test_seguridad.py` (revocación end-to-end login→logout→401, change-password revoca,
+  authorizer sin sid/sesión inactiva deniega), `test_listados_stats.py` (refresh
+  preserva sid+tenantRole, 401 con sesión revocada/sin sid), `test_customer_admin.py`
+  (context admin falsificado sin token → 403; token role=client → 403).
+
+### Paridad lienzo↔PDF del Estudio (2ª tanda, jul 2026)
+Fixes de fidelidad en `sketch_translator.py` + `pdf_engine` (motor estándar):
+- **Grosores en mm**: el editor captura trazos/bordes en mm (`ShapeProps`/`LineProps`)
+  y `border_renderer` espera mm, pero el traductor los trataba como pt (×`MM_PER_PT`)
+  → bordes ~2.8× más delgados que el lienzo. Ahora pasan por `self.mm()` (unidad del
+  doc) directo.
+- **Líneas diagonales**: antes se aproximaban con el bounding box RELLENO (un bloque);
+  ahora se emiten como rectángulo DELGADO centrado en el segmento (`points` relativos
+  al x/y del elemento) y ROTADO su ángulo.
+- **Rotación para TODOS los tipos**: `page_renderer._with_rotation` rota texto,
+  contentarea, tabla y QR/barcode alrededor de su centro (misma convención
+  `rotate(-rot)` que shape/image, que ya rotaban solos).
+- **Alineación con variables**: el traductor emite `<p style="text-align:…">`, el
+  `html_parser` la parsea (`Paragraph.alignment`) y `contentarea_renderer` la aplica
+  (antes `TA_LEFT` fijo: un título centrado con `{{nombre}}` salía a la izquierda).
+- **`font-family` por fragmento**: `_span_html` la emite, el parser la lee
+  (`InlineStyle.font_family`) y el renderer la resuelve por run
+  (`StyleRegistry.font_for`).
+- **Alias de fuentes** (`font_manager._FAMILY_ALIASES`): JetBrains Mono/Consolas/
+  Menlo→Courier (monoespaciada se mantiene monoespaciada), Arial→Helvetica,
+  Times New Roman→Times, Courier New→Courier (antes TODO caía a Helvetica).
+- **Estilos POR CELDA de tabla**: el traductor conserva `align`/`bold`/`color`/
+  `background` de cada celda y `table_renderer` los aplica (estilo por celda +
+  comandos `BACKGROUND` puntuales que pisan banda/cebra).
+- **Cobertura**: 8 pruebas nuevas en `test_render_engine.py` (bordes en mm, diagonal
+  rotada, alineación, celdas con estilo, font-family por span, alias de fuentes,
+  parser, render con rotación).
+- ⚠️ Lo que SIGUE pendiente del Estudio (ver `PENDIENTES.md` Bloque 3): usar estas
+  plantillas en campañas EAP-PDF (el selector solo lee `html` y el combinador solo
+  renderiza HTML), vista previa con datos de muestra, `dash`, `pen`/`flowable`,
+  opacidad/crop de imágenes, `fallback` del dataField.
 
 ### Fix de seguridad: RBAC de sub-rol (`tenantRole`) — cierre del bypass del maker-checker (jul 2026)
 - **Problema (ALTO):** el mapping template no-proxy (`scripts/sync_api.py` `CONTEXT_TEMPLATE`) NO

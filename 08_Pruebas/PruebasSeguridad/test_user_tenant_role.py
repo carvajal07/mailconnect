@@ -12,6 +12,7 @@ os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'testing')
 import pytest  # noqa: E402
 import boto3  # noqa: E402
 from moto import mock_aws  # noqa: E402
+from helpers_auth import make_token  # noqa: E402  (fija SECRET_KEY + firma JWT)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PATH = REPO_ROOT / '04_Backend' / 'lambdas' / 'Api_V1_User_SetTenantRole' / 'lambda_function.py'
@@ -43,7 +44,7 @@ def env():
 
 
 def _admin(body):
-    return {**body, 'requestContext': {'authorizer': {'role': 'admin', 'user': 'root', 'userId': 'A0'}}}
+    return {**body, 'authToken': make_token(), 'requestContext': {'authorizer': {'role': 'admin', 'user': 'root', 'userId': 'A0'}}}
 
 
 def _client(body):

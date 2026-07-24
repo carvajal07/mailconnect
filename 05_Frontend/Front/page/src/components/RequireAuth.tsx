@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
@@ -8,6 +8,7 @@ import {
   sessionExpired,
   secondsUntilExpiry,
   refreshSession,
+  requestSessionFromPeers,
   getUser,
   isAdmin,
 } from '../services/authService';
@@ -32,7 +33,18 @@ const TOUCH_THROTTLE_MS = 5_000; // no escribir la marca de actividad más segui
 const REFRESH_WHEN_LEFT_S = 3600; // renovar el token si le queda < 1 h y el usuario está activo
 
 export const RequireAuth = ({ children, requireAdmin = false }: { children: ReactNode; requireAdmin?: boolean }) => {
-  const authed = isAuthenticated() && !isTokenExpired();
+  // La sesión vive en sessionStorage (por pestaña). Una pestaña NUEVA sin token
+  // primero se la pide a las pestañas abiertas (handshake por localStorage) antes
+  // de decidir que no hay sesión y redirigir al login.
+  const [recovering, setRecovering] = useState(() => !isAuthenticated());
+  useEffect(() => {
+    if (!recovering) return;
+    let alive = true;
+    void requestSessionFromPeers().then(() => { if (alive) setRecovering(false); });
+    return () => { alive = false; };
+  }, [recovering]);
+
+  const authed = !recovering && isAuthenticated() && !isTokenExpired();
 
   useEffect(() => {
     if (!authed) return;
@@ -78,6 +90,9 @@ export const RequireAuth = ({ children, requireAdmin = false }: { children: Reac
       window.clearInterval(interval);
     };
   }, [authed]);
+
+  // Aún preguntando a las otras pestañas si tienen la sesión: no decidir todavía.
+  if (recovering) return null;
 
   if (!authed) {
     // Si había token pero venció, dejar el aviso para la pantalla de login.

@@ -13,6 +13,7 @@ os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'testing')
 import pytest  # noqa: E402
 import boto3  # noqa: E402
 from moto import mock_aws  # noqa: E402
+from helpers_auth import make_token  # noqa: E402  (fija SECRET_KEY + firma JWT)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DIR = REPO_ROOT / '04_Backend' / 'lambdas'
@@ -27,7 +28,7 @@ def _load(folder):
 
 
 def _admin(payload):
-    return {'body': None, 'requestContext': {'authorizer': {'role': 'admin'}}, **payload}
+    return {'body': None, 'authToken': make_token(), 'requestContext': {'authorizer': {'role': 'admin'}}, **payload}
 
 
 def _pk(name, pk):

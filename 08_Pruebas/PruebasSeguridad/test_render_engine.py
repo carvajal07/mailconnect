@@ -340,3 +340,130 @@ def test_mt_create_pdf_sin_contenido_400(mt_create):
         'channel': 'PDF', 'name': 'Vacía', 'customerId': CID,
     }), None)
     assert res['statusCode'] == 400
+
+
+# ── Fidelidad lienzo ↔ PDF (fixes jul 2026) ──────────────────────────────────
+
+def test_traductor_borde_de_forma_en_mm(mod):
+    # El editor captura el grosor en mm y el motor lo espera en mm → pasa DIRECTO.
+    # (Regresión: se multiplicaba por MM_PER_PT y un borde de 1 mm salía de 0.35 mm.)
+    from sketch_translator import translate_sketch
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 'r1', 'type': 'rect', 'x': 10, 'y': 10, 'width': 50, 'height': 20,
+         'fill': '#ffffff', 'stroke': '#000000', 'strokeWidth': 1, 'cornerRadius': 0},
+    ]}]}
+    el = translate_sketch(doc)['templateJson']['pages'][0]['elements'][0]
+    assert el['border']['unified']['width'] == 1.0
+
+
+def test_traductor_linea_diagonal_como_rect_rotado(mod):
+    # Una línea diagonal debe salir como rectángulo DELGADO rotado su ángulo
+    # (antes se emitía el bounding box relleno: un bloque sólido de 30×40).
+    from sketch_translator import translate_sketch
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 'l1', 'type': 'line', 'x': 10, 'y': 10, 'width': 30, 'height': 40,
+         'points': [0, 0, 30, 40], 'stroke': '#111111', 'strokeWidth': 0.5, 'rotation': 0},
+    ]}]}
+    el = translate_sketch(doc)['templateJson']['pages'][0]['elements'][0]
+    assert el['shape'] == 'rectangle'
+    assert round(el['width'], 1) == 50.0          # hipotenusa 30-40-50
+    assert el['height'] == 0.5                    # el grosor del trazo, no 40
+    assert round(el['rotation'], 1) == 53.1       # atan2(40, 30)
+    # Centrado en el punto medio del segmento (10+15, 10+20)
+    assert round(el['x'] + el['width'] / 2, 1) == 25.0
+    assert round(el['y'] + el['height'] / 2, 1) == 30.0
+
+
+def test_traductor_alineacion_con_variables(mod):
+    # Texto centrado CON variables → contentarea con <p style="text-align:center">
+    # (antes la alineación se perdía y todo salía a la izquierda).
+    from sketch_translator import translate_sketch
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 't1', 'type': 'text', 'x': 10, 'y': 10, 'width': 100, 'height': 10,
+         'text': 'Hola {{nombre}}', 'align': 'center', 'fontFamily': 'Inter',
+         'fontSize': 12, 'color': '#111111', 'fontWeight': 400, 'lineHeight': 1.3},
+    ]}]}
+    tj = translate_sketch(doc)['templateJson']
+    content = tj['contentAreas'][0]['content']
+    assert 'text-align:center' in content and 'data-var="nombre"' in content
+
+
+def test_traductor_estilos_por_celda(mod):
+    # Los estilos por celda del editor (align/bold/color/background) viajan al motor.
+    from sketch_translator import translate_sketch
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 'tb1', 'type': 'table', 'x': 10, 'y': 10, 'width': 100, 'height': 40,
+         'columns': [{'widthPercent': 50}, {'widthPercent': 50}],
+         'rows': [
+             [{'text': 'Total', 'bold': True, 'align': 'right'},
+              {'text': '$100', 'color': '#dc2626', 'background': '#fef2f2'}],
+         ],
+         'hasHeader': False, 'hasFooter': False, 'borderWidth': 0.2,
+         'borderColor': '#94a3b8', 'cellSpacing': 0, 'alternateRows': False,
+         'alternateBackground': '#f9fafb', 'headerBackground': '#eee',
+         'footerBackground': '#eee', 'rowFontSize': 9},
+    ]}]}
+    t = translate_sketch(doc)['templateJson']['pages'][0]['elements'][0]
+    c1, c2 = t['body']['rows'][0]['cells']
+    assert c1 == {'content': 'Total', 'bold': True, 'align': 'right'}
+    assert c2 == {'content': '$100', 'color': '#dc2626', 'background': '#fef2f2'}
+
+
+def test_traductor_span_con_font_family(mod):
+    from sketch_translator import translate_sketch
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 't1', 'type': 'text', 'x': 10, 'y': 10, 'width': 100, 'height': 10,
+         'text': 'ab', 'align': 'left', 'fontFamily': 'Inter', 'fontSize': 12,
+         'color': '#111111', 'fontWeight': 400, 'lineHeight': 1.3,
+         'spans': [{'text': 'a'}, {'text': 'b', 'fontFamily': 'JetBrains Mono', 'fontSize': 10}]},
+    ]}]}
+    tj = translate_sketch(doc)['templateJson']
+    content = tj['contentAreas'][0]['content']
+    assert 'font-family:JetBrains Mono' in content
+
+
+def test_font_manager_alias_de_familias(mod):
+    # Familias del editor sin fuente propia → builtin equivalente (una monoespaciada
+    # NO debe caer a Helvetica: cambiaría el layout respecto del lienzo).
+    from pdf_engine.font_manager import FontManager
+    fm = FontManager()
+    assert fm.resolve('JetBrains Mono') == 'Courier'
+    assert fm.resolve('JetBrains Mono', bold=True) == 'Courier-Bold'
+    assert fm.resolve('Arial') == 'Helvetica'
+    assert fm.resolve('Times New Roman', italic=True) == 'Times-Italic'
+    assert fm.resolve('Courier New') == 'Courier'
+
+
+def test_html_parser_alineacion_y_familia(mod):
+    from pdf_engine.html_parser import parse_content
+    paras = parse_content('<p style="text-align:center"><span style="font-family:courier">x</span></p>')
+    paras = [p for p in paras if not p.is_empty()]
+    assert paras[0].alignment == 'center'
+    assert paras[0].runs[0].style.font_family == 'courier'
+
+
+def test_render_con_rotacion_de_texto_y_tabla(mod):
+    # Smoke: el despachador rota texto/tabla/QR sin reventar el render.
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 't1', 'type': 'text', 'x': 30, 'y': 30, 'width': 80, 'height': 10,
+         'text': 'Girado', 'align': 'left', 'fontFamily': 'Helvetica', 'fontSize': 12,
+         'color': '#111111', 'fontWeight': 400, 'lineHeight': 1.3, 'rotation': 45},
+        {'id': 'q1', 'type': 'qr', 'x': 150, 'y': 30, 'width': 30, 'height': 30,
+         'barcodeType': 'QR', 'data': 'x', 'errorLevel': 'M', 'moduleSize': 4,
+         'showText': False, 'rotation': 30},
+        {'id': 'tb1', 'type': 'table', 'x': 20, 'y': 100, 'width': 120, 'height': 40,
+         'columns': [{'widthPercent': 100, 'header': 'Col'}],
+         'rows': [[{'text': 'dato'}]], 'hasHeader': False, 'hasFooter': False,
+         'borderWidth': 0.2, 'borderColor': '#94a3b8', 'cellSpacing': 0,
+         'alternateRows': False, 'alternateBackground': '#f9fafb',
+         'headerBackground': '#eee', 'footerBackground': '#eee',
+         'rowFontSize': 9, 'rotation': 15},
+    ]}]}
+    res = mod.lambda_handler(_ctx({'sketch': {'schema': 'pdfsketch@1', 'document': doc}}), None)
+    assert _pdf_bytes(res)[:5] == b'%PDF-'

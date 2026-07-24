@@ -41,6 +41,19 @@ _BUILTIN: dict[tuple[str, bool, bool], str] = {
 
 _WEIGHT_BOLD = {"bold", "700", "800", "900", "extrabold", "black", "semibold", "600"}
 
+# Familias del editor sin fuente propia → builtin visualmente equivalente. Sin el
+# alias caían TODAS a Helvetica: una monoespaciada (JetBrains Mono) se volvía
+# proporcional y el layout del lienzo no coincidía con el del PDF.
+_FAMILY_ALIASES: dict[str, str] = {
+    "arial": "helvetica",
+    "times new roman": "times",
+    "courier new": "courier",
+    "jetbrains mono": "courier",
+    "consolas": "courier",
+    "menlo": "courier",
+    "monospace": "courier",
+}
+
 # Filename weight/style keywords → (bold, italic)
 _FILENAME_KEYWORDS: dict[str, tuple[bool, bool]] = {
     "regular":          (False, False),
@@ -233,13 +246,19 @@ class FontManager:
         Return a ReportLab font name for the given family + style.
         Falls back to built-in Helvetica variants when the font isn't registered.
         """
-        key = (family.lower(), bold, italic)
+        family_lower = (family or "").lower()
+        key = (family_lower, bold, italic)
 
         if key in self._registry:
             return self._registry[key]
 
         if key in _BUILTIN:
             return _BUILTIN[key]
+
+        # Alias de familias conocidas (Arial→Helvetica, monoespaciadas→Courier…)
+        alias = _FAMILY_ALIASES.get(family_lower)
+        if alias:
+            return _BUILTIN[(alias, bold, italic)]
 
         # Unknown family → map to Helvetica variant
         return _BUILTIN[("helvetica", bold, italic)]

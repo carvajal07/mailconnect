@@ -260,3 +260,7 @@ class StyleRegistry:
     def font_name(self, ts: ResolvedTextStyle) -> str:
         """Resolve font family + style to a registered ReportLab font name."""
         return self._fm.resolve(ts.font_family, ts.bold, ts.italic)
+
+    def font_for(self, family: str, bold: bool = False, italic: bool = False) -> str:
+        """Fuente registrada para una familia puntual (override por fragmento/run)."""
+        return self._fm.resolve(family, bold, italic)

@@ -25,6 +25,7 @@ os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'testing')
 import pytest  # noqa: E402
 import boto3  # noqa: E402
 from moto import mock_aws  # noqa: E402
+from helpers_auth import make_token  # noqa: E402  (fija SECRET_KEY + firma JWT)
 from boto3.dynamodb.conditions import Attr  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -318,7 +319,7 @@ def wallet_env():
 
 
 def _admin_event(body):
-    return {'body': body, 'requestContext': {'authorizer': {'role': 'admin', 'user': 'boss', 'userId': 'A1'}}}
+    return {'body': body, 'authToken': make_token(), 'requestContext': {'authorizer': {'role': 'admin', 'user': 'boss', 'userId': 'A1'}}}
 
 
 def _client_event(body, customer_id='CU1', customer='empresa'):

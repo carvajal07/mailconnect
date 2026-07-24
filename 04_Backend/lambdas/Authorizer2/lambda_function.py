@@ -1,5 +1,6 @@
 import os
 
+import boto3
 import jwt  # PyJWT (mismo layer/lib que usa Login)
 
 # Autorizador de API Gateway para MailConnect (variante secundaria).
@@ -9,6 +10,21 @@ import jwt  # PyJWT (mismo layer/lib que usa Login)
 # Ante cualquier duda deniega (fail-closed): lanza Exception('Unauthorized').
 
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
+
+# Revocación server-side (ver Authorizer): el token trae el id de su sesión (claim
+# `sid`); si la sesión no está activa se deniega. Requiere dynamodb:GetItem sobre
+# la tabla `session` en el rol de esta lambda.
+_table_session = boto3.resource('dynamodb').Table('session')
+
+
+def _session_active(sid):
+    """¿La sesión del token existe y sigue activa? Ante error de lectura DENIEGA."""
+    try:
+        item = _table_session.get_item(Key={'sessionId': str(sid)}).get('Item')
+    except Exception as e:
+        print('Authorizer2: no se pudo leer la sesión: {}'.format(e))
+        return False
+    return bool(item) and bool(item.get('active'))
 
 
 def _extract_token(event):
@@ -72,6 +88,12 @@ def lambda_handler(event, context):
         print("Authorizer2: el token no contiene 'user'.")
         raise Exception('Unauthorized')
 
+    # Revocación: token sin `sid` (formato viejo) o con sesión inactiva → denegado.
+    sid = decoded.get('sid')
+    if not sid or not _session_active(sid):
+        print("Authorizer2: sesión revocada o token sin 'sid'.")
+        raise Exception('Unauthorized')
+
     # Reenviar la identidad del tenant en el context (ver Authorizer).
     ctx = {
         'user': str(user),
@@ -83,5 +105,7 @@ def lambda_handler(event, context):
         'role': str(decoded.get('role', 'client') or 'client'),
         # Sub-rol de empresa (RBAC): owner|approver|operator. Default owner.
         'tenantRole': str(decoded.get('tenantRole', 'owner') or 'owner'),
+        # Id de la sesión (revocación): útil para cerrar ESTA sesión en particular.
+        'sid': str(sid),
     }
     return _build_policy(user, 'Allow', resource, context=ctx)
