@@ -149,7 +149,7 @@ El front está terminado y el backend probado; solo falta la consola AWS
 8. [ ] `[C]` **Notificaciones al cliente**: campaña terminada, saldo bajo, rebote alto.
 9. [ ] `[P]` **Automatizaciones** (bienvenida/fechas) sobre el motor de la Cascada.
 10. [ ] `[P]` Decisiones abiertas: proveedor SMS definitivo, tarifas reales calibradas,
-        reembolso de fallidos, facturación fiscal DIAN (`PLAN_PREPAGO.md` §13).
+        reembolso de fallidos, facturación fiscal DIAN (ver la sección Prepago en `CLAUDE.md`).
 
 ---
 
@@ -160,7 +160,7 @@ El front está terminado y el backend probado; solo falta la consola AWS
        solicitudes pendientes), top clientes en riesgo de reputación con tendencia,
        últimas entradas de auditoría. Todo sale de tablas existentes + 1 llamada SQS.
 2. [ ] `[C]` **Series temporales** (30 días) en cliente y admin vía la preagregación
-       `sendSummary` (`PLAN_PREAGREGACION.md`): sparklines + área de
+       `sendSummary` (pre-agregación, ver `CLAUDE.md`): sparklines + área de
        envíos/entregas/aperturas. De paso elimina los avisos de "datos parciales".
 3. [ ] `[C]` **"Salud de mi base"** (portal): crecimiento de válidos, rebotados
        acumulados, desuscritos, heatmap día×hora de aperturas (alimenta la hora óptima

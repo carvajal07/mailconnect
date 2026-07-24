@@ -270,7 +270,7 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 > Orquestación por contacto: intenta el canal preferido/más barato y escala (correo→WhatsApp→SMS→voz)
 > hasta confirmar entrega/lectura. Reutiliza los workers de envío, `sendStatus`/recibos, monedero y
 > tarifas ya desplegados — solo agrega la capa de reglas. **El motor lo mueve un cron.**
-> El front tiene un editor **visual (ReactFlow)** y uno de **campos** (toggle Básico/Flujo); ver `PLAN_CASCADA.md`.
+> El front tiene un editor **visual (ReactFlow)** y uno de **campos** (toggle Básico/Flujo).
 
 - [ ] `[J]` Tablas **`cascadeRun`** (PK `cascadeRunId` + GSI `customerId-index`) y **`cascadeContact`**
   (PK `cascadeContactId` + GSI `cascadeRunId-index`), On-Demand — las crea `Cascade_Dispatch` on-demand, o
@@ -514,7 +514,7 @@ Lo que queda por hacer en el repo (no es despliegue):
   `Reports_Statistics`/`Portal_Bootstrap` leen el resumen `{customer}_sendSummary` O(1) por
   proceso (fallback al scan de ESE proceso); los `ReceptionStatus` (Email/SMS-Voz/WhatsApp) lo
   mantienen SIEMPRE (sin `SEND_SUMMARY_*`). Prepare-batch crea `{customer}_sendSummary`/`_sendState`.
-  Ver `PLAN_PREAGREGACION.md`. **Falta (`[J]`):** IAM `UpdateItem` sobre `*_sendSummary`/`*_sendState`
+  (Ver la sección de pre-agregación en `CLAUDE.md`.) **Falta (`[J]`):** IAM `UpdateItem` sobre `*_sendSummary`/`*_sendState`
   (cubierto por la política amplia); backfill de procesos VIEJOS (opcional; mientras, se leen por scan).
 - [x] **`sendDetail` unificado (jul 2026):** una tabla por cliente `{customer}_sendDetail`
   (PK `processId` + SK `sendDetailId`), no una por proceso. Escritores (EM/EAU/Prepare-batch) y
