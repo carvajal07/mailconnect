@@ -160,7 +160,7 @@ export default function StyleEditorModal({ target, onClose }: Props) {
 
 /* ─── Row helpers ─── */
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2">
       <span className="text-11 text-muted w-36 shrink-0">{label}</span>
@@ -178,7 +178,7 @@ function Divider({ label }: { label?: string }) {
   );
 }
 
-function NumInput({
+export function NumInput({
   value, onChange, min = 0, max, step = 1, unit,
 }: {
   value: number;
@@ -479,7 +479,7 @@ const BORDER_TABS: { key: BorderTab; label: string }[] = [
   { key: 'shading', label: 'Sombreado' },
 ];
 
-function BorderStyleFields({ draft, patch }: { draft: BorderStyle; patch: (p: Partial<BorderStyle>) => void }) {
+export function BorderStyleFields({ draft, patch }: { draft: BorderStyle; patch: (p: Partial<BorderStyle>) => void }) {
   const [tab, setTab] = useState<BorderTab>('lines');
 
   const cap = draft.cap ?? 'Butt';
@@ -687,7 +687,7 @@ const LINE_JOIN_OPTIONS: { value: LineStyle['join']; label: string }[] = [
   { value: 'Bevel', label: 'Bisel' },
 ];
 
-function LineStyleFields({ draft, patch }: { draft: LineStyle; patch: (p: Partial<LineStyle>) => void }) {
+export function LineStyleFields({ draft, patch }: { draft: LineStyle; patch: (p: Partial<LineStyle>) => void }) {
   const cap = draft.cap ?? 'Butt';
   const join = draft.join ?? 'Round';
   const selectedDash = DASH_PATTERNS.find(
@@ -774,7 +774,7 @@ function LineStyleFields({ draft, patch }: { draft: LineStyle; patch: (p: Partia
 
 /* ─── TextStyle fields ─── */
 
-function TextStyleFields({ draft, patch }: { draft: TextStyle; patch: (p: Partial<TextStyle>) => void }) {
+export function TextStyleFields({ draft, patch }: { draft: TextStyle; patch: (p: Partial<TextStyle>) => void }) {
   return (
     <>
       <Row label="Tamaño (pt)">
@@ -799,9 +799,10 @@ function TextStyleFields({ draft, patch }: { draft: TextStyle; patch: (p: Partia
 
 /* ─── ParagraphStyle fields ─── */
 
-function ParagraphStyleFields({ draft, patch }: { draft: ParagraphStyle; patch: (p: Partial<ParagraphStyle>) => void }) {
+export function ParagraphStyleFields({ draft, patch }: { draft: ParagraphStyle; patch: (p: Partial<ParagraphStyle>) => void }) {
   return (
     <>
+      <Divider label="General" />
       <Row label="Alineación">
         <select className="field" value={draft.hAlign} onChange={(e) => patch({ hAlign: e.target.value as ParagraphStyle['hAlign'] })}>
           {(['Left', 'Center', 'Right', 'Justify'] as const).map((v) => (
@@ -809,6 +810,11 @@ function ParagraphStyleFields({ draft, patch }: { draft: ParagraphStyle; patch: 
           ))}
         </select>
       </Row>
+      <Row label="Interlineado (mm)">
+        <NumInput value={draft.lineSpacing} min={0} step={0.5} onChange={(v) => patch({ lineSpacing: v })} />
+      </Row>
+
+      <Divider label="Sangrías" />
       <Row label="Sangría izq. (mm)">
         <NumInput value={draft.leftIndent} min={0} step={0.5} onChange={(v) => patch({ leftIndent: v })} />
       </Row>
@@ -818,20 +824,35 @@ function ParagraphStyleFields({ draft, patch }: { draft: ParagraphStyle; patch: 
       <Row label="Primera línea (mm)">
         <NumInput value={draft.firstLineLeftIndent} step={0.5} onChange={(v) => patch({ firstLineLeftIndent: v })} />
       </Row>
+
+      <Divider label="Espaciado" />
       <Row label="Espacio antes (mm)">
         <NumInput value={draft.spaceBefore} min={0} step={0.5} onChange={(v) => patch({ spaceBefore: v })} />
       </Row>
       <Row label="Espacio después (mm)">
         <NumInput value={draft.spaceAfter} min={0} step={0.5} onChange={(v) => patch({ spaceAfter: v })} />
       </Row>
-      <Row label="Interlineado (mm)">
-        <NumInput value={draft.lineSpacing} min={0} step={0.5} onChange={(v) => patch({ lineSpacing: v })} />
-      </Row>
+
+      <Divider label="Flujo (saltos de línea/página)" />
       <Row label="No cortar líneas">
         <select className="field" value={draft.keepLinesTogether} onChange={(e) => patch({ keepLinesTogether: e.target.value as 'Yes' | 'No' })}>
           <option value="No">No</option>
           <option value="Yes">Sí</option>
         </select>
+      </Row>
+      <Row label="Mantener con la siguiente">
+        <input type="checkbox" checked={!!draft.keepWithNext}
+          onChange={(e) => patch({ keepWithNext: e.target.checked })} />
+      </Row>
+      <Row label="No ajustar (dontWrap)">
+        <input type="checkbox" checked={!!draft.dontWrap}
+          onChange={(e) => patch({ dontWrap: e.target.checked })} />
+      </Row>
+      <Row label="Líneas viudas (mín.)">
+        <NumInput value={draft.widow ?? 1} min={0} step={1} onChange={(v) => patch({ widow: v })} />
+      </Row>
+      <Row label="Líneas huérfanas (mín.)">
+        <NumInput value={draft.orphan ?? 1} min={0} step={1} onChange={(v) => patch({ orphan: v })} />
       </Row>
     </>
   );
@@ -839,7 +860,7 @@ function ParagraphStyleFields({ draft, patch }: { draft: ParagraphStyle; patch: 
 
 /* ─── FillStyle fields ─── */
 
-function FillStyleFields({ draft, patch }: { draft: FillStyle; patch: (p: Partial<FillStyle>) => void }) {
+export function FillStyleFields({ draft, patch }: { draft: FillStyle; patch: (p: Partial<FillStyle>) => void }) {
   return (
     <Row label="Color">
       <ColorInput value={draft.colorId || '#ffffff'} onChange={(v) => patch({ colorId: v })} />
