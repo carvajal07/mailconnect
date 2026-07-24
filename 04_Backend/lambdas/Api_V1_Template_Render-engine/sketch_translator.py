@@ -239,6 +239,8 @@ class _Translator:
                 "textStyle": {},
                 "paragraphStyle": {
                     "alignment": _ALIGN_MAP.get(el.get("align") or "left", "left"),
+                    # Alineación vertical dentro del cuadro (el motor la soporta).
+                    "verticalAlign": (el.get("vAlign") if el.get("vAlign") in ("top", "middle", "bottom") else "top"),
                     "paddingTop": 0, "paddingRight": 0, "paddingBottom": 0,
                     "paddingLeft": self.mm(el.get("leftIndent") or 0),
                     "firstLineIndent": self.mm(el.get("firstLineIndent") or 0),

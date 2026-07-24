@@ -77,17 +77,23 @@ export default function TextElement({ el, zoom, onSelect, onChange, onEdit, drag
         const h = shape.height();
 
         const cmds = layoutSpans(native, spans, el, MM_TO_PX * zoom, w);
+        const contentH = cmds.length ? Math.max(...cmds.map((c) => c.y + c.lineH)) : 0;
+
+        // Alineación VERTICAL dentro del cuadro (top/middle/bottom, como el motor).
+        const vOff = el.vAlign === 'middle'
+          ? Math.max(0, (h - contentH) / 2)
+          : el.vAlign === 'bottom' ? Math.max(0, h - contentH) : 0;
 
         // Texto RECORTADO al cuadro (lo que no cabe no se muestra)
         native.save();
         native.beginPath();
         native.rect(0, 0, w, h);
         native.clip();
+        if (vOff) native.translate(0, vOff);
         drawCmds(native, cmds);
         native.restore();
 
         // ¿Desborda? (alto del contenido o una palabra más ancha que el cuadro)
-        const contentH = cmds.length ? Math.max(...cmds.map((c) => c.y + c.lineH)) : 0;
         const overflowX = cmds.some((c) => c.x + (c.width ?? 0) > w + 0.5);
         if (contentH > h + 0.5 || overflowX) {
           const sz = 11;

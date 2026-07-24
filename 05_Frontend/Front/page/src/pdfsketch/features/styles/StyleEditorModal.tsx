@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, Trash2 } from 'lucide-react';
+import { X, Trash2, ExternalLink } from 'lucide-react';
 import type {
   TextStyle, ParagraphStyle, BorderStyle, LineStyle, FillStyle,
   CapStyle, LineDashStyle, CornerStyle, BorderParts,
 } from '@/types/document';
 import { useDocumentStore, type StyleKey, type AnyStyleItem } from '@/store/documentStore';
 import { nextId } from '@/utils/id';
+import ColorPickerPanel from './ColorPickerPanel';
 
 export type StyleEditorTarget =
   | { key: 'textStyles'; item: TextStyle | null }
@@ -161,6 +162,38 @@ export default function StyleEditorModal({ target, onClose }: Props) {
 }
 
 /* ─── Row helpers ─── */
+
+/** Fila NOMBRE prominente al inicio del cuerpo (como los editores del Diseñador). */
+function NombreRow({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className="uppercase shrink-0"
+        style={{ fontSize: 10, fontWeight: 600, letterSpacing: 0.4, color: 'var(--ink-2)', width: 58 }}
+      >
+        Nombre
+      </span>
+      <input
+        className="field flex-1"
+        value={value}
+        placeholder="Nombre del estilo"
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
+/** Nota para los tabs que existen por paridad visual pero el motor no renderiza. */
+function MutedNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="rounded text-[10px] leading-relaxed"
+      style={{ padding: '10px 12px', background: 'var(--bg-2)', border: '1px dashed var(--line-2)', color: 'var(--muted)' }}
+    >
+      {children}
+    </div>
+  );
+}
 
 export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -791,14 +824,25 @@ export function LineStyleFields({ draft, patch }: { draft: LineStyle; patch: (p:
 
 /* ─── TextStyle fields — con TABS como el TextStyleEditor del Diseñador ─── */
 
-type TextTab = 'fuente' | 'reglas' | 'supersub' | 'lineas';
+type TextTab = 'fuente' | 'reglas' | 'supersub' | 'lineas' | 'relleno' | 'contorno' | 'borde';
 
 const TEXT_TABS: { key: TextTab; label: string }[] = [
   { key: 'fuente',   label: 'Fuente' },
   { key: 'reglas',   label: 'Reglas' },
   { key: 'supersub', label: 'Super/Sub' },
   { key: 'lineas',   label: 'Líneas' },
+  { key: 'relleno',  label: 'Relleno' },
+  { key: 'contorno', label: 'Contorno' },
+  { key: 'borde',    label: 'Borde' },
 ];
+
+/** Familias que ofrece el editor (las mismas de la barra de formato del lienzo). */
+const FONT_FAMILY_OPTIONS = ['Inter', 'JetBrains Mono', 'Arial', 'Helvetica', 'Times New Roman', 'Courier New'];
+
+const isBoldSub = (s: string) => s === 'Bold' || s === 'BoldItalic';
+const isItalicSub = (s: string) => s === 'Italic' || s === 'BoldItalic';
+const subFontOf = (bold: boolean, italic: boolean) =>
+  bold && italic ? 'BoldItalic' : bold ? 'Bold' : italic ? 'Italic' : 'Regular';
 
 /** Vista previa del estilo (como `tse__preview` del Diseñador). */
 function TextStylePreview({ draft }: { draft: TextStyle }) {
@@ -810,12 +854,12 @@ function TextStylePreview({ draft }: { draft: TextStyle }) {
     <div
       className="rounded flex items-center justify-center text-center overflow-hidden"
       style={{
-        padding: 12, minHeight: 44, background: 'var(--bg-2)',
+        padding: 12, minHeight: 48, background: 'var(--bg-2)',
         border: '1px solid var(--line-2)', wordBreak: 'break-word',
         color: draft.fillStyleId || 'var(--ink)',
         fontSize: Math.min(draft.fontSize ?? 12, 22),
-        fontWeight: draft.subFont === 'Bold' || draft.subFont === 'BoldItalic' ? 700 : 400,
-        fontStyle: draft.subFont === 'Italic' || draft.subFont === 'BoldItalic' ? 'italic' : 'normal',
+        fontWeight: isBoldSub(draft.subFont) ? 700 : 400,
+        fontStyle: isItalicSub(draft.subFont) ? 'italic' : 'normal',
         fontFamily: draft.fontId || 'Arial',
         letterSpacing: draft.letterSpacing ? `${draft.letterSpacing}pt` : undefined,
         textTransform: (draft.textTransform ?? 'none') as React.CSSProperties['textTransform'],
@@ -823,35 +867,105 @@ function TextStylePreview({ draft }: { draft: TextStyle }) {
         lineHeight: draft.lineHeight ?? 1.2,
       }}
     >
-      AaBbCc — Texto de ejemplo 123
+      Ejemplo de texto — AaBbCc 123
     </div>
+  );
+}
+
+/** Fila "Fill": muestra + selector de RELLENOS del documento (elegir uno copia su
+ *  color al estilo) + botón para saltar a la sección de rellenos. */
+function FillRefRow({ color, onPick }: { color: string; onPick: (hex: string) => void }) {
+  const fillStyles = useDocumentStore((s) => s.doc.assets.fillStyles);
+  const current = fillStyles.find(
+    (f) => (f.colorId || '').toLowerCase() === color.toLowerCase() && (f.fillType ?? 'solid') === 'solid',
+  );
+  return (
+    <Row label="Fill">
+      <div className="flex items-center gap-2">
+        <div className="w-6 h-6 rounded shrink-0" style={{ background: color, border: '1px solid var(--line-2)' }} />
+        <select
+          className="field flex-1 min-w-0"
+          value={current?.id ?? ''}
+          onChange={(e) => {
+            const f = fillStyles.find((x) => x.id === e.target.value);
+            if (f?.colorId) onPick(f.colorId);
+          }}
+        >
+          <option value="">—</option>
+          {fillStyles.map((f) => (
+            <option key={f.id} value={f.id}>{f.name}</option>
+          ))}
+        </select>
+        <span
+          className="w-6 h-6 flex items-center justify-center rounded shrink-0"
+          title="Los rellenos se administran en Recursos → Relleno"
+          style={{ background: 'var(--bg-3)', border: '1px solid var(--line-2)', color: 'var(--muted)' }}
+        >
+          <ExternalLink size={11} />
+        </span>
+      </div>
+    </Row>
+  );
+}
+
+function YesNoSelect({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <select className="field" value={value ? 'yes' : 'no'} onChange={(e) => onChange(e.target.value === 'yes')}>
+      <option value="no">No</option>
+      <option value="yes">Sí</option>
+    </select>
   );
 }
 
 export function TextStyleFields({ draft, patch }: { draft: TextStyle; patch: (p: Partial<TextStyle>) => void }) {
   const [tab, setTab] = useState<TextTab>('fuente');
+  const bold = isBoldSub(draft.subFont);
+  const italic = isItalicSub(draft.subFont);
   return (
     <>
+      <NombreRow value={draft.name} onChange={(v) => patch({ name: v })} />
       <TextStylePreview draft={draft} />
       <StyleTabs tabs={TEXT_TABS} active={tab} onChange={setTab} />
 
       {tab === 'fuente' && (
         <>
-          <Row label="Fuente">
-            <input className="field" value={draft.fontId} onChange={(e) => patch({ fontId: e.target.value })} placeholder="Arial" />
-          </Row>
-          <Row label="Variante">
-            <select className="field" value={draft.subFont} onChange={(e) => patch({ subFont: e.target.value })}>
-              {['Regular', 'Bold', 'Italic', 'BoldItalic'].map((v) => (
-                <option key={v} value={v}>{v}</option>
-              ))}
+          <Row label="Familia:">
+            <select className="field" value={draft.fontId} onChange={(e) => patch({ fontId: e.target.value })}>
+              {!FONT_FAMILY_OPTIONS.includes(draft.fontId) && draft.fontId && (
+                <option value={draft.fontId}>{draft.fontId}</option>
+              )}
+              {FONT_FAMILY_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
           </Row>
-          <Row label="Tamaño (pt)">
-            <NumInput value={draft.fontSize} min={1} onChange={(v) => patch({ fontSize: v })} />
+          <Row label="Peso:">
+            <select
+              className="field"
+              value={bold ? 'Bold' : 'Regular'}
+              onChange={(e) => patch({ subFont: subFontOf(e.target.value === 'Bold', italic) })}
+            >
+              <option value="Regular">Regular</option>
+              <option value="Bold">Bold</option>
+            </select>
           </Row>
-          <Row label="Color">
+          <Row label="Tamaño:">
+            <NumInput value={draft.fontSize} min={1} unit="pt" onChange={(v) => patch({ fontSize: v })} />
+          </Row>
+          <FillRefRow color={draft.fillStyleId || '#000000'} onPick={(hex) => patch({ fillStyleId: hex })} />
+          <Row label="Color:">
             <ColorInput value={draft.fillStyleId || '#000000'} onChange={(v) => patch({ fillStyleId: v })} />
+          </Row>
+          <Row label="Bold:">
+            <YesNoSelect value={bold} onChange={(v) => patch({ subFont: subFontOf(v, italic) })} />
+          </Row>
+          <Row label="Italic:">
+            <YesNoSelect value={italic} onChange={(v) => patch({ subFont: subFontOf(bold, v) })} />
+          </Row>
+          <Row label="Small caps:">
+            {/* El motor no tiene versalitas reales: se renderiza como MAYÚSCULAS. */}
+            <YesNoSelect
+              value={(draft.textTransform ?? 'none') === 'uppercase'}
+              onChange={(v) => patch({ textTransform: v ? 'uppercase' : 'none' })}
+            />
           </Row>
         </>
       )}
@@ -904,56 +1018,124 @@ export function TextStyleFields({ draft, patch }: { draft: TextStyle; patch: (p:
           </Row>
         </>
       )}
+
+      {tab === 'relleno' && (
+        <>
+          <FillRefRow color={draft.fillStyleId || '#000000'} onPick={(hex) => patch({ fillStyleId: hex })} />
+          <Row label="Color:">
+            <ColorInput value={draft.fillStyleId || '#000000'} onChange={(v) => patch({ fillStyleId: v })} />
+          </Row>
+        </>
+      )}
+
+      {tab === 'contorno' && (
+        <MutedNote>
+          El <strong>contorno del texto</strong> (outline) no está soportado por el motor de PDF
+          del Estudio; el tab existe por paridad visual con el Diseñador.
+        </MutedNote>
+      )}
+
+      {tab === 'borde' && (
+        <MutedNote>
+          El <strong>borde por carácter</strong> no está soportado por el motor de PDF del
+          Estudio; el tab existe por paridad visual con el Diseñador.
+        </MutedNote>
+      )}
     </>
   );
 }
 
 /* ─── ParagraphStyle fields — con TABS como el ParagraphStyleEditor del Diseñador ─── */
 
-type ParagraphTab = 'general' | 'listas' | 'flujo';
+type ParagraphTab = 'general' | 'listas' | 'tabuladores' | 'flujo' | 'borde' | 'avanzado';
 
 const PARAGRAPH_TABS: { key: ParagraphTab; label: string }[] = [
-  { key: 'general', label: 'General' },
-  { key: 'listas',  label: 'Listas' },
-  { key: 'flujo',   label: 'Flujo' },
+  { key: 'general',     label: 'General' },
+  { key: 'listas',      label: 'Listas' },
+  { key: 'tabuladores', label: 'Tabuladores' },
+  { key: 'flujo',       label: 'Flujo' },
+  { key: 'borde',       label: 'Borde' },
+  { key: 'avanzado',    label: 'Avanzado' },
 ];
+
+/** Vista previa del párrafo (como el ejemplo del ParagraphStyleEditor del Diseñador). */
+function ParagraphStylePreview({ draft }: { draft: ParagraphStyle }) {
+  const align = ({ Left: 'left', Center: 'center', Right: 'right', Justify: 'justify' } as const)[draft.hAlign] ?? 'left';
+  return (
+    <div
+      className="rounded overflow-hidden"
+      style={{ padding: '10px 12px', background: 'var(--bg-2)', border: '1px solid var(--line-2)' }}
+    >
+      <p
+        style={{
+          margin: 0,
+          fontSize: 11,
+          color: 'var(--ink)',
+          textAlign: align as React.CSSProperties['textAlign'],
+          lineHeight: Math.max(0.8, Math.min(draft.lineSpacing || 1.2, 3)),
+          paddingLeft: draft.leftIndent * 2,
+          paddingRight: draft.rightIndent * 2,
+          textIndent: draft.firstLineLeftIndent * 2,
+        }}
+      >
+        Ejemplo de párrafo con texto de muestra para visualizar el estilo aplicado.
+      </p>
+    </div>
+  );
+}
 
 export function ParagraphStyleFields({ draft, patch }: { draft: ParagraphStyle; patch: (p: Partial<ParagraphStyle>) => void }) {
   const [tab, setTab] = useState<ParagraphTab>('general');
   return (
     <>
+      <NombreRow value={draft.name} onChange={(v) => patch({ name: v })} />
+      <ParagraphStylePreview draft={draft} />
       <StyleTabs tabs={PARAGRAPH_TABS} active={tab} onChange={setTab} />
 
       {tab === 'general' && (
         <>
-          <Row label="Alineación">
+          <Row label="Alineación:">
             <select className="field" value={draft.hAlign} onChange={(e) => patch({ hAlign: e.target.value as ParagraphStyle['hAlign'] })}>
               {(['Left', 'Center', 'Right', 'Justify'] as const).map((v) => (
                 <option key={v} value={v}>{{ Left: 'Izquierda', Center: 'Centro', Right: 'Derecha', Justify: 'Justificado' }[v]}</option>
               ))}
             </select>
           </Row>
-          <Row label="Interlineado (mm)">
-            <NumInput value={draft.lineSpacing} min={0} step={0.5} onChange={(v) => patch({ lineSpacing: v })} />
+          <Row label="V. Alineación:">
+            <select
+              className="field"
+              value={draft.vAlign ?? 'Top'}
+              onChange={(e) => patch({ vAlign: e.target.value as ParagraphStyle['vAlign'] })}
+            >
+              <option value="Top">Arriba</option>
+              <option value="Middle">Centro</option>
+              <option value="Bottom">Abajo</option>
+            </select>
           </Row>
-
-          <Divider label="Sangrías" />
-          <Row label="Sangría izq. (mm)">
-            <NumInput value={draft.leftIndent} min={0} step={0.5} onChange={(v) => patch({ leftIndent: v })} />
+          <Row label="Sangría izquierda:">
+            <NumInput value={draft.leftIndent} min={0} step={0.5} unit="mm" onChange={(v) => patch({ leftIndent: v })} />
           </Row>
-          <Row label="Sangría der. (mm)">
-            <NumInput value={draft.rightIndent} min={0} step={0.5} onChange={(v) => patch({ rightIndent: v })} />
+          <Row label="Sangría derecha:">
+            <NumInput value={draft.rightIndent} min={0} step={0.5} unit="mm" onChange={(v) => patch({ rightIndent: v })} />
           </Row>
-          <Row label="Primera línea (mm)">
-            <NumInput value={draft.firstLineLeftIndent} step={0.5} onChange={(v) => patch({ firstLineLeftIndent: v })} />
+          <Row label="Sangría 1ra línea:">
+            <NumInput value={draft.firstLineLeftIndent} step={0.5} unit="mm" onChange={(v) => patch({ firstLineLeftIndent: v })} />
           </Row>
-
-          <Divider label="Espaciado" />
-          <Row label="Espacio antes (mm)">
-            <NumInput value={draft.spaceBefore} min={0} step={0.5} onChange={(v) => patch({ spaceBefore: v })} />
+          <Row label="Espacio antes:">
+            <NumInput value={draft.spaceBefore} min={0} step={0.5} unit="mm" onChange={(v) => patch({ spaceBefore: v })} />
           </Row>
-          <Row label="Espacio después (mm)">
-            <NumInput value={draft.spaceAfter} min={0} step={0.5} onChange={(v) => patch({ spaceAfter: v })} />
+          <Row label="Espacio después:">
+            <NumInput value={draft.spaceAfter} min={0} step={0.5} unit="mm" onChange={(v) => patch({ spaceAfter: v })} />
+          </Row>
+          <Row label="Tipo interlineado:">
+            {/* El motor del Estudio maneja el interlineado como MULTIPLICADOR del
+                tamaño de fuente (única opción; el Diseñador ofrece más tipos). */}
+            <select className="field" value="mult" onChange={() => undefined}>
+              <option value="mult">Multiplicador (× tamaño)</option>
+            </select>
+          </Row>
+          <Row label="Interlineado (×):">
+            <NumInput value={draft.lineSpacing} min={0.5} max={5} step={0.05} onChange={(v) => patch({ lineSpacing: v })} />
           </Row>
         </>
       )}
@@ -1006,6 +1188,13 @@ export function ParagraphStyleFields({ draft, patch }: { draft: ParagraphStyle; 
         </>
       )}
 
+      {tab === 'tabuladores' && (
+        <MutedNote>
+          Los <strong>tabuladores</strong> no están soportados por el motor de PDF del
+          Estudio; el tab existe por paridad visual con el Diseñador.
+        </MutedNote>
+      )}
+
       {tab === 'flujo' && (
         <>
           <Row label="No cortar líneas">
@@ -1022,6 +1211,18 @@ export function ParagraphStyleFields({ draft, patch }: { draft: ParagraphStyle; 
             <input type="checkbox" checked={!!draft.dontWrap}
               onChange={(e) => patch({ dontWrap: e.target.checked })} />
           </Row>
+        </>
+      )}
+
+      {tab === 'borde' && (
+        <MutedNote>
+          El <strong>borde de párrafo</strong> no está soportado por el motor de PDF del
+          Estudio; el tab existe por paridad visual con el Diseñador.
+        </MutedNote>
+      )}
+
+      {tab === 'avanzado' && (
+        <>
           <Row label="Líneas viudas (mín.)">
             <NumInput value={draft.widow ?? 1} min={0} step={1} onChange={(v) => patch({ widow: v })} />
           </Row>
@@ -1038,7 +1239,7 @@ export function ParagraphStyleFields({ draft, patch }: { draft: ParagraphStyle; 
 
 const FILL_TYPE_LABELS: { value: NonNullable<FillStyle['fillType']>; label: string }[] = [
   { value: 'none',   label: 'Ninguno (transparente)' },
-  { value: 'solid',  label: 'Sólido' },
+  { value: 'solid',  label: 'Simple' },
   { value: 'linear', label: 'Degradado lineal' },
   { value: 'radial', label: 'Degradado radial' },
 ];
@@ -1060,6 +1261,8 @@ export function FillStyleFields({ draft, patch }: { draft: FillStyle; patch: (p:
   const type = draft.fillType ?? 'solid';
   const grad = draft.gradient;
   const isGradient = type === 'linear' || type === 'radial';
+  // Color con el que se ABRIÓ el editor (muestra "actual" del picker); se fija una vez.
+  const [initialColor] = useState(() => draft.colorId || '#000000');
 
   const setGrad = (p: Partial<NonNullable<FillStyle['gradient']>>) => {
     const base = grad ?? defaultGradient(type === 'radial' ? 'radial' : 'linear');
@@ -1075,7 +1278,9 @@ export function FillStyleFields({ draft, patch }: { draft: FillStyle; patch: (p:
 
   return (
     <>
-      <Row label="Tipo de relleno">
+      <NombreRow value={draft.name} onChange={(v) => patch({ name: v })} />
+
+      <Row label="Tipo">
         <select className="field" value={type}
           onChange={(e) => {
             const t = e.target.value as NonNullable<FillStyle['fillType']>;
@@ -1089,19 +1294,23 @@ export function FillStyleFields({ draft, patch }: { draft: FillStyle; patch: (p:
         </select>
       </Row>
 
-      {/* Vista previa */}
-      <div className="h-12 rounded" style={{
-        border: '1px solid var(--line-2)',
-        background: type === 'none'
-          ? 'repeating-conic-gradient(#bbb 0% 25%, #fff 0% 50%) 0 0 / 10px 10px'
-          : gradCss ?? (draft.colorId || '#ffffff'),
-        opacity: type === 'solid' ? (draft.opacity ?? 1) : 1,
-      }} />
+      {/* Vista previa (solo para tipos sin picker propio: el picker ya muestra el color) */}
+      {type !== 'solid' && (
+        <div className="h-12 rounded" style={{
+          border: '1px solid var(--line-2)',
+          background: type === 'none'
+            ? 'repeating-conic-gradient(#bbb 0% 25%, #fff 0% 50%) 0 0 / 10px 10px'
+            : gradCss ?? (draft.colorId || '#ffffff'),
+        }} />
+      )}
 
       {type === 'solid' && (
-        <Row label="Color">
-          <ColorInput value={draft.colorId || '#ffffff'} onChange={(v) => patch({ colorId: v })} />
-        </Row>
+        // Picker completo estilo Diseñador: área SV + matiz + actual|nuevo + HTML/RGB/CMYK.
+        <ColorPickerPanel
+          value={/^#[0-9a-fA-F]{6}$/.test(draft.colorId || '') ? draft.colorId : '#000000'}
+          initial={initialColor}
+          onChange={(hex) => patch({ colorId: hex })}
+        />
       )}
 
       {isGradient && (
@@ -1193,9 +1402,13 @@ function buildDefault(target: StyleEditorTarget): AnyStyleItem {
       return {
         id, name: 'Nuevo estilo de párrafo',
         leftIndent: 0, rightIndent: 0, firstLineLeftIndent: 0,
-        spaceBefore: 0, spaceAfter: 0, lineSpacing: 5,
+        spaceBefore: 0, spaceAfter: 0,
+        // Interlineado = MULTIPLICADOR del tamaño (así lo consume el canvas y el
+        // motor vía applyParagraphStyleProps → el.lineHeight). El default viejo (5)
+        // venía de tratarlo como mm y producía un interlineado ×5 gigante.
+        lineSpacing: 1.2,
         widow: 1, orphan: 1, keepWithNext: false,
-        keepLinesTogether: 'No', dontWrap: false, hAlign: 'Left',
+        keepLinesTogether: 'No', dontWrap: false, hAlign: 'Left', vAlign: 'Top',
       } satisfies ParagraphStyle;
     case 'borderStyles':
       return {

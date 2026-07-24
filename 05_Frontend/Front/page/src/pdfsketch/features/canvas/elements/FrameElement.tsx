@@ -65,12 +65,6 @@ export default function FrameElement({ el, zoom, onSelect, onChange, draggable }
         cornerRadius={el.cornerRadius * s}
         dash={[6 * zoom, 3 * zoom]}
         hitStrokeWidth={Math.max(10, el.strokeWidth * s + 6)}
-        hitFunc={el.fill === 'transparent' ? (ctx, shape) => {
-          ctx.beginPath();
-          (ctx as unknown as CanvasRenderingContext2D).rect(0, 0, shape.width(), shape.height());
-          ctx.closePath();
-          (ctx as unknown as { strokeShape: (sh: Konva.Shape) => void }).strokeShape(shape);
-        } : undefined}
       />
       {/* Etiqueta ÁREA en la esquina superior izquierda (interactiva: sirve de
           "asa" para seleccionar/arrastrar el frame) */}

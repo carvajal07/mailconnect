@@ -60,6 +60,7 @@ export function applyParagraphStyleProps(el: ElementModel, s: ParagraphStyle): E
   };
   const patch: Partial<TextEl> = {
     align: alignMap[s.hAlign] ?? 'left',
+    vAlign: s.vAlign === 'Middle' ? 'middle' : s.vAlign === 'Bottom' ? 'bottom' : 'top',
     lineHeight: s.lineSpacing,
     leftIndent: s.leftIndent,
     rightIndent: s.rightIndent,
