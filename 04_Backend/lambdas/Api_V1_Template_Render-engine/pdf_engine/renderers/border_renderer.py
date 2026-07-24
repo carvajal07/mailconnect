@@ -55,6 +55,10 @@ def draw_border(
         canvas.saveState()
         canvas.setStrokeColor(color)
         canvas.setLineWidth(width)
+        # Borde discontinuo: el patrón (mm) viene del editor → a pt para setDash.
+        dash = unified.get("dash")
+        if isinstance(dash, list) and len(dash) >= 2:
+            canvas.setDash([mm(d) for d in dash], 0)
         if r > 0:
             canvas.roundRect(x, y, w, h, r, stroke=1, fill=0)
         else:

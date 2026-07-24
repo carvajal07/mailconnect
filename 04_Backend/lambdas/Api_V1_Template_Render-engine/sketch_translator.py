@@ -322,12 +322,20 @@ class _Translator:
         del doc. (Antes se trataba como pt: los bordes salían ~2.8× más delgados.)"""
         return self.mm(el.get("strokeWidth") or 0)
 
+    def _dash_mm(self, el: dict) -> list | None:
+        """Patrón de guiones del borde en mm (el editor lo guarda en mm, como el trazo)."""
+        dash = el.get("dash")
+        if isinstance(dash, list) and len(dash) >= 2:
+            return [self.mm(d) for d in dash]
+        return None
+
     def _rect(self, el: dict, base: dict) -> dict:
         base.update({
             "type": "shape", "shape": "rectangle",
             "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
             "border": _border(el.get("stroke"), self._stroke_mm(el),
-                              radius_mm=self.mm(el.get("cornerRadius") or 0)),
+                              radius_mm=self.mm(el.get("cornerRadius") or 0),
+                              dash_mm=self._dash_mm(el)),
         })
         return base
 
@@ -335,7 +343,7 @@ class _Translator:
         base.update({
             "type": "shape", "shape": "ellipse",
             "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
-            "border": _border(el.get("stroke"), self._stroke_mm(el)),
+            "border": _border(el.get("stroke"), self._stroke_mm(el), dash_mm=self._dash_mm(el)),
         })
         return base
 
@@ -343,7 +351,7 @@ class _Translator:
         base.update({
             "type": "shape", "shape": "triangle",
             "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
-            "border": _border(el.get("stroke"), self._stroke_mm(el)),
+            "border": _border(el.get("stroke"), self._stroke_mm(el), dash_mm=self._dash_mm(el)),
         })
         return base
 
@@ -630,7 +638,7 @@ def _span_html(s: dict) -> str:
     return '<span style="{}">{}</span>'.format(";".join(css), text)
 
 
-def _border(color, width_mm, radius_mm: float = 0) -> dict | None:
+def _border(color, width_mm, radius_mm: float = 0, dash_mm: list | None = None) -> dict | None:
     try:
         w = float(width_mm or 0)
     except (TypeError, ValueError):
@@ -640,9 +648,14 @@ def _border(color, width_mm, radius_mm: float = 0) -> dict | None:
     # El motor (border_renderer) interpreta el ancho en mm y el editor TAMBIÉN lo
     # captura en mm → pasa directo. (Antes se multiplicaba por MM_PER_PT como si
     # fuera pt: un borde de 1 mm salía de 0.35 mm, ~2.8× más delgado que el lienzo.)
+    unified = {"enabled": True, "width": round(w, 3), "style": "solid", "color": color}
+    # Borde discontinuo (viñeta/puntos): el motor aplica setDash con el patrón en mm.
+    if dash_mm:
+        unified["dash"] = [round(d, 3) for d in dash_mm]
+        unified["style"] = "dashed"
     return {
         "mode": "unified",
-        "unified": {"enabled": True, "width": round(w, 3), "style": "solid", "color": color},
+        "unified": unified,
         "sides": {},
         "radius": {"mode": "unified", "unified": radius_mm},
     }

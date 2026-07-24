@@ -90,8 +90,16 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
     ed.focus();
     restoreSelection();
     const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
-    const range = sel.getRangeAt(0);
+    if (!sel || sel.rangeCount === 0) return;
+    let range = sel.getRangeAt(0);
+    // Sin selección (solo el cursor) → aplicar el formato a TODO el texto del cuadro.
+    // Antes se salía sin hacer nada, y el usuario percibía que "no funcionaba".
+    if (sel.isCollapsed) {
+      range = document.createRange();
+      range.selectNodeContents(ed);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
     const span = document.createElement('span');
     span.style.cssText = cssText;
     try {

@@ -194,6 +194,12 @@ def _apply_border(canvas: Canvas, border: dict | None, registry: StyleRegistry) 
         if unified.get("enabled"):
             canvas.setStrokeColor(registry.rl_color(unified.get("color", "#000000")))
             canvas.setLineWidth(mm(unified.get("width", 1)))
+            # Borde discontinuo (viñeta/puntos) del editor → setDash (patrón en mm→pt).
+            dash = unified.get("dash")
+            if isinstance(dash, list) and len(dash) >= 2:
+                canvas.setDash([mm(d) for d in dash], 0)
+            else:
+                canvas.setDash([], 0)  # sólido (evita heredar el dash de otra forma)
             return
 
     canvas.setStrokeColorRGB(0, 0, 0, 0)

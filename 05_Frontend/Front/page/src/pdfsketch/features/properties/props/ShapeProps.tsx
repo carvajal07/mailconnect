@@ -43,6 +43,19 @@ export default function ShapeProps({ el }: Props) {
         />
       </Row>
 
+      <div className="flex items-center gap-2">
+        <input
+          id="shape-dash"
+          type="checkbox"
+          checked={Array.isArray((el as { dash?: number[] }).dash) && ((el as { dash?: number[] }).dash?.length ?? 0) > 0}
+          onChange={(e) => up({ dash: e.target.checked ? [2, 2] : undefined } as never)}
+          className="accent-[color:var(--accent)]"
+        />
+        <label htmlFor="shape-dash" className="text-ink-2 text-[10px] cursor-pointer select-none">
+          Borde discontinuo
+        </label>
+      </div>
+
       {el.type === 'rect' && (
         <Row label="Esquinas">
           <NumberInput
