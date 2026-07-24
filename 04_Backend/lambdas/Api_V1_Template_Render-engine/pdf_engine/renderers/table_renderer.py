@@ -53,19 +53,27 @@ def render_table(
     style_cmds: list[tuple] = []
     row_idx = 0
 
+    body_font = body_cfg.get("fontSize") or 8
+
     # Header
+    header_offset = 0
     if header_cfg.get("enabled", True):
         header_rows = _build_header_rows(header_cfg, columns, registry)
         for hr in header_rows:
             all_rows.append(hr)
-            style_cmds += _header_style_cmds(row_idx, len(columns), registry)
+            style_cmds += _band_style_cmds(row_idx, len(columns),
+                                           header_cfg.get("background"),
+                                           header_cfg.get("textColor"),
+                                           header_cfg.get("fontSize") or 9, registry)
             row_idx += 1
+            header_offset += 1
 
     # Body — from dataSource variable or explicit rows
     body_rows = _build_body_rows(body_cfg, element.get("dataSource"), columns, ctx, registry)
+    body_start = row_idx
     for br in body_rows:
         all_rows.append(br)
-        style_cmds += _body_style_cmds(row_idx, len(columns))
+        style_cmds += _body_style_cmds(row_idx, len(columns), body_font)
         row_idx += 1
 
     # Footer
@@ -73,7 +81,10 @@ def render_table(
         footer_rows = _build_footer_rows(footer_cfg, columns, registry)
         for fr in footer_rows:
             all_rows.append(fr)
-            style_cmds += _header_style_cmds(row_idx, len(columns), registry)
+            style_cmds += _band_style_cmds(row_idx, len(columns),
+                                           footer_cfg.get("background"),
+                                           footer_cfg.get("textColor"),
+                                           footer_cfg.get("fontSize") or 9, registry)
             row_idx += 1
 
     if not all_rows:
@@ -85,13 +96,14 @@ def render_table(
     cell_border  = element.get("cellBorder", {})
     style_cmds += _border_style_cmds(table_border, cell_border, len(all_rows), len(columns))
 
-    # ── Alternate row fill ────────────────────────────────────────────────────
+    # ── Alternate row fill (SOLO filas del cuerpo; no pisa encabezado/pie) ─────
     alt_fill = element.get("alternateRowFill")
-    if alt_fill and alt_fill.get("type") == "solid":
+    if alt_fill and alt_fill.get("type") == "solid" and body_rows:
         alt_color = registry.rl_color(alt_fill.get("color", "#f9fafb"), alt_fill.get("opacity", 1.0))
-        header_offset = 1 if header_cfg.get("enabled", True) else 0
-        for i in range(header_offset, len(all_rows), 2):
-            style_cmds.append(("BACKGROUND", (0, i), (-1, i), alt_color))
+        for k in range(len(body_rows)):
+            if k % 2 == 1:  # 2ª, 4ª… fila del cuerpo
+                r = body_start + k
+                style_cmds.append(("BACKGROUND", (0, r), (-1, r), alt_color))
 
     tbl = Table(all_rows, colWidths=col_widths, repeatRows=1 if header_cfg.get("enabled") else 0)
     tbl.setStyle(TableStyle(style_cmds))
@@ -110,12 +122,14 @@ def _build_header_rows(
     columns: list[dict],
     registry: StyleRegistry,
 ) -> list[list]:
+    color = header_cfg.get("textColor")
+    fs = header_cfg.get("fontSize") or 9
     explicit = header_cfg.get("rows", [])
     if explicit:
-        return [_cells_from_row(row, registry) for row in explicit]
+        return [_cells_from_row(row, registry, bold=True, color=color, font_size=fs) for row in explicit]
     # Default: column labels
-    style = _cell_style(registry, bold=True)
-    return [[RLParagraph(col.get("label", ""), style) for col in columns]]
+    style = _cell_style(registry, bold=True, color=color, font_size=fs)
+    return [[RLParagraph(_esc(col.get("label", "")), style) for col in columns]]
 
 
 def _build_body_rows(
@@ -125,12 +139,13 @@ def _build_body_rows(
     ctx: DocumentContext,
     registry: StyleRegistry,
 ) -> list[list]:
-    style = _cell_style(registry)
+    fs = body_cfg.get("fontSize") or 8
+    style = _cell_style(registry, font_size=fs)
 
     # Explicit rows defined in the template
     explicit = body_cfg.get("rows", [])
     if explicit:
-        return [_cells_from_row(row, registry) for row in explicit]
+        return [_cells_from_row(row, registry, font_size=fs) for row in explicit]
 
     # Dynamic rows from data context
     if data_source:
@@ -158,14 +173,18 @@ def _build_footer_rows(
     columns: list[dict],
     registry: StyleRegistry,
 ) -> list[list]:
+    color = footer_cfg.get("textColor")
+    fs = footer_cfg.get("fontSize") or 9
     explicit = footer_cfg.get("rows", [])
     if explicit:
-        return [_cells_from_row(row, registry) for row in explicit]
+        return [_cells_from_row(row, registry, bold=True, color=color, font_size=fs) for row in explicit]
     return []
 
 
-def _cells_from_row(row: dict | list, registry: StyleRegistry) -> list:
-    style = _cell_style(registry)
+def _cells_from_row(row: dict | list, registry: StyleRegistry,
+                    bold: bool = False, color: str | None = None,
+                    font_size: float = 8) -> list:
+    style = _cell_style(registry, bold=bold, color=color, font_size=font_size)
     cells = row if isinstance(row, list) else row.get("cells", [])
     result = []
     for cell in cells:
@@ -205,20 +224,30 @@ def _resolve_col_widths(columns: list[dict], total_w_pt: float) -> list[float]:
 
 # ── TableStyle commands ───────────────────────────────────────────────────────
 
-def _header_style_cmds(row: int, n_cols: int, registry: StyleRegistry) -> list[tuple]:
-    return [
-        ("BACKGROUND",  (0, row), (n_cols-1, row), colors.HexColor("#f3f4f6")),
+def _band_style_cmds(row: int, n_cols: int, background, text_color,
+                     font_size: float, registry: StyleRegistry) -> list[tuple]:
+    """Comandos de estilo para una banda de encabezado/pie (fondo + texto + padding)."""
+    cmds = [
         ("FONTNAME",    (0, row), (n_cols-1, row), "Helvetica-Bold"),
-        ("FONTSIZE",    (0, row), (n_cols-1, row), 9),
+        ("FONTSIZE",    (0, row), (n_cols-1, row), font_size),
         ("BOTTOMPADDING", (0, row), (n_cols-1, row), 4),
         ("TOPPADDING",    (0, row), (n_cols-1, row), 4),
+        ("LEFTPADDING",   (0, row), (n_cols-1, row), 4),
+        ("RIGHTPADDING",  (0, row), (n_cols-1, row), 4),
     ]
+    bg = background if (isinstance(background, str) and background.startswith("#")) else "#f3f4f6"
+    cmds.append(("BACKGROUND", (0, row), (n_cols-1, row), colors.HexColor(bg)))
+    if isinstance(text_color, str) and text_color.startswith("#"):
+        # TEXTCOLOR solo aplica a celdas string; las celdas Paragraph ya llevan su
+        # color propio (lo puso el row builder). Se incluye por si acaso.
+        cmds.append(("TEXTCOLOR", (0, row), (n_cols-1, row), colors.HexColor(text_color)))
+    return cmds
 
 
-def _body_style_cmds(row: int, n_cols: int) -> list[tuple]:
+def _body_style_cmds(row: int, n_cols: int, font_size: float = 8) -> list[tuple]:
     return [
         ("FONTNAME",  (0, row), (n_cols-1, row), "Helvetica"),
-        ("FONTSIZE",  (0, row), (n_cols-1, row), 8),
+        ("FONTSIZE",  (0, row), (n_cols-1, row), font_size),
         ("BOTTOMPADDING", (0, row), (n_cols-1, row), 3),
         ("TOPPADDING",    (0, row), (n_cols-1, row), 3),
         ("LEFTPADDING",   (0, row), (n_cols-1, row), 4),
@@ -234,41 +263,42 @@ def _border_style_cmds(
 ) -> list[tuple]:
     cmds = []
 
-    # Outer table border
+    # Outer table border — el ancho ya viene en PUNTOS; se garantiza un mínimo
+    # visible (antes se multiplicaba por 0.5 → hairline de 0.2pt casi invisible).
     tb_mode = table_border.get("mode", "unified")
     if tb_mode == "unified":
         u = table_border.get("unified", {})
         if u.get("enabled", True):
-            c = colors.HexColor(u.get("color", "#d1d5db"))
-            w = u.get("width", 1) * 0.5
-            cmds += [
-                ("BOX", (0, 0), (n_cols-1, n_rows-1), w, c),
-            ]
+            c = colors.HexColor(u.get("color", "#94a3b8"))
+            w = max(0.5, float(u.get("width", 1) or 1))
+            cmds += [("BOX", (0, 0), (n_cols-1, n_rows-1), w, c)]
 
     # Inner cell borders
     cb_mode = cell_border.get("mode", "unified")
     if cb_mode == "unified":
         u = cell_border.get("unified", {})
         if u.get("enabled", True):
-            c = colors.HexColor(u.get("color", "#e5e7eb"))
-            w = u.get("width", 0.5) * 0.5
-            cmds += [
-                ("INNERGRID", (0, 0), (n_cols-1, n_rows-1), w, c),
-            ]
+            c = colors.HexColor(u.get("color", "#cbd5e1"))
+            w = max(0.4, float(u.get("width", 0.5) or 0.5))
+            cmds += [("INNERGRID", (0, 0), (n_cols-1, n_rows-1), w, c)]
 
     return cmds
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _cell_style(registry: StyleRegistry, bold: bool = False) -> RLParagraphStyle:
-    return RLParagraphStyle(
+def _cell_style(registry: StyleRegistry, bold: bool = False,
+                color: str | None = None, font_size: float = 8) -> RLParagraphStyle:
+    kwargs = dict(
         name="cell_bold" if bold else "cell",
         fontName="Helvetica-Bold" if bold else "Helvetica",
-        fontSize=9 if bold else 8,
-        leading=12,
+        fontSize=font_size,
+        leading=font_size * 1.35,
         wordWrap="CJK",
     )
+    if isinstance(color, str) and color.startswith("#"):
+        kwargs["textColor"] = colors.HexColor(color)
+    return RLParagraphStyle(**kwargs)
 
 
 def _draw_empty_placeholder(

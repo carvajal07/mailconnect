@@ -247,6 +247,18 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   `reportlab` + `Pillow` (+ `qrcode`, `python-barcode`) para el runtime; IAM
   `dynamodb:GetItem messageTemplate` + S3 `PutObject` (store). El paquete de la lambda incluye
   `pdf_engine/`, `sketch_translator.py` y `fonts/` (el CD sube la carpeta completa).
+- **Paridad de render lienzo↔PDF (jul 2026):** se corrigieron las diferencias visibles entre el
+  lienzo del Estudio PDF y el PDF del motor (comparación con capturas): **giro** de las formas
+  (el motor no aplicaba `rotation` → ahora gira alrededor del centro, `canvas.rotate(-rot)`);
+  **degradado radial "gigante"** (el clip usaba `path.ellipse(x,y,x+w,y+h)` pasando esquinas donde
+  ReportLab espera **ancho/alto** → clip enorme que desbordaba la elipse; corregido a
+  `path.ellipse(x,y,w,h)`); **relleno que se salía del rectángulo redondeado** (el clip del
+  degradado ahora usa `roundRect` cuando hay radio); **bordes de tabla invisibles** (el ancho se
+  reducía a la mitad = 0.2 pt y el `borderWidth` del sketch venía en mm tratado como pt → el
+  traductor convierte mm→pt y el renderer aplica un mínimo `max(0.5/0.4pt)`); **encabezado/pie de
+  tabla** con su color de fondo + texto de contraste + tamaño (el traductor los emite; el renderer
+  los pinta con `_band_style_cmds` y arma los `Paragraph` con su color — `TableStyle` `TEXTCOLOR`
+  no afecta `Paragraph`); **cebra** limitada a las filas del CUERPO (no pisa encabezado/pie).
 - ⚠️ Pendientes conocidos del motor (nivel FULL): tablas standalone usan el modelo viejo
   (las de rowSets solo renderizan EMBEBIDAS en áreas), bordes de celda por `styleRef` sin
   resolver, sin merges (`spanUp/spanLeft`), `flowType:'repeated'` sin implementar, sin render

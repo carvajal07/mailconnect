@@ -159,6 +159,7 @@ class _Translator:
             "id": el.get("id") or self._id("el"),
             "x": self.mm(el.get("x")), "y": self.mm(el.get("y")),
             "width": self.mm(el.get("width")), "height": self.mm(el.get("height")),
+            "rotation": el.get("rotation") or 0,
             "visible": el.get("visible", True),
             "condition": None,
         }
@@ -355,24 +356,40 @@ class _Translator:
 
         rows = el.get("rows") or []
         has_header = bool(el.get("hasHeader"))
-        header_rows, body_rows = [], rows
-        if has_header and rows:
-            header_rows, body_rows = [rows[0]], rows[1:]
+        has_footer = bool(el.get("hasFooter"))
+        header_rows, footer_rows, body_rows = [], [], rows
+        if has_header and body_rows:
+            header_rows, body_rows = [body_rows[0]], body_rows[1:]
+        if has_footer and body_rows:
+            footer_rows, body_rows = [body_rows[-1]], body_rows[:-1]
+
+        row_font = el.get("rowFontSize") or 10
 
         def to_row(cells):
             return {"cells": [{"content": (c or {}).get("text", "")} for c in cells]}
 
-        border_w = el.get("borderWidth") or 0
-        border_c = el.get("borderColor") or "#d1d5db"
+        # El grosor del borde de la tabla viene en mm (editor) → a pt para el motor
+        # (el table_renderer pasa la anchura directo a ReportLab, que usa puntos).
+        border_w_mm = _num(el.get("borderWidth"), 0.0)
+        border_w_pt = round(border_w_mm / MM_PER_PT, 3) if border_w_mm else 0.0
+        border_c = el.get("borderColor") or "#94a3b8"
         border_cfg = {"mode": "unified",
-                      "unified": {"enabled": border_w > 0, "width": border_w, "color": border_c}}
+                      "unified": {"enabled": border_w_mm > 0, "width": border_w_pt, "color": border_c}}
+
+        header_bg = el.get("headerBackground") or None
+        footer_bg = el.get("footerBackground") or None
 
         base.update({
             "type": "table",
             "columns": columns,
-            "header": {"enabled": has_header, "rows": [to_row(r) for r in header_rows]},
-            "body": {"rows": [to_row(r) for r in body_rows] if not el.get("repeatBy") else []},
-            "footer": {"enabled": False},
+            "header": {"enabled": has_header, "rows": [to_row(r) for r in header_rows],
+                       "background": header_bg, "textColor": _contrast_text(header_bg),
+                       "fontSize": row_font},
+            "body": {"rows": [to_row(r) for r in body_rows] if not el.get("repeatBy") else [],
+                     "fontSize": row_font},
+            "footer": {"enabled": has_footer, "rows": [to_row(r) for r in footer_rows],
+                       "background": footer_bg, "textColor": _contrast_text(footer_bg),
+                       "fontSize": row_font},
             "dataSource": el.get("repeatBy") or None,
             "tableBorder": border_cfg,
             "cellBorder": border_cfg,
@@ -437,6 +454,25 @@ class _Translator:
 
 def _is_color(value) -> bool:
     return isinstance(value, str) and value.startswith("#")
+
+
+def _num(value, default=0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _contrast_text(bg) -> str | None:
+    """Texto blanco sobre fondos oscuros, gris oscuro sobre claros. None si no hay fondo."""
+    if not _is_color(bg) or len(bg) < 7:
+        return None
+    try:
+        r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+    except ValueError:
+        return None
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b)
+    return "#ffffff" if luminance < 140 else "#111827"
 
 
 def _esc(text: str) -> str:
