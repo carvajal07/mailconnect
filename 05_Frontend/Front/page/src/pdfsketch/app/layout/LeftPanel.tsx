@@ -41,15 +41,14 @@ export default function LeftPanel() {
 
       {/* ── Contenido según tab ── */}
       {tab === 'layers' && (
-        <PanelGroup direction="vertical" autoSaveId="left-panel">
+        <div className="flex-1 min-h-0 flex flex-col">
+        <PanelGroup direction="vertical" autoSaveId="left-panel" className="flex-1 min-h-0">
           <Panel defaultSize={55} minSize={20}>
             <div className="h-full flex flex-col">
               <SectionHeader title="Árbol de capas" />
               <div className="flex-1 min-h-0 overflow-auto">
                 <LayoutTree />
               </div>
-              {/* Controles de hojas (movidos desde la barra de estado) */}
-              <PagesStrip />
             </div>
           </Panel>
           <PanelResizeHandle
@@ -72,6 +71,9 @@ export default function LeftPanel() {
             </div>
           </Panel>
         </PanelGroup>
+        {/* Controles de hojas: FIJOS abajo del todo, después de Propiedades */}
+        <PagesStrip />
+        </div>
       )}
 
       {tab === 'styles' && (

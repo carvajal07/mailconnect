@@ -17,7 +17,7 @@ function BoxBtn({ onClick, title, active, children }: {
       type="button"
       onClick={onClick}
       title={title}
-      className="h-[22px] px-2.5 rounded flex items-center gap-1.5 text-11"
+      className="h-[22px] px-3 rounded flex items-center gap-1.5 text-11 whitespace-nowrap"
       style={active
         ? { background: 'var(--accent-soft)', color: 'var(--accent)', border: '1px solid var(--accent)' }
         : { background: 'var(--bg-1)', color: 'var(--ink-2)', border: '1px solid var(--line)' }}
@@ -75,7 +75,7 @@ export default function StatusBar() {
 
       {/* ── Tamaño de la hoja ── */}
       <span
-        className="font-mono px-2.5 h-[22px] flex items-center rounded whitespace-nowrap"
+        className="font-mono px-3 h-[22px] flex items-center rounded whitespace-nowrap"
         style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', color: 'var(--accent)' }}
         title="Tamaño de la hoja"
       >
@@ -92,7 +92,7 @@ export default function StatusBar() {
             key={u}
             type="button"
             onClick={() => setUnit(u)}
-            className="h-[22px] px-2 rounded font-mono text-[10px]"
+            className="h-[22px] px-2.5 rounded font-mono text-[10px]"
             style={u === unit
               ? { background: 'var(--accent)', color: '#ffffff', fontWeight: 700 }
               : { background: 'var(--bg-1)', color: 'var(--ink-2)', border: '1px solid var(--line)' }}

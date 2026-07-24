@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Layer, Rect, Stage } from 'react-konva';
+import { Layer, Line, Rect, Stage } from 'react-konva';
 import type Konva from 'konva';
 import Sheet from './Sheet';
 import Rulers, { RULER_SIZE_PX } from './Rulers';
@@ -17,8 +17,47 @@ import { useToolStore } from '@/store/toolStore';
 import { useSelectionStore } from '@/store/selectionStore';
 import { MM_TO_PX, pxToMm } from '@/utils/units';
 import { nextId } from '@/utils/id';
-import type { ImageEl, QrEl, TableEl, TextEl, TextSpan } from '@/types/document';
+import type { ElementModel, ImageEl, LineEl, PenEl, QrEl, TableEl, TextEl, TextSpan } from '@/types/document';
 import { spansToPlainText } from '@/utils/richText';
+
+/** Paso de la grilla en mm (alineada al origen de la hoja). */
+const GRID_MM = 10;
+
+/** Grilla de TODO el lienzo (no solo la hoja), alineada al origen de la hoja. */
+function CanvasGrid({ width, height, offsetX, offsetY, zoom }: {
+  width: number; height: number; offsetX: number; offsetY: number; zoom: number;
+}) {
+  const step = GRID_MM * MM_TO_PX * zoom;
+  if (step < 4) return null; // demasiado denso a zoom muy bajo
+  const lines: number[][] = [];
+  const startX = ((offsetX % step) + step) % step;
+  for (let x = startX; x <= width; x += step) lines.push([x, 0, x, height]);
+  const startY = ((offsetY % step) + step) % step;
+  for (let y = startY; y <= height; y += step) lines.push([0, y, width, y]);
+  return (
+    <>
+      {lines.map((pts, i) => (
+        <Line key={i} points={pts} stroke="rgba(59,130,246,0.20)" strokeWidth={1} listening={false} />
+      ))}
+    </>
+  );
+}
+
+/** Bounding box REAL de un elemento en mm (líneas/lápiz usan sus points). */
+function elementBBoxMm(el: ElementModel): { x: number; y: number; w: number; h: number } {
+  if ((el.type === 'line' || el.type === 'pen') && (el as LineEl | PenEl).points.length >= 2) {
+    const pts = (el as LineEl | PenEl).points;
+    const xs = pts.filter((_, i) => i % 2 === 0);
+    const ys = pts.filter((_, i) => i % 2 === 1);
+    return {
+      x: el.x + Math.min(...xs),
+      y: el.y + Math.min(...ys),
+      w: Math.max(0.5, Math.max(...xs) - Math.min(...xs)),
+      h: Math.max(0.5, Math.max(...ys) - Math.min(...ys)),
+    };
+  }
+  return { x: el.x, y: el.y, w: el.width, h: el.height };
+}
 
 export default function Canvas() {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -30,6 +69,7 @@ export default function Canvas() {
   const setCursor = useUIStore((s) => s.setCursor);
   const unit = useUIStore((s) => s.unit);
   const theme = useUIStore((s) => s.theme);
+  const showGrid = useUIStore((s) => s.showGrid);
   const fitTick = useUIStore((s) => s.fitTick);
   const fitWidthTick = useUIStore((s) => s.fitWidthTick);
   const activeTool = useToolStore((s) => s.active);
@@ -294,6 +334,11 @@ export default function Canvas() {
   // aparezca el cursor de texto NATIVO (|) siguiendo al puntero letra a letra;
   // al soltar, el overlay la inserta en esa posición del cursor.
   function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
+    // Si el puntero está sobre el editor de texto (contentEditable), NO tocar el
+    // evento: el navegador maneja el drag de texto de forma nativa y es lo que
+    // pinta el caret | recorriendo cada letra. Interceptarlo lo suprime.
+    const t = e.target as HTMLElement | null;
+    if (t && t.isContentEditable) return;
     e.preventDefault();
     const hasBinding = Array.from(e.dataTransfer.types).includes('text/x-binding-path');
     e.dataTransfer.dropEffect = 'copy';
@@ -439,11 +484,15 @@ export default function Canvas() {
       const ry2 = Math.max(m.y1, m.y2);
       if (rx2 - rx1 > 4 && ry2 - ry1 > 4 && page) {
         const s = MM_TO_PX * zoom;
+        // bbox REAL por elemento (líneas/lápiz usan sus points; antes su x/y era
+        // solo el offset del drag → el marquee "a veces" no los encontraba).
         const hits = page.elements.filter((el) => {
-          const ex1 = el.x * s + offset.x;
-          const ey1 = el.y * s + offset.y;
-          const ex2 = ex1 + ('width' in el ? (el as { width: number }).width * s : 0);
-          const ey2 = ey1 + ('height' in el ? (el as { height: number }).height * s : 0);
+          if (el.visible === false) return false;
+          const b = elementBBoxMm(el);
+          const ex1 = b.x * s + offset.x;
+          const ey1 = b.y * s + offset.y;
+          const ex2 = ex1 + b.w * s;
+          const ey2 = ey1 + b.h * s;
           return ex1 < rx2 && ex2 > rx1 && ey1 < ry2 && ey2 > ry1;
         });
         if (hits.length > 0) useSelectionStore.getState().select(hits.map((e) => e.id));
@@ -536,6 +585,10 @@ export default function Canvas() {
       >
         <Layer>
           {page && <Sheet page={page} zoom={zoom} offsetX={offset.x} offsetY={offset.y} />}
+          {/* Grilla por TODO el lienzo (encima de la hoja, debajo de los elementos) */}
+          {showGrid && (
+            <CanvasGrid width={size.w} height={size.h} offsetX={offset.x} offsetY={offset.y} zoom={zoom} />
+          )}
           {page && (
             <ElementsLayer
               page={page}

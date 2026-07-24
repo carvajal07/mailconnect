@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react';
+import type { ComponentType } from 'react';
+import {
+  ChevronDown, ChevronRight, PaintBucket, Palette, Pencil, Pilcrow, Plus,
+  Slash, Square, Trash2, Type,
+} from 'lucide-react';
 import { useDocumentStore, type StyleKey } from '@/store/documentStore';
 import { useSelectionStore } from '@/store/selectionStore';
 import type {
@@ -35,6 +39,55 @@ const KEY_LABELS: Record<StyleKey, string> = {
   lineStyles:      'Estilos de línea',
   fillStyles:      'Estilos de relleno',
 };
+
+/** Icono por sección — como el panel Recursos del Diseñador PDF. */
+const KEY_ICONS: Record<StyleKey, ComponentType<{ size?: number | string }>> = {
+  textStyles:      Type,
+  paragraphStyles: Pilcrow,
+  borderStyles:    Square,
+  lineStyles:      Slash,
+  fillStyles:      PaintBucket,
+};
+
+/** Cabecera de sección con el look del Diseñador: chevron · icono · label · count · + */
+function SectionHeaderRow({
+  icon: Icon, label, count, open, onToggle, onAdd, addTitle,
+}: {
+  icon: ComponentType<{ size?: number | string }>;
+  label: string;
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+  onAdd: () => void;
+  addTitle: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="w-full flex items-center gap-1.5 px-2 py-[5px] text-11 font-semibold text-left select-none hover:bg-bg-3"
+      style={{ color: 'var(--ink-2)' }}
+    >
+      {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+      <Icon size={13} />
+      <span style={{ color: 'var(--ink)' }}>{label}</span>
+      <span className="ml-auto font-mono text-[10px]" style={{ color: 'var(--muted)' }}>{count}</span>
+      <span
+        role="button"
+        tabIndex={0}
+        title={addTitle}
+        onClick={(e) => { e.stopPropagation(); onAdd(); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onAdd(); } }}
+        className="flex items-center px-0.5 py-0.5 rounded"
+        style={{ color: 'var(--muted)' }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent)'; e.currentTarget.style.background = 'var(--accent-soft)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--muted)'; e.currentTarget.style.background = 'transparent'; }}
+      >
+        <Plus size={11} />
+      </span>
+    </button>
+  );
+}
 
 const STYLE_KEYS: StyleKey[] = [
   'textStyles', 'paragraphStyles', 'borderStyles', 'lineStyles', 'fillStyles',
@@ -208,36 +261,30 @@ export default function StylesPanel() {
       <div className="flex flex-col">
         {/* ── Colores del documento (paleta reusable, como en Recursos del Diseñador) ── */}
         <div style={{ borderBottom: '1px solid var(--line-2)' }}>
-          <div
-            className="flex items-center h-8 px-2 cursor-default hover:bg-bg-3 select-none group"
-            onClick={() => toggleSection('colors')}
-          >
-            <span className="w-4 flex items-center justify-center text-muted">
-              {openSections.colors ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-            </span>
-            <span className="flex-1 text-11 font-semibold text-ink-2 ml-1">Colores</span>
-            <span className="font-mono text-[10px] text-muted mr-1">{doc.assets.colors.length}</span>
-            <button
-              type="button"
-              title="Nuevo color"
-              onClick={(e) => { e.stopPropagation(); addColor(`Color ${doc.assets.colors.length + 1}`, '#3b82f6'); }}
-              className="w-5 h-5 flex items-center justify-center rounded hover:bg-bg-4 text-muted opacity-0 group-hover:opacity-100 transition-opacity"
-            >
-              <Plus size={11} />
-            </button>
-          </div>
+          <SectionHeaderRow
+            icon={Palette}
+            label="Colores"
+            count={doc.assets.colors.length}
+            open={!!openSections.colors}
+            onToggle={() => toggleSection('colors')}
+            onAdd={() => addColor(`Color ${doc.assets.colors.length + 1}`, '#3b82f6')}
+            addTitle="Nuevo color"
+          />
           {openSections.colors && (
-            <div className="pb-1">
+            <div className="pb-1 pl-6 pr-1.5">
               {doc.assets.colors.length === 0 && (
-                <div className="px-7 py-1.5 text-[10px] text-muted italic">
+                <div className="py-1.5 text-[10px] text-muted italic">
                   Sin colores — usa + para crear uno
                 </div>
               )}
               {doc.assets.colors.map((c) => (
                 <div
                   key={c.id}
-                  className="flex items-center h-[28px] px-2 pl-7 gap-2 select-none group hover:bg-bg-3"
-                  style={selectedElements.length > 0 ? { cursor: 'pointer' } : {}}
+                  className="flex items-center h-[28px] px-1 gap-2 select-none group hover:bg-bg-3"
+                  style={{
+                    borderBottom: '1px solid var(--line-2)',
+                    ...(selectedElements.length > 0 ? { cursor: 'pointer' } : {}),
+                  }}
                   onClick={selectedElements.length > 0 ? () => applyColorToSelection(c.rgb) : undefined}
                   title={selectedElements.length > 0 ? `Aplicar "${c.name}" a la selección` : c.name}
                 >
@@ -280,33 +327,21 @@ export default function StylesPanel() {
 
           return (
             <div key={key} style={{ borderBottom: '1px solid var(--line-2)' }}>
-              {/* Cabecera de sección */}
-              <div
-                className="flex items-center h-8 px-2 cursor-default hover:bg-bg-3 select-none group"
-                onClick={() => toggleSection(key)}
-              >
-                <span className="w-4 flex items-center justify-center text-muted">
-                  {isOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                </span>
-                <span className="flex-1 text-11 font-semibold text-ink-2 ml-1">
-                  {KEY_LABELS[key]}
-                </span>
-                <span className="font-mono text-[10px] text-muted mr-1">{items.length}</span>
-                <button
-                  type="button"
-                  title={`Nuevo ${KEY_LABELS[key].toLowerCase()}`}
-                  onClick={(e) => { e.stopPropagation(); openNew(key); }}
-                  className="w-5 h-5 flex items-center justify-center rounded hover:bg-bg-4 text-muted opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <Plus size={11} />
-                </button>
-              </div>
+              <SectionHeaderRow
+                icon={KEY_ICONS[key]}
+                label={KEY_LABELS[key]}
+                count={items.length}
+                open={!!isOpen}
+                onToggle={() => toggleSection(key)}
+                onAdd={() => openNew(key)}
+                addTitle={`Nuevo ${KEY_LABELS[key].toLowerCase()}`}
+              />
 
               {/* Items */}
               {isOpen && (
-                <div className="pb-1">
+                <div className="pb-1 pl-6 pr-1.5">
                   {items.length === 0 && (
-                    <div className="px-7 py-1.5 text-[10px] text-muted italic">
+                    <div className="py-1.5 text-[10px] text-muted italic">
                       Sin estilos — usa + para crear uno
                     </div>
                   )}
@@ -349,8 +384,11 @@ function StyleItem({
 }) {
   return (
     <div
-      className="flex items-center h-[28px] px-2 pl-7 gap-2 cursor-default select-none group hover:bg-bg-3"
-      style={applicable ? { cursor: 'pointer' } : {}}
+      className="flex items-center h-[28px] px-1 gap-2 cursor-default select-none group hover:bg-bg-3"
+      style={{
+        borderBottom: '1px solid var(--line-2)',
+        ...(applicable ? { cursor: 'pointer' } : {}),
+      }}
       onClick={applicable ? onApply : undefined}
       title={applicable ? `Aplicar "${item.name}"` : item.name}
     >
