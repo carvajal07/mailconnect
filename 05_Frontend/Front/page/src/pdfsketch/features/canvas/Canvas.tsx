@@ -91,6 +91,19 @@ export default function Canvas() {
     return () => ro.disconnect();
   }, []);
 
+  // Ctrl/⌘ + rueda hace zoom del LIENZO, nunca del navegador: un listener nativo
+  // NO pasivo sobre el contenedor previene el zoom del navegador aunque el puntero
+  // esté sobre las reglas/overlay (donde el onWheel de Konva no llega).
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheelNative = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) e.preventDefault();
+    };
+    el.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => el.removeEventListener('wheel', onWheelNative);
+  }, []);
+
   useEffect(() => {
     if (!page) return;
     const sheetW = page.size.width * MM_TO_PX * zoom;
@@ -277,6 +290,27 @@ export default function Canvas() {
     e.target.value = '';
   }
 
+  // Al arrastrar una variable SOBRE un texto, se entra en modo edición para que
+  // aparezca el cursor de texto NATIVO (|) siguiendo al puntero letra a letra;
+  // al soltar, el overlay la inserta en esa posición del cursor.
+  function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const hasBinding = Array.from(e.dataTransfer.types).includes('text/x-binding-path');
+    e.dataTransfer.dropEffect = 'copy';
+    if (!hasBinding || !page) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const xMm = pxToMm(e.clientX - rect.left - offset.x, zoom);
+    const yMm = pxToMm(e.clientY - rect.top - offset.y, zoom);
+    const target = page.elements.find(
+      (el) => el.type === 'text' && xMm >= el.x && xMm <= el.x + el.width && yMm >= el.y && yMm <= el.y + el.height,
+    );
+    if (target && editingId !== target.id) {
+      select([target.id]);
+      setEditing(target.id);
+    }
+  }
+
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     const binding = e.dataTransfer.getData('text/x-binding-path');
@@ -437,7 +471,7 @@ export default function Canvas() {
       ref={containerRef}
       className="h-full w-full relative overflow-hidden"
       style={{ background: 'var(--canvas)', cursor }}
-      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
+      onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
       <input

@@ -149,8 +149,8 @@ export default function DataPanel() {
   const currentPageId = useDocumentStore((s) => s.currentPageId);
   const addElement = useDocumentStore((s) => s.addElement);
 
-  const insertBinding = useActiveEditorStore((s) => s.insertBinding);
-  const editingActive = !!insertBinding;
+  const api = useActiveEditorStore((s) => s.api);
+  const editingActive = !!api;
 
   const page = pages.find((p) => p.id === currentPageId) ?? pages[0];
   const selected = sources.find((s) => s.id === selectedId) ?? null;
@@ -174,8 +174,8 @@ export default function DataPanel() {
 
   /* Inserta la variable: en el cursor del texto en edición, o crea un texto nuevo. */
   function handleInsert(path: string) {
-    const fn = useActiveEditorStore.getState().insertBinding;
-    if (fn) { fn(path); return; }
+    const active = useActiveEditorStore.getState().api;
+    if (active) { active.insertBinding(path); return; }
     if (!page) return;
     const nextZ = page.elements.length > 0 ? Math.max(...page.elements.map((e) => e.zIndex)) + 1 : 1;
     const name = path.split('.').pop() ?? path;

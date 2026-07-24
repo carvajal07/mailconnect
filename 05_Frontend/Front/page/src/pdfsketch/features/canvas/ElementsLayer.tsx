@@ -12,7 +12,7 @@ import TableElement from './elements/TableElement';
 import FrameElement from './elements/FrameElement';
 import FlowableElement from './elements/FlowableElement';
 import type { ElementModel, Page } from '@/types/document';
-import { useDocumentStore } from '@/store/documentStore';
+import { useDocumentStore, useDocumentHistory } from '@/store/documentStore';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useToolStore } from '@/store/toolStore';
 import { MM_TO_PX } from '@/utils/units';
@@ -45,8 +45,11 @@ export default function ElementsLayer({ page, zoom, offsetX, offsetY, preview = 
   const activeTool = useToolStore((s) => s.active);
   const draggable = !preview && activeTool === 'select';
 
-  const groupRef = useRef<Konva.Group>(null);
-  const dragRef = useRef<{ anchorId: string; start: Map<string, { x: number; y: number }> } | null>(null);
+  const dragRef = useRef<{
+    anchorId: string;
+    preDrag: Map<string, { x: number; y: number }>; // posiciones en mm al iniciar
+    moved: boolean;
+  } | null>(null);
   const pendingCollapse = useRef<string | null>(null);
 
   function handleSelect(id: string, additive: boolean) {
@@ -65,68 +68,76 @@ export default function ElementsLayer({ page, zoom, offsetX, offsetY, preview = 
 
   const onUpdate = preview
     ? (_id: string, _patch: Partial<ElementModel>) => {}
-    : (id: string, patch: Partial<ElementModel>) => {
-        const d = dragRef.current;
-        // Durante un arrastre de grupo, el commit propio del ancla (solo x/y) lo
-        // agrupa el handler del <Group> (updateElements) → un único paso de undo.
-        if (d && id === d.anchorId) {
-          const keys = Object.keys(patch);
-          if (keys.length > 0 && keys.every((k) => k === 'x' || k === 'y')) return;
-        }
-        updateElement(id, patch);
-      };
+    : (id: string, patch: Partial<ElementModel>) => updateElement(id, patch);
   const onEdit = preview ? (_id: string) => {} : (id: string) => setEditing(id);
   const activeEditId = preview ? null : editingId;
 
   const elements = [...page.elements].sort((a, b) => a.zIndex - b.zIndex);
 
-  // ── Arrastre de selección múltiple (a nivel de grupo) ──
+  // ── Arrastre de selección MÚLTIPLE ─────────────────────────────────────────
+  // El movimiento del grupo es autoritativo desde el STORE (no manipulación
+  // imperativa de nodos, que se pisaba con el arrastre nativo del Transformer y
+  // hacía que los elementos se separaran). Durante el arrastre se pausa el
+  // historial; al soltar se registra UN solo paso de undo (restaurar→final).
+  function selectedPositionsMm(): Map<string, { x: number; y: number }> {
+    const sel = useSelectionStore.getState().selectedIds;
+    const els = useDocumentStore.getState().doc.pages.flatMap((p) => p.elements);
+    const m = new Map<string, { x: number; y: number }>();
+    for (const sid of sel) {
+      const el = els.find((x) => x.id === sid);
+      if (el) m.set(sid, { x: el.x, y: el.y });
+    }
+    return m;
+  }
+
   function onDragStart(e: Konva.KonvaEventObject<DragEvent>) {
     if (preview) return;
     pendingCollapse.current = null; // es un arrastre, no un clic-colapso
     const id = (e.target as Konva.Node).id();
     const sel = useSelectionStore.getState().selectedIds;
     if (!id || !sel.includes(id) || sel.length <= 1) { dragRef.current = null; return; }
-    const stage = e.target.getStage();
-    const start = new Map<string, { x: number; y: number }>();
-    for (const sid of sel) {
-      const node = stage?.findOne('#' + sid);
-      if (node) start.set(sid, { x: node.x(), y: node.y() });
-    }
-    dragRef.current = { anchorId: id, start };
+    dragRef.current = { anchorId: id, preDrag: selectedPositionsMm(), moved: false };
   }
+
   function onDragMove(e: Konva.KonvaEventObject<DragEvent>) {
     const d = dragRef.current;
     if (!d) return;
     const node = e.target as Konva.Node;
     if (node.id() !== d.anchorId) return;
-    const s0 = d.start.get(d.anchorId);
-    if (!s0) return;
-    const dx = node.x() - s0.x;
-    const dy = node.y() - s0.y;
-    const stage = node.getStage();
-    for (const [sid, p] of d.start) {
-      if (sid === d.anchorId) continue;
-      const other = stage?.findOne('#' + sid);
-      if (other) other.position({ x: p.x + dx, y: p.y + dy });
+    const a0 = d.preDrag.get(d.anchorId);
+    if (!a0) return;
+    const sc = MM_TO_PX * zoom;
+    const dx = node.x() / sc - a0.x;
+    const dy = node.y() / sc - a0.y;
+    if (!d.moved) { useDocumentHistory().getState().pause(); d.moved = true; }
+    const patches: { id: string; patch: Partial<ElementModel> }[] = [];
+    for (const [sid, p] of d.preDrag) {
+      patches.push({ id: sid, patch: { x: p.x + dx, y: p.y + dy } as Partial<ElementModel> });
     }
-    groupRef.current?.getLayer()?.batchDraw();
+    updateElements(patches);
   }
+
   function onDragEnd(e: Konva.KonvaEventObject<DragEvent>) {
     const d = dragRef.current;
-    if (!d) return;
-    const node = e.target as Konva.Node;
-    if (node.id() !== d.anchorId) return;
-    const sc = MM_TO_PX * zoom;
-    const stage = node.getStage();
-    const patches: { id: string; patch: Partial<ElementModel> }[] = [];
-    for (const [sid] of d.start) {
-      const n = stage?.findOne('#' + sid);
-      if (n) patches.push({ id: sid, patch: { x: n.x() / sc, y: n.y() / sc } as Partial<ElementModel> });
-    }
     dragRef.current = null;
-    if (patches.length) updateElements(patches);
+    if (!d || !d.moved) return; // arrastre simple → lo confirma el propio elemento
+    const node = e.target as Konva.Node;
+    const a0 = d.preDrag.get(d.anchorId);
+    const sc = MM_TO_PX * zoom;
+    const dx = a0 ? node.x() / sc - a0.x : 0;
+    const dy = a0 ? node.y() / sc - a0.y : 0;
+    const restore: { id: string; patch: Partial<ElementModel> }[] = [];
+    const final: { id: string; patch: Partial<ElementModel> }[] = [];
+    for (const [sid, p] of d.preDrag) {
+      restore.push({ id: sid, patch: { x: p.x, y: p.y } as Partial<ElementModel> });
+      final.push({ id: sid, patch: { x: p.x + dx, y: p.y + dy } as Partial<ElementModel> });
+    }
+    // Volver al estado previo (aún pausado) y registrar el final como UN paso.
+    updateElements(restore);
+    useDocumentHistory().getState().resume();
+    updateElements(final);
   }
+
   function onGroupMouseUp() {
     if (pendingCollapse.current) {
       select([pendingCollapse.current]);
@@ -136,7 +147,6 @@ export default function ElementsLayer({ page, zoom, offsetX, offsetY, preview = 
 
   return (
     <Group
-      ref={groupRef}
       x={offsetX}
       y={offsetY}
       onDragStart={onDragStart}

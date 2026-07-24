@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useDocumentStore } from '@/store/documentStore';
 import { useSelectionStore } from '@/store/selectionStore';
+import { useActiveEditorStore } from '@/store/activeEditorStore';
 import type { CircleEl, ElementModel, LineEl, PenEl, RectEl, TextEl } from '@/types/document';
 
 type Align = TextEl['align'];
@@ -24,6 +25,11 @@ export default function FormatToolbar() {
   const pages = useDocumentStore((s) => s.doc.pages);
   const updateElement = useDocumentStore((s) => s.updateElement);
   const selectedIds = useSelectionStore((s) => s.selectedIds);
+  // Cuando hay un editor de texto abierto, el formato de caracter (negrita,
+  // color, tamaño…) se aplica a la SELECCIÓN dentro del texto (por palabra),
+  // no a todo el elemento — así hay una sola barra y se conserva el formato fino.
+  const editorApi = useActiveEditorStore((s) => s.api);
+  const editing = !!editorApi;
 
   // ── Elementos de texto seleccionados ──────────────────────────────────────
   const selectedTexts = useMemo<TextEl[]>(() => {
@@ -93,9 +99,11 @@ export default function FormatToolbar() {
 
   const hasShapes = selectedShapes.length > 0;
   const hasText = selectedTexts.length > 0;
+  // Al editar, los controles de texto están siempre habilitados (hay selección viva).
+  const textCtrlDisabled = editing ? false : textDisabled;
 
   return (
-    <div className="h-full bg-bg-1 flex items-center px-2 gap-1.5 text-11">
+    <div data-format-toolbar className="h-full bg-bg-1 flex items-center px-2 gap-1.5 text-11">
 
       {/* ── Sección formas ─────────────────────────────────────────────────── */}
       {hasShapes && (
@@ -163,7 +171,7 @@ export default function FormatToolbar() {
       {/* ── Sección texto ──────────────────────────────────────────────────── */}
       {/* Fuente */}
       <select
-        disabled={textDisabled}
+        disabled={textCtrlDisabled}
         value={fontFamily}
         onChange={(e) => applyText({ fontFamily: e.target.value })}
         className="h-[22px] bg-bg-3 border border-line-2 rounded-3 text-11 px-1.5 outline-none disabled:opacity-50"
@@ -177,7 +185,7 @@ export default function FormatToolbar() {
         ))}
       </select>
       <select
-        disabled={textDisabled}
+        disabled={textCtrlDisabled}
         value={variantLabel}
         onChange={(e) => applyText(variantToPatch(e.target.value))}
         className="h-[22px] bg-bg-3 border border-line-2 rounded-3 text-11 px-1.5 outline-none disabled:opacity-50"
@@ -191,14 +199,14 @@ export default function FormatToolbar() {
         ))}
       </select>
       <NumberField
-        disabled={textDisabled}
+        disabled={textCtrlDisabled}
         value={fontSize}
-        onCommit={(v) => applyText({ fontSize: v })}
+        onCommit={(v) => editing ? editorApi!.setFontSize(v) : applyText({ fontSize: v })}
         width={54}
         min={1}
       />
       <select
-        disabled={textDisabled}
+        disabled={textCtrlDisabled}
         defaultValue="pt"
         className="h-[22px] bg-bg-3 border border-line-2 rounded-3 text-11 px-1.5 outline-none disabled:opacity-50"
         style={{ width: 48 }}
@@ -211,33 +219,41 @@ export default function FormatToolbar() {
       <Sep />
 
       {/* Estilo */}
-      <Toggle icon={Bold} label="Bold" disabled={textDisabled}
+      <Toggle icon={Bold} label="Negrita" disabled={textCtrlDisabled}
         active={fontWeight !== undefined && fontWeight >= 600}
-        onClick={() => applyText({ fontWeight: (fontWeight ?? 400) >= 600 ? 400 : 700 })}
+        onClick={() => editing
+          ? editorApi!.exec('bold')
+          : applyText({ fontWeight: (fontWeight ?? 400) >= 600 ? 400 : 700 })}
       />
-      <Toggle icon={Italic} label="Itálica" disabled={textDisabled}
+      <Toggle icon={Italic} label="Itálica" disabled={textCtrlDisabled}
         active={fontStyle === 'italic'}
-        onClick={() => applyText({ fontStyle: fontStyle === 'italic' ? 'normal' : 'italic' })}
+        onClick={() => editing
+          ? editorApi!.exec('italic')
+          : applyText({ fontStyle: fontStyle === 'italic' ? 'normal' : 'italic' })}
       />
-      <Toggle icon={Underline} label="Subrayado" disabled={textDisabled}
+      <Toggle icon={Underline} label="Subrayado" disabled={textCtrlDisabled}
         active={decoration === 'underline'}
-        onClick={() => applyText({ textDecoration: decoration === 'underline' ? undefined : 'underline' })}
+        onClick={() => editing
+          ? editorApi!.exec('underline')
+          : applyText({ textDecoration: decoration === 'underline' ? undefined : 'underline' })}
       />
-      <Toggle icon={Strikethrough} label="Tachado" disabled={textDisabled}
+      <Toggle icon={Strikethrough} label="Tachado" disabled={textCtrlDisabled}
         active={decoration === 'line-through'}
-        onClick={() => applyText({ textDecoration: decoration === 'line-through' ? undefined : 'line-through' })}
+        onClick={() => editing
+          ? editorApi!.exec('strikeThrough')
+          : applyText({ textDecoration: decoration === 'line-through' ? undefined : 'line-through' })}
       />
-      {/* Color de texto */}
+      {/* Color de texto (al editar, a la selección; si no, al elemento) */}
       <label
         className="w-[22px] h-[22px] rounded-3 border border-line-2 relative cursor-pointer"
-        style={{ background: textColor, opacity: textDisabled ? 0.5 : 1 }}
+        style={{ background: textColor, opacity: textCtrlDisabled ? 0.5 : 1 }}
         title={`Color texto (${textColor})`}
       >
         <input
           type="color"
-          disabled={textDisabled}
+          disabled={textCtrlDisabled}
           value={textColor}
-          onChange={(e) => applyText({ color: e.target.value })}
+          onChange={(e) => editing ? editorApi!.setColor(e.target.value) : applyText({ color: e.target.value })}
           className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
         />
       </label>
@@ -245,13 +261,13 @@ export default function FormatToolbar() {
       <Sep />
 
       {/* Alineación */}
-      <Toggle icon={AlignLeft} label="Alinear izquierda" disabled={textDisabled}
+      <Toggle icon={AlignLeft} label="Alinear izquierda" disabled={textCtrlDisabled}
         active={align === 'left'} onClick={() => applyText({ align: 'left' })}
       />
-      <Toggle icon={AlignCenter} label="Centrar" disabled={textDisabled}
+      <Toggle icon={AlignCenter} label="Centrar" disabled={textCtrlDisabled}
         active={align === 'center'} onClick={() => applyText({ align: 'center' })}
       />
-      <Toggle icon={AlignRight} label="Alinear derecha" disabled={textDisabled}
+      <Toggle icon={AlignRight} label="Alinear derecha" disabled={textCtrlDisabled}
         active={align === 'right'} onClick={() => applyText({ align: 'right' })}
       />
 
@@ -259,19 +275,19 @@ export default function FormatToolbar() {
 
       {/* Justificación */}
       <Toggle icon={JustifyLastIcon('left')} label="Justificar — última línea izquierda"
-        disabled={textDisabled} active={align === 'justify-left'}
+        disabled={textCtrlDisabled} active={align === 'justify-left'}
         onClick={() => applyText({ align: 'justify-left' })}
       />
       <Toggle icon={JustifyLastIcon('center')} label="Justificar — última línea centrada"
-        disabled={textDisabled} active={align === 'justify-center'}
+        disabled={textCtrlDisabled} active={align === 'justify-center'}
         onClick={() => applyText({ align: 'justify-center' })}
       />
       <Toggle icon={JustifyLastIcon('right')} label="Justificar — última línea derecha"
-        disabled={textDisabled} active={align === 'justify-right'}
+        disabled={textCtrlDisabled} active={align === 'justify-right'}
         onClick={() => applyText({ align: 'justify-right' })}
       />
       <Toggle icon={AlignJustify} label="Justificar bloque"
-        disabled={textDisabled} active={align === 'justify-block'}
+        disabled={textCtrlDisabled} active={align === 'justify-block'}
         onClick={() => applyText({ align: 'justify-block' })}
       />
 
@@ -300,6 +316,9 @@ function Toggle({ icon: Icon, label, active = false, disabled = false, onClick }
       title={label}
       aria-label={label}
       disabled={disabled}
+      // No robar el foco del editor de texto al hacer clic (conserva la selección
+      // para aplicar el formato inline a la palabra).
+      onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
       className="w-[22px] h-[22px] flex items-center justify-center rounded-3 text-ink-2 hover:bg-bg-3 hover:text-ink disabled:opacity-40 disabled:pointer-events-none"
       style={active ? { background: 'var(--bg-4)', color: 'var(--accent)' } : undefined}

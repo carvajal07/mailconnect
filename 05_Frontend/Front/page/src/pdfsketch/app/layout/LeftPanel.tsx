@@ -5,6 +5,7 @@ import LayoutTree from '@/features/tree/LayoutTree';
 import Inspector from '@/features/properties/Inspector';
 import StylesPanel from '@/features/styles/StylesPanel';
 import DataPanel from '@/features/data/DataPanel';
+import PagesStrip from './PagesStrip';
 
 type Tab = 'layers' | 'styles' | 'data';
 
@@ -27,7 +28,7 @@ export default function LeftPanel() {
         <TabBtn
           active={tab === 'styles'}
           icon={Palette}
-          label="Recursos"
+          label="Estilos"
           onClick={() => setTab('styles')}
         />
         <TabBtn
@@ -47,6 +48,8 @@ export default function LeftPanel() {
               <div className="flex-1 min-h-0 overflow-auto">
                 <LayoutTree />
               </div>
+              {/* Controles de hojas (movidos desde la barra de estado) */}
+              <PagesStrip />
             </div>
           </Panel>
           <PanelResizeHandle
