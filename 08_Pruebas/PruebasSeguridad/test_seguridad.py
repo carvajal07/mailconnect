@@ -29,6 +29,9 @@ os.environ.setdefault('AWS_ACCESS_KEY_ID', 'testing')
 os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'testing')
 os.environ.setdefault('SECRET_KEY', 'test-secret-key-para-pruebas-32bytes!')
 os.environ.setdefault('SENDER_EMAIL', 'comunicaciones@mailconnect.com.co')
+# El default real de PBKDF2 es 600.000 iteraciones (ver test_pbkdf2_default_600k);
+# en el suite se baja el costo para que las decenas de register/login sean rápidas.
+os.environ.setdefault('PBKDF2_ITERATIONS', '60000')
 
 from datetime import datetime, timedelta  # noqa: E402
 
@@ -37,9 +40,12 @@ from moto import mock_aws  # noqa: E402
 import boto3  # noqa: E402
 
 
-def _make_jwt(user, minutes=60):
-    """Genera un JWT HS256 con la SECRET_KEY de prueba (positivo/expirado)."""
+def _make_jwt(user, minutes=60, sid=None):
+    """Genera un JWT HS256 con la SECRET_KEY de prueba (positivo/expirado). El
+    Authorizer exige además el claim `sid` con una sesión ACTIVA (revocación)."""
     payload = {'user': user, 'exp': datetime.utcnow() + timedelta(minutes=minutes)}
+    if sid is not None:
+        payload['sid'] = sid
     token = jwt.encode(payload, os.environ['SECRET_KEY'], algorithm='HS256')
     return token if isinstance(token, str) else token.decode()
 
@@ -429,16 +435,23 @@ def test_recovery_password_debil_no_consume_otp(ctx):
 
 # ============================ AUTHORIZER ============================
 
+def _active_session(ctx, sid, user_id='U-test'):
+    """Registra una sesión ACTIVA (el Authorizer valida el claim `sid` contra ella)."""
+    ctx.tables['session'].put_item(Item={'sessionId': sid, 'userId': user_id, 'active': True})
+    return sid
+
+
 def test_authorizer_token_valido_permite(ctx):
-    token = _make_jwt('user@test.com')
+    token = _make_jwt('user@test.com', sid=_active_session(ctx, 'S-auth-1'))
     policy = ctx.handler('authorizer')(
         {'authorizationToken': 'Bearer ' + token, 'methodArn': 'arn:aws:execute-api:xx'}, None)
     assert policy['policyDocument']['Statement'][0]['Effect'] == 'Allow'
     assert policy['context']['user'] == 'user@test.com'
+    assert policy['context']['sid'] == 'S-auth-1'
 
 
 def test_authorizer_token_en_header_request(ctx):
-    token = _make_jwt('req@test.com')
+    token = _make_jwt('req@test.com', sid=_active_session(ctx, 'S-auth-2'))
     policy = ctx.handler('authorizer')(
         {'headers': {'Authorization': 'Bearer ' + token}, 'methodArn': 'arn:aws:execute-api:xx'}, None)
     assert policy['policyDocument']['Statement'][0]['Effect'] == 'Allow'
@@ -446,10 +459,72 @@ def test_authorizer_token_en_header_request(ctx):
 
 def test_authorizer_token_en_header_token(ctx):
     # Authorizer REQUEST cuya identity source es el header 'token' (no 'Authorization').
-    token = _make_jwt('req2@test.com')
+    token = _make_jwt('req2@test.com', sid=_active_session(ctx, 'S-auth-3'))
     policy = ctx.handler('authorizer')(
         {'headers': {'token': token}, 'methodArn': 'arn:aws:execute-api:xx'}, None)
     assert policy['policyDocument']['Statement'][0]['Effect'] == 'Allow'
+
+
+def test_authorizer_token_sin_sid_deniega(ctx):
+    # REVOCACIÓN: un token sin claim `sid` (formato viejo) no es revocable → se
+    # deniega aunque la firma sea válida. Basta volver a iniciar sesión.
+    token = _make_jwt('viejo@test.com')  # sin sid
+    with pytest.raises(Exception, match='Unauthorized'):
+        ctx.handler('authorizer')({'authorizationToken': 'Bearer ' + token}, None)
+
+
+def test_authorizer_sesion_inactiva_deniega(ctx):
+    # REVOCACIÓN: la sesión existe pero fue cerrada (logout) → denegado.
+    ctx.tables['session'].put_item(Item={'sessionId': 'S-cerrada', 'userId': 'U-x', 'active': False})
+    token = _make_jwt('cerrada@test.com', sid='S-cerrada')
+    with pytest.raises(Exception, match='Unauthorized'):
+        ctx.handler('authorizer')({'authorizationToken': 'Bearer ' + token}, None)
+
+
+# ============================ REVOCACIÓN DE TOKENS ============================
+
+def test_login_emite_sid_con_sesion_activa(ctx):
+    email = ctx.make_active_user(ctx.unique_email('sid'))
+    resp = ctx.handler('login')({'user': email, 'password': 'Password123'}, None)
+    claims = jwt.decode(resp['data']['token'], os.environ['SECRET_KEY'], algorithms=['HS256'])
+    assert claims['sid']
+    ses = ctx.tables['session'].get_item(Key={'sessionId': claims['sid']}).get('Item')
+    assert ses and ses['active'] is True
+
+
+def test_logout_revoca_el_token_en_el_authorizer(ctx):
+    # End-to-end: login → el Authorizer permite; logout → el MISMO token queda denegado.
+    email = ctx.make_active_user(ctx.unique_email('revoca'))
+    token = ctx.handler('login')({'user': email, 'password': 'Password123'}, None)['data']['token']
+    policy = ctx.handler('authorizer')({'authorizationToken': 'Bearer ' + token}, None)
+    assert policy['policyDocument']['Statement'][0]['Effect'] == 'Allow'
+    ctx.handler('logout')({'user': email}, None)
+    with pytest.raises(Exception, match='Unauthorized'):
+        ctx.handler('authorizer')({'authorizationToken': 'Bearer ' + token}, None)
+
+
+def test_change_password_revoca_sesiones(ctx):
+    # Cambiar la contraseña cierra las sesiones → el token previo queda revocado.
+    email = ctx.make_active_user(ctx.unique_email('revpwd'))
+    token = ctx.handler('login')({'user': email, 'password': 'Password123'}, None)['data']['token']
+    ok = ctx.handler('change_password')(
+        {'user': email, 'password': 'ClaveNueva9', 'token': token}, None)
+    assert ok['statusCode'] == 200
+    with pytest.raises(Exception, match='Unauthorized'):
+        ctx.handler('authorizer')({'authorizationToken': 'Bearer ' + token}, None)
+
+
+def test_pbkdf2_default_600k():
+    # El default de PBKDF2 (sin la env) debe ser 600.000 iteraciones (OWASP). El
+    # suite baja el costo por env; aquí se recarga el módulo SIN la variable para
+    # verificar el default real que correrá en producción.
+    prev = os.environ.pop('PBKDF2_ITERATIONS', None)
+    try:
+        mod = _load_lambda('login_default_iters', LAMBDA_FILES['login'])
+        assert mod.PBKDF2_ITERATIONS == 600000
+    finally:
+        if prev is not None:
+            os.environ['PBKDF2_ITERATIONS'] = prev
 
 
 def test_login_token_expira_en_un_dia(ctx):

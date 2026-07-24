@@ -27,7 +27,7 @@ import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
 import { useNavigate } from 'react-router-dom';
-import { authService, clearSession, getUser } from '../../services/authService';
+import { authService, clearSession, broadcastLogout, getUser } from '../../services/authService';
 import { PortalDataProvider } from '../../context/PortalDataContext';
 
 const DRAWER_WIDTH = 240;
@@ -53,6 +53,7 @@ export const AdminPage = () => {
       authService.logout(user.email).catch(() => { /* ignorar errores de red */ });
     }
     clearSession();
+    broadcastLogout(); // cierra la sesión también en las demás pestañas
     navigate('/login');
   };
 

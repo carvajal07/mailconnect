@@ -29,6 +29,18 @@ MAX_SESSION_DAYS = int(os.environ.get('MAX_SESSION_DAYS', '30'))
 
 dynamodb = boto3.resource('dynamodb')
 table_user = dynamodb.Table('user')
+table_session = dynamodb.Table('session')
+
+
+def _session_active(sid):
+    """¿La sesión del token existe y sigue activa? (revocación server-side, ver
+    Authorizer). Ante error de lectura DENIEGA: no se renueva un token dudoso."""
+    try:
+        item = table_session.get_item(Key={'sessionId': str(sid)}).get('Item')
+    except Exception as e:
+        print('Refresh-token: no se pudo leer la sesión: {}'.format(e))
+        return False
+    return bool(item) and bool(item.get('active'))
 
 
 def _get_payload(event):
@@ -80,6 +92,13 @@ def lambda_handler(event, context):
         print('Refresh-token: token inválido: {}'.format(e))
         return {'status': False, 'statusCode': 401, 'description': 'Token inválido.'}
 
+    # Revocación: el token debe traer su sesión (`sid`) y esta debe seguir activa
+    # (logout / cambio de contraseña la desactivan). Tokens sin `sid` → re-login.
+    sid = decoded.get('sid')
+    if not sid or not _session_active(sid):
+        return {'status': False, 'statusCode': 401,
+                'description': 'La sesión fue cerrada. Inicia sesión nuevamente.'}
+
     now = int(time.time())
     # Vida máxima absoluta: se preserva el iat original a través de los refrescos;
     # pasado el tope, hay que volver a iniciar sesión (no refresco infinito).
@@ -88,15 +107,18 @@ def lambda_handler(event, context):
         return {'status': False, 'statusCode': 401,
                 'description': 'La sesión alcanzó su duración máxima. Inicia sesión nuevamente.'}
 
-    # Revalidar contra la base: un usuario desactivado o con el rol cambiado NO debe
-    # conservar sus claims viejos indefinidamente.
+    # Revalidar contra la base: un usuario desactivado o con el rol/sub-rol cambiado
+    # NO debe conservar sus claims viejos indefinidamente.
     role = decoded.get('role', 'client')
+    # PRESERVAR el sub-rol (tenantRole) en el refresco: si se omitiera, el Authorizer
+    # aplicaría su default 'owner' y un operator quedaría ESCALADO a owner al renovar.
+    tenant_role = decoded.get('tenantRole', 'owner') or 'owner'
     user_id = decoded.get('userId', '')
     if user_id:
         try:
             user_item = table_user.get_item(
                 Key={'userId': user_id},
-                ProjectionExpression='active, #r',
+                ProjectionExpression='active, #r, tenantRole',
                 ExpressionAttributeNames={'#r': 'role'}).get('Item')
         except Exception as e:
             print('Refresh-token: no se pudo releer el usuario: {}'.format(e))
@@ -106,8 +128,10 @@ def lambda_handler(event, context):
                 return {'status': False, 'statusCode': 401,
                         'description': 'La cuenta está inactiva. Inicia sesión nuevamente.'}
             role = user_item.get('role', role) or role
+            tenant_role = user_item.get('tenantRole', tenant_role) or tenant_role
 
-    # Reemitir con los mismos claims (rol refrescado), iat preservado y exp fresco.
+    # Reemitir con los mismos claims (rol/sub-rol refrescados), iat y sid preservados
+    # y exp fresco.
     new_payload = {
         'user': decoded.get('user', ''),
         'customerId': decoded.get('customerId', ''),
@@ -115,6 +139,8 @@ def lambda_handler(event, context):
         'nit': decoded.get('nit', ''),   # llave de recursos por cliente: preservar en el refresco
         'userId': user_id,
         'role': role,
+        'tenantRole': tenant_role,
+        'sid': str(sid),                 # misma sesión: el logout la revoca junto al token
         'iat': int(orig_iat) if orig_iat is not None else now,
         'exp': datetime.utcnow() + timedelta(days=TOKEN_TTL_DAYS),
     }

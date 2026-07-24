@@ -45,11 +45,18 @@ def _load(name, folder):
 TENANT = '900'
 
 
-def _jwt(user='u@test.com', customer_id='CU1', customer='empresa', user_id='U1', nit='900', minutes=60):
+def _jwt(user='u@test.com', customer_id='CU1', customer='empresa', user_id='U1', nit='900',
+         minutes=60, sid='S1', tenant_role=None):
+    # `sid` = sesión ACTIVA en la tabla `session` (el Authorizer/Refresh la validan:
+    # revocación server-side). El fixture crea la sesión S1 activa por defecto.
     payload = {
         'user': user, 'customerId': customer_id, 'customer': customer, 'nit': nit, 'userId': user_id,
         'exp': datetime.utcnow() + timedelta(minutes=minutes),
     }
+    if sid is not None:
+        payload['sid'] = sid
+    if tenant_role is not None:
+        payload['tenantRole'] = tenant_role
     tok = jwt.encode(payload, os.environ['SECRET_KEY'], algorithm='HS256')
     return tok if isinstance(tok, str) else tok.decode()
 
@@ -76,8 +83,13 @@ def mods():
         mk('process', 'processId')
         mk('customer', 'customerId')
         mk('databaseFile', 'databaseFileId', gsi_attr='customerId')
+        mk('session', 'sessionId')  # revocación: Authorizer/Refresh validan el claim sid
+        mk('user', 'userId')        # Refresh revalida rol/sub-rol contra la base
 
         res = boto3.resource('dynamodb', region_name='us-east-1')
+        # Sesión activa S1 (los tokens de _jwt la referencian por defecto).
+        res.Table('session').put_item(Item={'sessionId': 'S1', 'userId': 'U1', 'active': True})
+        res.Table('user').put_item(Item={'userId': 'U1', 'active': True, 'role': 'client', 'tenantRole': 'operator'})
         # Cliente CU1 (empresa) y CU2 (otra) para probar aislamiento multi-tenant.
         res.Table('customer').put_item(Item={'customerId': 'CU1', 'company': 'empresa', 'companyTin': '900'})
         res.Table('customer').put_item(Item={'customerId': 'CU2', 'company': 'otra', 'companyTin': '901'})
@@ -134,6 +146,30 @@ def test_refresh_token_renueva(mods):
     new_tok = resp['data']['token']
     decoded = jwt.decode(new_tok, os.environ['SECRET_KEY'], algorithms=['HS256'])
     assert decoded['customerId'] == 'CU1'  # conserva los claims
+    assert decoded['sid'] == 'S1'          # conserva la sesión (revocable)
+
+
+def test_refresh_token_preserva_tenant_role(mods):
+    # SEGURIDAD: el refresco debe conservar el sub-rol. Si lo omitiera, el Authorizer
+    # aplicaría su default 'owner' y un operator quedaría ESCALADO a owner al renovar.
+    resp = mods['refresh'].lambda_handler({'token': _jwt(minutes=30, tenant_role='operator')}, None)
+    assert resp['statusCode'] == 200
+    decoded = jwt.decode(resp['data']['token'], os.environ['SECRET_KEY'], algorithms=['HS256'])
+    assert decoded['tenantRole'] == 'operator'
+
+
+def test_refresh_token_sesion_revocada_401(mods):
+    # Sesión cerrada (logout) → el token no se renueva.
+    boto3.resource('dynamodb', region_name='us-east-1').Table('session').put_item(
+        Item={'sessionId': 'S-rev', 'userId': 'U1', 'active': False})
+    resp = mods['refresh'].lambda_handler({'token': _jwt(minutes=30, sid='S-rev')}, None)
+    assert resp['statusCode'] == 401
+
+
+def test_refresh_token_sin_sid_401(mods):
+    # Token de formato viejo (sin sid): no es revocable → no se renueva.
+    resp = mods['refresh'].lambda_handler({'token': _jwt(minutes=30, sid=None)}, None)
+    assert resp['statusCode'] == 401
 
 
 def test_refresh_token_expirado_401(mods):

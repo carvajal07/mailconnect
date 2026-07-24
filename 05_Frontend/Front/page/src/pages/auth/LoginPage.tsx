@@ -170,10 +170,13 @@ export const LoginPage = () => {
         return;
       }
 
-      // Mapear los códigos de error del backend a mensajes claros
+      // Mapear los códigos de error del backend a mensajes claros. En el 404 se
+      // prefiere la descripción del backend: puede traer el aviso de "te queda 1
+      // intento antes del bloqueo". El 429 es el bloqueo temporal por intentos.
       const msg =
-        res.statusCode === 404 ? 'Usuario o contraseña incorrectos.'
+        res.statusCode === 404 ? (res.description || 'Usuario o contraseña incorrectos.')
         : res.statusCode === 423 ? 'Tu cuenta aún no está activada. Revisa tu correo para activarla.'
+        : res.statusCode === 429 ? (res.description || 'Cuenta bloqueada temporalmente por intentos fallidos.')
         : res.statusCode === 400 ? 'Tu usuario está bloqueado. Contacta a soporte.'
         : res.statusCode === 0 ? res.description
         : (res.description || 'No fue posible iniciar sesión. Intenta nuevamente.');

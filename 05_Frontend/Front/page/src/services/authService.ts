@@ -197,30 +197,118 @@ export const authService = {
 };
 
 /* ------------------------- Manejo de sesión ------------------------- */
+/*
+ * La sesión vive en sessionStorage (por PESTAÑA): al cerrar la pestaña, la
+ * ventana o el navegador, el token desaparece del cliente y hay que volver a
+ * iniciar sesión (además el backend puede revocar la sesión: claim `sid` del
+ * JWT validado por el Authorizer contra la tabla `session`).
+ *
+ * Para no perder la sesión al abrir una pestaña NUEVA del portal, las pestañas
+ * se la comparten por un handshake efímero vía localStorage (storage events):
+ * la pestaña nueva publica `mc_session_req`, una pestaña viva responde con
+ * `mc_session_share` (y la retira de inmediato) y la nueva la adopta.
+ */
 
 export function saveSession(token: string, user: SessionUser): void {
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  sessionStorage.setItem(TOKEN_KEY, token);
+  sessionStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return sessionStorage.getItem(TOKEN_KEY);
 }
 
 export function getUser(): SessionUser | null {
-  const raw = localStorage.getItem(USER_KEY);
+  const raw = sessionStorage.getItem(USER_KEY);
   if (!raw) return null;
   try { return JSON.parse(raw) as SessionUser; } catch { return null; }
 }
 
 export function clearSession(): void {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(USER_KEY);
+  // Limpieza de sesiones guardadas por versiones anteriores (vivían en localStorage).
+  try { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(USER_KEY); } catch { /* sin storage */ }
   clearPortalCache(); // limpia la caché precargada del portal (no mezclar cuentas)
 }
 
 export function isAuthenticated(): boolean {
   return !!getToken();
+}
+
+/* ------------- Compartir la sesión entre pestañas + logout global ------------- */
+
+const SHARE_REQ_KEY = 'mc_session_req';
+const SHARE_KEY = 'mc_session_share';
+const LOGOUT_BCAST_KEY = 'mc_logout_broadcast';
+
+function adoptSharedSession(raw: string | null): boolean {
+  if (!raw) return false;
+  try {
+    const parsed = JSON.parse(raw) as { token?: string; user?: SessionUser };
+    if (!parsed.token || !parsed.user) return false;
+    saveSession(parsed.token, parsed.user);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Avisa a las demás pestañas que la sesión se cerró (ellas también se limpian). */
+export function broadcastLogout(): void {
+  try {
+    localStorage.setItem(LOGOUT_BCAST_KEY, String(Date.now()));
+    localStorage.removeItem(LOGOUT_BCAST_KEY);
+  } catch { /* sin storage */ }
+}
+
+/**
+ * Pide la sesión a otra pestaña abierta (pestaña nueva sin token). Resuelve true
+ * si una pestaña viva la compartió dentro del tiempo de espera.
+ */
+export function requestSessionFromPeers(timeoutMs = 400): Promise<boolean> {
+  if (getToken()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      window.removeEventListener('storage', onStorage);
+      resolve(ok);
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SHARE_KEY && adoptSharedSession(e.newValue)) finish(true);
+    };
+    window.addEventListener('storage', onStorage);
+    try {
+      localStorage.setItem(SHARE_REQ_KEY, String(Date.now()));
+      localStorage.removeItem(SHARE_REQ_KEY);
+    } catch {
+      finish(false);
+      return;
+    }
+    window.setTimeout(() => finish(!!getToken()), timeoutMs);
+  });
+}
+
+// Listener global (una sola vez por pestaña): responde las peticiones de sesión de
+// pestañas nuevas y obedece el logout difundido desde otra pestaña.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === SHARE_REQ_KEY && e.newValue && getToken()) {
+      try {
+        localStorage.setItem(SHARE_KEY, JSON.stringify({ token: getToken(), user: getUser() }));
+        // Retirarla de inmediato: el token no debe QUEDAR en localStorage.
+        window.setTimeout(() => { try { localStorage.removeItem(SHARE_KEY); } catch { /* nada */ } }, 1000);
+      } catch { /* sin storage */ }
+    } else if (e.key === LOGOUT_BCAST_KEY && e.newValue && getToken()) {
+      clearSession();
+      const path = window.location.pathname;
+      if (path.startsWith('/panel') || path.startsWith('/admin')) {
+        window.location.assign('/login');
+      }
+    }
+  });
 }
 
 /* --------------------- Expiración y cierre de sesión --------------------- */
@@ -269,7 +357,7 @@ export async function refreshSession(): Promise<boolean> {
   try {
     const res = await authService.refreshToken();
     if (res.status && res.statusCode === 200 && res.data?.token) {
-      localStorage.setItem(TOKEN_KEY, res.data.token);
+      sessionStorage.setItem(TOKEN_KEY, res.data.token);
       return true;
     }
     return false;
@@ -297,6 +385,7 @@ export function consumeLogoutReason(): LogoutReason | null {
  */
 export function sessionExpired(reason: LogoutReason): void {
   clearSession();
+  broadcastLogout(); // las demás pestañas también cierran su sesión
   try { sessionStorage.setItem(LOGOUT_REASON_KEY, reason); } catch { /* sin sessionStorage */ }
   if (!window.location.pathname.startsWith('/login')) {
     window.location.assign('/login');

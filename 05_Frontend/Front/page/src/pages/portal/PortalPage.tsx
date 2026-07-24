@@ -35,7 +35,7 @@ import { MiCuentaSection } from '../../components/portal/MiCuentaSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
-import { authService, clearSession, getUser, getTenantRole } from '../../services/authService';
+import { authService, clearSession, broadcastLogout, getUser, getTenantRole } from '../../services/authService';
 import { canAccessTab } from '../../config/portalAccess';
 import { PortalDataProvider } from '../../context/PortalDataContext';
 
@@ -56,6 +56,7 @@ export const PortalPage = () => {
       authService.logout(user.email).catch(() => { /* ignorar errores de red */ });
     }
     clearSession();
+    broadcastLogout(); // cierra la sesión también en las demás pestañas
     navigate('/login');
   };
 

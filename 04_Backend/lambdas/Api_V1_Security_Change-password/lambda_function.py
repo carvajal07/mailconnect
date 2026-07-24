@@ -16,6 +16,7 @@ except ImportError:
 dynamodb = boto3.resource('dynamodb')
 table_user = dynamodb.Table('user')
 table_otp = dynamodb.Table('oneTimePassword')
+table_session = dynamodb.Table('session')
 
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
 
@@ -29,7 +30,7 @@ _HEADERS = {
 }
 
 
-PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '100000'))
+PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '600000'))
 
 
 def _hash_password(password, salt):
@@ -102,6 +103,31 @@ def _find_user_by_email(email):
         ProjectionExpression='userId, email'
     )
     return response['Items'][0] if response['Items'] else None
+
+
+def _revoke_sessions(user_id):
+    """Desactiva TODAS las sesiones del usuario (tabla `session`). Al cambiar la
+    contraseña, cualquier token vivo queda revocado (el Authorizer valida el claim
+    `sid` contra la sesión). Best-effort: no rompe el cambio si la tabla falla."""
+    try:
+        kwargs = {
+            'FilterExpression': 'userId = :u AND active = :a',
+            'ExpressionAttributeValues': {':u': user_id, ':a': True},
+            'ProjectionExpression': 'sessionId',
+        }
+        while True:
+            response = table_session.scan(**kwargs)
+            for item in response.get('Items', []):
+                table_session.update_item(
+                    Key={'sessionId': item['sessionId']},
+                    UpdateExpression='SET active = :f',
+                    ExpressionAttributeValues={':f': False})
+            last = response.get('LastEvaluatedKey')
+            if not last:
+                return
+            kwargs['ExclusiveStartKey'] = last
+    except Exception as e:
+        print('No se pudieron revocar las sesiones: {}'.format(e))
 
 
 def _valid_password(password):
@@ -209,6 +235,9 @@ def lambda_handler(event, context):
             UpdateExpression='SET userHash = :h, userSalt = :s',
             ExpressionAttributeValues={':h': hashed, ':s': salt}
         )
+
+        # Contraseña cambiada → revocar los tokens vivos (todas las sesiones).
+        _revoke_sessions(user['userId'])
     except Exception as e:
         print("Error en change-password: {}".format(e))
         status = False
