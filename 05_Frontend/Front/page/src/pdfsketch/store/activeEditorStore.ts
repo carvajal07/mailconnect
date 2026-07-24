@@ -14,11 +14,13 @@ export interface EditorApi {
   /** Inserta la variable `{{binding}}` en el cursor. */
   insertBinding: (binding: string) => void;
   /** Ejecuta un comando de formato inline sobre la selección. */
-  exec: (cmd: 'bold' | 'italic' | 'underline' | 'strikeThrough') => void;
+  exec: (cmd: 'bold' | 'italic' | 'underline' | 'strikeThrough' | 'superscript' | 'subscript') => void;
   /** Color de la selección. */
   setColor: (hex: string) => void;
   /** Tamaño (pt) de la selección. */
   setFontSize: (pt: number) => void;
+  /** Interletra (pt) de la selección. */
+  setLetterSpacing: (pt: number) => void;
 }
 
 interface ActiveEditorState {

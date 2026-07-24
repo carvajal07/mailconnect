@@ -477,18 +477,32 @@ export default function Canvas() {
       // herramientas de dibujo: iniciar draft y salir
       if (draw.onMouseDown(e)) return;
       if (activeTool === 'select') {
-        // El marquee arranca SIEMPRE que el mousedown no caiga sobre un
-        // ELEMENTO del lienzo ni sobre un control del Transformer — sin
-        // depender de si hay o no una selección previa.
+        // El marquee arranca SIEMPRE que el puntero NO esté sobre un elemento
+        // del lienzo ni sobre un anclaje del Transformer — INDEPENDIENTE de si
+        // ya hay algo seleccionado. La detección de "sobre un elemento" usa el
+        // MODELO (bboxes en mm), no el `e.target` de Konva: con un Transformer
+        // adjunto el target es poco fiable (su `back`/anclajes tapan el área),
+        // que era la causa de que el marquee no arrancara con algo seleccionado.
         const t = e.target as Konva.Node;
         const stage = t.getStage();
-        const onElement =
-          t !== (stage as unknown as Konva.Node) &&
-          (t.hasName('pdfsketch-element') || !!t.findAncestor('.pdfsketch-element', true));
-        const onTransformer =
-          t !== (stage as unknown as Konva.Node) && !!t.findAncestor('Transformer', true);
-        if (!onElement && !onTransformer) {
-          const p = stage?.getPointerPosition();
+        // SOLO los anclajes de resize/rotación del Transformer (name `_anchor`)
+        // deben dejar pasar el gesto al Transformer. El `back` del Transformer
+        // (que tapa todo el bbox, incluido el interior vacío de formas huecas)
+        // NO cuenta como anclaje → así el marquee arranca aunque haya selección.
+        const onAnchor =
+          t !== (stage as unknown as Konva.Node) && t.hasName('_anchor');
+        const p = stage?.getPointerPosition();
+        let overElement = false;
+        if (p && page) {
+          const mx = pxToMm(p.x - offset.x, zoom);
+          const my = pxToMm(p.y - offset.y, zoom);
+          overElement = page.elements.some((el) => {
+            if (el.visible === false) return false;
+            const b = elementBBoxMm(el);
+            return mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h;
+          });
+        }
+        if (!onAnchor && !overElement) {
           if (p) startMarquee(p);
           clearSelection();
         }

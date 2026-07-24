@@ -1,13 +1,24 @@
 import { useUIStore } from '@/store/uiStore';
-import { useDocumentStore, type StyleKey } from '@/store/documentStore';
+import { useDocumentStore, type StyleKey, type AnyStyleItem } from '@/store/documentStore';
 import type {
-  BorderStyle, FillStyle, LineDashStyle, LineStyle, ParagraphStyle, TextStyle,
+  BorderStyle, FillStyle, LineStyle, ParagraphStyle, TextStyle,
 } from '@/types/document';
+import {
+  Row, NumInput,
+  TextStyleFields, ParagraphStyleFields, BorderStyleFields, LineStyleFields, FillStyleFields,
+} from './StyleEditorModal';
 
 /**
  * PROPIEDADES del estilo/color enfocado (uiStore.styleTarget) — se muestra en
  * la sección de abajo del panel izquierdo (tabs Capas y Estilos). Edita EN VIVO
  * vía updateStyle/updateColor (los elementos vinculados se actualizan solos).
+ *
+ * Reutiliza los MISMOS editores de campos del modal (StyleEditorModal) para que
+ * en Propiedades aparezcan TODAS las configuraciones de cada recurso (traídas del
+ * Diseñador PDF): texto (fuente/variante/tamaño/color), párrafo (alineación,
+ * sangrías, espaciado, flujo: viudas/huérfanas/mantener con la siguiente/no
+ * ajustar), borde (partes/diagonales, esquinas, sombreado), línea (cap/join/
+ * patrón) y relleno. Colores: HTML (hex) + RGB + CMYK.
  */
 export default function StylePropsPanel() {
   const target = useUIStore((s) => s.styleTarget);
@@ -28,19 +39,16 @@ export default function StylePropsPanel() {
     if (!c) return <Missing />;
     return (
       <div className="px-3 py-2 flex flex-col gap-2">
-        <Field label="Nombre">
+        <Row label="Nombre">
           <input className="field" value={c.name}
             onChange={(e) => updateColor(c.id, { name: e.target.value })} />
-        </Field>
-        <Field label="Color">
-          <div className="flex items-center gap-2">
-            <input type="color" value={c.rgb}
-              onChange={(e) => updateColor(c.id, { rgb: e.target.value })}
-              className="w-7 h-7 cursor-pointer rounded border-0 p-0 bg-transparent" />
-            <input className="field" style={{ width: 90 }} value={c.rgb}
-              onChange={(e) => { if (/^#[0-9a-fA-F]{0,6}$/.test(e.target.value)) updateColor(c.id, { rgb: e.target.value }); }} />
-          </div>
-        </Field>
+        </Row>
+        <ColorFields
+          rgb={c.rgb}
+          alpha={c.alpha ?? 255}
+          onChange={(rgb) => updateColor(c.id, { rgb })}
+          onAlpha={(alpha) => updateColor(c.id, { alpha })}
+        />
       </div>
     );
   }
@@ -49,150 +57,143 @@ export default function StylePropsPanel() {
   const item = (doc.assets[key] as { id: string }[]).find((x) => x.id === target.id);
   if (!item) return <Missing />;
 
-  const up = (patch: Record<string, unknown>) => updateStyle(key, target.id, patch);
+  const up = (patch: Partial<AnyStyleItem>) => updateStyle(key, target.id, patch);
 
   return (
     <div className="px-3 py-2 flex flex-col gap-2">
-      <Field label="Nombre">
+      <Row label="Nombre">
         <input className="field" value={(item as { name?: string }).name ?? ''}
           onChange={(e) => up({ name: e.target.value })} />
-      </Field>
+      </Row>
 
-      {key === 'textStyles' && (() => {
-        const s = item as TextStyle;
-        return (
-          <>
-            <Field label="Tamaño (pt)">
-              <input className="field" type="number" min={1} step={0.5} value={s.fontSize}
-                onChange={(e) => up({ fontSize: Number(e.target.value) || s.fontSize })} />
-            </Field>
-            <Field label="Fuente">
-              <input className="field" value={s.fontId}
-                onChange={(e) => up({ fontId: e.target.value })} />
-            </Field>
-            <Field label="Variante">
-              <select className="field" value={s.subFont}
-                onChange={(e) => up({ subFont: e.target.value })}>
-                {['Regular', 'Bold', 'Italic', 'BoldItalic'].map((v) => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </Field>
-            <Field label="Color">
-              <ColorInput value={s.fillStyleId || '#000000'} onChange={(v) => up({ fillStyleId: v })} />
-            </Field>
-          </>
-        );
-      })()}
-
-      {key === 'paragraphStyles' && (() => {
-        const s = item as ParagraphStyle;
-        return (
-          <>
-            <Field label="Alineación">
-              <select className="field" value={s.hAlign}
-                onChange={(e) => up({ hAlign: e.target.value })}>
-                {(['Left', 'Center', 'Right', 'Justify'] as const).map((v) => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </Field>
-            <Field label="Interlineado">
-              <input className="field" type="number" min={0.5} step={0.1} value={s.lineSpacing}
-                onChange={(e) => up({ lineSpacing: Number(e.target.value) || s.lineSpacing })} />
-            </Field>
-          </>
-        );
-      })()}
-
-      {key === 'borderStyles' && (() => {
-        const s = item as BorderStyle;
-        return (
-          <>
-            <Field label="Color">
-              <ColorInput value={s.colorId || '#000000'} onChange={(v) => up({ colorId: v })} />
-            </Field>
-            <Field label="Grosor (mm)">
-              <input className="field" type="number" min={0.05} step={0.05} value={s.lineWidth}
-                onChange={(e) => up({ lineWidth: Number(e.target.value) || s.lineWidth })} />
-            </Field>
-            <Field label="Trazo">
-              <select className="field" value={s.lineDash ?? 'Solid'}
-                onChange={(e) => up({ lineDash: e.target.value as LineDashStyle })}>
-                {(['Solid', 'Dashed', 'Dotted', 'DashDot'] as const).map((v) => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </Field>
-            <Field label="Esquina">
-              <div className="flex items-center gap-2">
-                <select className="field" style={{ width: 110 }} value={s.corner ?? 'Standard'}
-                  onChange={(e) => up({ corner: e.target.value })}>
-                  {(['Standard', 'Round', 'Bevel'] as const).map((v) => <option key={v} value={v}>{v}</option>)}
-                </select>
-                {s.corner === 'Round' && (
-                  <input className="field" style={{ width: 64 }} type="number" min={0} step={0.5}
-                    value={s.radiusX} title="Radio (mm)"
-                    onChange={(e) => up({ radiusX: Number(e.target.value) || 0 })} />
-                )}
-              </div>
-            </Field>
-          </>
-        );
-      })()}
-
-      {key === 'lineStyles' && (() => {
-        const s = item as LineStyle;
-        const dashKind = !s.dash?.length ? 'solid' : s.dash[0] <= 2 ? 'dotted' : 'dashed';
-        return (
-          <>
-            <Field label="Color">
-              <ColorInput value={s.colorId || '#000000'} onChange={(v) => up({ colorId: v })} />
-            </Field>
-            <Field label="Grosor (mm)">
-              <input className="field" type="number" min={0.05} step={0.05} value={s.width}
-                onChange={(e) => up({ width: Number(e.target.value) || s.width })} />
-            </Field>
-            <Field label="Trazo">
-              <select className="field" value={dashKind}
-                onChange={(e) => up({
-                  dash: e.target.value === 'solid' ? undefined
-                    : e.target.value === 'dotted' ? [1, 2] : [4, 2],
-                })}>
-                <option value="solid">Sólido</option>
-                <option value="dashed">Guiones</option>
-                <option value="dotted">Punteado</option>
-              </select>
-            </Field>
-          </>
-        );
-      })()}
-
-      {key === 'fillStyles' && (() => {
-        const s = item as FillStyle;
-        return (
-          <Field label="Color">
-            <ColorInput value={s.colorId || '#000000'} onChange={(v) => up({ colorId: v })} />
-          </Field>
-        );
-      })()}
+      {key === 'textStyles' && (
+        <TextStyleFields draft={item as TextStyle} patch={up} />
+      )}
+      {key === 'paragraphStyles' && (
+        <ParagraphStyleFields draft={item as ParagraphStyle} patch={up} />
+      )}
+      {key === 'borderStyles' && (
+        <BorderStyleFields draft={item as BorderStyle} patch={up} />
+      )}
+      {key === 'lineStyles' && (
+        <LineStyleFields draft={item as LineStyle} patch={up} />
+      )}
+      {key === 'fillStyles' && (
+        <FillStyleFields draft={item as FillStyle} patch={up} />
+      )}
     </div>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+/* ─── Editor de color: HTML (hex) + RGB + CMYK ─── */
+
+function ColorFields({ rgb, alpha, onChange, onAlpha }: {
+  rgb: string;
+  alpha: number;
+  onChange: (hex: string) => void;
+  onAlpha: (alpha: number) => void;
+}) {
+  const { r, g, b } = hexToRgb(rgb);
+  const { c, m, y, k } = rgbToCmyk(r, g, b);
+  const safe = /^#[0-9a-fA-F]{6}$/.test(rgb) ? rgb : '#000000';
+
+  const setRgb = (nr: number, ng: number, nb: number) => onChange(rgbToHex(nr, ng, nb));
+  const setCmyk = (nc: number, nm: number, ny: number, nk: number) => {
+    const rr = cmykToRgb(nc, nm, ny, nk);
+    onChange(rgbToHex(rr.r, rr.g, rr.b));
+  };
+
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-[10px] font-semibold" style={{ color: 'var(--muted)' }}>{label}</span>
-      {children}
-    </label>
+    <>
+      {/* Vista previa grande */}
+      <div className="h-14 rounded flex items-end justify-end p-2"
+        style={{ background: safe, border: '1px solid var(--line-2)' }}>
+        <span className="text-[10px] font-mono px-1 rounded"
+          style={{ background: 'rgba(0,0,0,0.35)', color: '#fff' }}>{safe}</span>
+      </div>
+
+      <Row label="HTML (hex)">
+        <div className="flex items-center gap-2">
+          <input type="color" value={safe}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-7 h-7 cursor-pointer rounded border-0 p-0 bg-transparent" />
+          <input className="field" style={{ width: 100 }} value={rgb}
+            onChange={(e) => { const v = e.target.value; if (/^#?[0-9a-fA-F]{0,6}$/.test(v)) onChange(v.startsWith('#') ? v : `#${v}`); }} />
+        </div>
+      </Row>
+
+      <div className="text-[10px] font-semibold pt-1" style={{ color: 'var(--muted)' }}>RGB</div>
+      <Row label="Rojo (R)">
+        <NumInput value={r} min={0} max={255} step={1} onChange={(v) => setRgb(clamp(v, 0, 255), g, b)} />
+      </Row>
+      <Row label="Verde (G)">
+        <NumInput value={g} min={0} max={255} step={1} onChange={(v) => setRgb(r, clamp(v, 0, 255), b)} />
+      </Row>
+      <Row label="Azul (B)">
+        <NumInput value={b} min={0} max={255} step={1} onChange={(v) => setRgb(r, g, clamp(v, 0, 255))} />
+      </Row>
+
+      <div className="text-[10px] font-semibold pt-1" style={{ color: 'var(--muted)' }}>Opacidad</div>
+      <div className="flex items-center gap-2">
+        <input type="range" min={0} max={255} step={1} value={alpha}
+          onChange={(e) => onAlpha(Number(e.target.value))} className="flex-1" />
+        <span className="text-11 w-10 text-right" style={{ color: 'var(--muted)' }}>
+          {Math.round((alpha / 255) * 100)}%
+        </span>
+      </div>
+
+      <div className="text-[10px] font-semibold pt-1" style={{ color: 'var(--muted)' }}>CMYK (%)</div>
+      <Row label="Cian (C)">
+        <NumInput value={c} min={0} max={100} step={1} onChange={(v) => setCmyk(clamp(v, 0, 100), m, y, k)} />
+      </Row>
+      <Row label="Magenta (M)">
+        <NumInput value={m} min={0} max={100} step={1} onChange={(v) => setCmyk(c, clamp(v, 0, 100), y, k)} />
+      </Row>
+      <Row label="Amarillo (Y)">
+        <NumInput value={y} min={0} max={100} step={1} onChange={(v) => setCmyk(c, m, clamp(v, 0, 100), k)} />
+      </Row>
+      <Row label="Negro (K)">
+        <NumInput value={k} min={0} max={100} step={1} onChange={(v) => setCmyk(c, m, y, clamp(v, 0, 100))} />
+      </Row>
+    </>
   );
 }
 
-function ColorInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const safe = /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000';
-  return (
-    <div className="flex items-center gap-2">
-      <input type="color" value={safe} onChange={(e) => onChange(e.target.value)}
-        className="w-7 h-7 cursor-pointer rounded border-0 p-0 bg-transparent" />
-      <input className="field" style={{ width: 90 }} value={value}
-        onChange={(e) => onChange(e.target.value)} />
-    </div>
-  );
+/* ─── Conversiones de color ─── */
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, Math.round(v)));
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const h = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+  if (!h) return { r: 0, g: 0, b: 0 };
+  const n = parseInt(h[1], 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  const c = clamp(r, 0, 255) * 65536 + clamp(g, 0, 255) * 256 + clamp(b, 0, 255);
+  return `#${c.toString(16).padStart(6, '0')}`;
+}
+
+function rgbToCmyk(r: number, g: number, b: number): { c: number; m: number; y: number; k: number } {
+  const rr = r / 255, gg = g / 255, bb = b / 255;
+  const k = 1 - Math.max(rr, gg, bb);
+  if (k >= 1) return { c: 0, m: 0, y: 0, k: 100 };
+  const c = (1 - rr - k) / (1 - k);
+  const m = (1 - gg - k) / (1 - k);
+  const y = (1 - bb - k) / (1 - k);
+  return { c: Math.round(c * 100), m: Math.round(m * 100), y: Math.round(y * 100), k: Math.round(k * 100) };
+}
+
+function cmykToRgb(c: number, m: number, y: number, k: number): { r: number; g: number; b: number } {
+  const cc = c / 100, mm = m / 100, yy = y / 100, kk = k / 100;
+  return {
+    r: Math.round(255 * (1 - cc) * (1 - kk)),
+    g: Math.round(255 * (1 - mm) * (1 - kk)),
+    b: Math.round(255 * (1 - yy) * (1 - kk)),
+  };
 }
 
 function Missing() {

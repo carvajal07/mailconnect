@@ -76,7 +76,7 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
   }
 
   /* ── formato inline sobre la selección (lo llama la barra de arriba) ── */
-  function execCmd(cmd: 'bold' | 'italic' | 'underline' | 'strikeThrough') {
+  function execCmd(cmd: 'bold' | 'italic' | 'underline' | 'strikeThrough' | 'superscript' | 'subscript') {
     const ed = editorRef.current;
     if (!ed) return;
     ed.focus();
@@ -106,6 +106,7 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
   }
   function setColorSel(hex: string) { wrapSelectionCss(`color:${hex}`); }
   function setFontSizeSel(pt: number) { if (pt > 0) wrapSelectionCss(`font-size:${pt}pt`); }
+  function setLetterSpacingSel(pt: number) { wrapSelectionCss(`letter-spacing:${pt}pt`); }
 
   /* ── inserción de una variable como ficha ── */
   function makeChip(binding: string): HTMLElement {
@@ -184,6 +185,7 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
       exec: execCmd,
       setColor: setColorSel,
       setFontSize: setFontSizeSel,
+      setLetterSpacing: setLetterSpacingSel,
     });
 
     // Mantener actualizado el rango del cursor

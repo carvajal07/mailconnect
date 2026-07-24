@@ -211,6 +211,21 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   `DataProcessor/engine/JsonPath`, `tokens.css`; `allowJs` activado en tsconfig). Abre como
   overlay full-screen; las variables `{{campo}}` se alimentan con las **columnas de las bases**
   del cliente. Gráficas (vega) quedan en chunk dinámico propio.
+- **Paridad de Recursos con el Diseñador (jul 2026):** el Estudio PDF trae ahora TODOS los
+  tipos de recurso del Diseñador con configuraciones FUNCIONALES de punta a punta (modelo →
+  canvas → traductor → motor): **texto** (subrayado/tachado, super-subíndice, interletra,
+  transformación de mayúsculas, interlineado), **párrafo** (listas viñetas/numeradas/letras,
+  sangrías, primera línea, espacio antes/después + flujo), **relleno** (sólido/degradado
+  lineal-radial con stops + opacidad), **color** (HTML/RGB/CMYK + alfa) y **borde/línea** (ya
+  estaban completos). Elemento nuevo **triángulo** (herramienta + render + motor). Los estilos
+  se vinculan por `textStyleId`/`paragraphStyleId`/`fillStyleId` → editar el recurso actualiza
+  los elementos EN VIVO (`documentStore.updateStyle`). Motor: `html_parser` parsea `<s>/<strike>`
+  y `line-through`; `text_renderer` aplica decoraciones del estilo + **interletra** (layout
+  manual con `charSpace`); `shape_renderer` pinta **degradados** (clip + linear/radialGradient)
+  y opacidad; el traductor emite todo (spans con estilos por-fragmento → contentarea, listas →
+  `<ul>/<ol>`). Cubierto por `08_Pruebas/PruebasSeguridad/test_paridad_estilos.py` (11).
+  NO portado (el motor no lo renderiza): rellenos por imagen/condicionales, tabuladores,
+  separación silábica, catálogo de 49 formas y gráficas del Diseñador.
 - **Motor estándar** — lambda **`Api_V1_Template_Render-engine`** (`POST /Template/Render-engine`,
   no-proxy, envelope): `pdf_engine/` de production **vendorizado** + `sketch_translator.py`
   (pdfsketch JSON → templateJson: unidades mm/pt/px, var-tags `data-var` con rutas de punto,

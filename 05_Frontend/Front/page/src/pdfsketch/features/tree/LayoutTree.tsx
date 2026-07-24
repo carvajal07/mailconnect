@@ -28,6 +28,7 @@ import { useDocumentStore } from '@/store/documentStore';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useUIStore } from '@/store/uiStore';
 import type { DocumentModel, ElementModel } from '@/types/document';
+import { Triangle as TriangleIcon } from 'lucide-react';
 
 type AssetList = 'colors' | 'fonts' | 'images' | 'tables' | 'rowSets' | 'cells';
 
@@ -96,10 +97,16 @@ export default function LayoutTree() {
     const first = selectedIds[0];
     const tree = treeRef.current;
     if (!tree || !first) return;
-    const nodeId = `el:${first}`;
-    if (tree.focusedNode?.id === nodeId) return;
-    tree.select(nodeId);
-  }, [selectedIds]);
+    // El nodo canónico del elemento ahora tiene id por-grupo (pel:/pfl:/lel:).
+    // Si el nodo enfocado ya corresponde a este elemento, no re-seleccionar.
+    if (tree.focusedNode?.data.elementId === first) return;
+    const containing = doc.pages.find((p) => p.elements.some((e) => e.id === first));
+    const node =
+      (containing && tree.get(`pel:${containing.id}:${first}`)) ||
+      (containing && tree.get(`pfl:${containing.id}:${first}`)) ||
+      tree.get(`lel:${first}`);
+    if (node) tree.select(node.id);
+  }, [selectedIds, doc.pages]);
 
   function onSelect(nodes: NodeApi<TreeNode>[]) {
     const elementIds = nodes
@@ -272,6 +279,7 @@ function iconFor(n: TreeNode) {
       case 'text': return Type;
       case 'rect': return Square;
       case 'circle': return Circle;
+      case 'triangle': return TriangleIcon;
       case 'line': return Minus;
       case 'pen': return Edit3;
       case 'image': return ImageIcon;
@@ -314,7 +322,7 @@ function iconFor(n: TreeNode) {
 }
 
 const TYPE_LABELS: Record<string, string> = {
-  text: 'Texto', rect: 'Rectángulo', circle: 'Círculo', line: 'Línea',
+  text: 'Texto', rect: 'Rectángulo', circle: 'Círculo', triangle: 'Triángulo', line: 'Línea',
   pen: 'Lápiz', image: 'Imagen', table: 'Tabla', qr: 'QR',
   dataField: 'Campo', frame: 'Área', flowable: 'Sub-área',
 };
@@ -322,8 +330,14 @@ const TYPE_LABELS: Record<string, string> = {
 function buildTree(doc: DocumentModel): TreeNode[] {
   const a = doc.assets;
 
-  const elementNode = (e: ElementModel, pageId?: string): TreeNode => ({
-    id: `el:${e.id}`,
+  // ⚠️ Los ids de NODO deben ser ÚNICOS en todo el árbol (react-arborist los usa
+  // como key del posicionamiento virtual). El mismo elemento aparece en varios
+  // grupos (Páginas y Elementos) → hay que darle un id de nodo DISTINTO en cada
+  // grupo (con `key`), aunque el `elementId` real sea el mismo. Duplicar el id de
+  // nodo hacía que las filas se solaparan al contraer y que el renombrado fuera
+  // intermitente (apuntaba a dos filas a la vez).
+  const elementNode = (e: ElementModel, pageId: string | undefined, key: string): TreeNode => ({
+    id: `${key}:${e.id}`,
     name: e.name ?? (TYPE_LABELS[e.type] ?? e.type),
     kind: 'element',
     elementType: e.type,
@@ -374,14 +388,17 @@ function buildTree(doc: DocumentModel): TreeNode[] {
               const flowables = p.elements.filter(
                 (f) => f.type === 'flowable' && (f as { frameId?: string }).frameId === e.id,
               );
-              return { ...elementNode(e, p.id), children: flowables.map((f) => elementNode(f, p.id)) };
+              return {
+                ...elementNode(e, p.id, `pel:${p.id}`),
+                children: flowables.map((f) => elementNode(f, p.id, `pfl:${p.id}`)),
+              };
             }
-            return elementNode(e, p.id);
+            return elementNode(e, p.id, `pel:${p.id}`);
           }),
       })),
     ),
     group('g:elements', 'Elementos',
-      doc.pages.flatMap((p) => p.elements.filter((e) => e.type !== 'flowable').map((e) => elementNode(e, p.id))),
+      doc.pages.flatMap((p) => p.elements.filter((e) => e.type !== 'flowable').map((e) => elementNode(e, p.id, 'lel'))),
     ),
     group('g:flows', 'Flujos', assetNodes('flow', doc.flows)),
     group('g:fonts', 'Fuentes', assetNodes('font', a.fonts, 'fonts')),

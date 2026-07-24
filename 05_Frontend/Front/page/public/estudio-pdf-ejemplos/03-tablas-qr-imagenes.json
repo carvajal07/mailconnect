@@ -1,0 +1,409 @@
+{
+  "schema": "pdfsketch@1",
+  "document": {
+    "id": "doc67",
+    "name": "Ejemplo · Tablas y códigos",
+    "unit": "mm",
+    "pages": [
+      {
+        "id": "page66",
+        "name": "Tablas y códigos",
+        "size": {
+          "width": 210,
+          "height": 297,
+          "unit": "mm"
+        },
+        "background": "#ffffff",
+        "margin": {
+          "top": 12,
+          "right": 12,
+          "bottom": 12,
+          "left": 12
+        },
+        "rotation": 0,
+        "visible": true,
+        "weight": 5,
+        "repeatedBy": "Empty",
+        "addHeight": 5,
+        "elements": [
+          {
+            "id": "tex52",
+            "type": "text",
+            "x": 12,
+            "y": 12,
+            "width": 186,
+            "height": 8,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 52,
+            "fontFamily": "Helvetica",
+            "fontSize": 15,
+            "fontStyle": "normal",
+            "fontWeight": 700,
+            "align": "left",
+            "lineHeight": 1.3,
+            "color": "#0075be",
+            "text": "3 · Tablas, QR, códigos de barras e imágenes"
+          },
+          {
+            "id": "tex53",
+            "type": "text",
+            "x": 12,
+            "y": 24,
+            "width": 60,
+            "height": 5,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 53,
+            "fontFamily": "Helvetica",
+            "fontSize": 7,
+            "fontStyle": "normal",
+            "fontWeight": 400,
+            "align": "left",
+            "lineHeight": 1.3,
+            "color": "#6b7280",
+            "text": "Tabla con encabezado, cebra y pie"
+          },
+          {
+            "id": "tab54",
+            "type": "table",
+            "x": 12,
+            "y": 30,
+            "width": 186,
+            "height": 55,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 54,
+            "columns": [
+              {
+                "widthPercent": 40,
+                "minWidth": 20,
+                "header": "Producto"
+              },
+              {
+                "widthPercent": 20,
+                "minWidth": 15,
+                "header": "Cant."
+              },
+              {
+                "widthPercent": 40,
+                "minWidth": 20,
+                "header": "Precio"
+              }
+            ],
+            "rows": [
+              [
+                {
+                  "text": "Producto"
+                },
+                {
+                  "text": "Cant."
+                },
+                {
+                  "text": "Precio"
+                }
+              ],
+              [
+                {
+                  "text": "Café molido"
+                },
+                {
+                  "text": "2"
+                },
+                {
+                  "text": "$ 24.000"
+                }
+              ],
+              [
+                {
+                  "text": "Azúcar morena"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "text": "$ 6.500"
+                }
+              ],
+              [
+                {
+                  "text": "Filtros papel"
+                },
+                {
+                  "text": "3"
+                },
+                {
+                  "text": "$ 9.900"
+                }
+              ],
+              [
+                {
+                  "text": "TOTAL"
+                },
+                {
+                  "text": "6"
+                },
+                {
+                  "text": "$ 40.400"
+                }
+              ]
+            ],
+            "borderWidth": 0.4,
+            "borderColor": "#94a3b8",
+            "cellSpacing": 0,
+            "hasHeader": true,
+            "hasFooter": true,
+            "headerBackground": "#0075be",
+            "footerBackground": "#16233f",
+            "alternateRows": true,
+            "alternateBackground": "#eef6fc",
+            "rowFontSize": 10
+          },
+          {
+            "id": "tex55",
+            "type": "text",
+            "x": 12,
+            "y": 92,
+            "width": 60,
+            "height": 5,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 55,
+            "fontFamily": "Helvetica",
+            "fontSize": 7,
+            "fontStyle": "normal",
+            "fontWeight": 400,
+            "align": "left",
+            "lineHeight": 1.3,
+            "color": "#6b7280",
+            "text": "Código QR"
+          },
+          {
+            "id": "qr56",
+            "type": "qr",
+            "x": 12,
+            "y": 98,
+            "width": 34,
+            "height": 34,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 56,
+            "barcodeType": "QR",
+            "data": "https://mailconnect.com.co",
+            "errorLevel": "M",
+            "moduleSize": 4,
+            "showText": false
+          },
+          {
+            "id": "tex57",
+            "type": "text",
+            "x": 60,
+            "y": 92,
+            "width": 60,
+            "height": 5,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 57,
+            "fontFamily": "Helvetica",
+            "fontSize": 7,
+            "fontStyle": "normal",
+            "fontWeight": 400,
+            "align": "left",
+            "lineHeight": 1.3,
+            "color": "#6b7280",
+            "text": "Código de barras CODE128"
+          },
+          {
+            "id": "qr58",
+            "type": "qr",
+            "x": 60,
+            "y": 98,
+            "width": 70,
+            "height": 26,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 58,
+            "barcodeType": "CODE128",
+            "data": "MC-2026-0001",
+            "errorLevel": "M",
+            "moduleSize": 2,
+            "showText": true
+          },
+          {
+            "id": "tex59",
+            "type": "text",
+            "x": 60,
+            "y": 128,
+            "width": 60,
+            "height": 5,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 59,
+            "fontFamily": "Helvetica",
+            "fontSize": 7,
+            "fontStyle": "normal",
+            "fontWeight": 400,
+            "align": "left",
+            "lineHeight": 1.3,
+            "color": "#6b7280",
+            "text": "EAN-13"
+          },
+          {
+            "id": "qr60",
+            "type": "qr",
+            "x": 60,
+            "y": 134,
+            "width": 60,
+            "height": 26,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 60,
+            "barcodeType": "EAN13",
+            "data": "7701234567890",
+            "errorLevel": "M",
+            "moduleSize": 2,
+            "showText": true
+          },
+          {
+            "id": "tex61",
+            "type": "text",
+            "x": 140,
+            "y": 92,
+            "width": 60,
+            "height": 5,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 61,
+            "fontFamily": "Helvetica",
+            "fontSize": 7,
+            "fontStyle": "normal",
+            "fontWeight": 400,
+            "align": "left",
+            "lineHeight": 1.3,
+            "color": "#6b7280",
+            "text": "QR desde variable"
+          },
+          {
+            "id": "qr62",
+            "type": "qr",
+            "x": 140,
+            "y": 98,
+            "width": 34,
+            "height": 34,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 62,
+            "barcodeType": "QR",
+            "data": "",
+            "variable": "pedido.url",
+            "errorLevel": "Q",
+            "moduleSize": 4,
+            "showText": false
+          },
+          {
+            "id": "tex63",
+            "type": "text",
+            "x": 12,
+            "y": 170,
+            "width": 60,
+            "height": 5,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 63,
+            "fontFamily": "Helvetica",
+            "fontSize": 7,
+            "fontStyle": "normal",
+            "fontWeight": 400,
+            "align": "left",
+            "lineHeight": 1.3,
+            "color": "#6b7280",
+            "text": "Imagen (data URI: se ve en el lienzo; el motor la reemplaza por un marcador)"
+          },
+          {
+            "id": "ima64",
+            "type": "image",
+            "x": 12,
+            "y": 176,
+            "width": 60,
+            "height": 40,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 64,
+            "src": "data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"80\"><rect width=\"120\" height=\"80\" fill=\"%230075be\"/><circle cx=\"60\" cy=\"40\" r=\"26\" fill=\"%2300c3ff\"/><text x=\"60\" y=\"45\" font-size=\"14\" fill=\"white\" text-anchor=\"middle\">IMG</text></svg>",
+            "opacity": 1
+          },
+          {
+            "id": "ima65",
+            "type": "image",
+            "x": 80,
+            "y": 176,
+            "width": 60,
+            "height": 40,
+            "rotation": 0,
+            "visible": true,
+            "locked": false,
+            "zIndex": 65,
+            "src": "data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"80\"><rect width=\"120\" height=\"80\" fill=\"%230075be\"/><circle cx=\"60\" cy=\"40\" r=\"26\" fill=\"%2300c3ff\"/><text x=\"60\" y=\"45\" font-size=\"14\" fill=\"white\" text-anchor=\"middle\">IMG</text></svg>",
+            "opacity": 0.5
+          }
+        ]
+      }
+    ],
+    "assets": {
+      "fonts": [],
+      "colors": [
+        {
+          "id": "colA",
+          "name": "Cian",
+          "rgb": "#00c3ff"
+        },
+        {
+          "id": "colB",
+          "name": "Azul",
+          "rgb": "#0075be"
+        },
+        {
+          "id": "colC",
+          "name": "Verde",
+          "rgb": "#1fbf87"
+        },
+        {
+          "id": "colD",
+          "name": "Ámbar",
+          "rgb": "#ff9d2e",
+          "alpha": 200
+        }
+      ],
+      "textStyles": [],
+      "paragraphStyles": [],
+      "borderStyles": [],
+      "lineStyles": [],
+      "fillStyles": [],
+      "images": [],
+      "tables": [],
+      "rowSets": [],
+      "cells": []
+    },
+    "data": {
+      "variables": [],
+      "datasets": []
+    },
+    "dynamicComms": [],
+    "flows": [],
+    "createdAt": "1970-01-01T00:00:00.000Z",
+    "updatedAt": "1970-01-01T00:00:00.000Z"
+  }
+}

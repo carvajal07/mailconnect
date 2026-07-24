@@ -106,9 +106,13 @@ class _Translator:
         return "{}_{}".format(prefix, self._seq)
 
     # ── estilos ──────────────────────────────────────────────────────────────
-    def text_style_id(self, font_family, font_size_pt, color, bold, italic) -> str:
+    def text_style_id(self, font_family, font_size_pt, color, bold, italic,
+                      underline=False, strikethrough=False, letter_spacing=0,
+                      line_height=None, text_transform="none") -> str:
         key = (font_family or "Helvetica", float(font_size_pt or 12),
-               color or "#111111", bool(bold), bool(italic))
+               color or "#111111", bool(bold), bool(italic),
+               bool(underline), bool(strikethrough), float(letter_spacing or 0),
+               float(line_height or 1.35), text_transform or "none")
         if key in self._style_cache:
             return self._style_cache[key]
         ts_id = self._id("ts")
@@ -116,8 +120,8 @@ class _Translator:
             "id": ts_id, "name": ts_id,
             "fontFamily": key[0], "fontWeight": "Bold" if key[3] else "Regular",
             "fontSize": key[1], "color": key[2],
-            "italic": key[4], "underline": False, "strikethrough": False,
-            "letterSpacing": 0, "lineHeight": 1.35, "textTransform": "none",
+            "italic": key[4], "underline": key[5], "strikethrough": key[6],
+            "letterSpacing": key[7], "lineHeight": key[8], "textTransform": key[9],
         })
         self._style_cache[key] = ts_id
         return ts_id
@@ -167,6 +171,8 @@ class _Translator:
             return self._rect(el, base)
         if el_type == "circle":
             return self._circle(el, base)
+        if el_type == "triangle":
+            return self._triangle(el, base)
         if el_type == "line":
             return self._line(el, base)
         if el_type == "image":
@@ -186,26 +192,50 @@ class _Translator:
             return True
         return bool(_VAR_RE.search(el.get("text") or ""))
 
-    def _text(self, el: dict, base: dict) -> dict:
+    def _style_args(self, el: dict) -> tuple:
+        """(bold, italic, underline, strike, letterSpacing, lineHeight, transform) del elemento."""
         bold = (el.get("fontWeight") or 400) >= 600
         italic = el.get("fontStyle") == "italic"
-        if not self._has_vars(el):
+        deco = el.get("textDecoration") or ""
+        return (bold, italic, deco == "underline", deco == "line-through",
+                el.get("letterSpacing") or 0, el.get("lineHeight") or 1.35,
+                el.get("textTransform") or "none")
+
+    def _is_rich(self, el: dict) -> bool:
+        """True si algún span trae formato propio (el texto plano no basta)."""
+        for s in el.get("spans") or []:
+            if any(s.get(k) for k in ("fontFamily", "fontSize", "fontWeight", "fontStyle",
+                                      "textDecoration", "baselineShift", "letterSpacing", "color")):
+                return True
+        return False
+
+    def _text(self, el: dict, base: dict) -> dict:
+        bold, italic, und, strike, lsp, lh, transform = self._style_args(el)
+        ts_id = self.text_style_id(
+            el.get("fontFamily"), el.get("fontSize"), el.get("color"), bold, italic,
+            underline=und, strikethrough=strike, letter_spacing=lsp,
+            line_height=lh, text_transform=transform)
+        list_style = el.get("listStyle") or "none"
+
+        # Texto plano sin variables, sin spans ricos y sin lista → elemento `text`
+        # (el motor aplica underline/strike/transform/letterSpacing del estilo).
+        if not self._has_vars(el) and not self._is_rich(el) and list_style == "none":
             base.update({
                 "type": "text",
                 "content": el.get("text") or "",
-                "textStyleId": self.text_style_id(
-                    el.get("fontFamily"), el.get("fontSize"), el.get("color"), bold, italic),
+                "textStyleId": ts_id,
                 "textStyle": {},
                 "paragraphStyle": {
                     "alignment": _ALIGN_MAP.get(el.get("align") or "left", "left"),
-                    "paddingTop": 0, "paddingRight": 0, "paddingBottom": 0, "paddingLeft": 0,
+                    "paddingTop": 0, "paddingRight": 0, "paddingBottom": 0,
+                    "paddingLeft": self.mm(el.get("leftIndent") or 0),
+                    "spaceBefore": self.mm(el.get("spaceBefore") or 0),
+                    "spaceAfter": self.mm(el.get("spaceAfter") or 0),
                 },
             })
             return base
 
-        # Texto con variables → contentarea con var-tags
-        ts_id = self.text_style_id(
-            el.get("fontFamily"), el.get("fontSize"), el.get("color"), bold, italic)
+        # Con variables, spans ricos o listas → contentarea (HTML con estilos por span)
         html = self._spans_to_html(el)
         return self._make_contentarea(base, html, ts_id)
 
@@ -217,17 +247,27 @@ class _Translator:
                 if s.get("binding"):
                     parts.append(_var_tag(s["binding"]))
                 else:
-                    parts.append(_text_to_html(s.get("text") or ""))
-            return "<p>{}</p>".format("".join(parts))
-        # Sin spans: texto plano con {{ruta}} embebidas
-        text = el.get("text") or ""
-        out, last = [], 0
-        for m in _VAR_RE.finditer(text):
-            out.append(_text_to_html(text[last:m.start()]))
-            out.append(_var_tag(m.group(1)))
-            last = m.end()
-        out.append(_text_to_html(text[last:]))
-        return "<p>{}</p>".format("".join(out))
+                    parts.append(_span_html(s))
+        else:
+            # Sin spans: texto plano con {{ruta}} embebidas
+            text = el.get("text") or ""
+            parts, last = [], 0
+            for m in _VAR_RE.finditer(text):
+                parts.append(_text_to_html(text[last:m.start()]))
+                parts.append(_var_tag(m.group(1)))
+                last = m.end()
+            parts.append(_text_to_html(text[last:]))
+
+        inner = "".join(parts)
+        list_style = el.get("listStyle") or "none"
+        if list_style != "none":
+            # Cada línea (<br>) es un ítem de la lista; el motor renderiza <ul>/<ol>.
+            items = inner.split("<br>")
+            tag = "ul" if list_style == "bullet" else "ol"
+            lis = "".join("<li>{}</li>".format(i) for i in items if i.strip())
+            return "<{t}>{lis}</{t}>".format(t=tag, lis=lis)
+        # Párrafos separados por <br> (el motor los trata como saltos de línea)
+        return "<p>{}</p>".format(inner)
 
     def _data_field(self, el: dict, base: dict) -> dict:
         ts_id = self.text_style_id(
@@ -250,7 +290,7 @@ class _Translator:
     def _rect(self, el: dict, base: dict) -> dict:
         base.update({
             "type": "shape", "shape": "rectangle",
-            "fill": _fill(el.get("fill")),
+            "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
             "border": _border(el.get("stroke"), el.get("strokeWidth"),
                               radius_mm=self.mm(el.get("cornerRadius") or 0)),
         })
@@ -259,7 +299,15 @@ class _Translator:
     def _circle(self, el: dict, base: dict) -> dict:
         base.update({
             "type": "shape", "shape": "ellipse",
-            "fill": _fill(el.get("fill")),
+            "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
+            "border": _border(el.get("stroke"), el.get("strokeWidth")),
+        })
+        return base
+
+    def _triangle(self, el: dict, base: dict) -> dict:
+        base.update({
+            "type": "shape", "shape": "triangle",
+            "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
             "border": _border(el.get("stroke"), el.get("strokeWidth")),
         })
         return base
@@ -404,10 +452,52 @@ def _var_tag(path: str) -> str:
     return '<span class="var-tag" data-var="{}">{{{{{}}}}}</span>'.format(_esc(path), _esc(path))
 
 
-def _fill(color) -> dict | None:
+def _fill(color, opacity=None, gradient=None) -> dict | None:
+    op = 1.0
+    try:
+        if opacity is not None:
+            op = max(0.0, min(1.0, float(opacity)))
+    except (TypeError, ValueError):
+        op = 1.0
+    if isinstance(gradient, dict) and gradient.get("stops"):
+        return {"type": "gradient", "opacity": op, "gradient": {
+            "type": "radial" if gradient.get("kind") == "radial" else "linear",
+            "angle": gradient.get("angle", 180),
+            "cx": gradient.get("cx", 50), "cy": gradient.get("cy", 50),
+            "stops": [
+                {"offset": s.get("offset", 0), "color": s.get("color", "#000000"),
+                 "opacity": s.get("opacity", 1)}
+                for s in gradient.get("stops", [])
+            ],
+        }}
     if not _is_color(color):
         return None
-    return {"type": "solid", "color": color, "opacity": 1}
+    return {"type": "solid", "color": color, "opacity": op}
+
+
+def _span_html(s: dict) -> str:
+    """Un TextSpan literal → HTML con sus estilos inline (los que el motor parsea)."""
+    text = _text_to_html(s.get("text") or "")
+    css = []
+    if s.get("color"):
+        css.append("color:{}".format(s["color"]))
+    if s.get("fontSize"):
+        css.append("font-size:{}pt".format(s["fontSize"]))
+    if (s.get("fontWeight") or 0) >= 600:
+        css.append("font-weight:bold")
+    if s.get("fontStyle") == "italic":
+        css.append("font-style:italic")
+    deco = s.get("textDecoration")
+    if deco == "underline":
+        css.append("text-decoration:underline")
+    elif deco == "line-through":
+        css.append("text-decoration:line-through")
+    shift = s.get("baselineShift")
+    if shift in ("super", "sub"):
+        css.append("vertical-align:{}".format(shift))
+    if not css:
+        return text
+    return '<span style="{}">{}</span>'.format(";".join(css), text)
 
 
 def _border(color, width, radius_mm: float = 0) -> dict | None:

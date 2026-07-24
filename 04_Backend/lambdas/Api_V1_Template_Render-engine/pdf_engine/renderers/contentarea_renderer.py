@@ -377,6 +377,8 @@ def _runs_to_rl_xml(
             open_tags.append("<i>"); close_tags.insert(0, "</i>")
         if ts.underline or default_ts.underline:
             open_tags.append("<u>"); close_tags.insert(0, "</u>")
+        if ts.strikethrough or default_ts.strikethrough:
+            open_tags.append("<strike>"); close_tags.insert(0, "</strike>")
         if ts.superscript:
             open_tags.append("<super>"); close_tags.insert(0, "</super>")
         if ts.subscript:
@@ -392,7 +394,10 @@ def _make_rl_style(
     registry: StyleRegistry,
     para: Paragraph | None = None,
 ) -> RLParagraphStyle:
-    left_indent = mm(ts.letter_spacing)  # repurposed; real indent comes from para style
+    # (antes: left_indent = mm(ts.letter_spacing) "repurposed" — un estilo con
+    # interletra real ganaba una sangría fantasma; la interletra ahora tiene
+    # semántica propia en text_renderer y aquí NO se abusa del campo)
+    left_indent = 0
     if para and para.list_item:
         left_indent = mm(5 * para.list_depth)
 
