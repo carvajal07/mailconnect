@@ -59,7 +59,7 @@ export default function StyleEditorModal({ target, onClose }: Props) {
     setDraft((d) => ({ ...d, ...p } as AnyStyleItem));
   }
 
-  const modalWidth = target.key === 'borderStyles' ? 480 : target.key === 'lineStyles' ? 420 : 380;
+  const modalWidth = target.key === 'borderStyles' ? 520 : target.key === 'lineStyles' ? 440 : 420;
 
   return (
     <div
@@ -69,52 +69,75 @@ export default function StyleEditorModal({ target, onClose }: Props) {
       onMouseDown={(e) => { if (e.target === overlayRef.current) onClose(); }}
     >
       <div
-        className="rounded-lg shadow-2xl flex flex-col"
+        className="rounded-lg flex flex-col overflow-hidden"
         style={{
           background: 'var(--bg-1)',
-          border: '1px solid var(--bg-3)',
           width: modalWidth,
-          maxHeight: '85vh',
+          maxHeight: '90vh',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
         }}
       >
-        {/* Header */}
+        {/* Header — como el del Diseñador PDF (etiqueta + nombre editable + acciones) */}
         <div
-          className="h-10 shrink-0 flex items-center px-4 gap-2"
-          style={{ borderBottom: '1px solid var(--bg-3)' }}
+          className="shrink-0 flex items-center justify-between gap-2"
+          style={{ padding: '10px 14px', background: 'var(--bg-2)', borderBottom: '1px solid var(--line)' }}
         >
-          <span className="font-semibold text-sm text-ink flex-1">
-            {isNew ? `Nuevo ${KEY_LABELS[target.key]}` : KEY_LABELS[target.key]}
-          </span>
-          {!isNew && (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <span
+              className="shrink-0 uppercase"
+              style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--ink-2)' }}
+            >
+              {isNew ? `Nuevo · ${KEY_LABELS[target.key]}` : KEY_LABELS[target.key]}
+            </span>
+            <input
+              className="flex-1 min-w-0 rounded outline-none"
+              style={{
+                padding: '4px 8px', fontSize: 13, fontWeight: 600,
+                color: 'var(--ink)', background: 'transparent',
+                border: '1px solid transparent',
+              }}
+              value={draft.name}
+              placeholder="Nombre del estilo"
+              onChange={(e) => patch({ name: e.target.value })}
+              onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'var(--bg-1)'; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.background = 'transparent'; }}
+              onMouseEnter={(e) => { if (document.activeElement !== e.currentTarget) e.currentTarget.style.borderColor = 'var(--line-2)'; }}
+              onMouseLeave={(e) => { if (document.activeElement !== e.currentTarget) e.currentTarget.style.borderColor = 'transparent'; }}
+            />
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {!isNew && (
+              <button
+                type="button"
+                onClick={del}
+                className="w-7 h-7 flex items-center justify-center rounded hover:bg-red-500/20 text-red-400"
+                title="Eliminar estilo"
+              >
+                <Trash2 size={14} />
+              </button>
+            )}
             <button
               type="button"
-              onClick={del}
-              className="w-7 h-7 flex items-center justify-center rounded hover:bg-red-500/20 text-red-400"
-              title="Eliminar estilo"
+              onClick={save}
+              className="flex items-center rounded font-semibold"
+              style={{ padding: '5px 12px', fontSize: 12, background: 'var(--accent)', color: '#fff', border: '1px solid var(--accent)' }}
             >
-              <Trash2 size={14} />
+              {isNew ? 'Crear' : 'Guardar'}
             </button>
-          )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-7 h-7 flex items-center justify-center rounded hover:bg-bg-3 text-muted"
-          >
-            <X size={14} />
-          </button>
+            <button
+              type="button"
+              onClick={onClose}
+              title="Cancelar"
+              className="w-7 h-7 flex items-center justify-center rounded hover:bg-bg-3 text-muted"
+              style={{ border: '1px solid var(--line-2)' }}
+            >
+              <X size={14} />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-          {/* Nombre — siempre */}
-          <Row label="Nombre">
-            <input
-              className="field"
-              value={draft.name}
-              onChange={(e) => patch({ name: e.target.value })}
-            />
-          </Row>
-
           {target.key === 'textStyles' && (
             <TextStyleFields draft={draft as TextStyle} patch={patch} />
           )}
@@ -132,27 +155,6 @@ export default function StyleEditorModal({ target, onClose }: Props) {
           )}
         </div>
 
-        {/* Footer */}
-        <div
-          className="h-12 shrink-0 flex items-center justify-end gap-2 px-4"
-          style={{ borderTop: '1px solid var(--bg-3)' }}
-        >
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 h-8 rounded text-sm hover:bg-bg-3 text-ink-2"
-          >
-            Cancelar
-          </button>
-          <button
-            type="button"
-            onClick={save}
-            className="px-4 h-8 rounded text-sm font-semibold"
-            style={{ background: 'var(--accent)', color: '#0b1a10' }}
-          >
-            {isNew ? 'Crear' : 'Guardar'}
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -174,6 +176,40 @@ function Divider({ label }: { label?: string }) {
     <div className="flex items-center gap-2 pt-1">
       {label && <span className="text-[10px] font-semibold text-muted uppercase tracking-wide">{label}</span>}
       <div className="flex-1 h-px" style={{ background: 'var(--line-2)' }} />
+    </div>
+  );
+}
+
+/**
+ * Barra de tabs de los editores de estilo — mismo look que los tabs de los
+ * editores de recursos del Diseñador PDF (`tse__tabs`): pequeños (10px, seminegrita),
+ * subrayado de 2px en el activo, con wrap si no caben.
+ */
+export function StyleTabs<T extends string>({ tabs, active, onChange }: {
+  tabs: readonly { key: T; label: string }[];
+  active: T;
+  onChange: (t: T) => void;
+}) {
+  return (
+    <div className="flex flex-wrap" style={{ borderBottom: '1px solid var(--line-2)' }}>
+      {tabs.map(({ key, label }) => (
+        <button
+          key={key}
+          type="button"
+          onClick={() => onChange(key)}
+          className="whitespace-nowrap transition-colors"
+          style={{
+            padding: '5px 7px',
+            fontSize: 10,
+            fontWeight: 600,
+            marginBottom: -1,
+            color: active === key ? 'var(--accent)' : 'var(--ink-2)',
+            borderBottom: active === key ? '2px solid var(--accent)' : '2px solid transparent',
+          }}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -498,27 +534,8 @@ export function BorderStyleFields({ draft, patch }: { draft: BorderStyle; patch:
       {/* ─── 10-part selector ─── */}
       <BorderPartSelector parts={parts} onChange={(p) => patch({ parts: p })} />
 
-      {/* ─── Tab bar ─── */}
-      <div
-        className="flex mt-1"
-        style={{ borderBottom: '1px solid var(--line-2)' }}
-      >
-        {BORDER_TABS.map(({ key, label }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setTab(key)}
-            className="px-3 h-8 text-11 font-medium relative"
-            style={
-              tab === key
-                ? { color: 'var(--accent)', borderBottom: '2px solid var(--accent)', marginBottom: -1 }
-                : { color: 'var(--ink-2)' }
-            }
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* ─── Tab bar (mismo look que los editores del Diseñador) ─── */}
+      <StyleTabs tabs={BORDER_TABS} active={tab} onChange={setTab} />
 
       {/* ─── Líneas/Esquinas ─── */}
       {tab === 'lines' && (
@@ -772,174 +789,247 @@ export function LineStyleFields({ draft, patch }: { draft: LineStyle; patch: (p:
   );
 }
 
-/* ─── TextStyle fields ─── */
+/* ─── TextStyle fields — con TABS como el TextStyleEditor del Diseñador ─── */
+
+type TextTab = 'fuente' | 'reglas' | 'supersub' | 'lineas';
+
+const TEXT_TABS: { key: TextTab; label: string }[] = [
+  { key: 'fuente',   label: 'Fuente' },
+  { key: 'reglas',   label: 'Reglas' },
+  { key: 'supersub', label: 'Super/Sub' },
+  { key: 'lineas',   label: 'Líneas' },
+];
+
+/** Vista previa del estilo (como `tse__preview` del Diseñador). */
+function TextStylePreview({ draft }: { draft: TextStyle }) {
+  const deco = [
+    draft.underline ? 'underline' : '',
+    draft.strikethrough ? 'line-through' : '',
+  ].filter(Boolean).join(' ') || 'none';
+  return (
+    <div
+      className="rounded flex items-center justify-center text-center overflow-hidden"
+      style={{
+        padding: 12, minHeight: 44, background: 'var(--bg-2)',
+        border: '1px solid var(--line-2)', wordBreak: 'break-word',
+        color: draft.fillStyleId || 'var(--ink)',
+        fontSize: Math.min(draft.fontSize ?? 12, 22),
+        fontWeight: draft.subFont === 'Bold' || draft.subFont === 'BoldItalic' ? 700 : 400,
+        fontStyle: draft.subFont === 'Italic' || draft.subFont === 'BoldItalic' ? 'italic' : 'normal',
+        fontFamily: draft.fontId || 'Arial',
+        letterSpacing: draft.letterSpacing ? `${draft.letterSpacing}pt` : undefined,
+        textTransform: (draft.textTransform ?? 'none') as React.CSSProperties['textTransform'],
+        textDecoration: deco,
+        lineHeight: draft.lineHeight ?? 1.2,
+      }}
+    >
+      AaBbCc — Texto de ejemplo 123
+    </div>
+  );
+}
 
 export function TextStyleFields({ draft, patch }: { draft: TextStyle; patch: (p: Partial<TextStyle>) => void }) {
+  const [tab, setTab] = useState<TextTab>('fuente');
   return (
     <>
-      <Divider label="Fuente" />
-      <Row label="Fuente">
-        <input className="field" value={draft.fontId} onChange={(e) => patch({ fontId: e.target.value })} placeholder="Arial" />
-      </Row>
-      <Row label="Variante">
-        <select className="field" value={draft.subFont} onChange={(e) => patch({ subFont: e.target.value })}>
-          {['Regular', 'Bold', 'Italic', 'BoldItalic'].map((v) => (
-            <option key={v} value={v}>{v}</option>
-          ))}
-        </select>
-      </Row>
-      <Row label="Tamaño (pt)">
-        <NumInput value={draft.fontSize} min={1} onChange={(v) => patch({ fontSize: v })} />
-      </Row>
-      <Row label="Color">
-        <ColorInput value={draft.fillStyleId || '#000000'} onChange={(v) => patch({ fillStyleId: v })} />
-      </Row>
+      <TextStylePreview draft={draft} />
+      <StyleTabs tabs={TEXT_TABS} active={tab} onChange={setTab} />
 
-      <Divider label="Reglas" />
-      <Row label="Interletra (pt)">
-        <NumInput value={draft.letterSpacing ?? 0} min={-5} step={0.1} onChange={(v) => patch({ letterSpacing: v })} />
-      </Row>
-      <Row label="Interlineado (×)">
-        <NumInput value={draft.lineHeight ?? 1.2} min={0.5} max={5} step={0.1} onChange={(v) => patch({ lineHeight: v })} />
-      </Row>
-      <Row label="Transformación">
-        <select className="field" value={draft.textTransform ?? 'none'}
-          onChange={(e) => patch({ textTransform: e.target.value as TextStyle['textTransform'] })}>
-          <option value="none">Ninguna</option>
-          <option value="uppercase">MAYÚSCULAS</option>
-          <option value="lowercase">minúsculas</option>
-          <option value="capitalize">Capitalizar</option>
-        </select>
-      </Row>
+      {tab === 'fuente' && (
+        <>
+          <Row label="Fuente">
+            <input className="field" value={draft.fontId} onChange={(e) => patch({ fontId: e.target.value })} placeholder="Arial" />
+          </Row>
+          <Row label="Variante">
+            <select className="field" value={draft.subFont} onChange={(e) => patch({ subFont: e.target.value })}>
+              {['Regular', 'Bold', 'Italic', 'BoldItalic'].map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+          </Row>
+          <Row label="Tamaño (pt)">
+            <NumInput value={draft.fontSize} min={1} onChange={(v) => patch({ fontSize: v })} />
+          </Row>
+          <Row label="Color">
+            <ColorInput value={draft.fillStyleId || '#000000'} onChange={(v) => patch({ fillStyleId: v })} />
+          </Row>
+        </>
+      )}
 
-      <Divider label="Super / Sub" />
-      <Row label="Superíndice">
-        <input type="checkbox" checked={!!draft.superscript}
-          onChange={(e) => patch({ superscript: e.target.checked, subscript: e.target.checked ? false : draft.subscript })} />
-      </Row>
-      <Row label="Subíndice">
-        <input type="checkbox" checked={!!draft.subscript}
-          onChange={(e) => patch({ subscript: e.target.checked, superscript: e.target.checked ? false : draft.superscript })} />
-      </Row>
-      <Row label="Tamaño super/sub (%)">
-        <NumInput value={draft.superSubSize ?? 58} min={10} max={100} step={1} onChange={(v) => patch({ superSubSize: v })} />
-      </Row>
+      {tab === 'reglas' && (
+        <>
+          <Row label="Interletra (pt)">
+            <NumInput value={draft.letterSpacing ?? 0} min={-5} step={0.1} onChange={(v) => patch({ letterSpacing: v })} />
+          </Row>
+          <Row label="Interlineado (×)">
+            <NumInput value={draft.lineHeight ?? 1.2} min={0.5} max={5} step={0.1} onChange={(v) => patch({ lineHeight: v })} />
+          </Row>
+          <Row label="Transformación">
+            <select className="field" value={draft.textTransform ?? 'none'}
+              onChange={(e) => patch({ textTransform: e.target.value as TextStyle['textTransform'] })}>
+              <option value="none">Ninguna</option>
+              <option value="uppercase">MAYÚSCULAS</option>
+              <option value="lowercase">minúsculas</option>
+              <option value="capitalize">Capitalizar</option>
+            </select>
+          </Row>
+        </>
+      )}
 
-      <Divider label="Líneas" />
-      <Row label="Subrayado">
-        <input type="checkbox" checked={!!draft.underline}
-          onChange={(e) => patch({ underline: e.target.checked })} />
-      </Row>
-      <Row label="Tachado">
-        <input type="checkbox" checked={!!draft.strikethrough}
-          onChange={(e) => patch({ strikethrough: e.target.checked })} />
-      </Row>
+      {tab === 'supersub' && (
+        <>
+          <Row label="Superíndice">
+            <input type="checkbox" checked={!!draft.superscript}
+              onChange={(e) => patch({ superscript: e.target.checked, subscript: e.target.checked ? false : draft.subscript })} />
+          </Row>
+          <Row label="Subíndice">
+            <input type="checkbox" checked={!!draft.subscript}
+              onChange={(e) => patch({ subscript: e.target.checked, superscript: e.target.checked ? false : draft.superscript })} />
+          </Row>
+          <Row label="Tamaño super/sub (%)">
+            <NumInput value={draft.superSubSize ?? 58} min={10} max={100} step={1} onChange={(v) => patch({ superSubSize: v })} />
+          </Row>
+        </>
+      )}
+
+      {tab === 'lineas' && (
+        <>
+          <Row label="Subrayado">
+            <input type="checkbox" checked={!!draft.underline}
+              onChange={(e) => patch({ underline: e.target.checked })} />
+          </Row>
+          <Row label="Tachado">
+            <input type="checkbox" checked={!!draft.strikethrough}
+              onChange={(e) => patch({ strikethrough: e.target.checked })} />
+          </Row>
+        </>
+      )}
     </>
   );
 }
 
-/* ─── ParagraphStyle fields ─── */
+/* ─── ParagraphStyle fields — con TABS como el ParagraphStyleEditor del Diseñador ─── */
+
+type ParagraphTab = 'general' | 'listas' | 'flujo';
+
+const PARAGRAPH_TABS: { key: ParagraphTab; label: string }[] = [
+  { key: 'general', label: 'General' },
+  { key: 'listas',  label: 'Listas' },
+  { key: 'flujo',   label: 'Flujo' },
+];
 
 export function ParagraphStyleFields({ draft, patch }: { draft: ParagraphStyle; patch: (p: Partial<ParagraphStyle>) => void }) {
+  const [tab, setTab] = useState<ParagraphTab>('general');
   return (
     <>
-      <Divider label="General" />
-      <Row label="Alineación">
-        <select className="field" value={draft.hAlign} onChange={(e) => patch({ hAlign: e.target.value as ParagraphStyle['hAlign'] })}>
-          {(['Left', 'Center', 'Right', 'Justify'] as const).map((v) => (
-            <option key={v} value={v}>{{ Left: 'Izquierda', Center: 'Centro', Right: 'Derecha', Justify: 'Justificado' }[v]}</option>
-          ))}
-        </select>
-      </Row>
-      <Row label="Interlineado (mm)">
-        <NumInput value={draft.lineSpacing} min={0} step={0.5} onChange={(v) => patch({ lineSpacing: v })} />
-      </Row>
+      <StyleTabs tabs={PARAGRAPH_TABS} active={tab} onChange={setTab} />
 
-      <Divider label="Sangrías" />
-      <Row label="Sangría izq. (mm)">
-        <NumInput value={draft.leftIndent} min={0} step={0.5} onChange={(v) => patch({ leftIndent: v })} />
-      </Row>
-      <Row label="Sangría der. (mm)">
-        <NumInput value={draft.rightIndent} min={0} step={0.5} onChange={(v) => patch({ rightIndent: v })} />
-      </Row>
-      <Row label="Primera línea (mm)">
-        <NumInput value={draft.firstLineLeftIndent} step={0.5} onChange={(v) => patch({ firstLineLeftIndent: v })} />
-      </Row>
+      {tab === 'general' && (
+        <>
+          <Row label="Alineación">
+            <select className="field" value={draft.hAlign} onChange={(e) => patch({ hAlign: e.target.value as ParagraphStyle['hAlign'] })}>
+              {(['Left', 'Center', 'Right', 'Justify'] as const).map((v) => (
+                <option key={v} value={v}>{{ Left: 'Izquierda', Center: 'Centro', Right: 'Derecha', Justify: 'Justificado' }[v]}</option>
+              ))}
+            </select>
+          </Row>
+          <Row label="Interlineado (mm)">
+            <NumInput value={draft.lineSpacing} min={0} step={0.5} onChange={(v) => patch({ lineSpacing: v })} />
+          </Row>
 
-      <Divider label="Espaciado" />
-      <Row label="Espacio antes (mm)">
-        <NumInput value={draft.spaceBefore} min={0} step={0.5} onChange={(v) => patch({ spaceBefore: v })} />
-      </Row>
-      <Row label="Espacio después (mm)">
-        <NumInput value={draft.spaceAfter} min={0} step={0.5} onChange={(v) => patch({ spaceAfter: v })} />
-      </Row>
+          <Divider label="Sangrías" />
+          <Row label="Sangría izq. (mm)">
+            <NumInput value={draft.leftIndent} min={0} step={0.5} onChange={(v) => patch({ leftIndent: v })} />
+          </Row>
+          <Row label="Sangría der. (mm)">
+            <NumInput value={draft.rightIndent} min={0} step={0.5} onChange={(v) => patch({ rightIndent: v })} />
+          </Row>
+          <Row label="Primera línea (mm)">
+            <NumInput value={draft.firstLineLeftIndent} step={0.5} onChange={(v) => patch({ firstLineLeftIndent: v })} />
+          </Row>
 
-      <Divider label="Listas" />
-      <Row label="Estilo de lista">
-        <select className="field" value={draft.listStyle ?? 'none'}
-          onChange={(e) => patch({ listStyle: e.target.value as ParagraphStyle['listStyle'] })}>
-          <option value="none">Ninguna</option>
-          <option value="bullet">Viñetas</option>
-          <option value="numbered">Numerada</option>
-          <option value="letter">Letras</option>
-        </select>
-      </Row>
-      {draft.listStyle === 'bullet' && (
-        <Row label="Viñeta">
-          <div className="flex items-center gap-1 flex-wrap">
-            {['•', '○', '■', '□', '❖', '➢', '✓'].map((ch) => (
-              <button key={ch} type="button"
-                onClick={() => patch({ bulletChar: ch })}
-                className="w-6 h-6 rounded text-sm"
-                style={(draft.bulletChar ?? '•') === ch
-                  ? { background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent)' }
-                  : { background: 'var(--bg-3)', border: '1px solid var(--line-2)', color: 'var(--ink)' }}>
-                {ch}
-              </button>
-            ))}
-            <input className="field" style={{ width: 44 }} maxLength={3}
-              value={draft.bulletChar ?? '•'}
-              onChange={(e) => patch({ bulletChar: e.target.value || '•' })} />
-          </div>
-        </Row>
-      )}
-      {(draft.listStyle === 'numbered' || draft.listStyle === 'letter') && (
-        <Row label="Formato">
-          <select className="field" value={draft.numberFormat ?? '0.'}
-            onChange={(e) => patch({ numberFormat: e.target.value })}>
-            <option value="0.">1. / a.</option>
-            <option value="0)">1) / a)</option>
-            <option value="(0)">(1) / (a)</option>
-          </select>
-        </Row>
-      )}
-      {draft.listStyle && draft.listStyle !== 'none' && (
-        <Row label="Sangría lista (mm)">
-          <NumInput value={draft.listIndent ?? 5} min={0} step={0.5} onChange={(v) => patch({ listIndent: v })} />
-        </Row>
+          <Divider label="Espaciado" />
+          <Row label="Espacio antes (mm)">
+            <NumInput value={draft.spaceBefore} min={0} step={0.5} onChange={(v) => patch({ spaceBefore: v })} />
+          </Row>
+          <Row label="Espacio después (mm)">
+            <NumInput value={draft.spaceAfter} min={0} step={0.5} onChange={(v) => patch({ spaceAfter: v })} />
+          </Row>
+        </>
       )}
 
-      <Divider label="Flujo (saltos de línea/página)" />
-      <Row label="No cortar líneas">
-        <select className="field" value={draft.keepLinesTogether} onChange={(e) => patch({ keepLinesTogether: e.target.value as 'Yes' | 'No' })}>
-          <option value="No">No</option>
-          <option value="Yes">Sí</option>
-        </select>
-      </Row>
-      <Row label="Mantener con la siguiente">
-        <input type="checkbox" checked={!!draft.keepWithNext}
-          onChange={(e) => patch({ keepWithNext: e.target.checked })} />
-      </Row>
-      <Row label="No ajustar (dontWrap)">
-        <input type="checkbox" checked={!!draft.dontWrap}
-          onChange={(e) => patch({ dontWrap: e.target.checked })} />
-      </Row>
-      <Row label="Líneas viudas (mín.)">
-        <NumInput value={draft.widow ?? 1} min={0} step={1} onChange={(v) => patch({ widow: v })} />
-      </Row>
-      <Row label="Líneas huérfanas (mín.)">
-        <NumInput value={draft.orphan ?? 1} min={0} step={1} onChange={(v) => patch({ orphan: v })} />
-      </Row>
+      {tab === 'listas' && (
+        <>
+          <Row label="Estilo de lista">
+            <select className="field" value={draft.listStyle ?? 'none'}
+              onChange={(e) => patch({ listStyle: e.target.value as ParagraphStyle['listStyle'] })}>
+              <option value="none">Ninguna</option>
+              <option value="bullet">Viñetas</option>
+              <option value="numbered">Numerada</option>
+              <option value="letter">Letras</option>
+            </select>
+          </Row>
+          {draft.listStyle === 'bullet' && (
+            <Row label="Viñeta">
+              <div className="flex items-center gap-1 flex-wrap">
+                {['•', '○', '■', '□', '❖', '➢', '✓'].map((ch) => (
+                  <button key={ch} type="button"
+                    onClick={() => patch({ bulletChar: ch })}
+                    className="w-6 h-6 rounded text-sm"
+                    style={(draft.bulletChar ?? '•') === ch
+                      ? { background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent)' }
+                      : { background: 'var(--bg-3)', border: '1px solid var(--line-2)', color: 'var(--ink)' }}>
+                    {ch}
+                  </button>
+                ))}
+                <input className="field" style={{ width: 44 }} maxLength={3}
+                  value={draft.bulletChar ?? '•'}
+                  onChange={(e) => patch({ bulletChar: e.target.value || '•' })} />
+              </div>
+            </Row>
+          )}
+          {(draft.listStyle === 'numbered' || draft.listStyle === 'letter') && (
+            <Row label="Formato">
+              <select className="field" value={draft.numberFormat ?? '0.'}
+                onChange={(e) => patch({ numberFormat: e.target.value })}>
+                <option value="0.">1. / a.</option>
+                <option value="0)">1) / a)</option>
+                <option value="(0)">(1) / (a)</option>
+              </select>
+            </Row>
+          )}
+          {draft.listStyle && draft.listStyle !== 'none' && (
+            <Row label="Sangría lista (mm)">
+              <NumInput value={draft.listIndent ?? 5} min={0} step={0.5} onChange={(v) => patch({ listIndent: v })} />
+            </Row>
+          )}
+        </>
+      )}
+
+      {tab === 'flujo' && (
+        <>
+          <Row label="No cortar líneas">
+            <select className="field" value={draft.keepLinesTogether} onChange={(e) => patch({ keepLinesTogether: e.target.value as 'Yes' | 'No' })}>
+              <option value="No">No</option>
+              <option value="Yes">Sí</option>
+            </select>
+          </Row>
+          <Row label="Mantener con la siguiente">
+            <input type="checkbox" checked={!!draft.keepWithNext}
+              onChange={(e) => patch({ keepWithNext: e.target.checked })} />
+          </Row>
+          <Row label="No ajustar (dontWrap)">
+            <input type="checkbox" checked={!!draft.dontWrap}
+              onChange={(e) => patch({ dontWrap: e.target.checked })} />
+          </Row>
+          <Row label="Líneas viudas (mín.)">
+            <NumInput value={draft.widow ?? 1} min={0} step={1} onChange={(v) => patch({ widow: v })} />
+          </Row>
+          <Row label="Líneas huérfanas (mín.)">
+            <NumInput value={draft.orphan ?? 1} min={0} step={1} onChange={(v) => patch({ orphan: v })} />
+          </Row>
+        </>
+      )}
     </>
   );
 }
