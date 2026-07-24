@@ -176,19 +176,25 @@ export function drawCmds(ctx: CanvasRenderingContext2D, cmds: DrawCmd[]) {
     ctx.save();
     ctx.font  = cmd.font;
 
+    // Half-leading: CSS centra el glifo dentro de la caja de línea (lineHeight),
+    // el canvas con textBaseline='top' lo pintaba pegado arriba → al entrar a
+    // editar (contentEditable) el texto "bajaba" y parecía cambiar. Se centra
+    // igual que CSS para que lienzo y editor coincidan.
+    const dy = Math.max(0, (cmd.lineH - cmd.fontSize) / 2);
+
     if (cmd.isVariable) {
       ctx.fillStyle = 'rgba(144,39,116,0.12)';
       ctx.fillRect(cmd.x, cmd.y + 1, cmd.width ?? ctx.measureText(cmd.text).width, cmd.lineH * 0.9);
     }
 
     ctx.fillStyle = cmd.color;
-    ctx.fillText(cmd.text, cmd.x, cmd.y);
+    ctx.fillText(cmd.text, cmd.x, cmd.y + dy);
 
     if (cmd.underline) {
-      ctx.fillRect(cmd.x, cmd.y + cmd.fontSize + 1, ctx.measureText(cmd.text).width, 1);
+      ctx.fillRect(cmd.x, cmd.y + dy + cmd.fontSize + 1, ctx.measureText(cmd.text).width, 1);
     }
     if (cmd.lineThrough) {
-      ctx.fillRect(cmd.x, cmd.y + cmd.fontSize * 0.5, ctx.measureText(cmd.text).width, 1);
+      ctx.fillRect(cmd.x, cmd.y + dy + cmd.fontSize * 0.5, ctx.measureText(cmd.text).width, 1);
     }
     ctx.restore();
   }
