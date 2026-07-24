@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   AlignCenter,
   AlignJustify,
@@ -23,6 +23,24 @@ type FillableEl = RectEl | CircleEl | TriangleEl;
 const FONT_FAMILIES = ['Inter', 'JetBrains Mono', 'Arial', 'Helvetica', 'Times New Roman', 'Courier New'];
 const FONT_VARIANTS = ['Regular', 'Medium', 'Semi-Bold', 'Bold', 'Italic'];
 
+/** El tamaño de fuente se ALMACENA en puntos (pt), la convención tipográfica; el
+ *  selector permite ver/escribir en otras unidades y hace la conversión. */
+type SizeUnit = 'pt' | 'px' | 'mm' | 'cm' | 'in';
+const PT_PER_UNIT: Record<SizeUnit, number> = {
+  pt: 1, px: 72 / 96, mm: 72 / 25.4, cm: 72 / 2.54, in: 72,
+};
+const SIZE_UNITS: SizeUnit[] = ['pt', 'px', 'mm', 'cm', 'in'];
+/** Tamaños comunes (en pt) que ofrece el desplegable del combo. */
+const FONT_SIZE_PRESETS_PT = [6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72];
+
+const ptToUnit = (pt: number, u: SizeUnit) => pt / PT_PER_UNIT[u];
+const unitToPt = (v: number, u: SizeUnit) => v * PT_PER_UNIT[u];
+/** Formato compacto por unidad: pt/px enteros o .5; mm/cm/in con 2 decimales. */
+function fmtSize(v: number, u: SizeUnit): string {
+  const dec = u === 'pt' || u === 'px' ? 1 : 2;
+  return String(Number(v.toFixed(dec)));
+}
+
 export default function FormatToolbar() {
   const pages = useDocumentStore((s) => s.doc.pages);
   const updateElement = useDocumentStore((s) => s.updateElement);
@@ -32,6 +50,9 @@ export default function FormatToolbar() {
   // no a todo el elemento — así hay una sola barra y se conserva el formato fino.
   const editorApi = useActiveEditorStore((s) => s.api);
   const editing = !!editorApi;
+
+  // Unidad del tamaño de fuente (solo display/entrada; el valor se guarda en pt).
+  const [sizeUnit, setSizeUnit] = useState<SizeUnit>('pt');
 
   // ── Elementos de texto seleccionados ──────────────────────────────────────
   const selectedTexts = useMemo<TextEl[]>(() => {
@@ -200,22 +221,23 @@ export default function FormatToolbar() {
           </option>
         ))}
       </select>
-      <NumberField
+      <SizeCombo
         disabled={textCtrlDisabled}
-        value={fontSize}
-        onCommit={(v) => editing ? editorApi!.setFontSize(v) : applyText({ fontSize: v })}
-        width={54}
-        min={1}
+        valuePt={fontSize}
+        unit={sizeUnit}
+        onCommitPt={(v) => editing ? editorApi!.setFontSize(v) : applyText({ fontSize: v })}
       />
       <select
         disabled={textCtrlDisabled}
-        defaultValue="pt"
+        value={sizeUnit}
+        onChange={(e) => setSizeUnit(e.target.value as SizeUnit)}
         className="h-[22px] bg-bg-3 border border-line-2 rounded-3 text-11 px-1.5 outline-none disabled:opacity-50"
-        style={{ width: 48 }}
+        style={{ width: 50 }}
+        title="Unidad del tamaño de fuente (convierte el valor)"
       >
-        <option value="pt">pt</option>
-        <option value="px">px</option>
-        <option value="mm">mm</option>
+        {SIZE_UNITS.map((u) => (
+          <option key={u} value={u}>{u}</option>
+        ))}
       </select>
 
       <Sep />
@@ -377,6 +399,63 @@ function NumberField({ value, onCommit, width = 54, disabled = false, min }: Num
         className="bg-transparent w-full text-right font-mono text-11 outline-none disabled:cursor-not-allowed"
       />
     </div>
+  );
+}
+
+/**
+ * Selector de tamaño de fuente estilo Word/Docs: un input editable con un
+ * desplegable de tamaños comunes (datalist). Muestra y acepta el valor en la
+ * unidad activa (pt/px/mm/cm/in) y lo convierte a pt para almacenarlo.
+ */
+function SizeCombo({
+  valuePt, unit, onCommitPt, disabled = false,
+}: {
+  valuePt: number | undefined;
+  unit: SizeUnit;
+  onCommitPt: (pt: number) => void;
+  disabled?: boolean;
+}) {
+  // Texto controlado; se re-sincroniza cuando cambia el valor pt o la unidad.
+  const shown = valuePt === undefined ? '' : fmtSize(ptToUnit(valuePt, unit), unit);
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? shown;
+  const listId = 'mc-fontsize-presets';
+
+  const commit = (raw: string) => {
+    setDraft(null);
+    const v = Number(raw);
+    if (raw === '' || Number.isNaN(v) || v <= 0) return;
+    onCommitPt(unitToPt(v, unit));
+  };
+
+  return (
+    <>
+      <div
+        className="h-[22px] flex items-center bg-bg-3 border border-line-2 rounded-3 px-1.5"
+        style={{ width: 64, opacity: disabled ? 0.5 : 1 }}
+      >
+        <input
+          type="text"
+          inputMode="decimal"
+          list={listId}
+          disabled={disabled}
+          placeholder={valuePt === undefined ? '—' : undefined}
+          value={value}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { commit((e.target as HTMLInputElement).value); (e.target as HTMLInputElement).blur(); }
+            if (e.key === 'Escape') setDraft(null);
+          }}
+          className="bg-transparent w-full text-right font-mono text-11 outline-none disabled:cursor-not-allowed"
+        />
+      </div>
+      <datalist id={listId}>
+        {FONT_SIZE_PRESETS_PT.map((pt) => (
+          <option key={pt} value={fmtSize(ptToUnit(pt, unit), unit)} />
+        ))}
+      </datalist>
+    </>
   );
 }
 

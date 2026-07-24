@@ -39,7 +39,7 @@ export default function DraftOverlay({ draft, zoom, offsetX, offsetY }: Props) {
     );
   }
 
-  if (draft.tool === 'rect' || draft.tool === 'circle' || draft.tool === 'triangle' || draft.tool === 'text') {
+  if (draft.tool === 'rect' || draft.tool === 'circle' || draft.tool === 'triangle' || draft.tool === 'text' || draft.tool === 'image') {
     const end = applyConstrainIfNeeded(draft);
     const x = Math.min(draft.startMm.x, end.x);
     const y = Math.min(draft.startMm.y, end.y);
@@ -50,7 +50,7 @@ export default function DraftOverlay({ draft, zoom, offsetX, offsetY }: Props) {
     const absW = w * s;
     const absH = h * s;
 
-    if (draft.tool === 'rect' || draft.tool === 'triangle' || draft.tool === 'text') {
+    if (draft.tool === 'rect' || draft.tool === 'triangle' || draft.tool === 'text' || draft.tool === 'image') {
       return (
         <Rect
           x={absX}

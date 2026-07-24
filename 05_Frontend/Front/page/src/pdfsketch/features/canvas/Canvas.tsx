@@ -15,6 +15,7 @@ import { useDocumentStore, useDocumentHistory } from '@/store/documentStore';
 import { useUIStore } from '@/store/uiStore';
 import { useToolStore } from '@/store/toolStore';
 import { useSelectionStore } from '@/store/selectionStore';
+import { useUploadStore } from '@/store/uploadStore';
 import { MM_TO_PX, pxToMm } from '@/utils/units';
 import { nextId } from '@/utils/id';
 import type { ElementModel, ImageEl, LineEl, PenEl, QrEl, TableEl, TextEl, TextSpan } from '@/types/document';
@@ -83,6 +84,7 @@ export default function Canvas() {
   const updateElement = useDocumentStore((s) => s.updateElement);
   const addElement = useDocumentStore((s) => s.addElement);
   const select = useSelectionStore((s) => s.select);
+  const uploadImage = useUploadStore((s) => s.uploadImage);
   const page = pages.find((p) => p.id === currentPageId) ?? pages[0];
 
   const editingEl = editingId
@@ -159,6 +161,9 @@ export default function Canvas() {
   // imagen: ref al input oculto y posición pendiente en mm
   const imageInputRef = useRef<HTMLInputElement>(null);
   const pendingImagePosMm = useRef<{ x: number; y: number }>({ x: 20, y: 20 });
+  // Caja (mm) dibujada con la herramienta de imagen; si w/h > 0 la imagen se encaja
+  // en ella (respetando proporción); si es ~0 (clic simple) se usa el tamaño natural.
+  const pendingImageBoxMm = useRef<{ w: number; h: number } | null>(null);
 
   // diálogos de creación
   const [barcodeDialog, setBarcodeDialog] = useState<{ x: number; y: number } | null>(null);
@@ -176,6 +181,12 @@ export default function Canvas() {
     zoom,
     pageId: page?.id ?? '',
     nextZIndex,
+    // Herramienta imagen: al terminar de dibujar la caja, abre el diálogo de archivo.
+    onImageBox: (box) => {
+      pendingImagePosMm.current = { x: box.x, y: box.y };
+      pendingImageBoxMm.current = box.w > 1 && box.h > 1 ? { w: box.w, h: box.h } : null;
+      imageInputRef.current?.click();
+    },
   });
 
   useLayoutEffect(() => {
@@ -349,34 +360,54 @@ export default function Canvas() {
     const file = e.target.files?.[0];
     if (!file || !page) return;
     const src = URL.createObjectURL(file);
+    const box = pendingImageBoxMm.current;
+    pendingImageBoxMm.current = null;
     const img = new window.Image();
     img.onload = () => {
       const pos = pendingImagePosMm.current;
       const naturalW = img.naturalWidth;
       const naturalH = img.naturalHeight;
-      // Limitar a 100mm de ancho máximo, mantener proporción
-      const maxW = 100;
-      const scaleF = naturalW > 0 ? Math.min(1, maxW / (naturalW * 0.2646)) : 1;
-      const w = Math.max(5, naturalW * 0.2646 * scaleF);
-      const h = Math.max(5, naturalH * 0.2646 * scaleF);
+      const ratio = naturalW > 0 && naturalH > 0 ? naturalW / naturalH : 1;
+      let w: number;
+      let h: number;
+      if (box) {
+        // Encaja la imagen DENTRO de la caja dibujada, respetando su proporción.
+        w = box.w;
+        h = box.w / ratio;
+        if (h > box.h) { h = box.h; w = box.h * ratio; }
+      } else {
+        // Clic simple: tamaño natural (px→mm), tope 100mm de ancho.
+        const maxW = 100;
+        const scaleF = naturalW > 0 ? Math.min(1, maxW / (naturalW * 0.2646)) : 1;
+        w = Math.max(5, naturalW * 0.2646 * scaleF);
+        h = Math.max(5, naturalH * 0.2646 * scaleF);
+      }
+      const elId = nextId('el');
       const el: ImageEl = {
-        id: nextId('el'),
+        id: elId,
         name: file.name.replace(/\.[^.]+$/, ''),
         type: 'image',
         x: pos.x,
         y: pos.y,
-        width: w,
-        height: h,
+        width: Math.max(5, w),
+        height: Math.max(5, h),
         rotation: 0,
         visible: true,
         locked: false,
         zIndex: nextZIndex(),
-        src,
+        src, // preview local instantáneo; se reemplaza por la URL de S3 al subir.
         opacity: 1,
       };
       addElement(page.id, el);
-      select([el.id]);
+      select([elId]);
       setActiveTool('select');
+      // Sube a S3 (si hay uploader inyectado) y reemplaza el src por la URL pública,
+      // que es la que el motor puede descargar para el PDF. Si falla, queda el local.
+      if (uploadImage) {
+        void uploadImage(file).then((url) => {
+          if (url) updateElement(elId, { src: url });
+        });
+      }
     };
     img.src = src;
     e.target.value = '';
@@ -410,6 +441,35 @@ export default function Canvas() {
 
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
+
+    const rect0 = containerRef.current?.getBoundingClientRect();
+
+    // Arrastrar una IMAGEN del árbol de objetos → crea un elemento imagen en el punto.
+    const imgSrc = e.dataTransfer.getData('text/x-image-src');
+    if (imgSrc && page && rect0) {
+      const dropX = pxToMm(e.clientX - rect0.left - offset.x, zoom);
+      const dropY = pxToMm(e.clientY - rect0.top - offset.y, zoom);
+      const imgName = e.dataTransfer.getData('text/x-image-name') || 'Imagen';
+      const probe = new window.Image();
+      probe.onload = () => {
+        const ratio = probe.naturalWidth > 0 && probe.naturalHeight > 0
+          ? probe.naturalWidth / probe.naturalHeight : 1;
+        const w = 60;
+        const h = w / ratio;
+        const elId = nextId('el');
+        const el: ImageEl = {
+          id: elId, name: imgName, type: 'image',
+          x: dropX, y: dropY, width: Math.max(5, w), height: Math.max(5, h),
+          rotation: 0, visible: true, locked: false, zIndex: nextZIndex(),
+          src: imgSrc, opacity: 1,
+        };
+        addElement(page.id, el);
+        select([elId]);
+      };
+      probe.src = imgSrc;
+      return;
+    }
+
     const binding = e.dataTransfer.getData('text/x-binding-path');
     if (!binding || !page) return;
 
@@ -437,19 +497,8 @@ export default function Canvas() {
 
   function onMouseDown(e: Konva.KonvaEventObject<MouseEvent>) {
     if (!isHand) {
-      // herramienta imagen: abrir selector de archivo
-      if (activeTool === 'image') {
-        const stage = e.target.getStage();
-        const p = stage?.getPointerPosition();
-        if (p) {
-          pendingImagePosMm.current = {
-            x: pxToMm(p.x - offset.x, zoom),
-            y: pxToMm(p.y - offset.y, zoom),
-          };
-        }
-        imageInputRef.current?.click();
-        return;
-      }
+      // herramienta imagen: se dibuja como caja (draw.onMouseDown → onImageBox abre
+      // el diálogo al soltar). Se maneja abajo junto al resto de herramientas de dibujo.
       // herramienta código de barras / QR: abrir diálogo de configuración
       if (activeTool === 'qr') {
         const stage = e.target.getStage();

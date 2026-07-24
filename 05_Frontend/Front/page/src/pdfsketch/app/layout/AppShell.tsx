@@ -67,11 +67,15 @@ export default function AppShell() {
 
   return (
     <div className="h-full w-full bg-bg-0 text-ink overflow-hidden flex flex-col">
-      {/* FormatToolbar (ancho completo) */}
+      {/* FormatToolbar (ancho completo) + separador (mismo trazo que los verticales
+          entre rail/panel/lienzo → var(--line-2)) */}
       {showFormat && (
-        <div className="shrink-0 border-b border-line" style={{ height: 38 }}>
-          <FormatToolbar />
-        </div>
+        <>
+          <div className="shrink-0" style={{ height: 38 }}>
+            <FormatToolbar />
+          </div>
+          <div className="shrink-0" style={{ height: 2, background: 'var(--line-2)' }} />
+        </>
       )}
 
       {/* Fila principal */}

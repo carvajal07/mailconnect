@@ -20,6 +20,7 @@ import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { pdfEngineService } from '../../services/pdfEngineService';
 import { base64ToPdfBlob } from '../../services/pdfTemplatesService';
 import { databaseService } from '../../services/databaseService';
+import { campaignsService } from '../../services/campaignsService';
 import SketchEditor from '../../pdfsketch/SketchEditor';
 import { useDocumentStore, emptyDocument } from '../../pdfsketch/store/documentStore';
 import { useDataSourceStore, type SketchDataSource } from '../../pdfsketch/store/dataSourceStore';
@@ -39,6 +40,33 @@ export default function SketchStudio() {
   const { notify, FeedbackSnackbar } = useFeedback();
   const user = getUser();
   const customerId = user?.customerId ?? '';
+  const sessionCustomer = user?.customer ?? '';
+  const sessionNit = user?.nit ?? '';
+
+  // Subida de imágenes a S3 (bucket del cliente, prefijo público `resources/`) → URL
+  // pública que el motor de PDF puede descargar. Se inyecta al editor (uploadStore).
+  const uploadImage = useCallback(async (file: File): Promise<string | null> => {
+    if (!sessionCustomer) {
+      notify('Tu sesión no tiene un cliente asociado para subir imágenes.', 'warning');
+      return null;
+    }
+    const presign = await campaignsService.presignUrl({
+      customer: sessionCustomer,
+      nit: sessionNit,
+      documentName: file.name,
+      documentType: 'resources',
+    });
+    if (!isOk(presign) || !presign.data?.url) {
+      notify(presign.description || 'No se pudo obtener la URL de carga de la imagen.', 'error');
+      return null;
+    }
+    const ok = await campaignsService.uploadToS3(presign.data.url, file);
+    if (!ok) {
+      notify('No se pudo subir la imagen a S3.', 'error');
+      return null;
+    }
+    return campaignsService.publicUrl(sessionNit, presign.data.path ?? '');
+  }, [sessionCustomer, sessionNit, notify]);
 
   const setDoc = useDocumentStore((s) => s.setDoc);
   const markSaved = useDocumentStore((s) => s.markSaved);
@@ -352,7 +380,7 @@ export default function SketchStudio() {
 
           {/* Editor pdfsketch (ocupa el resto de la pantalla) */}
           <Box sx={{ flex: 1, minHeight: 0 }}>
-            <SketchEditor databases={databases} />
+            <SketchEditor databases={databases} uploadImage={uploadImage} />
           </Box>
         </Box>
       )}
