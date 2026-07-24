@@ -44,7 +44,7 @@ function CanvasGrid({ width, height, offsetX, offsetY, zoom }: {
   );
 }
 
-/** Bounding box REAL de un elemento en mm (líneas/lápiz usan sus points). */
+/** Bounding box REAL de un elemento en mm (líneas/lápiz usan sus points), SIN rotación. */
 function elementBBoxMm(el: ElementModel): { x: number; y: number; w: number; h: number } {
   if ((el.type === 'line' || el.type === 'pen') && (el as LineEl | PenEl).points.length >= 2) {
     const pts = (el as LineEl | PenEl).points;
@@ -58,6 +58,50 @@ function elementBBoxMm(el: ElementModel): { x: number; y: number; w: number; h: 
     };
   }
   return { x: el.x, y: el.y, w: el.width, h: el.height };
+}
+
+/**
+ * ¿El punto (mm) cae DENTRO del elemento considerando su ROTACIÓN?
+ * Konva rota alrededor del origen (x,y) del nodo → se lleva el punto al espacio
+ * local (rotación inversa) y se compara contra el bbox sin rotar. Sin esto, un
+ * texto girado era "inseleccionable": el clic dentro de su caja visual caía fuera
+ * del bbox sin rotar → arrancaba el marquee y LIMPIABA la selección.
+ */
+function pointInElementMm(el: ElementModel, mx: number, my: number): boolean {
+  const b = elementBBoxMm(el);
+  const deg = el.rotation ?? 0;
+  if (!deg) return mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h;
+  const rot = (deg * Math.PI) / 180;
+  const cos = Math.cos(-rot);
+  const sin = Math.sin(-rot);
+  const dx = mx - el.x;
+  const dy = my - el.y;
+  const lx = el.x + dx * cos - dy * sin;
+  const ly = el.y + dx * sin + dy * cos;
+  return lx >= b.x && lx <= b.x + b.w && ly >= b.y && ly <= b.y + b.h;
+}
+
+/** AABB del elemento YA rotado (para la intersección con el marquee). */
+function rotatedAABBMm(el: ElementModel): { x: number; y: number; w: number; h: number } {
+  const b = elementBBoxMm(el);
+  const deg = el.rotation ?? 0;
+  if (!deg) return b;
+  const rot = (deg * Math.PI) / 180;
+  const cos = Math.cos(rot);
+  const sin = Math.sin(rot);
+  const corners: Array<[number, number]> = [
+    [b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h],
+  ];
+  const pts = corners.map(([px, py]) => {
+    const dx = px - el.x;
+    const dy = py - el.y;
+    return [el.x + dx * cos - dy * sin, el.y + dx * sin + dy * cos] as [number, number];
+  });
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
 }
 
 export default function Canvas() {
@@ -117,7 +161,7 @@ export default function Canvas() {
       const s = MM_TO_PX * zoom;
       const hits = page.elements.filter((el) => {
         if (el.visible === false) return false;
-        const b = elementBBoxMm(el);
+        const b = rotatedAABBMm(el); // considera la rotación del elemento
         const ex1 = b.x * s + offset.x;
         const ey1 = b.y * s + offset.y;
         const ex2 = ex1 + b.w * s;
@@ -555,11 +599,12 @@ export default function Canvas() {
         if (p && page) {
           const mx = pxToMm(p.x - offset.x, zoom);
           const my = pxToMm(p.y - offset.y, zoom);
-          overElement = page.elements.some((el) => {
-            if (el.visible === false) return false;
-            const b = elementBBoxMm(el);
-            return mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h;
-          });
+          // Rotación-consciente: un clic dentro de la caja VISUAL (girada) de un
+          // elemento cuenta como "sobre el elemento" → no arranca el marquee ni
+          // limpia la selección (el elemento recibe el clic y se selecciona).
+          overElement = page.elements.some(
+            (el) => el.visible !== false && pointInElementMm(el, mx, my),
+          );
         }
         if (!onAnchor && !overElement) {
           if (p) startMarquee(p);

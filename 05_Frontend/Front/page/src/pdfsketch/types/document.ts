@@ -98,6 +98,9 @@ export interface TextEl extends BaseEl {
   listIndent?: number;       // sangría del marcador de lista (mm)
   bulletChar?: string;       // carácter de viñeta (default •)
   numberFormat?: string;     // formato de número: '0.' | '0)' | '(0)'
+  /** Alineación VERTICAL del texto dentro del cuadro (paridad con el Diseñador;
+   *  la aplica el ParagraphStyle y el motor la soporta como `verticalAlign`). */
+  vAlign?: 'top' | 'middle' | 'bottom';
   // ── Vínculos a recursos (actualización EN VIVO al editar el estilo) ──
   textStyleId?: string;
   paragraphStyleId?: string;
@@ -335,6 +338,8 @@ export interface ParagraphStyle {
   keepLinesTogether: 'No' | 'Yes';
   dontWrap: boolean;
   hAlign: 'Left' | 'Center' | 'Right' | 'Justify';
+  /** Alineación vertical dentro del cuadro de texto (tab «General», como el Diseñador). */
+  vAlign?: 'Top' | 'Middle' | 'Bottom';
   // ── Paridad con el ParagraphStyleEditor del Diseñador (tab «Listas») ──
   listStyle?: ListStyle;
   listIndent?: number;       // mm

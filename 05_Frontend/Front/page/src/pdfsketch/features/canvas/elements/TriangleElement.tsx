@@ -22,7 +22,6 @@ export default function TriangleElement({ el, zoom, onSelect, onChange, draggabl
   const w = el.width * s;
   const h = el.height * s;
   const points = [w / 2, 0, w, h, 0, h]; // ápice arriba, base abajo
-  const hollow = el.fill === 'transparent' && !el.fillGradient;
   return (
     <Line
       id={el.id}
@@ -39,15 +38,6 @@ export default function TriangleElement({ el, zoom, onSelect, onChange, draggabl
       dashEnabled={!!el.dash?.length}
       visible={el.visible}
       hitStrokeWidth={Math.max(10, el.strokeWidth * s + 6)}
-      hitFunc={hollow ? (ctx, shape) => {
-        const c = ctx as unknown as CanvasRenderingContext2D;
-        ctx.beginPath();
-        c.moveTo(w / 2, 0);
-        c.lineTo(w, h);
-        c.lineTo(0, h);
-        ctx.closePath();
-        (ctx as unknown as { strokeShape: (sh: Konva.Shape) => void }).strokeShape(shape);
-      } : undefined}
       draggable={draggable && !el.locked}
       onMouseDown={(e) => onSelect(el.id, e.evt.shiftKey || e.evt.ctrlKey || e.evt.metaKey)}
       onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
