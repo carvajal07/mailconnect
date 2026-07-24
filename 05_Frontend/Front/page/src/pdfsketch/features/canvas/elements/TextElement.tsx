@@ -34,6 +34,16 @@ export default function TextElement({ el, zoom, onSelect, onChange, onEdit, drag
       const node = e.target;
       onChange({ x: node.x() / s, y: node.y() / s });
     },
+    // Durante el resize, Konva ESCALA el nodo (el texto se estiraba/encogía).
+    // Se convierte la escala a ancho/alto EN VIVO → el texto re-fluye con su
+    // tamaño de fuente original mientras se arrastra el manejador.
+    onTransform: (e: Konva.KonvaEventObject<Event>) => {
+      const node = e.target as Konva.Node;
+      node.width(Math.max(10, node.width() * node.scaleX()));
+      node.height(Math.max(6, node.height() * node.scaleY()));
+      node.scaleX(1);
+      node.scaleY(1);
+    },
     onTransformEnd: (e: Konva.KonvaEventObject<Event>) => {
       const node = e.target as Konva.Node;
       const scaleX = node.scaleX();

@@ -109,6 +109,14 @@ interface DocumentState {
   updateColor: (id: string, patch: Partial<{ name: string; rgb: string }>) => void;
   removeColor: (id: string) => void;
 
+  /** Renombra un item de cualquier lista de assets (colores, fuentes, imágenes,
+   *  tablas, filas, celdas…) — para el renombrar por doble clic del árbol. */
+  renameAssetItem: (
+    listKey: 'colors' | 'fonts' | 'images' | 'tables' | 'rowSets' | 'cells',
+    id: string,
+    name: string,
+  ) => void;
+
   markSaved: () => void;
 }
 
@@ -280,6 +288,21 @@ export const useDocumentStore = create<DocumentState>()(
           doc: {
             ...s.doc,
             assets: { ...s.doc.assets, colors: s.doc.assets.colors.filter((c) => c.id !== id) },
+            updatedAt: new Date().toISOString(),
+          },
+          dirty: true,
+        })),
+
+      renameAssetItem: (listKey, id, name) =>
+        set((s) => ({
+          doc: {
+            ...s.doc,
+            assets: {
+              ...s.doc.assets,
+              [listKey]: (s.doc.assets[listKey] as { id: string; name: string }[]).map((it) =>
+                it.id === id ? { ...it, name } : it,
+              ),
+            },
             updatedAt: new Date().toISOString(),
           },
           dirty: true,

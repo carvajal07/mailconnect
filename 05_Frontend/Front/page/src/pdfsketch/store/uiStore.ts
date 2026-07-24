@@ -1,5 +1,11 @@
 import { create } from 'zustand';
 
+/** Estilo/recurso "enfocado" para editarlo en el panel PROPIEDADES (abajo). */
+export interface StyleTarget {
+  kind: 'textStyles' | 'paragraphStyles' | 'borderStyles' | 'lineStyles' | 'fillStyles' | 'color';
+  id: string;
+}
+
 interface Panels {
   leftRail: boolean;
   leftPanel: boolean;
@@ -18,6 +24,9 @@ interface UIState {
   showMargins: boolean;
   cursor: { x: number; y: number };
   previewOpen: boolean;
+  /** Estilo enfocado → sus propiedades se editan abajo (panel Propiedades). */
+  styleTarget: StyleTarget | null;
+  setStyleTarget: (t: StyleTarget | null) => void;
 
   setTheme: (t: 'dark' | 'light') => void;
   setUnit: (u: 'mm' | 'cm' | 'pt' | 'px' | 'in') => void;
@@ -48,6 +57,8 @@ export const useUIStore = create<UIState>((set) => ({
   showMargins: true,
   cursor: { x: 0, y: 0 },
   previewOpen: false,
+  styleTarget: null,
+  setStyleTarget: (t) => set({ styleTarget: t }),
 
   setPreviewOpen: (v) => set({ previewOpen: v }),
   // El tema se aplica como clase del wrapper `.mc-sketch` (SketchEditor lee

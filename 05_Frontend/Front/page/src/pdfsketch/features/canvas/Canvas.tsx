@@ -94,9 +94,67 @@ export default function Canvas() {
   const panningRef = useRef(false);
   const panStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
 
-  // marquee selection
+  // marquee selection — el seguimiento va por listeners de WINDOW (no del Stage):
+  // así el rectángulo de selección no depende del estado (transformer adjunto,
+  // selección previa, salir del lienzo…) y nada de Konva puede interrumpirlo.
   const [marquee, setMarquee] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const marqueeRef = useRef<typeof marquee>(null);
+  const marqueeCleanupRef = useRef<(() => void) | null>(null);
+
+  function finishMarquee() {
+    const m = marqueeRef.current;
+    setMarquee(null);
+    marqueeRef.current = null;
+    if (!m) return;
+    const rx1 = Math.min(m.x1, m.x2);
+    const ry1 = Math.min(m.y1, m.y2);
+    const rx2 = Math.max(m.x1, m.x2);
+    const ry2 = Math.max(m.y1, m.y2);
+    if (rx2 - rx1 > 4 && ry2 - ry1 > 4 && page) {
+      const s = MM_TO_PX * zoom;
+      const hits = page.elements.filter((el) => {
+        if (el.visible === false) return false;
+        const b = elementBBoxMm(el);
+        const ex1 = b.x * s + offset.x;
+        const ey1 = b.y * s + offset.y;
+        const ex2 = ex1 + b.w * s;
+        const ey2 = ey1 + b.h * s;
+        return ex1 < rx2 && ex2 > rx1 && ey1 < ry2 && ey2 > ry1;
+      });
+      if (hits.length > 0) {
+        useSelectionStore.getState().select(hits.map((e) => e.id));
+        useUIStore.getState().setStyleTarget(null);
+      }
+    }
+  }
+
+  function startMarquee(p: { x: number; y: number }) {
+    marqueeCleanupRef.current?.();
+    const m = { x1: p.x, y1: p.y, x2: p.x, y2: p.y };
+    setMarquee(m);
+    marqueeRef.current = m;
+    const onMove = (ev: MouseEvent) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect || !marqueeRef.current) return;
+      const nm = { ...marqueeRef.current, x2: ev.clientX - rect.left, y2: ev.clientY - rect.top };
+      setMarquee(nm);
+      marqueeRef.current = nm;
+    };
+    const onUp = () => {
+      cleanup();
+      finishMarquee();
+    };
+    const cleanup = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      marqueeCleanupRef.current = null;
+    };
+    marqueeCleanupRef.current = cleanup;
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  useEffect(() => () => marqueeCleanupRef.current?.(), []);
 
   // imagen: ref al input oculto y posición pendiente en mm
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -287,12 +345,6 @@ export default function Canvas() {
 
   const isHand = activeTool === 'hand' || spaceDown;
 
-  function stagePosPx(e: Konva.KonvaEventObject<MouseEvent>) {
-    const stage = e.target.getStage();
-    const p = stage?.getPointerPosition();
-    return p ?? null;
-  }
-
   function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !page) return;
@@ -384,8 +436,6 @@ export default function Canvas() {
   }
 
   function onMouseDown(e: Konva.KonvaEventObject<MouseEvent>) {
-    const isOnStage = e.target === e.target.getStage();
-
     if (!isHand) {
       // herramienta imagen: abrir selector de archivo
       if (activeTool === 'image') {
@@ -427,14 +477,19 @@ export default function Canvas() {
       // herramientas de dibujo: iniciar draft y salir
       if (draw.onMouseDown(e)) return;
       if (activeTool === 'select') {
-        if (isOnStage) {
-          // drag marquee on empty area
-          const p = stagePosPx(e);
-          if (p) {
-            const m = { x1: p.x, y1: p.y, x2: p.x, y2: p.y };
-            setMarquee(m);
-            marqueeRef.current = m;
-          }
+        // El marquee arranca SIEMPRE que el mousedown no caiga sobre un
+        // ELEMENTO del lienzo ni sobre un control del Transformer — sin
+        // depender de si hay o no una selección previa.
+        const t = e.target as Konva.Node;
+        const stage = t.getStage();
+        const onElement =
+          t !== (stage as unknown as Konva.Node) &&
+          (t.hasName('pdfsketch-element') || !!t.findAncestor('.pdfsketch-element', true));
+        const onTransformer =
+          t !== (stage as unknown as Konva.Node) && !!t.findAncestor('Transformer', true);
+        if (!onElement && !onTransformer) {
+          const p = stage?.getPointerPosition();
+          if (p) startMarquee(p);
           clearSelection();
         }
       }
@@ -457,15 +512,7 @@ export default function Canvas() {
       });
       return;
     }
-    if (marqueeRef.current) {
-      const p = stagePosPx(e);
-      if (p) {
-        const m = { ...marqueeRef.current, x2: p.x, y2: p.y };
-        setMarquee(m);
-        marqueeRef.current = m;
-      }
-      return;
-    }
+    if (marqueeRef.current) return; // lo sigue el listener de window
     // si estamos dibujando, actualizar draft
     draw.onMouseMove(e);
     const stage = stageRef.current;
@@ -476,31 +523,9 @@ export default function Canvas() {
   }
   function onMouseUp() {
     panningRef.current = false;
-    if (marqueeRef.current) {
-      const m = marqueeRef.current;
-      const rx1 = Math.min(m.x1, m.x2);
-      const ry1 = Math.min(m.y1, m.y2);
-      const rx2 = Math.max(m.x1, m.x2);
-      const ry2 = Math.max(m.y1, m.y2);
-      if (rx2 - rx1 > 4 && ry2 - ry1 > 4 && page) {
-        const s = MM_TO_PX * zoom;
-        // bbox REAL por elemento (líneas/lápiz usan sus points; antes su x/y era
-        // solo el offset del drag → el marquee "a veces" no los encontraba).
-        const hits = page.elements.filter((el) => {
-          if (el.visible === false) return false;
-          const b = elementBBoxMm(el);
-          const ex1 = b.x * s + offset.x;
-          const ey1 = b.y * s + offset.y;
-          const ex2 = ex1 + b.w * s;
-          const ey2 = ey1 + b.h * s;
-          return ex1 < rx2 && ex2 > rx1 && ey1 < ry2 && ey2 > ry1;
-        });
-        if (hits.length > 0) useSelectionStore.getState().select(hits.map((e) => e.id));
-      }
-      setMarquee(null);
-      marqueeRef.current = null;
-      return;
-    }
+    // El marquee lo termina su listener de window (finishMarquee) — aquí solo
+    // se evita disparar el draw.
+    if (marqueeRef.current) return;
     draw.onMouseUp();
   }
 

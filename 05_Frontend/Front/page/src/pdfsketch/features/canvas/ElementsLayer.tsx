@@ -69,6 +69,8 @@ export default function ElementsLayer({ page, zoom, offsetX, offsetY, preview = 
 
   function handleSelect(id: string, additive: boolean) {
     if (preview || activeTool !== 'select') return;
+    // Volver a las propiedades del ELEMENTO en el panel de abajo.
+    useUIStore.getState().setStyleTarget(null);
     if (additive) { pendingCollapse.current = null; toggle(id); return; }
     const sel = useSelectionStore.getState().selectedIds;
     if (sel.includes(id) && sel.length > 1) {
@@ -111,7 +113,9 @@ export default function ElementsLayer({ page, zoom, offsetX, offsetY, preview = 
     if (id && sel.includes(id) && sel.length > 1) {
       const startMm = new Map<string, { x: number; y: number }>();
       for (const el of page.elements) {
-        if (sel.includes(el.id)) startMm.set(el.id, { x: el.x, y: el.y });
+        // Los BLOQUEADOS no se mueven (tampoco están adjuntos al Transformer) →
+        // fuera del commit; si se incluyeran, el delta los teletransportaría.
+        if (sel.includes(el.id) && !el.locked) startMm.set(el.id, { x: el.x, y: el.y });
       }
       multiDragRef.current = {
         ids: [...sel],

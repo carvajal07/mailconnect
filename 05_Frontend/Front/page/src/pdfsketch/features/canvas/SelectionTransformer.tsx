@@ -31,7 +31,17 @@ export default function SelectionTransformer({ stageRef }: Props) {
       return;
     }
 
+    // Los elementos BLOQUEADOS no se adjuntan al Transformer: su proxy de
+    // arrastre movería nodos con draggable=false (startDrag programático los
+    // ignora) → un locked dentro de una multiselección se movía igual.
+    const lockedIds = new Set(
+      useDocumentStore.getState().doc.pages
+        .flatMap((p) => p.elements)
+        .filter((e) => e.locked)
+        .map((e) => e.id),
+    );
     const nodes = selectedIds
+      .filter((id) => !lockedIds.has(id))
       .map((id) => stage.findOne(`#${id}`))
       .filter((n): n is Konva.Node => !!n);
     tr.nodes(nodes);
