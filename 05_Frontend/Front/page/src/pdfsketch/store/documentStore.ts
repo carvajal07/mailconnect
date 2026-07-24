@@ -197,6 +197,10 @@ interface DocumentState {
   updateColor: (id: string, patch: Partial<{ name: string; rgb: string; alpha: number }>) => void;
   removeColor: (id: string) => void;
 
+  // Imágenes registradas como recurso (Estilos → Imágenes). `imageLocation` = URL S3.
+  addImageAsset: (name: string, imageLocation: string) => void;
+  removeImageAsset: (id: string) => void;
+
   /** Renombra un item de cualquier lista de assets (colores, fuentes, imágenes,
    *  tablas, filas, celdas…) — para el renombrar por doble clic del árbol. */
   renameAssetItem: (
@@ -381,6 +385,32 @@ export const useDocumentStore = create<DocumentState>()(
           doc: {
             ...s.doc,
             assets: { ...s.doc.assets, colors: s.doc.assets.colors.filter((c) => c.id !== id) },
+            updatedAt: new Date().toISOString(),
+          },
+          dirty: true,
+        })),
+
+      addImageAsset: (name, imageLocation) =>
+        set((s) => ({
+          doc: {
+            ...s.doc,
+            assets: {
+              ...s.doc.assets,
+              images: [
+                ...s.doc.assets.images,
+                { id: nextId('img'), name, imageType: 'Simple', imageLocation },
+              ],
+            },
+            updatedAt: new Date().toISOString(),
+          },
+          dirty: true,
+        })),
+
+      removeImageAsset: (id) =>
+        set((s) => ({
+          doc: {
+            ...s.doc,
+            assets: { ...s.doc.assets, images: s.doc.assets.images.filter((im) => im.id !== id) },
             updatedAt: new Date().toISOString(),
           },
           dirty: true,

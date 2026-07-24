@@ -43,6 +43,7 @@
     { "path": "/Template/Delete-template", "lambda": "Api_V1_Template_Delete-template" },
     { "path": "/Template/List",            "lambda": "Api_V1_Template_List" },
     { "path": "/Template/Render-pdf",      "lambda": "Api_V1_Template_Render-pdf" },
+    { "path": "/Template/Render-engine",   "lambda": "Api_V1_Template_Render-engine" },
     { "path": "/MessageTemplate/Create",   "lambda": "Api_V1_MessageTemplate_Create" },
     { "path": "/MessageTemplate/List",     "lambda": "Api_V1_MessageTemplate_List" },
     { "path": "/MessageTemplate/Delete",   "lambda": "Api_V1_MessageTemplate_Delete" },

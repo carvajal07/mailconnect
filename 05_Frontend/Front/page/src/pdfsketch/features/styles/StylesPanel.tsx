@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import { useUIStore } from '@/store/uiStore';
 import {
-  ChevronDown, ChevronRight, PaintBucket, Palette, Pencil, Pilcrow, Plus,
+  ChevronDown, ChevronRight, Image as ImageIcon, PaintBucket, Palette, Pencil, Pilcrow, Plus,
   Slash, Square, Trash2, Type,
 } from 'lucide-react';
 import { useDocumentStore, applyTextStyleProps, applyParagraphStyleProps, applyFillStyleProps, type StyleKey } from '@/store/documentStore';
 import { useSelectionStore } from '@/store/selectionStore';
+import { useUploadStore } from '@/store/uploadStore';
 import type {
   TextStyle, ParagraphStyle, BorderStyle, LineStyle, FillStyle,
   ElementModel, RectEl, CircleEl, LineEl, PenEl, FlowableEl,
@@ -153,8 +154,30 @@ export default function StylesPanel() {
   const addColor = useDocumentStore((s) => s.addColor);
   const updateColor = useDocumentStore((s) => s.updateColor);
   const removeColor = useDocumentStore((s) => s.removeColor);
+  const addImageAsset = useDocumentStore((s) => s.addImageAsset);
+  const removeImageAsset = useDocumentStore((s) => s.removeImageAsset);
+  const uploadImage = useUploadStore((s) => s.uploadImage);
   const selectedIds = useSelectionStore((s) => s.selectedIds);
   const [editor, setEditor] = useState<StyleEditorTarget | null>(null);
+  const imgInputRef = useRef<HTMLInputElement>(null);
+  const [imgBusy, setImgBusy] = useState(false);
+  const [imgError, setImgError] = useState<string | null>(null);
+
+  async function handleUploadImage(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImgError(null);
+    if (!uploadImage) {
+      setImgError('La subida de imágenes no está disponible en esta sesión.');
+      return;
+    }
+    setImgBusy(true);
+    const url = await uploadImage(file);
+    setImgBusy(false);
+    if (url) addImageAsset(file.name.replace(/\.[^.]+$/, ''), url);
+    else setImgError('No se pudo subir la imagen a S3.');
+  }
   // Todas las secciones CONTRAÍDAS por defecto (como el panel Recursos del Diseñador).
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
 
@@ -347,6 +370,80 @@ export default function StylesPanel() {
             </div>
           );
         })}
+
+        {/* ── Imágenes (recurso): subir a S3 + arrastrar al lienzo desde el árbol ── */}
+        <div style={{ borderBottom: '1px solid var(--line-2)' }}>
+          <SectionHeaderRow
+            icon={ImageIcon}
+            label="Imágenes"
+            count={doc.assets.images.length}
+            open={!!openSections.images}
+            onToggle={() => toggleSection('images')}
+            onAdd={() => imgInputRef.current?.click()}
+            addTitle="Subir imagen a S3"
+          />
+          {openSections.images && (
+            <div className="pb-1 pl-6 pr-1.5">
+              <input
+                ref={imgInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleUploadImage}
+              />
+              {imgBusy && (
+                <div className="py-1.5 text-[10px] italic" style={{ color: 'var(--accent)' }}>
+                  Subiendo imagen…
+                </div>
+              )}
+              {imgError && (
+                <div className="py-1.5 text-[10px] italic" style={{ color: 'var(--danger, #dc2626)' }}>
+                  {imgError}
+                </div>
+              )}
+              {doc.assets.images.length === 0 && !imgBusy && (
+                <div className="py-1.5 text-[10px] text-muted italic">
+                  Sin imágenes — usa + para subir una (se guarda en S3)
+                </div>
+              )}
+              {doc.assets.images.map((im) => {
+                const src = (im as { imageLocation?: string }).imageLocation;
+                return (
+                  <div
+                    key={im.id}
+                    className="flex items-center h-[28px] px-1 gap-2 select-none group hover:bg-bg-3"
+                    style={{ borderBottom: '1px solid var(--line-2)', cursor: src ? 'grab' : 'default' }}
+                    draggable={!!src}
+                    onDragStart={src ? (e) => {
+                      e.dataTransfer.setData('text/x-image-src', src);
+                      e.dataTransfer.setData('text/x-image-name', im.name);
+                      e.dataTransfer.effectAllowed = 'copy';
+                    } : undefined}
+                    title={src ? 'Arrastra al lienzo para colocarla' : ''}
+                  >
+                    {src ? (
+                      <img src={src} alt="" className="w-5 h-5 shrink-0 rounded object-cover" style={{ border: '1px solid var(--line-2)' }} />
+                    ) : (
+                      <ImageIcon size={14} className="shrink-0 text-muted" />
+                    )}
+                    <RenamableName
+                      name={im.name}
+                      onRename={(name) => useDocumentStore.getState().renameAssetItem('images', im.id, name)}
+                    />
+                    <button
+                      type="button"
+                      title="Eliminar imagen"
+                      onClick={() => removeImageAsset(im.id)}
+                      className="w-5 h-5 flex items-center justify-center rounded hover:bg-bg-4 text-muted opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-auto"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {editor && (

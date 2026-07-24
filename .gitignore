@@ -88,3 +88,6 @@ infra/terraform/*.auto.tfvars
 infra/terraform/layers/*.zip
 crash.log
 crash.*.log
+
+# Lambda layer artefactos (se regeneran con build.sh)
+04_Backend/layers/**/*.zip

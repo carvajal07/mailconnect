@@ -1,0 +1,13 @@
+# Layer pdf-engine — dependencias del MOTOR DE PDF ESTÁNDAR
+# (Api_V1_Template_Render-engine): ReportLab + Pillow + QR + códigos de barras.
+#
+# El motor (pdf_engine/, ReportLab) dibuja formas/texto/tablas; qrcode y
+# python-barcode generan las imágenes de QR / códigos de barras que ReportLab
+# incrusta (vía PIL.ImageReader). Versiones FIJAS para builds reproducibles.
+#
+# No fijamos las transitivas: pip resuelve wheels manylinux2014 (glibc 2.17)
+# compatibles con el runtime python3.13 de Lambda (Amazon Linux 2023).
+reportlab>=4.0,<5
+Pillow>=10.0
+qrcode>=7.4
+python-barcode>=0.15

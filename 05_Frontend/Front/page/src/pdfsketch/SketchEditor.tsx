@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useUIStore } from '@/store/uiStore';
 import { useDataSourceStore, type SketchDataSource } from '@/store/dataSourceStore';
+import { useUploadStore } from '@/store/uploadStore';
 import AppShell from './app/layout/AppShell';
 import { useTheme } from '../contexts/ThemeContext';
 import './styles/tokens.css';
@@ -17,10 +18,18 @@ import './styles/globals.css';
  *   los tokens `.light` del editor se activan cuando el portal está en claro.
  * - Se monta desde `SketchStudio` (overlay full-screen del nivel MEDIO).
  */
-export default function SketchEditor({ databases }: { databases?: SketchDataSource[] }) {
+export default function SketchEditor({
+  databases,
+  uploadImage,
+}: {
+  databases?: SketchDataSource[];
+  /** Sube una imagen a S3 y devuelve su URL pública (lo inyecta SketchStudio). */
+  uploadImage?: (file: File) => Promise<string | null>;
+}) {
   const theme = useUIStore((s) => s.theme);
   const setTheme = useUIStore((s) => s.setTheme);
   const setSources = useDataSourceStore((s) => s.setSources);
+  const setUploadImage = useUploadStore((s) => s.setUploadImage);
   const { mode } = useTheme();
 
   // Sincroniza el tema del editor con el modo claro/oscuro del portal.
@@ -32,6 +41,12 @@ export default function SketchEditor({ databases }: { databases?: SketchDataSour
   useEffect(() => {
     setSources(databases ?? []);
   }, [databases, setSources]);
+
+  // Inyecta el subidor de imágenes a S3 (o null si no viene) al store del editor.
+  useEffect(() => {
+    setUploadImage(uploadImage ?? null);
+    return () => setUploadImage(null);
+  }, [uploadImage, setUploadImage]);
 
   return (
     <div className={`mc-sketch ${theme === 'light' ? 'light' : 'dark'}`} style={{ height: '100%' }}>

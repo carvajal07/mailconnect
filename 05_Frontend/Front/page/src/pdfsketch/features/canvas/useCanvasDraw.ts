@@ -17,7 +17,10 @@ import type {
   TriangleEl,
 } from '@/types/document';
 
-export type DrawTool = 'rect' | 'circle' | 'triangle' | 'line' | 'pen' | 'text' | 'frame';
+export type DrawTool = 'rect' | 'circle' | 'triangle' | 'line' | 'pen' | 'text' | 'frame' | 'image';
+
+/** Caja (en mm) que dibuja la herramienta de imagen antes de abrir el diálogo. */
+export interface ImageBox { x: number; y: number; w: number; h: number; }
 
 export interface Draft {
   tool: DrawTool;
@@ -30,7 +33,7 @@ export interface Draft {
 }
 
 export function isDrawTool(t: Tool): t is DrawTool {
-  return t === 'rect' || t === 'circle' || t === 'triangle' || t === 'line' || t === 'pen' || t === 'text' || t === 'frame';
+  return t === 'rect' || t === 'circle' || t === 'triangle' || t === 'line' || t === 'pen' || t === 'text' || t === 'frame' || t === 'image';
 }
 
 interface Args {
@@ -40,6 +43,9 @@ interface Args {
   pageId: string;
   /** Siguiente zIndex a asignar. */
   nextZIndex: () => number;
+  /** La herramienta de imagen NO crea un elemento al soltar: reporta la caja
+   *  dibujada para que el llamador abra el diálogo de archivo y encaje la imagen. */
+  onImageBox?: (box: ImageBox) => void;
 }
 
 /**
@@ -47,7 +53,7 @@ interface Args {
  * - Devuelve handlers para conectar al Stage y el `draft` para previsualizar.
  * - Al soltar, hace `addElement` en el store y selecciona el nuevo elemento.
  */
-export function useCanvasDraw({ offsetX, offsetY, zoom, pageId, nextZIndex }: Args) {
+export function useCanvasDraw({ offsetX, offsetY, zoom, pageId, nextZIndex, onImageBox }: Args) {
   const activeTool = useToolStore((s) => s.active);
   const setTool = useToolStore((s) => s.setActive);
   const autoReturn = useToolStore((s) => s.autoReturnToSelect);
@@ -104,14 +110,24 @@ export function useCanvasDraw({ offsetX, offsetY, zoom, pageId, nextZIndex }: Ar
 
   const onMouseUp = useCallback((): boolean => {
     if (!draft) return false;
-    const count = doc.pages.flatMap((p) => p.elements).filter((e) => e.type === draft.tool).length;
-    const name = `${draft.tool}${count + 1}`;
 
+    // Imagen: al soltar NO se crea el elemento; se reporta la caja dibujada para
+    // que el llamador abra el diálogo de archivo (la imagen se encaja en la caja).
+    if (draft.tool === 'image') {
+      const end = draft.constrain ? applyConstrain(draft.startMm, draft.currentMm) : draft.currentMm;
+      const { x, y, w, h } = bboxFromTwoPoints(draft.startMm, end);
+      onImageBox?.({ x, y, w, h });
+      setDraft(null);
+      return true;
+    }
+
+    // El NOMBRE lo asigna el store (addElement → autoNameFor: Texto, Texto_1, …); no
+    // se pasa desde aquí para que sea consistente en español y sin duplicados.
     if (draft.tool === 'frame') {
-      const frame = draftToFrame(draft, nextZIndex(), name);
+      const frame = draftToFrame(draft, nextZIndex());
       if (frame) {
         addElement(pageId, frame);
-        const flowable = draftToFlowable(frame, nextZIndex() + 1, count + 1);
+        const flowable = draftToFlowable(frame, nextZIndex() + 1);
         addElement(pageId, flowable);
         select([frame.id]);
         if (autoReturn) setTool('select');
@@ -120,7 +136,7 @@ export function useCanvasDraw({ offsetX, offsetY, zoom, pageId, nextZIndex }: Ar
       return true;
     }
 
-    const el = draftToElement(draft, nextZIndex(), name);
+    const el = draftToElement(draft, nextZIndex());
     if (el) {
       addElement(pageId, el);
       select([el.id]);
@@ -128,7 +144,7 @@ export function useCanvasDraw({ offsetX, offsetY, zoom, pageId, nextZIndex }: Ar
     }
     setDraft(null);
     return true;
-  }, [draft, doc, pageId, nextZIndex, addElement, select, autoReturn, setTool]);
+  }, [draft, doc, pageId, nextZIndex, addElement, select, autoReturn, setTool, onImageBox]);
 
   const cancel = useCallback(() => setDraft(null), []);
 
@@ -168,10 +184,9 @@ function bboxFromTwoPoints(
   };
 }
 
-function draftToElement(d: Draft, zIndex: number, name: string): ElementModel | null {
+function draftToElement(d: Draft, zIndex: number): ElementModel | null {
   const baseCommon = {
     id: nextId('el'),
-    name,
     rotation: 0,
     visible: true,
     locked: false,
@@ -290,12 +305,11 @@ function draftToElement(d: Draft, zIndex: number, name: string): ElementModel | 
   return null;
 }
 
-function draftToFrame(d: Draft, zIndex: number, name: string): FrameEl | null {
+function draftToFrame(d: Draft, zIndex: number): FrameEl | null {
   const { x, y, w, h } = bboxFromTwoPoints(d.startMm, d.currentMm);
   if (w < 2 && h < 2) return null;
   return {
     id: nextId('el'),
-    name,
     type: 'frame',
     x,
     y,
@@ -313,11 +327,10 @@ function draftToFrame(d: Draft, zIndex: number, name: string): FrameEl | null {
   };
 }
 
-function draftToFlowable(frame: FrameEl, zIndex: number, count: number): FlowableEl {
+function draftToFlowable(frame: FrameEl, zIndex: number): FlowableEl {
   const pad = frame.padding;
   return {
     id: nextId('el'),
-    name: `sub-área${count}`,
     type: 'flowable',
     frameId: frame.id,
     x: frame.x + pad.left,

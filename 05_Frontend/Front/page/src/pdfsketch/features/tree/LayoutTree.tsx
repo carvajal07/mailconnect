@@ -44,6 +44,8 @@ interface TreeNode {
   assetId?: string;
   /** Muestra visual del color (para los items de la lista Colores). */
   swatch?: string;
+  /** URL/fuente de la imagen (para arrastrar imágenes del árbol al lienzo). */
+  imgSrc?: string;
   children?: TreeNode[];
 }
 
@@ -215,11 +217,21 @@ function Node({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
     }
   }, [isRenaming]);
 
+  // Las imágenes (elemento o recurso) se pueden ARRASTRAR al lienzo (HTML5 DnD nativo,
+  // independiente del drag interno del árbol —desactivado— para reordenar).
+  const draggableImg = !!d.imgSrc;
+
   return (
     <div
       ref={dragHandle}
       style={style}
       className="flex items-center h-[22px] text-11 select-none cursor-default hover:bg-bg-3"
+      draggable={draggableImg || undefined}
+      onDragStart={draggableImg ? (e) => {
+        e.dataTransfer.setData('text/x-image-src', d.imgSrc!);
+        e.dataTransfer.setData('text/x-image-name', d.name);
+        e.dataTransfer.effectAllowed = 'copy';
+      } : undefined}
       onClick={() => {
         if (hasChildren && !isRenaming) node.toggle();
       }}
@@ -363,6 +375,7 @@ function buildTree(doc: DocumentModel): TreeNode[] {
     elementType: e.type,
     elementId: e.id,
     pageId,
+    ...(e.type === 'image' ? { imgSrc: (e as { src?: string }).src } : {}),
   });
 
   const group = (id: string, name: string, children: TreeNode[]): TreeNode => ({
@@ -391,8 +404,19 @@ function buildTree(doc: DocumentModel): TreeNode[] {
         elementType: 'image' as const,
         elementId: e.id,
         pageId: p.id,
+        imgSrc: (e as { src?: string }).src,
       })),
   );
+
+  // Imágenes registradas como RECURSO (assets.images): su `imageLocation` es la URL.
+  const imageAssetNodes: TreeNode[] = a.images.map((im): TreeNode => ({
+    id: `img:${im.id}`,
+    name: im.name,
+    kind: 'asset',
+    assetList: 'images',
+    assetId: im.id,
+    imgSrc: (im as { imageLocation?: string }).imageLocation,
+  }));
 
   return [
     group('g:pages', 'Páginas',
@@ -430,7 +454,7 @@ function buildTree(doc: DocumentModel): TreeNode[] {
       assetId: c.id,
       swatch: (c as { rgb?: string }).rgb || '#000000',
     }))),
-    group('g:images', 'Imágenes', [...assetNodes('img', a.images, 'images'), ...imageElements]),
+    group('g:images', 'Imágenes', [...imageAssetNodes, ...imageElements]),
     group('g:tables', 'Tablas', assetNodes('tbl', a.tables, 'tables')),
     group('g:rowSets', 'Filas', assetNodes('rs', a.rowSets, 'rowSets')),
     group('g:cells', 'Celdas', assetNodes('cell', a.cells, 'cells')),
