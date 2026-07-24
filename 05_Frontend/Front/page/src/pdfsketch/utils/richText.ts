@@ -178,9 +178,13 @@ export function layoutSpans(
       markerTok = { ...mt, width: measure(mt) };
     }
 
-    // Sangría de la primera línea vs siguientes
+    // Sangría de la primera línea vs siguientes.
+    // En LISTAS el texto va sangrado por la canaleta (baseIndent) en TODAS las
+    // líneas y el marcador se dibuja DENTRO de esa canaleta, a la izquierda del
+    // texto (antes la 1ª línea usaba solo leftIndent → el marcador caía ENCIMA
+    // del texto cuando leftIndent era 0).
     const baseIndent  = leftIndentPx + listIndentPx;
-    const firstIndent = isList ? leftIndentPx : leftIndentPx + Math.max(0, firstLinePx);
+    const firstIndent = isList ? baseIndent : leftIndentPx + Math.max(0, firstLinePx);
     const hangingNeg  = !isList && firstLinePx < 0 ? Math.max(0, leftIndentPx + firstLinePx) : null;
 
     const lines: Line[] = [];

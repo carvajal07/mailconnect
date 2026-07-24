@@ -22,6 +22,13 @@ export default function LineLikeElement<T extends LineEl | PenEl>({
   const s = MM_TO_PX * zoom;
   const pointsPx = el.points.map((v) => v * s);
   const tension = (el as PenEl).tension ?? 0;
+  // El patrón de guiones se guarda en unidades del documento (mm); Konva lo dibuja
+  // en px del lienzo → hay que escalarlo (si no, [4,4] px se ve casi continuo al
+  // hacer zoom y "parecía una línea recta sin puntear").
+  const dashPx =
+    el.type === 'line' && Array.isArray((el as LineEl).dash) && (el as LineEl).dash!.length > 0
+      ? (el as LineEl).dash!.map((d) => Math.max(1, d * s))
+      : undefined;
 
   return (
     <Line
@@ -34,7 +41,7 @@ export default function LineLikeElement<T extends LineEl | PenEl>({
       stroke={el.stroke}
       strokeWidth={Math.max(1, el.strokeWidth * s)}
       tension={tension}
-      dash={el.type === 'line' ? (el as LineEl).dash : undefined}
+      dash={dashPx}
       visible={el.visible}
       lineCap="butt"
       lineJoin="miter"

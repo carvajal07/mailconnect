@@ -115,8 +115,10 @@ def test_listas_traducen_a_ul_ol(engine):
         _text_el(id='n', x=10, y=50, text='uno\ndos', listStyle='numbered'),
     ]))['templateJson']
     contents = [a['content'] for a in tj['contentAreas']]
-    assert any(c.startswith('<ul>') and '<li>uno</li>' in c for c in contents)
-    assert any(c.startswith('<ol>') and '<li>dos</li>' in c for c in contents)
+    # El tipo/formato de lista viaja como atributo (data-bullet / data-list+data-format)
+    # para que el motor pinte el marcador correcto (viñeta vs número).
+    assert any(c.startswith('<ul data-bullet=') and '<li>uno</li>' in c for c in contents)
+    assert any(c.startswith('<ol data-list="numbered"') and '<li>dos</li>' in c for c in contents)
 
 
 # ── Traductor: formas ─────────────────────────────────────────────────────────

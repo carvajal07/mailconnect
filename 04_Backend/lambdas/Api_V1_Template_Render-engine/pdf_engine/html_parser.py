@@ -83,8 +83,13 @@ class Paragraph:
     runs: list[TextRun] = field(default_factory=list)
     list_item: bool = False
     list_depth: int = 0
-    list_type: str = "none"    # "none" | "bullet" | "numbered"
+    list_type: str = "none"    # "none" | "bullet" | "numbered" | "letter"
     alignment: str = ""        # "" (default/left) | "center" | "right" | "justify"
+    # Marcador de lista (numeradas/letras): índice 1-based dentro de la lista +
+    # carácter de viñeta / formato del número ("0." → "1.", "0)" → "1)").
+    list_index: int = 1
+    bullet_char: str = "•"
+    number_format: str = "0."
 
     def is_empty(self) -> bool:
         return all(
@@ -185,7 +190,8 @@ class _ContentHTMLParser(HTMLParser):
         super().__init__()
         self.paragraphs: list[Paragraph] = [Paragraph()]
         self._style_stack: list[InlineStyle] = [InlineStyle()]
-        self._list_stack: list[str] = []   # "ul" | "ol"
+        # Cada nivel de lista guarda su tipo/formato y el contador de ítems.
+        self._list_stack: list[dict] = []
         self._in_li: bool = False
         # Track spans to suppress content INSIDE var/area/element-tag spans only.
         # Each entry = True if this span is a suppressed special tag, False if normal.
@@ -209,12 +215,17 @@ class _ContentHTMLParser(HTMLParser):
             self._style_stack.pop()
 
     def _new_paragraph(self, list_item: bool = False) -> None:
-        self.paragraphs.append(Paragraph(
+        top = self._list_stack[-1] if self._list_stack else None
+        para = Paragraph(
             list_item=list_item,
             list_depth=len(self._list_stack),
-            list_type="bullet" if self._list_stack and self._list_stack[-1] == "ul"
-                      else "numbered" if self._list_stack else "none",
-        ))
+            list_type=(top["type"] if top else "none"),
+        )
+        if top:
+            para.list_index = top.get("count", 1)
+            para.bullet_char = top.get("bullet", "•")
+            para.number_format = top.get("format", "0.")
+        self.paragraphs.append(para)
 
     def _emit(self, text: str) -> None:
         if not text:
@@ -255,15 +266,21 @@ class _ContentHTMLParser(HTMLParser):
             self._push_style(InlineStyle(strikethrough=True))
 
         elif tag == "ul":
-            self._list_stack.append("ul")
+            self._list_stack.append({
+                "type": "bullet", "bullet": attrs.get("data-bullet", "•"), "count": 0})
             self._push_style(InlineStyle())
 
         elif tag == "ol":
-            self._list_stack.append("ol")
+            # data-list = "numbered" | "letter"; data-format = "0." | "0)" | "(0)"
+            self._list_stack.append({
+                "type": attrs.get("data-list", "numbered"),
+                "format": attrs.get("data-format", "0."), "count": 0})
             self._push_style(InlineStyle())
 
         elif tag == "li":
             self._in_li = True
+            if self._list_stack:
+                self._list_stack[-1]["count"] += 1
             self._new_paragraph(list_item=True)
             self._push_style(InlineStyle())
 
