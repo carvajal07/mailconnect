@@ -51,6 +51,9 @@ PLAN = '--plan' in sys.argv or os.environ.get('DRY_RUN') == '1'
 CONTEXT_TEMPLATE = (
     '{\n'
     '  "body": $input.json(\'$\'),\n'
+    # Header Authorization crudo: las lambdas ADMIN revalidan la FIRMA del JWT
+    # (segunda barrera; el context solo no basta si una ruta queda sin template).
+    '  "authToken": "$util.escapeJavaScript($input.params(\'Authorization\'))",\n'
     '  "requestContext": {\n'
     '    "authorizer": {\n'
     '      "role": "$context.authorizer.role",\n'

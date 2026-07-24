@@ -13,6 +13,7 @@ os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'testing')
 import pytest  # noqa: E402
 import boto3  # noqa: E402
 from moto import mock_aws  # noqa: E402
+from helpers_auth import make_token  # noqa: E402  (fija SECRET_KEY + firma JWT)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DIR = REPO_ROOT / '04_Backend' / 'lambdas'
@@ -42,7 +43,7 @@ def cust():
 
 def _admin(body):
     """Envuelve el body con el context de un Authorizer de rol admin."""
-    return {**body, 'requestContext': {'authorizer': {'role': 'admin'}}}
+    return {**body, 'authToken': make_token(), 'requestContext': {'authorizer': {'role': 'admin'}}}
 
 
 def test_list_ordena_y_default_habilitado(cust):
@@ -62,6 +63,24 @@ def test_list_no_admin_403(cust):
     # Sin rol admin en el context → denegado.
     assert lst.lambda_handler({'requestContext': {'authorizer': {'role': 'client'}}}, None)['statusCode'] == 403
     assert lst.lambda_handler({}, None)['statusCode'] == 403
+
+
+def test_context_admin_sin_token_403_segunda_barrera(cust):
+    # SEGUNDA BARRERA: con SECRET_KEY configurada, el context admin SOLO no basta —
+    # se exige el JWT firmado. Simula una ruta sin mapping template (passthrough del
+    # body) donde un atacante inyecta el context admin: sin token válido → 403.
+    lst, _ = cust
+    forged = {'requestContext': {'authorizer': {'role': 'admin'}}}
+    assert lst.lambda_handler(forged, None)['statusCode'] == 403
+
+
+def test_token_firmado_de_cliente_no_pasa_el_gate_admin(cust):
+    # Un token VÁLIDO pero con role=client no autoriza endpoints admin, aunque el
+    # context (falsificado) diga admin.
+    lst, _ = cust
+    evt = {'authToken': make_token(role='client'),
+           'requestContext': {'authorizer': {'role': 'admin'}}}
+    assert lst.lambda_handler(evt, None)['statusCode'] == 403
 
 
 def test_update_deshabilita(cust):
@@ -227,7 +246,7 @@ def test_delete_falta_id_400(borrar):
 
 def test_delete_no_permite_borrar_propia_empresa(borrar):
     # El admin actúa desde CU1 y trata de borrar CU1 → 400 (evita auto-bloqueo).
-    event = {'customerId': 'CU1', 'requestContext': {'authorizer': {'role': 'admin', 'customerId': 'CU1'}}}
+    event = {'customerId': 'CU1', 'authToken': make_token(), 'requestContext': {'authorizer': {'role': 'admin', 'customerId': 'CU1'}}}
     resp = borrar.lambda_handler(event, None)
     assert resp['statusCode'] == 400
     assert _tbl('customer').get_item(Key={'customerId': 'CU1'}).get('Item') is not None

@@ -24,3 +24,16 @@ def test_context_template_reenvia_todos_los_claims():
         assert '$context.authorizer.{}'.format(claim) in src, (
             'El mapping template (CONTEXT_TEMPLATE) no reenvía "{}" → las lambdas lo verían '
             'ausente en el context y su gate fallaría (403) o —peor— haría fail-open.'.format(claim))
+
+
+def test_context_template_inyecta_el_token_para_la_segunda_barrera():
+    # Las lambdas ADMIN revalidan la FIRMA del JWT (segunda barrera del gate admin).
+    # En integración no-proxy el header Authorization no llega solo: el template debe
+    # inyectarlo como `authToken`. Sin esto, con SECRET_KEY configurada, todo el panel
+    # admin respondería 403 (fail-closed).
+    # En el fuente Python las comillas del VTL van escapadas (\'Authorization\'),
+    # por eso se buscan las piezas por separado.
+    src = SYNC_API.read_text(encoding='utf-8')
+    assert '"authToken"' in src and '$input.params' in src and 'Authorization' in src, (
+        'El mapping template no inyecta el header Authorization como authToken → las '
+        'lambdas admin no pueden revalidar la firma del JWT (segunda barrera).')
