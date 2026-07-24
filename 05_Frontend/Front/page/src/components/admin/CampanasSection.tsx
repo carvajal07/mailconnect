@@ -150,10 +150,13 @@ export const CampanasSection = () => {
   const [attachmentPath, setAttachmentPath] = useState('');
   const [attachmentName, setAttachmentName] = useState('');
   const [attachmentUploading, setAttachmentUploading] = useState(false);
-  // EAP-PDF: clave de la plantilla elegida y su HTML. El HTML se guarda SOLO en memoria al
-  // seleccionar (no se sube a S3); la subida se hace al CREAR la campaña (handleSubmit).
+  // EAP-PDF: clave de la plantilla elegida y su CONTENIDO. El contenido puede ser HTML
+  // (editor básico) o el JSON del lienzo (Estudio `sketchJson` / Diseñador `templateJson`);
+  // se guarda SOLO en memoria al seleccionar y se sube a S3 al CREAR la campaña. `pdfTemplateKind`
+  // distingue el formato para subirlo con la extensión/tipo correctos (el combinador lo detecta).
   const [pdfTemplateName, setPdfTemplateName] = useState('');
   const [pdfTemplateHtml, setPdfTemplateHtml] = useState('');
+  const [pdfTemplateKind, setPdfTemplateKind] = useState<'html' | 'json'>('html');
 
   const loadCampaigns = refreshCampaigns;
 
@@ -188,6 +191,7 @@ export const CampanasSection = () => {
     setAttachmentName('');
     setPdfTemplateName('');
     setPdfTemplateHtml('');
+    setPdfTemplateKind('html');
   };
 
   const handleOpenDialog = () => {
@@ -353,26 +357,39 @@ export const CampanasSection = () => {
    */
   const selectPdfTemplate = (key: string) => {
     setPdfTemplateName(key);
-    // Cambiar de plantilla invalida cualquier HTML/ruta ya resuelto.
+    // Cambiar de plantilla invalida cualquier contenido/ruta ya resuelto.
     setAttachmentPath('');
-    if (!key) { setPdfTemplateHtml(''); setAttachmentName(''); return; }
-    let html = '';
+    if (!key) { setPdfTemplateHtml(''); setPdfTemplateKind('html'); setAttachmentName(''); return; }
+    let content = '';
+    let kind: 'html' | 'json' = 'html';
     let label = 'plantilla';
     if (key.startsWith('c:')) {
       const tpl = msgTemplates.find((t) => t.messageTemplateId === key.slice(2));
-      html = tpl?.html ?? '';
       label = tpl?.name ?? 'plantilla';
+      // Preferir el HTML (editor básico); si no, el JSON del lienzo (Estudio/Diseñador).
+      // Estas plantillas antes fallaban ("no se encontró") porque solo se leía `html`.
+      if (tpl?.html && tpl.html.trim()) {
+        content = tpl.html; kind = 'html';
+      } else if (tpl?.sketchJson && String(tpl.sketchJson).trim()) {
+        content = typeof tpl.sketchJson === 'string' ? tpl.sketchJson : JSON.stringify(tpl.sketchJson);
+        kind = 'json';
+      } else if (tpl?.templateJson && String(tpl.templateJson).trim()) {
+        content = typeof tpl.templateJson === 'string' ? tpl.templateJson : JSON.stringify(tpl.templateJson);
+        kind = 'json';
+      }
     } else if (key.startsWith('l:')) {
       label = key.slice(2);
-      html = readPdfDrafts()[label] ?? '';
+      content = readPdfDrafts()[label] ?? '';
+      kind = 'html';
     }
-    if (!html) {
+    if (!content) {
       notify('No se encontró la plantilla PDF seleccionada.', 'error');
-      setPdfTemplateName(''); setPdfTemplateHtml(''); setAttachmentName('');
+      setPdfTemplateName(''); setPdfTemplateHtml(''); setPdfTemplateKind('html'); setAttachmentName('');
       return;
     }
-    setPdfTemplateHtml(html);
-    setAttachmentName(`${label} (plantilla PDF)`);
+    setPdfTemplateHtml(content);
+    setPdfTemplateKind(kind);
+    setAttachmentName(`${label} (plantilla PDF${kind === 'json' ? ' · lienzo' : ''})`);
   };
 
   /** Sube a S3 el HTML de la plantilla PDF seleccionada y devuelve su ruta (o null si falla).
@@ -380,10 +397,13 @@ export const CampanasSection = () => {
   const uploadPdfTemplateHtml = async (): Promise<string | null> => {
     if (!pdfTemplateHtml) return null;
     if (!customer) { notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning'); return null; }
-    const label = (attachmentName || 'plantilla').replace(/\s*\(plantilla PDF\)\s*$/, '');
+    const label = (attachmentName || 'plantilla').replace(/\s*\(plantilla PDF[^)]*\)\s*$/, '');
     const safe = label.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'plantilla';
-    const fileName = `plantilla-pdf-${safe}-${Date.now()}.html`;
-    const file = new File([pdfTemplateHtml], fileName, { type: 'text/html' });
+    // El JSON del lienzo se sube como .json (el combinador lo detecta y usa el motor
+    // ReportLab); el HTML del editor básico sigue como .html (xhtml2pdf).
+    const isJson = pdfTemplateKind === 'json';
+    const fileName = `plantilla-pdf-${safe}-${Date.now()}.${isJson ? 'json' : 'html'}`;
+    const file = new File([pdfTemplateHtml], fileName, { type: isJson ? 'application/json' : 'text/html' });
     setAttachmentUploading(true);
     const presign = await campaignsService.presignUrl({ customer, nit: getUser()?.nit ?? '', documentName: fileName, documentType: 'attachment' });
     if (!isOk(presign) || !presign.data?.url || !presign.data?.path) {

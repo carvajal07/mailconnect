@@ -1,0 +1,661 @@
+"""
+sketch_translator.py — Traductor del JSON de pdfsketch (nivel MEDIO del portal)
+al `templateJson` estándar que consume el motor (`pdf_engine`).
+
+Entrada aceptada (las dos formas):
+  - Envelope versionado:  { "schema": "pdfsketch@1", "document": { ...DocumentModel... } }
+  - DocumentModel directo (dict con "pages")
+
+El DocumentModel es el modelo del editor pdfsketch (ver `src/types/document.ts`
+del editor): páginas con elementos `text | rect | circle | line | pen | image |
+table | qr | dataField | frame | flowable`, en la unidad del documento
+(`doc.unit` ∈ mm | pt | px; default mm).
+
+Salida: `templateJson` (mm, esquema del motor) listo para `normalize()` +
+`render_pdf()`.
+
+Mapeo y limitaciones (v1):
+  - text sin variables  → elemento `text` (alineación y estilo inline).
+  - text CON variables (spans con `binding` o `{{ruta}}` en el texto) y
+    dataField → `contentarea` con `<span class="var-tag" data-var="ruta">`
+    (el motor resuelve rutas con punto: `persona.nombre`). La alineación viaja
+    en `<p style="text-align:…">` (el motor la aplica; antes salía a la izq.).
+  - rect → shape rectangle · circle → shape ellipse · frame → shape rectangle.
+  - line → rectángulo DELGADO centrado en el segmento y ROTADO su ángulo (las
+    diagonales se ven como línea, no como bloque); pen (trazo libre) y
+    flowable se OMITEN.
+  - image → `image` con `source.kind='url'` (URLs http(s), p. ej. el prefijo
+    público `resources/` del bucket del cliente). Los `data:` URI se omiten.
+  - table → modelo simple del motor (header/body/dataSource/alternateRowFill)
+    + estilos POR CELDA (align/bold/color/background). `repeatBy` (variable con
+    lista de filas) → `dataSource`. Las variables `{{...}}` dentro de celdas
+    literales NO se resuelven (limitación del motor).
+  - qr → `qr`; otros códigos (CODE128, EAN13…) → `barcode` con su `symbology`.
+    `variable` definido → `valueSource='variable'`.
+  - rotation se aplica en TODOS los tipos (el motor rota shapes/imágenes por su
+    cuenta y el resto —texto, contentarea, tabla, QR— en el despachador).
+  - grosores de trazo/borde: el editor los captura en mm (ShapeProps/LineProps)
+    y el motor espera mm → se convierten con la unidad del documento, SIN
+    tratarlos como pt (antes salían ~2.8× más delgados que en el lienzo).
+
+Los elementos no soportados se registran en `result["warnings"]` para que el
+front pueda avisar, sin romper el render del resto del documento.
+"""
+from __future__ import annotations
+
+import math
+import re
+
+MM_PER_PT = 25.4 / 72.0
+MM_PER_PX = 25.4 / 96.0
+
+_VAR_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+
+_BARCODE_SYMBOLOGY = {
+    "CODE128": "CODE128",
+    "CODE39": "CODE39",
+    "EAN13": "EAN13",
+    "EAN8": "EAN8",
+    "ITF14": "ITF14",
+    "UPC": "UPCA",
+}
+
+_ALIGN_MAP = {
+    "left": "left",
+    "center": "center",
+    "right": "right",
+    "justify-left": "justify",
+    "justify-center": "justify",
+    "justify-right": "justify",
+    "justify-block": "justify",
+}
+
+
+def translate_sketch(payload: dict) -> dict:
+    """Punto de entrada. Devuelve {"templateJson": dict, "warnings": [str]}."""
+    doc = payload.get("document") if isinstance(payload.get("document"), dict) else payload
+    if not isinstance(doc, dict) or not isinstance(doc.get("pages"), list):
+        raise ValueError("El JSON de pdfsketch no tiene 'pages' (¿es un DocumentModel?).")
+
+    unit = str(doc.get("unit") or "mm").lower()
+    tr = _Translator(unit)
+    for page in doc.get("pages", []):
+        tr.add_page(page)
+
+    return {"templateJson": tr.build(doc), "warnings": tr.warnings}
+
+
+class _Translator:
+    def __init__(self, unit: str):
+        self.unit = unit
+        self.pages: list[dict] = []
+        self.content_areas: list[dict] = []
+        self.text_styles: list[dict] = []
+        self._style_cache: dict[tuple, str] = {}
+        self.warnings: list[str] = []
+        self._seq = 0
+
+    # ── unidades ─────────────────────────────────────────────────────────────
+    def mm(self, value, unit: str | None = None) -> float:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        u = (unit or self.unit or "mm").lower()
+        if u == "pt":
+            return v * MM_PER_PT
+        if u == "px":
+            return v * MM_PER_PX
+        return v
+
+    def _id(self, prefix: str) -> str:
+        self._seq += 1
+        return "{}_{}".format(prefix, self._seq)
+
+    # ── estilos ──────────────────────────────────────────────────────────────
+    def text_style_id(self, font_family, font_size_pt, color, bold, italic,
+                      underline=False, strikethrough=False, letter_spacing=0,
+                      line_height=None, text_transform="none") -> str:
+        key = (font_family or "Helvetica", float(font_size_pt or 12),
+               color or "#111111", bool(bold), bool(italic),
+               bool(underline), bool(strikethrough), float(letter_spacing or 0),
+               float(line_height or 1.35), text_transform or "none")
+        if key in self._style_cache:
+            return self._style_cache[key]
+        ts_id = self._id("ts")
+        self.text_styles.append({
+            "id": ts_id, "name": ts_id,
+            "fontFamily": key[0], "fontWeight": "Bold" if key[3] else "Regular",
+            "fontSize": key[1], "color": key[2],
+            "italic": key[4], "underline": key[5], "strikethrough": key[6],
+            "letterSpacing": key[7], "lineHeight": key[8], "textTransform": key[9],
+        })
+        self._style_cache[key] = ts_id
+        return ts_id
+
+    # ── páginas ──────────────────────────────────────────────────────────────
+    def add_page(self, page: dict) -> None:
+        size = page.get("size") or {}
+        page_unit = str(size.get("unit") or self.unit).lower()
+        margins = page.get("margin") or {}
+        elements = []
+        for el in page.get("elements") or []:
+            out = self.translate_element(el)
+            # translate_element puede devolver VARIOS elementos (p. ej. una línea
+            # discontinua → un rect por cada segmento del guion).
+            if isinstance(out, list):
+                elements.extend(out)
+            elif out:
+                elements.append(out)
+
+        self.pages.append({
+            "id": page.get("id") or self._id("pg"),
+            "name": page.get("name") or "Página",
+            "visible": page.get("visible", True),
+            "size": {
+                "width": self.mm(size.get("width", 210), page_unit),
+                "height": self.mm(size.get("height", 297), page_unit),
+                "unit": "mm",
+            },
+            "margins": {k: self.mm(margins.get(k, 0)) for k in ("top", "right", "bottom", "left")},
+            "background": ({"type": "solid", "color": page.get("background")}
+                           if _is_color(page.get("background")) else {"type": "none"}),
+            "elements": elements,
+        })
+
+    # ── elementos ────────────────────────────────────────────────────────────
+    def translate_element(self, el: dict) -> dict | None:
+        el_type = el.get("type")
+        base = {
+            "id": el.get("id") or self._id("el"),
+            "x": self.mm(el.get("x")), "y": self.mm(el.get("y")),
+            "width": self.mm(el.get("width")), "height": self.mm(el.get("height")),
+            "rotation": el.get("rotation") or 0,
+            "visible": el.get("visible", True),
+            "condition": None,
+        }
+
+        if el_type == "text":
+            return self._text(el, base)
+        if el_type == "dataField":
+            return self._data_field(el, base)
+        if el_type == "rect" or el_type == "frame":
+            return self._rect(el, base)
+        if el_type == "circle":
+            return self._circle(el, base)
+        if el_type == "triangle":
+            return self._triangle(el, base)
+        if el_type == "line":
+            return self._line(el, base)
+        if el_type == "image":
+            return self._image(el, base)
+        if el_type == "table":
+            return self._table(el, base)
+        if el_type == "qr":
+            return self._barcode(el, base)
+
+        self.warnings.append(
+            "Elemento '{}' ({}) no soportado por el motor; se omitió.".format(
+                el.get("name") or el.get("id"), el_type))
+        return None
+
+    def _has_vars(self, el: dict) -> bool:
+        if any(s.get("binding") for s in el.get("spans") or []):
+            return True
+        return bool(_VAR_RE.search(el.get("text") or ""))
+
+    def _style_args(self, el: dict) -> tuple:
+        """(bold, italic, underline, strike, letterSpacing, lineHeight, transform) del elemento."""
+        bold = (el.get("fontWeight") or 400) >= 600
+        italic = el.get("fontStyle") == "italic"
+        deco = el.get("textDecoration") or ""
+        return (bold, italic, deco == "underline", deco == "line-through",
+                el.get("letterSpacing") or 0, el.get("lineHeight") or 1.35,
+                el.get("textTransform") or "none")
+
+    def _is_rich(self, el: dict) -> bool:
+        """True si algún span trae formato propio (el texto plano no basta)."""
+        for s in el.get("spans") or []:
+            if any(s.get(k) for k in ("fontFamily", "fontSize", "fontWeight", "fontStyle",
+                                      "textDecoration", "baselineShift", "letterSpacing", "color")):
+                return True
+        return False
+
+    def _text(self, el: dict, base: dict) -> dict:
+        bold, italic, und, strike, lsp, lh, transform = self._style_args(el)
+        ts_id = self.text_style_id(
+            el.get("fontFamily"), el.get("fontSize"), el.get("color"), bold, italic,
+            underline=und, strikethrough=strike, letter_spacing=lsp,
+            line_height=lh, text_transform=transform)
+        list_style = el.get("listStyle") or "none"
+
+        # Texto plano sin variables, sin spans ricos y sin lista → elemento `text`
+        # (el motor aplica underline/strike/transform/letterSpacing del estilo).
+        if not self._has_vars(el) and not self._is_rich(el) and list_style == "none":
+            base.update({
+                "type": "text",
+                "content": el.get("text") or "",
+                "textStyleId": ts_id,
+                "textStyle": {},
+                "paragraphStyle": {
+                    "alignment": _ALIGN_MAP.get(el.get("align") or "left", "left"),
+                    "paddingTop": 0, "paddingRight": 0, "paddingBottom": 0,
+                    "paddingLeft": self.mm(el.get("leftIndent") or 0),
+                    "firstLineIndent": self.mm(el.get("firstLineIndent") or 0),
+                    "spaceBefore": self.mm(el.get("spaceBefore") or 0),
+                    "spaceAfter": self.mm(el.get("spaceAfter") or 0),
+                },
+            })
+            return base
+
+        # Con variables, spans ricos o listas → contentarea (HTML con estilos por span)
+        html = self._spans_to_html(el)
+        return self._make_contentarea(base, html, ts_id)
+
+    def _align_css(self, el: dict) -> str:
+        """text-align CSS del elemento ('' si es izquierda/default)."""
+        align = _ALIGN_MAP.get(el.get("align") or "left", "left")
+        return align if align != "left" else ""
+
+    def _spans_to_html(self, el: dict) -> str:
+        spans = el.get("spans") or []
+        if spans:
+            parts = []
+            for s in spans:
+                if s.get("binding"):
+                    parts.append(_var_tag(s["binding"]))
+                else:
+                    parts.append(_span_html(s))
+        else:
+            # Sin spans: texto plano con {{ruta}} embebidas
+            text = el.get("text") or ""
+            parts, last = [], 0
+            for m in _VAR_RE.finditer(text):
+                parts.append(_text_to_html(text[last:m.start()]))
+                parts.append(_var_tag(m.group(1)))
+                last = m.end()
+            parts.append(_text_to_html(text[last:]))
+
+        inner = "".join(parts)
+        list_style = el.get("listStyle") or "none"
+        if list_style != "none":
+            # Cada línea (<br>) es un ítem de la lista. Se emite el TIPO y el FORMATO
+            # como atributos para que el motor pinte el marcador correcto (viñeta,
+            # número o letra); antes numeradas/letras caían a <ol> genérico y el
+            # motor no les dibujaba marcador (solo las de viñeta).
+            items = inner.split("<br>")
+            lis = "".join("<li>{}</li>".format(i) for i in items if i.strip())
+            if list_style == "bullet":
+                bullet = _esc(el.get("bulletChar") or "•")
+                return '<ul data-bullet="{b}">{lis}</ul>'.format(b=bullet, lis=lis)
+            fmt = _esc(el.get("numberFormat") or "0.")
+            kind = "letter" if list_style == "letter" else "numbered"
+            return '<ol data-list="{k}" data-format="{f}">{lis}</ol>'.format(k=kind, f=fmt, lis=lis)
+        # Párrafos separados por <br>. La alineación del elemento viaja en el
+        # style del <p> (el motor la parsea; antes se perdía y todo salía a la izq.).
+        align = self._align_css(el)
+        if align:
+            return '<p style="text-align:{}">{}</p>'.format(align, inner)
+        return "<p>{}</p>".format(inner)
+
+    def _data_field(self, el: dict, base: dict) -> dict:
+        ts_id = self.text_style_id(
+            el.get("fontFamily"), el.get("fontSize"), el.get("color"), False, False)
+        html = "<p>{}</p>".format(_var_tag(el.get("binding") or ""))
+        return self._make_contentarea(base, html, ts_id)
+
+    def _make_contentarea(self, base: dict, html: str, ts_id: str) -> dict:
+        area_id = self._id("area")
+        self.content_areas.append({
+            "id": area_id, "type": "simple", "label": area_id,
+            "height": base["height"], "content": html,
+            "elements": [], "children": [], "visible": True, "condition": None,
+            "defaultTextStyleId": ts_id,
+        })
+        base.update({"type": "contentarea", "areaRef": area_id,
+                     "border": None, "fill": None})
+        return base
+
+    def _stroke_mm(self, el: dict) -> float:
+        """Grosor del trazo en mm. El editor lo captura en mm (ShapeProps/LineProps)
+        y Konva lo dibuja en unidades del documento → SOLO se convierte por la unidad
+        del doc. (Antes se trataba como pt: los bordes salían ~2.8× más delgados.)"""
+        return self.mm(el.get("strokeWidth") or 0)
+
+    def _dash_mm(self, el: dict) -> list | None:
+        """Patrón de guiones del borde en mm (el editor lo guarda en mm, como el trazo)."""
+        dash = el.get("dash")
+        if isinstance(dash, list) and len(dash) >= 2:
+            return [self.mm(d) for d in dash]
+        return None
+
+    def _rect(self, el: dict, base: dict) -> dict:
+        base.update({
+            "type": "shape", "shape": "rectangle",
+            "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
+            "border": _border(el.get("stroke"), self._stroke_mm(el),
+                              radius_mm=self.mm(el.get("cornerRadius") or 0),
+                              dash_mm=self._dash_mm(el)),
+        })
+        return base
+
+    def _circle(self, el: dict, base: dict) -> dict:
+        base.update({
+            "type": "shape", "shape": "ellipse",
+            "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
+            "border": _border(el.get("stroke"), self._stroke_mm(el), dash_mm=self._dash_mm(el)),
+        })
+        return base
+
+    def _triangle(self, el: dict, base: dict) -> dict:
+        base.update({
+            "type": "shape", "shape": "triangle",
+            "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
+            "border": _border(el.get("stroke"), self._stroke_mm(el), dash_mm=self._dash_mm(el)),
+        })
+        return base
+
+    def _line(self, el: dict, base: dict):
+        # El motor no dibuja líneas sueltas: se emite un rectángulo DELGADO centrado
+        # en el segmento y ROTADO su ángulo (las diagonales se ven como línea, no
+        # como el bloque del bounding box). `points` = [x1,y1,x2,y2] relativos al
+        # (x,y) del elemento, en unidades del documento (igual que Konva).
+        # Si la línea es DISCONTINUA (`dash`), se emite un rect por cada segmento
+        # del guion (el motor no tiene stroke discontinuo para formas rellenas).
+        stroke_mm = max(self._stroke_mm(el) or 0.25, 0.25)
+        color = el.get("stroke") or "#000000"
+        rot_extra = base.get("rotation") or 0
+        visible = base.get("visible", True)
+        dash = el.get("dash")
+        pts = el.get("points") or []
+        if len(pts) >= 4:
+            ox, oy = self.mm(el.get("x")), self.mm(el.get("y"))
+            x1, y1 = ox + self.mm(pts[0]), oy + self.mm(pts[1])
+            x2, y2 = ox + self.mm(pts[2]), oy + self.mm(pts[3])
+        else:
+            # Sin points (docs viejos): aproximación por el bounding box.
+            x1, y1 = self.mm(el.get("x")), self.mm(el.get("y"))
+            x2, y2 = x1 + self.mm(el.get("width")), y1 + self.mm(el.get("height"))
+        dx, dy = x2 - x1, y2 - y1
+        length = math.hypot(dx, dy)
+        if length < 0.01:
+            base.update({"type": "shape", "shape": "rectangle",
+                         "fill": {"type": "solid", "color": color, "opacity": 1}, "border": None})
+            return base
+        angle = math.degrees(math.atan2(dy, dx)) + rot_extra
+        ux, uy = dx / length, dy / length
+
+        if isinstance(dash, list) and len(dash) >= 2:
+            on_len = max(self.mm(dash[0]), 0.2)
+            off_len = max(self.mm(dash[1]), 0.2)
+            segments, pos, guard = [], 0.0, 0
+            while pos < length and guard < 500:
+                guard += 1
+                seg = min(on_len, length - pos)
+                mid = pos + seg / 2.0
+                segments.append(self._line_rect(
+                    x1 + ux * mid, y1 + uy * mid, seg, stroke_mm, angle, color, visible))
+                pos += on_len + off_len
+            return segments or None
+
+        # Continua: un solo rect centrado en el punto medio, rotado.
+        return self._line_rect(
+            x1 + ux * (length / 2.0), y1 + uy * (length / 2.0),
+            length, stroke_mm, angle, color, visible)
+
+    def _line_rect(self, cx: float, cy: float, length: float, thickness: float,
+                   rotation: float, color: str, visible: bool = True) -> dict:
+        """Un rectángulo relleno DELGADO centrado en (cx,cy), rotado, que representa
+        un tramo de línea (o un guion de una línea discontinua)."""
+        return {
+            "id": self._id("el"),
+            "x": cx - length / 2.0, "y": cy - thickness / 2.0,
+            "width": length, "height": max(thickness, 0.2),
+            "rotation": rotation, "visible": visible, "condition": None,
+            "type": "shape", "shape": "rectangle",
+            "fill": {"type": "solid", "color": color, "opacity": 1},
+            "border": None,
+        }
+
+    def _image(self, el: dict, base: dict) -> dict | None:
+        src = el.get("src") or ""
+        if src.startswith("data:"):
+            self.warnings.append(
+                "Imagen '{}' con data-URI omitida (sube la imagen a S3 y usa su URL)."
+                .format(el.get("name") or el.get("id")))
+            src = ""
+        base.update({
+            "type": "image",
+            "source": {"kind": "url", "url": src} if src else {"kind": "placeholder"},
+            "fit": "contain",
+            "rotation": el.get("rotation") or 0,
+            "border": None,
+        })
+        return base
+
+    def _table(self, el: dict, base: dict) -> dict:
+        columns = []
+        for col in el.get("columns") or []:
+            columns.append({
+                "id": col.get("header") or "col{}".format(len(columns) + 1),
+                "label": col.get("header") or "",
+                "width": col.get("widthPercent") or (100 / max(len(el.get("columns") or []), 1)),
+                "widthUnit": "%",
+            })
+
+        rows = el.get("rows") or []
+        has_header = bool(el.get("hasHeader"))
+        has_footer = bool(el.get("hasFooter"))
+        header_rows, footer_rows, body_rows = [], [], rows
+        if has_header and body_rows:
+            header_rows, body_rows = [body_rows[0]], body_rows[1:]
+        if has_footer and body_rows:
+            footer_rows, body_rows = [body_rows[-1]], body_rows[:-1]
+
+        row_font = el.get("rowFontSize") or 10
+
+        def to_row(cells):
+            # Los estilos POR CELDA del editor (align/bold/color/background) viajan
+            # al motor (antes se descartaban y solo llegaba el texto).
+            out = []
+            for c in cells:
+                c = c or {}
+                cell = {"content": c.get("text", "")}
+                for key in ("align", "bold", "color", "background"):
+                    if c.get(key):
+                        cell[key] = c[key]
+                out.append(cell)
+            return {"cells": out}
+
+        # El grosor del borde de la tabla viene en mm (editor) → a pt para el motor
+        # (el table_renderer pasa la anchura directo a ReportLab, que usa puntos).
+        border_w_mm = _num(el.get("borderWidth"), 0.0)
+        border_w_pt = round(border_w_mm / MM_PER_PT, 3) if border_w_mm else 0.0
+        border_c = el.get("borderColor") or "#94a3b8"
+        border_cfg = {"mode": "unified",
+                      "unified": {"enabled": border_w_mm > 0, "width": border_w_pt, "color": border_c}}
+
+        header_bg = el.get("headerBackground") or None
+        footer_bg = el.get("footerBackground") or None
+
+        base.update({
+            "type": "table",
+            "columns": columns,
+            "header": {"enabled": has_header, "rows": [to_row(r) for r in header_rows],
+                       "background": header_bg, "textColor": _contrast_text(header_bg),
+                       "fontSize": row_font},
+            "body": {"rows": [to_row(r) for r in body_rows] if not el.get("repeatBy") else [],
+                     "fontSize": row_font},
+            "footer": {"enabled": has_footer, "rows": [to_row(r) for r in footer_rows],
+                       "background": footer_bg, "textColor": _contrast_text(footer_bg),
+                       "fontSize": row_font},
+            "dataSource": el.get("repeatBy") or None,
+            "tableBorder": border_cfg,
+            "cellBorder": border_cfg,
+            "alternateRowFill": ({"type": "solid", "color": el.get("alternateBackground") or "#f9fafb"}
+                                 if el.get("alternateRows") else None),
+            "border": None,
+        })
+        if any(_VAR_RE.search((c or {}).get("text") or "") for r in rows for c in r):
+            self.warnings.append(
+                "La tabla '{}' tiene variables {{...}} en celdas literales; el motor solo "
+                "resuelve variables en tablas con 'repeatBy' (dataSource).".format(
+                    el.get("name") or el.get("id")))
+        return base
+
+    def _barcode(self, el: dict, base: dict) -> dict:
+        b_type = (el.get("barcodeType") or "QR").upper()
+        value = el.get("variable") or el.get("data") or ""
+        common = {
+            "valueSource": "variable" if el.get("variable") else "static",
+            "value": value,
+            "foreground": "#000000", "background": "#ffffff",
+        }
+        if b_type == "QR":
+            base.update({"type": "qr",
+                         "errorCorrection": el.get("errorLevel") or "M", **common})
+        else:
+            base.update({"type": "barcode",
+                         "symbology": _BARCODE_SYMBOLOGY.get(b_type, "CODE128"),
+                         "showText": el.get("showText", True), **common})
+        return base
+
+    # ── ensamblado ───────────────────────────────────────────────────────────
+    def build(self, doc: dict) -> dict:
+        if not any(ts["id"] == "ts_default" for ts in self.text_styles):
+            self.text_styles.insert(0, {
+                "id": "ts_default", "name": "Default",
+                "fontFamily": "Helvetica", "fontWeight": "Regular", "fontSize": 12,
+                "color": "#111111", "italic": False, "underline": False,
+                "strikethrough": False, "letterSpacing": 0, "lineHeight": 1.35,
+                "textTransform": "none",
+            })
+        return {
+            "version": "1.0",
+            "id": doc.get("id") or "sketch",
+            "name": doc.get("name") or "Documento pdfsketch",
+            "pages": self.pages,
+            "contentAreas": self.content_areas,
+            "styles": {
+                "text": self.text_styles,
+                "paragraph": [{
+                    "id": "ps_default", "name": "Default", "alignment": "left",
+                    "verticalAlign": "top", "lineHeight": 1.35,
+                }],
+                "border": [], "fill": [], "cell": [], "line": [],
+            },
+            "colors": [], "images": [], "fonts": [],
+            "outputChannels": ["pdf"],
+        }
+
+
+# ── helpers de módulo ─────────────────────────────────────────────────────────
+
+def _is_color(value) -> bool:
+    return isinstance(value, str) and value.startswith("#")
+
+
+def _num(value, default=0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _contrast_text(bg) -> str | None:
+    """Texto blanco sobre fondos oscuros, gris oscuro sobre claros. None si no hay fondo."""
+    if not _is_color(bg) or len(bg) < 7:
+        return None
+    try:
+        r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+    except ValueError:
+        return None
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b)
+    return "#ffffff" if luminance < 140 else "#111827"
+
+
+def _esc(text: str) -> str:
+    return (str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _text_to_html(text: str) -> str:
+    return _esc(text).replace("\n", "<br>")
+
+
+def _var_tag(path: str) -> str:
+    path = str(path).strip()
+    return '<span class="var-tag" data-var="{}">{{{{{}}}}}</span>'.format(_esc(path), _esc(path))
+
+
+def _fill(color, opacity=None, gradient=None) -> dict | None:
+    op = 1.0
+    try:
+        if opacity is not None:
+            op = max(0.0, min(1.0, float(opacity)))
+    except (TypeError, ValueError):
+        op = 1.0
+    if isinstance(gradient, dict) and gradient.get("stops"):
+        return {"type": "gradient", "opacity": op, "gradient": {
+            "type": "radial" if gradient.get("kind") == "radial" else "linear",
+            "angle": gradient.get("angle", 180),
+            "cx": gradient.get("cx", 50), "cy": gradient.get("cy", 50),
+            "stops": [
+                {"offset": s.get("offset", 0), "color": s.get("color", "#000000"),
+                 "opacity": s.get("opacity", 1)}
+                for s in gradient.get("stops", [])
+            ],
+        }}
+    if not _is_color(color):
+        return None
+    return {"type": "solid", "color": color, "opacity": op}
+
+
+def _span_html(s: dict) -> str:
+    """Un TextSpan literal → HTML con sus estilos inline (los que el motor parsea)."""
+    text = _text_to_html(s.get("text") or "")
+    css = []
+    if s.get("color"):
+        css.append("color:{}".format(s["color"]))
+    if s.get("fontSize"):
+        css.append("font-size:{}pt".format(s["fontSize"]))
+    if s.get("fontFamily"):
+        # Familia por fragmento (el motor la resuelve con sus alias/builtin).
+        css.append("font-family:{}".format(s["fontFamily"]))
+    if (s.get("fontWeight") or 0) >= 600:
+        css.append("font-weight:bold")
+    if s.get("fontStyle") == "italic":
+        css.append("font-style:italic")
+    deco = s.get("textDecoration")
+    if deco == "underline":
+        css.append("text-decoration:underline")
+    elif deco == "line-through":
+        css.append("text-decoration:line-through")
+    shift = s.get("baselineShift")
+    if shift in ("super", "sub"):
+        css.append("vertical-align:{}".format(shift))
+    if not css:
+        return text
+    return '<span style="{}">{}</span>'.format(";".join(css), text)
+
+
+def _border(color, width_mm, radius_mm: float = 0, dash_mm: list | None = None) -> dict | None:
+    try:
+        w = float(width_mm or 0)
+    except (TypeError, ValueError):
+        w = 0
+    if w <= 0 or not _is_color(color):
+        return None
+    # El motor (border_renderer) interpreta el ancho en mm y el editor TAMBIÉN lo
+    # captura en mm → pasa directo. (Antes se multiplicaba por MM_PER_PT como si
+    # fuera pt: un borde de 1 mm salía de 0.35 mm, ~2.8× más delgado que el lienzo.)
+    unified = {"enabled": True, "width": round(w, 3), "style": "solid", "color": color}
+    # Borde discontinuo (viñeta/puntos): el motor aplica setDash con el patrón en mm.
+    if dash_mm:
+        unified["dash"] = [round(d, 3) for d in dash_mm]
+        unified["style"] = "dashed"
+    return {
+        "mode": "unified",
+        "unified": unified,
+        "sides": {},
+        "radius": {"mode": "unified", "unified": radius_mm},
+    }
