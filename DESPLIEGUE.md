@@ -245,6 +245,10 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
   + el **trigger** cola→lambda. IAM: DynamoDB `Scan document`, `Scan`/`PutItem` sobre `{tenant}_processDetail`;
   S3 `GetObject` (plantilla) + `PutObject` (`attachment/{campaña}/{nombre}.pdf`) sobre el bucket del cliente;
   **`sqs:SendMessage`** a `Email_Send-batch-raw-EAP`. Env `URL_SQS_EAP` (opc; default apunta a esa cola).
+  ⚠️ **Ago 2026:** el combinador ahora renderiza también las plantillas del **Estudio/Diseñador** (JSON de
+  lienzo) con el **motor `pdf_engine` vendorizado** → su **layer debe sumar** `reportlab`, `Pillow`, `qrcode`,
+  `python-barcode`, `beautifulsoup4`, `lxml` (además de `xhtml2pdf`); el paquete incluye `pdf_engine/`,
+  `sketch_translator.py` y `fonts/` (el CD sube la carpeta completa).
 - [ ] `[J]` **Redesplegar `Api_V1_Email_Send-batch-template-EAP`**: ahora usa `.pdf` (subtype
   `application/pdf`) cuando el mensaje trae `documentFormat=PDF`. La ruta DOCX no cambia — no requiere
   permisos nuevos.
@@ -303,8 +307,8 @@ integración **no-proxy** + **CORS** + el mapping template de §1.
 > **Bug crítico corregido:** `Register` reutilizaba el `customerId` si el NIT ya existía → cualquiera que
 > supiera el NIT (semi-público) se registraba y quedaba dentro del tenant de otra empresa como owner.
 
-- [ ] `[J]` **Redesplegar `Api_V1_Security_Register`**: ahora **rechaza (409)** el registro bajo un NIT ya
-  existente. Sin permisos nuevos. (Es el fix crítico — priorizar.)
+- [x] `[J]` **Redesplegar `Api_V1_Security_Register`** ✅ (desplegado ago 2026): **rechaza (409)** el
+  registro bajo un NIT ya existente. Sin permisos nuevos.
 - [ ] `[J]` Desplegar `Api_V1_User_Create`, `Api_V1_User_List`, `Api_V1_User_Delete` (crear vacías) + rutas
   `/User/{Create,List,Delete}` (authorizer + CORS + **mapping template con `customerId`/`nit`/`userId`/
   `tenantRole`** — el owner-check usa `tenantRole`). **NO son admin** (las usa el owner del tenant). IAM:

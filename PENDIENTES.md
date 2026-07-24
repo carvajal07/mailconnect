@@ -64,9 +64,8 @@ bloque son los pasos `[J]` de despliegue.
 
 ## BLOQUE 1 — Seguridad (lo que sigue abierto)
 
-1. [ ] `[J]` **URGENTE — Redesplegar `Api_V1_Security_Register`** con el fix del 409 por
-       NIT (`DESPLIEGUE.md` §3e). Mientras no se despliegue, cualquiera que conozca el
-       NIT de una empresa entra a su tenant como owner.
+1. [x] `[J]` ✅ **`Api_V1_Security_Register`** desplegado (ago 2026): rechaza (409) el
+       registro bajo un NIT ya existente. Cerrado.
 2. [ ] `[J]` **Rate limiting/WAF** en los endpoints públicos: `/Assistant/Ask` (costo
        Bedrock ilimitado + jailbreak), `/Security/Register` y `/Security/Create-otp`
        (email bombing vía SES). Usage plan + regla rate-based + alarma de gasto Bedrock.
@@ -114,20 +113,20 @@ El front está terminado y el backend probado; solo falta la consola AWS
 
 ## BLOQUE 3 — Plantillas PDF avanzadas (Estudio): cerrar el ciclo
 
-1. [ ] `[C]` **Usarlas en campañas (CRÍTICO del flujo)**: hoy el selector EAP-PDF las
-       lista pero solo lee `html` → elegir una del Estudio falla ("No se encontró la
-       plantilla"). El pipeline de envío tampoco sabe renderizar `sketchJson`.
-       Plan: el combinador EAP-PDF detecta `messageTemplateId` con `sketchJson`/
-       `templateJson` y renderiza con el motor (traductor + pdf_engine) por
-       destinatario, pasando la fila del CSV como `data`. Mientras tanto: filtrar del
-       selector las plantillas sin `html` y ajustar el texto del editor ("guarda para
-       usarla en campañas" aún no aplica).
+1. [x] `[C]` ✅ **Usarlas en campañas (ago 2026)**: el selector EAP-PDF ya acepta las
+       plantillas del Estudio (`sketchJson`) y del Diseñador (`templateJson`) — sube el
+       JSON a S3 y el combinador `Combination-EAP-PDF` (con el motor `pdf_engine`
+       vendorizado) lo detecta, lo traduce y renderiza el PDF **por destinatario**
+       pasando la fila del CSV como `data` → las variables (`data-var`/`{{campo}}`) se
+       resuelven. El HTML del editor básico sigue por xhtml2pdf. ⚠️ `[J]`: el layer del
+       combinador debe sumar el motor (`reportlab`, `Pillow`, `qrcode`,
+       `python-barcode`, `beautifulsoup4`, `lxml`) además de `xhtml2pdf`.
 2. [ ] `[C]` **Vista previa con datos de muestra**: `SketchStudio.handlePreview` no envía
        `data` → las `{{variables}}` salen vacías y las tablas `repeatBy` sin filas.
        Usar las `previewRows` de la base seleccionada (ya están en `dataSourceStore`).
-3. [ ] `[C]` Restos del traductor: `dash` (líneas/bordes punteados), `pen` y `flowable`
-       (omitidos con warning), opacidad/crop de imágenes, `fallback` del dataField,
-       interletra por fragmento en contentarea, fondos de página no sólidos.
+3. [ ] `[C]` Restos del traductor: `pen` y `flowable` (omitidos con warning),
+       opacidad/crop de imágenes, `fallback` del dataField, interletra por fragmento en
+       contentarea, fondos de página no sólidos. (Líneas/bordes punteados: ✅ hechos.)
 4. [ ] `[J]` Fuentes reales para cursivas de Inter (subir `Inter-Italic.ttf`/
        `Inter-BoldItalic.ttf` a `fonts/`) si se quiere cursiva fiel (hoy cae a
        Helvetica-Oblique).
