@@ -77,6 +77,7 @@ def render_table(
         row_idx += 1
 
     # Footer
+    footer_start = row_idx
     if footer_cfg.get("enabled", False):
         footer_rows = _build_footer_rows(footer_cfg, columns, registry)
         for fr in footer_rows:
@@ -104,6 +105,16 @@ def render_table(
             if k % 2 == 1:  # 2ª, 4ª… fila del cuerpo
                 r = body_start + k
                 style_cmds.append(("BACKGROUND", (0, r), (-1, r), alt_color))
+
+    # Fondos POR CELDA (estilos del editor en filas explícitas): van al final para
+    # que pisen los fondos de banda/cebra. Solo aplican a filas explícitas (las de
+    # dataSource no traen dicts de celda).
+    if header_cfg.get("enabled", True):
+        style_cmds += _cell_background_cmds(header_cfg.get("rows", []), 0, registry)
+    if not element.get("dataSource"):
+        style_cmds += _cell_background_cmds(body_cfg.get("rows", []), body_start, registry)
+    if footer_cfg.get("enabled", False):
+        style_cmds += _cell_background_cmds(footer_cfg.get("rows", []), footer_start, registry)
 
     tbl = Table(all_rows, colWidths=col_widths, repeatRows=1 if header_cfg.get("enabled") else 0)
     tbl.setStyle(TableStyle(style_cmds))
@@ -192,7 +203,16 @@ def _cells_from_row(row: dict | list, registry: StyleRegistry,
             result.append(RLParagraph(_esc(cell), style))
         elif isinstance(cell, dict):
             content = cell.get("content", cell.get("value", ""))
-            result.append(RLParagraph(_esc(str(content)), style))
+            cell_style = style
+            # Estilos POR CELDA del editor (align/bold/color) pisan los de la banda.
+            if cell.get("align") or cell.get("bold") or cell.get("color"):
+                cell_style = _cell_style(
+                    registry,
+                    bold=bold or bool(cell.get("bold")),
+                    color=cell.get("color") or color,
+                    font_size=font_size,
+                    align=cell.get("align"))
+            result.append(RLParagraph(_esc(str(content)), cell_style))
         else:
             result.append(RLParagraph("", style))
     return result
@@ -287,8 +307,22 @@ def _border_style_cmds(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _cell_background_cmds(rows_cfg: list, start_row: int, registry: StyleRegistry) -> list:
+    """Comandos BACKGROUND para celdas con fondo propio (campo `background` de la celda)."""
+    cmds = []
+    for r_off, row in enumerate(rows_cfg or []):
+        cells = row.get("cells", []) if isinstance(row, dict) else []
+        for c_idx, cell in enumerate(cells):
+            bg = cell.get("background") if isinstance(cell, dict) else None
+            if isinstance(bg, str) and bg.startswith("#"):
+                pos = (c_idx, start_row + r_off)
+                cmds.append(("BACKGROUND", pos, pos, registry.rl_color(bg)))
+    return cmds
+
+
 def _cell_style(registry: StyleRegistry, bold: bool = False,
-                color: str | None = None, font_size: float = 8) -> RLParagraphStyle:
+                color: str | None = None, font_size: float = 8,
+                align: str | None = None) -> RLParagraphStyle:
     kwargs = dict(
         name="cell_bold" if bold else "cell",
         fontName="Helvetica-Bold" if bold else "Helvetica",
@@ -298,6 +332,8 @@ def _cell_style(registry: StyleRegistry, bold: bool = False,
     )
     if isinstance(color, str) and color.startswith("#"):
         kwargs["textColor"] = colors.HexColor(color)
+    if align in _ALIGN_MAP:
+        kwargs["alignment"] = _ALIGN_MAP[align]
     return RLParagraphStyle(**kwargs)
 
 

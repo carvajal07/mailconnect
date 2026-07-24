@@ -18,25 +18,32 @@ Mapeo y limitaciones (v1):
   - text sin variables  → elemento `text` (alineación y estilo inline).
   - text CON variables (spans con `binding` o `{{ruta}}` en el texto) y
     dataField → `contentarea` con `<span class="var-tag" data-var="ruta">`
-    (el motor resuelve rutas con punto: `persona.nombre`). La alineación
-    dentro de contentarea sale a la izquierda (limitación del motor).
+    (el motor resuelve rutas con punto: `persona.nombre`). La alineación viaja
+    en `<p style="text-align:…">` (el motor la aplica; antes salía a la izq.).
   - rect → shape rectangle · circle → shape ellipse · frame → shape rectangle.
-  - line → se aproxima con un rectángulo relleno del color del trazo (el motor
-    no dibuja líneas sueltas); pen (trazo libre) y flowable se OMITEN.
+  - line → rectángulo DELGADO centrado en el segmento y ROTADO su ángulo (las
+    diagonales se ven como línea, no como bloque); pen (trazo libre) y
+    flowable se OMITEN.
   - image → `image` con `source.kind='url'` (URLs http(s), p. ej. el prefijo
     público `resources/` del bucket del cliente). Los `data:` URI se omiten.
-  - table → modelo simple del motor (header/body/dataSource/alternateRowFill).
-    `repeatBy` (variable con lista de filas) → `dataSource`. Las variables
-    `{{...}}` dentro de celdas literales NO se resuelven (limitación del motor).
+  - table → modelo simple del motor (header/body/dataSource/alternateRowFill)
+    + estilos POR CELDA (align/bold/color/background). `repeatBy` (variable con
+    lista de filas) → `dataSource`. Las variables `{{...}}` dentro de celdas
+    literales NO se resuelven (limitación del motor).
   - qr → `qr`; otros códigos (CODE128, EAN13…) → `barcode` con su `symbology`.
     `variable` definido → `valueSource='variable'`.
-  - rotation se ignora (salvo en imágenes, que el motor sí rota).
+  - rotation se aplica en TODOS los tipos (el motor rota shapes/imágenes por su
+    cuenta y el resto —texto, contentarea, tabla, QR— en el despachador).
+  - grosores de trazo/borde: el editor los captura en mm (ShapeProps/LineProps)
+    y el motor espera mm → se convierten con la unidad del documento, SIN
+    tratarlos como pt (antes salían ~2.8× más delgados que en el lienzo).
 
 Los elementos no soportados se registran en `result["warnings"]` para que el
 front pueda avisar, sin romper el render del resto del documento.
 """
 from __future__ import annotations
 
+import math
 import re
 
 MM_PER_PT = 25.4 / 72.0
@@ -240,6 +247,11 @@ class _Translator:
         html = self._spans_to_html(el)
         return self._make_contentarea(base, html, ts_id)
 
+    def _align_css(self, el: dict) -> str:
+        """text-align CSS del elemento ('' si es izquierda/default)."""
+        align = _ALIGN_MAP.get(el.get("align") or "left", "left")
+        return align if align != "left" else ""
+
     def _spans_to_html(self, el: dict) -> str:
         spans = el.get("spans") or []
         if spans:
@@ -267,7 +279,11 @@ class _Translator:
             tag = "ul" if list_style == "bullet" else "ol"
             lis = "".join("<li>{}</li>".format(i) for i in items if i.strip())
             return "<{t}>{lis}</{t}>".format(t=tag, lis=lis)
-        # Párrafos separados por <br> (el motor los trata como saltos de línea)
+        # Párrafos separados por <br>. La alineación del elemento viaja en el
+        # style del <p> (el motor la parsea; antes se perdía y todo salía a la izq.).
+        align = self._align_css(el)
+        if align:
+            return '<p style="text-align:{}">{}</p>'.format(align, inner)
         return "<p>{}</p>".format(inner)
 
     def _data_field(self, el: dict, base: dict) -> dict:
@@ -288,11 +304,17 @@ class _Translator:
                      "border": None, "fill": None})
         return base
 
+    def _stroke_mm(self, el: dict) -> float:
+        """Grosor del trazo en mm. El editor lo captura en mm (ShapeProps/LineProps)
+        y Konva lo dibuja en unidades del documento → SOLO se convierte por la unidad
+        del doc. (Antes se trataba como pt: los bordes salían ~2.8× más delgados.)"""
+        return self.mm(el.get("strokeWidth") or 0)
+
     def _rect(self, el: dict, base: dict) -> dict:
         base.update({
             "type": "shape", "shape": "rectangle",
             "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
-            "border": _border(el.get("stroke"), el.get("strokeWidth"),
+            "border": _border(el.get("stroke"), self._stroke_mm(el),
                               radius_mm=self.mm(el.get("cornerRadius") or 0)),
         })
         return base
@@ -301,7 +323,7 @@ class _Translator:
         base.update({
             "type": "shape", "shape": "ellipse",
             "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
-            "border": _border(el.get("stroke"), el.get("strokeWidth")),
+            "border": _border(el.get("stroke"), self._stroke_mm(el)),
         })
         return base
 
@@ -309,14 +331,41 @@ class _Translator:
         base.update({
             "type": "shape", "shape": "triangle",
             "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
-            "border": _border(el.get("stroke"), el.get("strokeWidth")),
+            "border": _border(el.get("stroke"), self._stroke_mm(el)),
         })
         return base
 
     def _line(self, el: dict, base: dict) -> dict:
-        # El motor no dibuja líneas sueltas: se aproxima con un rectángulo
-        # relleno del color del trazo, con grosor mínimo visible.
-        stroke_mm = max(self.mm(el.get("strokeWidth") or 1, "pt"), 0.3)
+        # El motor no dibuja líneas sueltas: se emite un rectángulo DELGADO centrado
+        # en el segmento y ROTADO su ángulo (las diagonales se ven como línea, no
+        # como el bloque del bounding box). `points` = [x1,y1,x2,y2] relativos al
+        # (x,y) del elemento, en unidades del documento (igual que Konva).
+        stroke_mm = max(self._stroke_mm(el) or 0.25, 0.25)
+        pts = el.get("points") or []
+        if len(pts) >= 4:
+            ox, oy = self.mm(el.get("x")), self.mm(el.get("y"))
+            x1, y1 = ox + self.mm(pts[0]), oy + self.mm(pts[1])
+            x2, y2 = ox + self.mm(pts[2]), oy + self.mm(pts[3])
+            dx, dy = x2 - x1, y2 - y1
+            length = math.hypot(dx, dy)
+            if length >= 0.01:
+                # Ángulo horario en pantalla (Y hacia abajo) = convención de rotación
+                # del editor; se suma la rotación propia del elemento si la tiene.
+                angle = math.degrees(math.atan2(dy, dx))
+                base.update({
+                    "x": (x1 + x2) / 2.0 - length / 2.0,
+                    "y": (y1 + y2) / 2.0 - stroke_mm / 2.0,
+                    "width": length,
+                    "height": stroke_mm,
+                    "rotation": angle + (base.get("rotation") or 0),
+                })
+                base.update({
+                    "type": "shape", "shape": "rectangle",
+                    "fill": {"type": "solid", "color": el.get("stroke") or "#000000", "opacity": 1},
+                    "border": None,
+                })
+                return base
+        # Sin points (docs viejos): aproximación por el bounding box.
         if base["height"] <= base["width"]:
             base["height"] = max(base["height"], stroke_mm)
         else:
@@ -366,7 +415,17 @@ class _Translator:
         row_font = el.get("rowFontSize") or 10
 
         def to_row(cells):
-            return {"cells": [{"content": (c or {}).get("text", "")} for c in cells]}
+            # Los estilos POR CELDA del editor (align/bold/color/background) viajan
+            # al motor (antes se descartaban y solo llegaba el texto).
+            out = []
+            for c in cells:
+                c = c or {}
+                cell = {"content": c.get("text", "")}
+                for key in ("align", "bold", "color", "background"):
+                    if c.get(key):
+                        cell[key] = c[key]
+                out.append(cell)
+            return {"cells": out}
 
         # El grosor del borde de la tabla viene en mm (editor) → a pt para el motor
         # (el table_renderer pasa la anchura directo a ReportLab, que usa puntos).
@@ -519,6 +578,9 @@ def _span_html(s: dict) -> str:
         css.append("color:{}".format(s["color"]))
     if s.get("fontSize"):
         css.append("font-size:{}pt".format(s["fontSize"]))
+    if s.get("fontFamily"):
+        # Familia por fragmento (el motor la resuelve con sus alias/builtin).
+        css.append("font-family:{}".format(s["fontFamily"]))
     if (s.get("fontWeight") or 0) >= 600:
         css.append("font-weight:bold")
     if s.get("fontStyle") == "italic":
@@ -536,17 +598,19 @@ def _span_html(s: dict) -> str:
     return '<span style="{}">{}</span>'.format(";".join(css), text)
 
 
-def _border(color, width, radius_mm: float = 0) -> dict | None:
+def _border(color, width_mm, radius_mm: float = 0) -> dict | None:
     try:
-        w = float(width or 0)
+        w = float(width_mm or 0)
     except (TypeError, ValueError):
         w = 0
     if w <= 0 or not _is_color(color):
         return None
-    # El motor interpreta el ancho del borde en mm; el editor lo maneja en pt.
+    # El motor (border_renderer) interpreta el ancho en mm y el editor TAMBIÉN lo
+    # captura en mm → pasa directo. (Antes se multiplicaba por MM_PER_PT como si
+    # fuera pt: un borde de 1 mm salía de 0.35 mm, ~2.8× más delgado que el lienzo.)
     return {
         "mode": "unified",
-        "unified": {"enabled": True, "width": round(w * MM_PER_PT, 3), "style": "solid", "color": color},
+        "unified": {"enabled": True, "width": round(w, 3), "style": "solid", "color": color},
         "sides": {},
         "radius": {"mode": "unified", "unified": radius_mm},
     }

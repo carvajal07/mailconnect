@@ -12,7 +12,7 @@ from reportlab.pdfgen.canvas import Canvas
 from pdf_engine.normalize import DocumentContext
 from pdf_engine.style_registry import StyleRegistry, _num
 from pdf_engine.font_manager import FontManager
-from pdf_engine.coordinate import page_height_pt, page_width_pt
+from pdf_engine.coordinate import mm, page_height_pt, page_width_pt
 
 from pdf_engine.renderers.contentarea_renderer import render_contentarea
 from pdf_engine.renderers.shape_renderer import render_shape
@@ -115,11 +115,16 @@ def _render_elements(
 
         el_type = element.get("type")
 
+        # `shape` e `image` aplican su rotación internamente; el resto de tipos
+        # (texto, contentarea, QR/barcode, tabla) se rota aquí de forma genérica
+        # alrededor de su centro (antes la rotación de esos tipos se perdía).
         if el_type == "contentarea":
-            render_contentarea(canvas, element, h_pt, ctx, registry, page_vars)
+            _with_rotation(canvas, element, h_pt,
+                           lambda: render_contentarea(canvas, element, h_pt, ctx, registry, page_vars))
 
         elif el_type == "text":
-            render_text(canvas, element, h_pt, registry)
+            _with_rotation(canvas, element, h_pt,
+                           lambda: render_text(canvas, element, h_pt, registry))
 
         elif el_type == "shape":
             render_shape(canvas, element, h_pt, registry)
@@ -128,13 +133,46 @@ def _render_elements(
             render_image(canvas, element, h_pt, ctx, registry, assets_base_path)
 
         elif el_type == "qr":
-            render_qr(canvas, element, h_pt, ctx)
+            _with_rotation(canvas, element, h_pt,
+                           lambda: render_qr(canvas, element, h_pt, ctx))
 
         elif el_type == "barcode":
-            render_barcode(canvas, element, h_pt, ctx)
+            _with_rotation(canvas, element, h_pt,
+                           lambda: render_barcode(canvas, element, h_pt, ctx))
 
         elif el_type == "table":
-            render_table(canvas, element, h_pt, ctx, registry)
+            _with_rotation(canvas, element, h_pt,
+                           lambda: render_table(canvas, element, h_pt, ctx, registry))
+
+
+def _with_rotation(canvas: Canvas, element: dict, h_pt: float, draw) -> None:
+    """Dibuja el elemento rotado alrededor de su centro. En pantalla (Y hacia
+    abajo) el ángulo es horario; el PDF tiene Y hacia arriba → `rotate(-rot)`
+    reproduce el mismo giro visual (misma convención que shape_renderer)."""
+    try:
+        rot = float(element.get("rotation") or 0)
+    except (TypeError, ValueError):
+        rot = 0.0
+    if not rot:
+        draw()
+        return
+
+    def _n(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    cx = mm(_n(element.get("x")) + _n(element.get("width")) / 2.0)
+    cy = h_pt - mm(_n(element.get("y")) + _n(element.get("height")) / 2.0)
+    canvas.saveState()
+    canvas.translate(cx, cy)
+    canvas.rotate(-rot)
+    canvas.translate(-cx, -cy)
+    try:
+        draw()
+    finally:
+        canvas.restoreState()
 
 
 def _check_condition(element: dict, ctx: DocumentContext) -> bool:

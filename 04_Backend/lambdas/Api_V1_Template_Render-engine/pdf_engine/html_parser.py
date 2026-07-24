@@ -38,6 +38,7 @@ class InlineStyle:
     strikethrough: bool = False
     color: Optional[str] = None        # hex string e.g. "#246ed6"
     font_size_override: Optional[float] = None  # pt
+    font_family: Optional[str] = None  # per-run font family (style="font-family:…")
     superscript: bool = False
     subscript: bool = False
     text_style_id: Optional[str] = None  # set when a named class is applied
@@ -55,6 +56,7 @@ class InlineStyle:
                 if other.font_size_override is not None
                 else self.font_size_override
             ),
+            font_family=other.font_family if other.font_family is not None else self.font_family,
             superscript=other.superscript or self.superscript,
             subscript=other.subscript or self.subscript,
             text_style_id=other.text_style_id or self.text_style_id,
@@ -82,6 +84,7 @@ class Paragraph:
     list_item: bool = False
     list_depth: int = 0
     list_type: str = "none"    # "none" | "bullet" | "numbered"
+    alignment: str = ""        # "" (default/left) | "center" | "right" | "justify"
 
     def is_empty(self) -> bool:
         return all(
@@ -139,7 +142,24 @@ def _parse_css(style_attr: str) -> InlineStyle:
                 result.font_size_override = float(value[:-2]) * 0.75  # px → pt
             elif value.endswith("pt"):
                 result.font_size_override = float(value[:-2])
+        elif prop == "font-family":
+            # Primera familia de la lista, sin comillas ("JetBrains Mono", monospace → jetbrains mono)
+            family = value.split(",")[0].strip().strip("'\"")
+            if family:
+                result.font_family = family
     return result
+
+
+def _parse_text_align(style_attr: str) -> str:
+    """text-align del atributo style de un bloque (<p>/<div>): left|center|right|justify."""
+    for declaration in (style_attr or "").split(";"):
+        prop, _, value = declaration.partition(":")
+        if prop.strip().lower() == "text-align":
+            value = value.strip().lower()
+            if value in ("center", "right", "justify"):
+                return value
+            return ""
+    return ""
 
 
 def _css_color_to_hex(value: str) -> Optional[str]:
@@ -212,7 +232,12 @@ class _ContentHTMLParser(HTMLParser):
         if tag in ("p", "div"):
             if self._current_para.runs:
                 self._new_paragraph()
-            self._push_style(InlineStyle())
+            # Alineación + estilos inline del bloque (el traductor de pdfsketch emite
+            # <p style="text-align:center"> para conservar la alineación del lienzo).
+            align = _parse_text_align(style_attr)
+            if align:
+                self._current_para.alignment = align
+            self._push_style(_parse_css(style_attr) if style_attr else InlineStyle())
 
         elif tag == "br":
             self._emit("\n")

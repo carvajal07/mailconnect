@@ -366,6 +366,11 @@ def _runs_to_rl_xml(
         color = ts.color or default_ts.color
         resolved_ts = registry.text(ts.text_style_id) if ts.text_style_id else default_ts
         font_name = registry.font_name(resolved_ts)
+        if ts.font_family:
+            # Familia puntual del fragmento (style="font-family:…" del span).
+            font_name = registry.font_for(ts.font_family,
+                                          ts.bold or resolved_ts.bold,
+                                          ts.italic or resolved_ts.italic)
         font_size = ts.font_size_override or default_ts.font_size
 
         open_tags.append(f'<font name="{font_name}" size="{font_size:.1f}" color="{color}">')
@@ -407,7 +412,9 @@ def _make_rl_style(
         fontSize=ts.font_size,
         leading=ts.font_size * ts.line_height,
         textColor=registry.rl_color(ts.color),
-        alignment=TA_LEFT,
+        # Alineación del párrafo (<p style="text-align:…"> del HTML). Antes era
+        # TA_LEFT fijo: todo texto con variables perdía su centrado/derecha.
+        alignment=_ALIGN_MAP.get(para.alignment if para else "", TA_LEFT),
         wordWrap="CJK",
         leftIndent=left_indent,
     )
