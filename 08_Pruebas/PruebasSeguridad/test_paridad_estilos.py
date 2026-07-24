@@ -215,3 +215,26 @@ def test_render_pdf_interletra_alineaciones(engine):
     ]
     pdf = render_pdf(normalize(translate_sketch(_doc(els))['templateJson']))
     assert pdf[:4] == b'%PDF'
+
+
+# ── Plantillas de ejemplo del Estudio PDF (public/estudio-pdf-ejemplos) ───────
+
+def test_plantillas_ejemplo_renderizan(engine):
+    """Cada .json de ejemplo importa (traductor) y produce un PDF válido."""
+    import json
+    from sketch_translator import translate_sketch
+    from pdf_engine.normalize import normalize
+    from pdf_engine.page_renderer import render_pdf
+
+    samples = REPO_ROOT / '05_Frontend' / 'Front' / 'page' / 'public' / 'estudio-pdf-ejemplos'
+    files = sorted(samples.glob('*.json'))
+    assert len(files) >= 4, f'faltan ejemplos en {samples}'
+    for f in files:
+        doc = json.loads(f.read_text(encoding='utf-8'))
+        out = translate_sketch(doc)
+        pdf = render_pdf(normalize(out['templateJson']))
+        assert pdf[:4] == b'%PDF', f'{f.name} no rinde PDF'
+        # Los únicos warnings esperados son pen (lápiz) e imágenes data-URI.
+        for w in out['warnings']:
+            assert ('pen' in w) or ('data-URI' in w) or ('Imagen' in w), \
+                f'{f.name}: warning inesperado: {w}'

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert, Box, Button, Card, CardActionArea, CardContent, Chip, Dialog, DialogActions,
   DialogContent, DialogTitle, Grid, IconButton, Stack, TextField, Tooltip, Typography,
@@ -7,6 +7,8 @@ import AddIcon from '@mui/icons-material/Add';
 import CloseIcon from '@mui/icons-material/Close';
 import DeleteIcon from '@mui/icons-material/Delete';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
+import FileUploadIcon from '@mui/icons-material/FileUpload';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SaveIcon from '@mui/icons-material/Save';
@@ -21,7 +23,7 @@ import { databaseService } from '../../services/databaseService';
 import SketchEditor from '../../pdfsketch/SketchEditor';
 import { useDocumentStore, emptyDocument } from '../../pdfsketch/store/documentStore';
 import { useDataSourceStore, type SketchDataSource } from '../../pdfsketch/store/dataSourceStore';
-import { toEnvelope, deserializeFromJson } from '../../pdfsketch/json/documentJson';
+import { toEnvelope, serializeToJson, deserializeFromJson } from '../../pdfsketch/json/documentJson';
 
 /**
  * ESTUDIO PDF (nivel MEDIO de plantillas PDF) — editor de lienzo pdfsketch.
@@ -40,6 +42,9 @@ export default function SketchStudio() {
 
   const setDoc = useDocumentStore((s) => s.setDoc);
   const markSaved = useDocumentStore((s) => s.markSaved);
+
+  // Import de JSON (archivo local) — el input está oculto y lo dispara el botón.
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loadingList, setLoadingList] = useState(false);
@@ -107,6 +112,52 @@ export default function SketchStudio() {
     setTemplateId('');
     setSaveName('');
     setEditorOpen(true);
+  };
+
+  // ── Importar un diseño desde un archivo .json (envelope pdfsketch@1 o
+  //    DocumentModel pelado). Abre el editor con el documento cargado; queda
+  //    como diseño NUEVO (sin messageTemplateId) hasta que se guarde. ──
+  const importFromFile = () => importInputRef.current?.click();
+
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // permite reimportar el mismo archivo
+    if (!file) return;
+    // Si ya hay un diseño con cambios sin guardar, confirmar antes de reemplazarlo.
+    if (editorOpen && useDocumentStore.getState().dirty
+      && !window.confirm('Hay cambios sin guardar. ¿Reemplazar el diseño actual con el archivo importado?')) {
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const doc = deserializeFromJson(String(ev.target?.result ?? ''));
+        setDoc(doc);
+        setTemplateId('');
+        setSaveName(doc.name && doc.name !== 'Untitled' ? doc.name : file.name.replace(/\.json$/i, ''));
+        setEditorOpen(true);
+        notify('Diseño importado. Revísalo y guárdalo para conservarlo.', 'success');
+      } catch (err) {
+        notify(err instanceof Error ? err.message : 'No se pudo importar el JSON.', 'error');
+      }
+    };
+    reader.onerror = () => notify('No se pudo leer el archivo.', 'error');
+    reader.readAsText(file);
+  };
+
+  // ── Exportar el documento en edición a un archivo .json descargable. ──
+  const exportToFile = () => {
+    const doc = useDocumentStore.getState().doc;
+    const json = serializeToJson({ ...doc, name: saveName || doc.name });
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${saveName || doc.name || 'documento'}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
 
   const openEdit = (t: MessageTemplate) => {
@@ -202,6 +253,9 @@ export default function SketchStudio() {
         <IconButton size="small" onClick={() => void refreshList()} title="Refrescar">
           <RefreshIcon fontSize="small" />
         </IconButton>
+        <Button size="small" variant="outlined" startIcon={<FileUploadIcon />} onClick={importFromFile}>
+          Importar JSON
+        </Button>
         <Button size="small" variant="contained" startIcon={<AddIcon />} onClick={openNew}>
           Nuevo diseño
         </Button>
@@ -258,6 +312,22 @@ export default function SketchStudio() {
             {saveName && <Chip size="small" variant="outlined" label={saveName} />}
             {templateId && <Chip size="small" color="info" variant="outlined" label="guardada" />}
             <Box sx={{ flex: 1 }} />
+            <Tooltip title="Cargar un diseño desde un archivo .json (reemplaza el actual)">
+              <span>
+                <Button size="small" variant="text" startIcon={<FileUploadIcon />}
+                  onClick={importFromFile}>
+                  Importar
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title="Descargar el diseño actual como archivo .json">
+              <span>
+                <Button size="small" variant="text" startIcon={<FileDownloadIcon />}
+                  onClick={exportToFile}>
+                  Exportar
+                </Button>
+              </span>
+            </Tooltip>
             <Tooltip title="Genera el PDF real con el motor del backend">
               <span>
                 <Button size="small" variant="outlined" startIcon={<PictureAsPdfIcon />}
@@ -327,6 +397,15 @@ export default function SketchStudio() {
           <Button onClick={closePreview}>Cerrar</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Input oculto para importar JSON (lo disparan los botones «Importar») */}
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        style={{ display: 'none' }}
+        onChange={handleImportFile}
+      />
 
       {FeedbackSnackbar}
     </Box>
