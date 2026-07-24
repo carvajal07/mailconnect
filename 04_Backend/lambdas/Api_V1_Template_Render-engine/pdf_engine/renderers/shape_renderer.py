@@ -2,7 +2,8 @@
 shape_renderer.py  —  ellipse, rectangle, triangle
 
 Soporta relleno sólido (con opacidad), degradado lineal/radial (clip a la forma
-+ canvas.linearGradient/radialGradient) y borde unificado o por styleRef.
++ canvas.linearGradient/radialGradient), borde unificado o por styleRef, y
+ROTACIÓN del elemento (alrededor de su centro).
 """
 from __future__ import annotations
 import math
@@ -11,48 +12,68 @@ from pdf_engine.coordinate import element_rect, mm
 from pdf_engine.style_registry import StyleRegistry
 
 
+def _num(v, default=0.0):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def render_shape(canvas: Canvas, element: dict, page_h_pt: float, registry: StyleRegistry) -> None:
     shape = element.get("shape", "rectangle")
     x, y, w, h = element_rect(
         element["x"], element["y"], element["width"], element["height"], page_h_pt
     )
-
+    border = element.get("border")
     fill = element.get("fill")
     is_gradient = bool(fill and fill.get("type") == "gradient" and (fill.get("gradient") or {}).get("stops"))
 
+    # Rotación del editor: en pantalla (Y hacia abajo) el ángulo es horario; el PDF
+    # tiene Y hacia arriba → `canvas.rotate(-rot)` reproduce el mismo giro visual.
+    rot = _num(element.get("rotation"))
+
+    canvas.saveState()
+    if rot:
+        cx, cy = x + w / 2.0, y + h / 2.0
+        canvas.translate(cx, cy)
+        canvas.rotate(-rot)
+        canvas.translate(-cx, -cy)
+
     if is_gradient:
-        # 1) pinta el degradado recortado a la forma; 2) traza el borde sin fill.
-        _paint_gradient(canvas, shape, x, y, w, h, fill, element.get("border"), registry)
+        # 1) degradado recortado a la forma; 2) borde encima sin relleno.
+        _paint_gradient(canvas, shape, x, y, w, h, fill, border, registry)
         canvas.saveState()
         canvas.setFillColorRGB(1, 1, 1, 0)  # sin relleno para el trazo
-        _apply_border(canvas, element.get("border"), registry)
-        _draw_shape_path(canvas, shape, x, y, w, h, element.get("border"), fill_flag=0)
+        _apply_border(canvas, border, registry)
+        _draw_shape_path(canvas, shape, x, y, w, h, border, fill_flag=0)
         canvas.restoreState()
-        return
+    else:
+        canvas.saveState()
+        _apply_fill(canvas, fill, registry)
+        _apply_border(canvas, border, registry)
+        _draw_shape_path(canvas, shape, x, y, w, h, border, fill_flag=1)
+        canvas.restoreState()
 
-    _apply_fill(canvas, fill, registry)
-    _apply_border(canvas, element.get("border"), registry)
-    _draw_shape_path(canvas, shape, x, y, w, h, element.get("border"), fill_flag=1)
     canvas.restoreState()
+
+
+def _radius_pt(border: dict | None) -> float:
+    if border and border.get("radius"):
+        return mm(border["radius"].get("unified", 0))
+    return 0.0
 
 
 def _draw_shape_path(canvas: Canvas, shape: str, x, y, w, h, border: dict | None, fill_flag: int) -> None:
     if shape == "rectangle":
-        _draw_rectangle(canvas, x, y, w, h, border, fill_flag)
+        radius = _radius_pt(border)
+        if radius > 0:
+            canvas.roundRect(x, y, w, h, radius, stroke=1, fill=fill_flag)
+        else:
+            canvas.rect(x, y, w, h, stroke=1, fill=fill_flag)
     elif shape == "ellipse":
         canvas.ellipse(x, y, x + w, y + h, stroke=1, fill=fill_flag)
     elif shape == "triangle":
         _draw_triangle(canvas, x, y, w, h, fill_flag)
-
-
-def _draw_rectangle(canvas: Canvas, x, y, w, h, border: dict | None, fill_flag: int = 1) -> None:
-    radius = 0
-    if border and border.get("radius"):
-        radius = mm(border["radius"].get("unified", 0))
-    if radius > 0:
-        canvas.roundRect(x, y, w, h, radius, stroke=1, fill=fill_flag)
-    else:
-        canvas.rect(x, y, w, h, stroke=1, fill=fill_flag)
 
 
 def _draw_triangle(canvas: Canvas, x, y, w, h, fill_flag: int = 1) -> None:
@@ -65,18 +86,29 @@ def _draw_triangle(canvas: Canvas, x, y, w, h, fill_flag: int = 1) -> None:
     canvas.drawPath(path, stroke=1, fill=fill_flag)
 
 
-def _shape_clip_path(canvas: Canvas, shape: str, x, y, w, h):
-    """Path de la forma para usar como región de clip del degradado."""
+def _shape_clip_path(canvas: Canvas, shape: str, x, y, w, h, border: dict | None):
+    """Path de la forma para usar como región de clip del degradado.
+
+    ⚠️ `PDFPathObject.ellipse(x, y, width, height)` toma ANCHO/ALTO, no las dos
+    esquinas — pasar (x, y, x+w, y+h) creaba un clip GIGANTE (la elipse del
+    degradado radial se salía por toda la hoja). Se usa (x, y, w, h). El
+    rectángulo con radio recorta con esquinas redondeadas para que el relleno
+    NO se salga del borde redondeado.
+    """
     path = canvas.beginPath()
     if shape == "ellipse":
-        path.ellipse(x, y, x + w, y + h)
+        path.ellipse(x, y, w, h)
     elif shape == "triangle":
         path.moveTo(x + w / 2, y + h)
         path.lineTo(x, y)
         path.lineTo(x + w, y)
         path.close()
     else:
-        path.rect(x, y, w, h)
+        radius = _radius_pt(border)
+        if radius > 0:
+            path.roundRect(x, y, w, h, radius)
+        else:
+            path.rect(x, y, w, h)
     return path
 
 
@@ -85,7 +117,6 @@ def _paint_gradient(canvas: Canvas, shape: str, x, y, w, h,
     grad = fill.get("gradient") or {}
     stops = grad.get("stops") or []
     if len(stops) < 2:
-        # degradado degenerado → sólido con el primer color
         color = registry.rl_color((stops[0].get("color") if stops else "#ffffff") or "#ffffff",
                                   fill.get("opacity", 1.0))
         canvas.saveState()
@@ -98,7 +129,6 @@ def _paint_gradient(canvas: Canvas, shape: str, x, y, w, h,
     ordered = sorted(stops, key=lambda s: s.get("offset", 0))
     colors = [registry.rl_color(s.get("color", "#000000")) for s in ordered]
     positions = [max(0.0, min(1.0, (s.get("offset", 0) or 0) / 100.0)) for s in ordered]
-    # ReportLab exige posiciones estrictamente crecientes con extremos 0 y 1
     positions[0] = 0.0
     positions[-1] = 1.0
     for i in range(1, len(positions)):
@@ -110,11 +140,12 @@ def _paint_gradient(canvas: Canvas, shape: str, x, y, w, h,
     try:
         if opacity is not None and opacity < 1:
             canvas.setFillAlpha(float(opacity))
-        clip = _shape_clip_path(canvas, shape, x, y, w, h)
+        clip = _shape_clip_path(canvas, shape, x, y, w, h, border)
         canvas.clipPath(clip, stroke=0, fill=0)
         if grad.get("type") == "radial":
             cx = x + w * ((grad.get("cx", 50) or 50) / 100.0)
-            cy = y + h * (1 - ((grad.get("cy", 50) or 50) / 100.0))  # cy% viene en coords "pantalla"
+            # cy% viene en coordenadas de pantalla (Y hacia abajo) → se invierte.
+            cy = y + h * (1 - ((grad.get("cy", 50) or 50) / 100.0))
             radius = max(w, h) * 0.75
             canvas.radialGradient(cx, cy, radius, colors, positions, extend=True)
         else:
@@ -125,8 +156,6 @@ def _paint_gradient(canvas: Canvas, shape: str, x, y, w, h,
             dx, dy = math.cos(ang) * half, -math.sin(ang) * half
             canvas.linearGradient(cx - dx, cy - dy, cx + dx, cy + dy, colors, positions, extend=True)
     except Exception:
-        # Fail-safe: si el gradiente no está disponible en esta versión de
-        # ReportLab, cae a un sólido con el primer color del degradado.
         canvas.restoreState()
         canvas.saveState()
         canvas.setFillColor(colors[0])
@@ -136,7 +165,7 @@ def _paint_gradient(canvas: Canvas, shape: str, x, y, w, h,
 
 
 def _apply_fill(canvas: Canvas, fill: dict | None, registry: StyleRegistry) -> None:
-    canvas.saveState()
+    """Fija el color de relleno en el estado ACTUAL (el llamador maneja save/restore)."""
     if not fill or fill.get("type") == "none":
         canvas.setFillColorRGB(1, 1, 1, 0)  # transparent
         return
