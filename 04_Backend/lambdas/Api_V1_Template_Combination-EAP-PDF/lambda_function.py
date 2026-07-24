@@ -3,23 +3,31 @@ Combinador de correspondencia para el canal EAP con PDF (envío real).
 
 Es el consumidor de la cola `Template_Combination-EAP-PDF`, que Prepare-batch alimenta
 cuando la campaña es EAP con `documentFormat=PDF`. Análogo a `Api_V1_Template_Combination`
-(DOCX) pero, en vez de combinar un .docx con python-docx, RENDERIZA a PDF el HTML de la
-plantilla que hizo el editor (PdfTemplatesSection).
+(DOCX) pero RENDERIZA a PDF la plantilla que hizo el editor, en DOS formatos:
+  - **HTML** (editor básico tipo Word, PdfTemplatesSection): reemplaza `{{campo}}` y
+    renderiza con xhtml2pdf (como antes).
+  - **JSON de lienzo** (Estudio PDF `sketchJson` / Diseñador `templateJson`): traduce con
+    `sketch_translator` (o usa el templateJson directo) y renderiza con el motor
+    `pdf_engine` (ReportLab) pasando la fila del CSV como `data` → las variables
+    `{{campo}}` / dataField (`data-var`) se resuelven POR DESTINATARIO.
+El formato se DETECTA por el contenido (si parsea a un dict JSON → lienzo; si no → HTML).
 
 Flujo por mensaje (build_ctx + part + data, ver Prepare-batch):
   1. Dedup por parte en `{tenant}_processDetail` (estado "Creando adjuntos") — evita
      adjuntos duplicados si SQS reentrega el mensaje.
-  2. Baja la plantilla HTML del cliente desde S3 (documentPath del registro `document`
-     de la campaña; el editor sube ese HTML con el prefijo attachment/).
-  3. Por cada destinatario: reemplaza `{{campo}}` con su fila del CSV, renderiza el PDF
-     y lo sube a `personalized/{campaignId}/{nombre}.pdf` (prefijo PRIVADO) del bucket del cliente.
+  2. Baja la plantilla del cliente desde S3 (documentPath del registro `document`
+     de la campaña; el front sube el HTML o el JSON del lienzo con el prefijo attachment/).
+  3. Por cada destinatario: sustituye sus datos, renderiza el PDF y lo sube a
+     `personalized/{campaignId}/{nombre}.pdf` (prefijo PRIVADO) del bucket del cliente.
   4. Re-emite el mensaje a `Email_Send-batch-raw-EAP` PRESERVANDO nit + samples +
      documentFormat (para que Send-EAP resuelva el bucket por NIT, adjunte el .pdf y
      cuente las muestras correctamente).
 
 Requisito de despliegue [J]: cola `Template_Combination-EAP-PDF` + trigger; layer con
-`xhtml2pdf` (+ reportlab, Pillow); permisos S3 (GetObject/PutObject), DynamoDB
-(Scan document, Scan/PutItem {tenant}_processDetail) y SQS SendMessage.
+`xhtml2pdf` **y** el motor (`reportlab`, `Pillow`, `qrcode`, `python-barcode`,
+`beautifulsoup4`, `lxml`); el paquete incluye `pdf_engine/`, `sketch_translator.py` y
+`fonts/` (vendorizados). Permisos S3 (GetObject/PutObject), DynamoDB (Scan document,
+Scan/PutItem {tenant}_processDetail) y SQS SendMessage.
 '''
 import io
 import json
@@ -32,6 +40,8 @@ from datetime import datetime
 
 import boto3
 from botocore.exceptions import ClientError
+
+from sketch_translator import translate_sketch
 
 REGION = 'us-east-1'
 URL_SQS_EAP = os.environ.get(
@@ -144,6 +154,43 @@ def html_to_pdf(html, page_size='A4'):
     if result.err:
         raise RuntimeError('No se pudo generar el PDF (errores de render: {})'.format(result.err))
     return out.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Render del LIENZO (Estudio/Diseñador) con el motor `pdf_engine` (ReportLab).
+# ---------------------------------------------------------------------------
+def parse_template_content(raw):
+    """Detecta el formato de la plantilla descargada de S3.
+    Devuelve ('html', str) para el editor básico, o ('template', templateJson_dict)
+    para el lienzo (Estudio `sketchJson` o Diseñador `templateJson`)."""
+    text = raw if isinstance(raw, str) else (raw or '')
+    stripped = text.strip()
+    if stripped.startswith('{'):
+        try:
+            obj = json.loads(stripped)
+        except Exception:
+            return 'html', text
+        if isinstance(obj, dict):
+            # sketchJson: envelope {schema:'pdfsketch@1', document} o DocumentModel con pages.
+            if obj.get('schema') == 'pdfsketch@1' or (isinstance(obj.get('document'), dict)) \
+                    or (isinstance(obj.get('pages'), list) and 'contentAreas' not in obj):
+                try:
+                    return 'template', translate_sketch(obj)['templateJson']
+                except Exception as e:
+                    print('No se pudo traducir el sketch; se intenta como templateJson: {}'.format(e))
+            # templateJson del Diseñador (ya tiene el esquema del motor).
+            if isinstance(obj.get('pages'), list):
+                return 'template', obj
+    return 'html', text
+
+
+def render_engine_pdf(template_json, mapping):
+    """Renderiza el templateJson con el motor pasando `mapping` (columna→valor) como
+    data → las variables `data-var`/`{{campo}}` se resuelven por destinatario."""
+    from pdf_engine.normalize import normalize
+    from pdf_engine.page_renderer import render_pdf
+    ctx = normalize(template_json, mapping or {})
+    return render_pdf(ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -261,15 +308,22 @@ def lambda_handler(event, context):
         return {'status': True, 'statusCode': 200, 'description': 'Parte ya procesada (duplicado); se omite.'}
 
     bucket_name = tenant_bucket(nit) if nit else '{}.document'.format(customer_name.lower())
-    template_html = download_template_html(campaign_id, bucket_name)
-    if not template_html:
+    template_raw = download_template_html(campaign_id, bucket_name)
+    if not template_raw:
         print('Sin plantilla PDF para la campaña {} — no se generan adjuntos'.format(campaign_id))
         return {'status': False, 'statusCode': 404, 'description': 'Plantilla PDF no encontrada'}
 
+    # Detecta el formato UNA vez (HTML del editor básico vs JSON del lienzo Estudio/Diseñador).
+    kind, content = parse_template_content(template_raw)
+    print('EAP-PDF combiner · formato de plantilla: {}'.format(kind))
+
     for register in data:
         mapping = row_mapping(headers, register)
-        rendered = render_variables(template_html, mapping)
-        pdf_bytes = html_to_pdf(rendered, page_size)
+        if kind == 'template':
+            # Motor ReportLab: las variables (data-var) se resuelven con `mapping` (columna→valor).
+            pdf_bytes = render_engine_pdf(content, mapping)
+        else:
+            pdf_bytes = html_to_pdf(render_variables(content, mapping), page_size)
         doc_name = '{}.pdf'.format(register[2] if len(register) > 2 else register[0])
         # PRIVADO: los personalizados por destinatario traen datos personales → van al prefijo
         # `personalized/` (NO público como attachment/). Send-EAP los adjunta por get_object (IAM).

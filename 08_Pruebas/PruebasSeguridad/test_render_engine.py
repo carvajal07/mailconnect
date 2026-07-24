@@ -571,3 +571,42 @@ def test_traductor_linea_continua_un_solo_rect(mod):
     ]}]}
     els = translate_sketch(doc)['templateJson']['pages'][0]['elements']
     assert len(els) == 1 and round(els[0]['width'], 1) == 40.0
+
+
+# ── Bordes discontinuos → setDash en el motor (fix ago 2026) ─────────────────
+
+def test_traductor_borde_discontinuo_lleva_dash(mod):
+    from sketch_translator import translate_sketch
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 'r', 'type': 'rect', 'x': 10, 'y': 10, 'width': 50, 'height': 30,
+         'fill': 'transparent', 'stroke': '#111111', 'strokeWidth': 0.5,
+         'cornerRadius': 0, 'dash': [8, 4]},
+    ]}]}
+    el = translate_sketch(doc)['templateJson']['pages'][0]['elements'][0]
+    b = el['border']['unified']
+    assert b['dash'] == [8.0, 4.0] and b['style'] == 'dashed'
+
+
+def test_traductor_borde_solido_sin_dash(mod):
+    from sketch_translator import translate_sketch
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 'r', 'type': 'rect', 'x': 10, 'y': 10, 'width': 50, 'height': 30,
+         'fill': 'transparent', 'stroke': '#111111', 'strokeWidth': 0.5, 'cornerRadius': 0},
+    ]}]}
+    el = translate_sketch(doc)['templateJson']['pages'][0]['elements'][0]
+    assert 'dash' not in el['border']['unified']
+
+
+def test_render_borde_discontinuo_smoke(mod):
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 'r', 'type': 'rect', 'x': 10, 'y': 10, 'width': 80, 'height': 40,
+         'fill': 'transparent', 'stroke': '#2563eb', 'strokeWidth': 1,
+         'cornerRadius': 4, 'dash': [6, 3]},
+        {'id': 'c', 'type': 'circle', 'x': 10, 'y': 60, 'width': 40, 'height': 40,
+         'fill': 'transparent', 'stroke': '#dc2626', 'strokeWidth': 0.8, 'dash': [2, 2]},
+    ]}]}
+    res = mod.lambda_handler(_ctx({'sketch': {'schema': 'pdfsketch@1', 'document': doc}}), None)
+    assert _pdf_bytes(res)[:5] == b'%PDF-'

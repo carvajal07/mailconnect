@@ -243,6 +243,15 @@ export default function FormatToolbar() {
         unit={sizeUnit}
         onUnitChange={setSizeUnit}
         onCommitPt={(v) => editing ? editorApi!.setFontSize(v) : applyText({ fontSize: v })}
+        // Las flechas ▲▼ SIEMPRE recorren el tamaño del ELEMENTO (aunque se esté
+        // editando): así acumulan (el valor mostrado = el.fontSize cambia) y hacen
+        // crecer/encoger todo el cuadro. Antes, editando, aplicaban a la selección
+        // colapsada → no hacían nada y no acumulaban.
+        onStep={(dir) => {
+          for (const el of selectedTexts) {
+            updateElement(el.id, { fontSize: stepPt(el.fontSize ?? 12, dir) });
+          }
+        }}
       />
 
       <Sep />
@@ -423,12 +432,14 @@ function stepPt(cur: number, dir: 1 | -1): number {
  * (pt/px/mm/cm/in) que CONVIERTE el valor. El valor se almacena en pt.
  */
 function SizeCombo({
-  valuePt, unit, onCommitPt, onUnitChange, disabled = false,
+  valuePt, unit, onCommitPt, onUnitChange, onStep, disabled = false,
 }: {
   valuePt: number | undefined;
   unit: SizeUnit;
   onCommitPt: (pt: number) => void;
   onUnitChange: (u: SizeUnit) => void;
+  /** Sube/baja el tamaño (a nivel de elemento). Si no se pasa, cae a onCommitPt. */
+  onStep?: (dir: 1 | -1) => void;
   disabled?: boolean;
 }) {
   const shown = valuePt === undefined ? '' : fmtSize(ptToUnit(valuePt, unit), unit);
@@ -442,7 +453,8 @@ function SizeCombo({
     if (raw === '' || Number.isNaN(v) || v <= 0) return;
     onCommitPt(unitToPt(v, unit));
   };
-  const step = (dir: 1 | -1) => onCommitPt(stepPt(valuePt ?? 12, dir));
+  const step = (dir: 1 | -1) =>
+    onStep ? onStep(dir) : onCommitPt(stepPt(valuePt ?? 12, dir));
 
   return (
     <>

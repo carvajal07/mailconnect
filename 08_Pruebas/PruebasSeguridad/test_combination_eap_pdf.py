@@ -10,6 +10,7 @@ key de S3, la forma del re-emit (preserva nit + samples + documentFormat) y el d
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 
 os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
@@ -35,7 +36,16 @@ TMPL_KEY = 'attachment/2026-07-22/tmpl.html'
 
 
 def _load(folder, name):
-    p = DIR / folder / 'lambda_function.py'
+    # El combinador vendoriza el motor (importa sketch_translator + pdf_engine a nivel de
+    # módulo) → su carpeta debe estar en sys.path y se limpian los módulos cacheados para no
+    # chocar con la copia del test del motor (mismo nombre, contenido idéntico).
+    d = DIR / folder
+    if str(d) not in sys.path:
+        sys.path.insert(0, str(d))
+    for mod_name in list(sys.modules):
+        if mod_name == 'sketch_translator' or mod_name.startswith('pdf_engine'):
+            del sys.modules[mod_name]
+    p = d / 'lambda_function.py'
     spec = importlib.util.spec_from_file_location(name, str(p))
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
@@ -126,3 +136,44 @@ def test_sin_plantilla_404(combiner):
     mod, _, _, _ = combiner
     res = mod.lambda_handler(_event([['1', 'a@x.com', 'Ana', 'Bogotá']], campaign='sin-doc'), None)
     assert res['statusCode'] == 404
+
+
+def test_renderiza_plantilla_estudio_con_variables(combiner):
+    # Plantilla del ESTUDIO PDF (sketchJson): el combinador la detecta como JSON, la
+    # traduce y la renderiza con el MOTOR (ReportLab) pasando la fila del CSV como data →
+    # las variables (dataField `nombre`, texto `{{ciudad}}`) se resuelven por destinatario.
+    mod, sqs, q, s3 = combiner
+    sketch = {'schema': 'pdfsketch@1', 'document': {
+        'unit': 'mm',
+        'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'}, 'margin': {}, 'elements': [
+            {'id': 'df', 'type': 'dataField', 'x': 20, 'y': 20, 'width': 100, 'height': 10,
+             'binding': 'nombre', 'fallback': '', 'fontFamily': 'Helvetica', 'fontSize': 14, 'color': '#111111'},
+            {'id': 't', 'type': 'text', 'x': 20, 'y': 40, 'width': 120, 'height': 10,
+             'text': 'Ciudad: {{ciudad}}', 'align': 'left', 'fontFamily': 'Helvetica',
+             'fontSize': 12, 'color': '#111111', 'fontWeight': 400, 'lineHeight': 1.3},
+        ]}],
+    }}
+    key = 'attachment/2026-07-22/estudio.json'
+    s3.put_object(Bucket=BUCKET, Key=key, Body=json.dumps(sketch).encode(), ContentType='application/json')
+    boto3.resource('dynamodb', region_name='us-east-1').Table('document').put_item(
+        Item={'documentId': 'd2', 'campaignId': 'camp-estudio', 'documentPath': key})
+
+    data = [['1', 'a@x.com', 'Ana', 'Bogotá']]
+    res = mod.lambda_handler(_event(data, campaign='camp-estudio'), None)
+    assert res['statusCode'] == 200
+    # PDF REAL del motor (no el stub HTML) → el pipeline del lienzo funciona de punta a punta.
+    pdf = s3.get_object(Bucket=BUCKET, Key='personalized/camp-estudio/Ana.pdf')['Body'].read()
+    assert pdf[:5] == b'%PDF-'
+    # Se re-emite a Send-EAP como cualquier EAP-PDF.
+    msgs = sqs.receive_message(QueueUrl=q, MaxNumberOfMessages=10).get('Messages', [])
+    assert len(msgs) == 1 and json.loads(msgs[0]['Body'])['documentFormat'] == 'PDF'
+
+
+def test_parse_template_content_detecta_formato(combiner):
+    mod, _, _, _ = combiner
+    kind, _ = mod.parse_template_content('<h1>Hola {{nombre}}</h1>')
+    assert kind == 'html'
+    kind, tj = mod.parse_template_content(json.dumps(
+        {'schema': 'pdfsketch@1', 'document': {'unit': 'mm', 'pages': [
+            {'size': {'width': 210, 'height': 297, 'unit': 'mm'}, 'margin': {}, 'elements': []}]}}))
+    assert kind == 'template' and isinstance(tj.get('pages'), list)

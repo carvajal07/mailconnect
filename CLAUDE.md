@@ -1119,6 +1119,33 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
   letras, `_list_marker`, render smoke, `firstLineIndent`, multipárrafo, dash a
   segmentos, línea continua) + ajuste de `test_paridad_estilos.py`.
 
+### Estudio PDF (4ª tanda, ago 2026): flechas de tamaño, bordes punteados y USO EN CAMPAÑAS
+- **Flechas ▲▼ del tamaño de fuente** (`FormatToolbar.SizeCombo`): ahora recorren SIEMPRE
+  el tamaño del ELEMENTO (nueva prop `onStep`), aunque se esté editando. Antes, editando,
+  aplicaban a la selección colapsada → no hacían nada y **no acumulaban** (el valor
+  mostrado = `el.fontSize` no cambiaba). Además, en el editor (`TextEditorOverlay`),
+  aplicar formato (color/tamaño/interletra) **sin selección** ahora afecta a TODO el texto
+  del cuadro (antes se salía sin hacer nada).
+- **Bordes discontinuos en el PDF**: el borde de las formas (rect/círculo/triángulo) toma
+  su patrón de guiones del `BorderStyle` (`dash`, mm) o de la nueva casilla **"Borde
+  discontinuo"** de `ShapeProps`. El traductor lo emite en el `unified.dash` del borde y
+  el motor lo pinta con `canvas.setDash` — tanto en `border_renderer` como en
+  `shape_renderer` (que dibuja forma+borde). Antes el PDF los mostraba sólidos.
+- **Estudio/Diseñador USABLES en campañas EAP-PDF (cierre del Bloque 3 crítico):** el
+  selector de plantilla PDF de `CampanasSection` ya no falla con las del lienzo — acepta
+  `html` (editor básico), `sketchJson` (Estudio) y `templateJson` (Diseñador); sube el
+  JSON del lienzo a S3 como `.json`. El combinador **`Api_V1_Template_Combination-EAP-PDF`**
+  tiene ahora el motor **`pdf_engine` + `sketch_translator` VENDORIZADOS**: detecta el
+  formato por el contenido (`parse_template_content`) y, si es lienzo, renderiza el PDF con
+  el motor (`normalize` + `render_pdf`) **por destinatario** pasando su fila del CSV como
+  `data` → las variables (`data-var`/`{{campo}}`) SE RESUELVEN. El HTML del editor básico
+  sigue por xhtml2pdf. ⚠️ `[J]`: el **layer del combinador** debe sumar el motor
+  (`reportlab`, `Pillow`, `qrcode`, `python-barcode`, `beautifulsoup4`, `lxml`) además de
+  `xhtml2pdf`; el paquete incluye `pdf_engine/`, `sketch_translator.py` y `fonts/`.
+- **Cobertura**: `test_render_engine.py` (bordes discontinuos → `unified.dash`, sólido sin
+  dash, render smoke) y `test_combination_eap_pdf.py` (plantilla del Estudio renderizada
+  con el motor real + `parse_template_content`).
+
 ### Fix de seguridad: RBAC de sub-rol (`tenantRole`) — cierre del bypass del maker-checker (jul 2026)
 - **Problema (ALTO):** el mapping template no-proxy (`scripts/sync_api.py` `CONTEXT_TEMPLATE`) NO
   reenviaba `tenantRole`. Los gates RBAC de sub-rol —`Campaign_Approve`, `Campaign_Reject`,
