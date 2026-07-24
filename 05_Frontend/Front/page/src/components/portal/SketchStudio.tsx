@@ -22,6 +22,7 @@ import { base64ToPdfBlob } from '../../services/pdfTemplatesService';
 import { databaseService } from '../../services/databaseService';
 import { campaignsService } from '../../services/campaignsService';
 import SketchEditor from '../../pdfsketch/SketchEditor';
+import SketchThumbnail from './SketchThumbnail';
 import { useDocumentStore, emptyDocument } from '../../pdfsketch/store/documentStore';
 import { useDataSourceStore, type SketchDataSource } from '../../pdfsketch/store/dataSourceStore';
 import { toEnvelope, serializeToJson, deserializeFromJson } from '../../pdfsketch/json/documentJson';
@@ -111,6 +112,11 @@ export default function SketchStudio() {
   const [previewWarnings, setPreviewWarnings] = useState<string[]>([]);
   const [rendering, setRendering] = useState(false);
 
+  // Diálogo de confirmación reutilizable (reemplaza los window.confirm feos).
+  const [confirm, setConfirm] = useState<{
+    title: string; message: string; confirmLabel: string; danger?: boolean; onConfirm: () => void;
+  } | null>(null);
+
   const refreshList = async () => {
     setLoadingList(true);
     try {
@@ -151,26 +157,35 @@ export default function SketchStudio() {
     const file = e.target.files?.[0];
     e.target.value = ''; // permite reimportar el mismo archivo
     if (!file) return;
+    const doImport = () => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const doc = deserializeFromJson(String(ev.target?.result ?? ''));
+          setDoc(doc);
+          setTemplateId('');
+          setSaveName(doc.name && doc.name !== 'Untitled' ? doc.name : file.name.replace(/\.json$/i, ''));
+          setEditorOpen(true);
+          notify('Diseño importado. Revísalo y guárdalo para conservarlo.', 'success');
+        } catch (err) {
+          notify(err instanceof Error ? err.message : 'No se pudo importar el JSON.', 'error');
+        }
+      };
+      reader.onerror = () => notify('No se pudo leer el archivo.', 'error');
+      reader.readAsText(file);
+    };
     // Si ya hay un diseño con cambios sin guardar, confirmar antes de reemplazarlo.
-    if (editorOpen && useDocumentStore.getState().dirty
-      && !window.confirm('Hay cambios sin guardar. ¿Reemplazar el diseño actual con el archivo importado?')) {
+    if (editorOpen && useDocumentStore.getState().dirty) {
+      setConfirm({
+        title: 'Reemplazar el diseño',
+        message: 'Hay cambios sin guardar. ¿Reemplazar el diseño actual con el archivo importado? Se perderán los cambios.',
+        confirmLabel: 'Reemplazar',
+        danger: true,
+        onConfirm: doImport,
+      });
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const doc = deserializeFromJson(String(ev.target?.result ?? ''));
-        setDoc(doc);
-        setTemplateId('');
-        setSaveName(doc.name && doc.name !== 'Untitled' ? doc.name : file.name.replace(/\.json$/i, ''));
-        setEditorOpen(true);
-        notify('Diseño importado. Revísalo y guárdalo para conservarlo.', 'success');
-      } catch (err) {
-        notify(err instanceof Error ? err.message : 'No se pudo importar el JSON.', 'error');
-      }
-    };
-    reader.onerror = () => notify('No se pudo leer el archivo.', 'error');
-    reader.readAsText(file);
+    doImport();
   };
 
   // ── Exportar el documento en edición a un archivo .json descargable. ──
@@ -200,8 +215,7 @@ export default function SketchStudio() {
     }
   };
 
-  const handleDelete = async (t: MessageTemplate) => {
-    if (!window.confirm(`¿Eliminar la plantilla "${t.name}"?`)) return;
+  const doDelete = async (t: MessageTemplate) => {
     const res = await messageTemplatesService.delete(t.messageTemplateId);
     if (isOk(res)) {
       notify('Plantilla eliminada.', 'success');
@@ -211,13 +225,29 @@ export default function SketchStudio() {
     }
   };
 
+  const handleDelete = (t: MessageTemplate) => {
+    setConfirm({
+      title: 'Eliminar plantilla',
+      message: `¿Eliminar la plantilla “${t.name}”? Esta acción no se puede deshacer.`,
+      confirmLabel: 'Eliminar',
+      danger: true,
+      onConfirm: () => void doDelete(t),
+    });
+  };
+
   const handleClose = () => {
-    if (useDocumentStore.getState().dirty
-      && !window.confirm('Hay cambios sin guardar. ¿Cerrar de todos modos?')) {
+    const doClose = () => { setEditorOpen(false); void refreshList(); };
+    if (useDocumentStore.getState().dirty) {
+      setConfirm({
+        title: 'Salir del editor',
+        message: 'Hay cambios sin guardar. ¿Cerrar de todos modos? Se perderán los cambios.',
+        confirmLabel: 'Cerrar sin guardar',
+        danger: true,
+        onConfirm: doClose,
+      });
       return;
     }
-    setEditorOpen(false);
-    void refreshList();
+    doClose();
   };
 
   const handleSave = async () => {
@@ -310,6 +340,10 @@ export default function SketchStudio() {
             <Grid key={t.messageTemplateId} size={{ xs: 12, sm: 6, md: 4 }}>
               <Card variant="outlined">
                 <CardActionArea onClick={() => openEdit(t)}>
+                  {/* Miniatura (vista previa) de la plantilla */}
+                  <Box sx={{ borderBottom: '1px solid', borderColor: 'divider' }}>
+                    <SketchThumbnail sketchJson={(t.sketchJson ?? '').toString()} />
+                  </Box>
                   <CardContent>
                     <Stack direction="row" spacing={1} alignItems="center">
                       <FolderOpenIcon fontSize="small" color="action" />
@@ -428,6 +462,25 @@ export default function SketchStudio() {
             Descargar
           </Button>
           <Button onClick={closePreview}>Cerrar</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Confirmación (eliminar / salir con cambios / reemplazar) — por encima del overlay */}
+      <Dialog open={!!confirm} onClose={() => setConfirm(null)} maxWidth="xs" fullWidth
+        sx={{ zIndex: 1500 }}>
+        <DialogTitle>{confirm?.title}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">{confirm?.message}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirm(null)}>Cancelar</Button>
+          <Button
+            variant="contained"
+            color={confirm?.danger ? 'error' : 'primary'}
+            onClick={() => { const c = confirm; setConfirm(null); c?.onConfirm(); }}
+          >
+            {confirm?.confirmLabel}
+          </Button>
         </DialogActions>
       </Dialog>
 

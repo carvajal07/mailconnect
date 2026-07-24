@@ -5,6 +5,8 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
+  ChevronDown,
+  ChevronUp,
   Italic,
   Strikethrough,
   Subscript,
@@ -225,20 +227,9 @@ export default function FormatToolbar() {
         disabled={textCtrlDisabled}
         valuePt={fontSize}
         unit={sizeUnit}
+        onUnitChange={setSizeUnit}
         onCommitPt={(v) => editing ? editorApi!.setFontSize(v) : applyText({ fontSize: v })}
       />
-      <select
-        disabled={textCtrlDisabled}
-        value={sizeUnit}
-        onChange={(e) => setSizeUnit(e.target.value as SizeUnit)}
-        className="h-[22px] bg-bg-3 border border-line-2 rounded-3 text-11 px-1.5 outline-none disabled:opacity-50"
-        style={{ width: 50 }}
-        title="Unidad del tamaño de fuente (convierte el valor)"
-      >
-        {SIZE_UNITS.map((u) => (
-          <option key={u} value={u}>{u}</option>
-        ))}
-      </select>
 
       <Sep />
 
@@ -402,20 +393,30 @@ function NumberField({ value, onCommit, width = 54, disabled = false, min }: Num
   );
 }
 
+/** Siguiente/anterior tamaño (en pt) recorriendo los presets; fuera de ellos, ±1. */
+function stepPt(cur: number, dir: 1 | -1): number {
+  if (dir > 0) {
+    const nxt = FONT_SIZE_PRESETS_PT.find((p) => p > cur + 0.001);
+    return nxt ?? Math.round(cur + 1);
+  }
+  const prev = [...FONT_SIZE_PRESETS_PT].reverse().find((p) => p < cur - 0.001);
+  return prev ?? Math.max(1, Math.round(cur - 1));
+}
+
 /**
- * Selector de tamaño de fuente estilo Word/Docs: un input editable con un
- * desplegable de tamaños comunes (datalist). Muestra y acepta el valor en la
- * unidad activa (pt/px/mm/cm/in) y lo convierte a pt para almacenarlo.
+ * Selector de tamaño de fuente estilo Word/Docs: flechas ▲▼ (recorren los tamaños
+ * comunes), un valor editable con desplegable (datalist) y un segmento de UNIDAD
+ * (pt/px/mm/cm/in) que CONVIERTE el valor. El valor se almacena en pt.
  */
 function SizeCombo({
-  valuePt, unit, onCommitPt, disabled = false,
+  valuePt, unit, onCommitPt, onUnitChange, disabled = false,
 }: {
   valuePt: number | undefined;
   unit: SizeUnit;
   onCommitPt: (pt: number) => void;
+  onUnitChange: (u: SizeUnit) => void;
   disabled?: boolean;
 }) {
-  // Texto controlado; se re-sincroniza cuando cambia el valor pt o la unidad.
   const shown = valuePt === undefined ? '' : fmtSize(ptToUnit(valuePt, unit), unit);
   const [draft, setDraft] = useState<string | null>(null);
   const value = draft ?? shown;
@@ -427,13 +428,34 @@ function SizeCombo({
     if (raw === '' || Number.isNaN(v) || v <= 0) return;
     onCommitPt(unitToPt(v, unit));
   };
+  const step = (dir: 1 | -1) => onCommitPt(stepPt(valuePt ?? 12, dir));
 
   return (
     <>
       <div
-        className="h-[22px] flex items-center bg-bg-3 border border-line-2 rounded-3 px-1.5"
-        style={{ width: 64, opacity: disabled ? 0.5 : 1 }}
+        className="h-[22px] flex items-stretch bg-bg-3 border border-line-2 rounded-3 overflow-hidden"
+        style={{ opacity: disabled ? 0.5 : 1 }}
       >
+        {/* Flechas ▲▼ (steppers) */}
+        <div className="flex flex-col justify-center border-r border-line-2" style={{ width: 15 }}>
+          <button
+            type="button" disabled={disabled} title="Aumentar tamaño"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => step(1)}
+            className="flex-1 flex items-center justify-center text-ink-2 hover:bg-bg-4 disabled:pointer-events-none"
+          >
+            <ChevronUp size={9} />
+          </button>
+          <button
+            type="button" disabled={disabled} title="Disminuir tamaño"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => step(-1)}
+            className="flex-1 flex items-center justify-center text-ink-2 hover:bg-bg-4 disabled:pointer-events-none"
+          >
+            <ChevronDown size={9} />
+          </button>
+        </div>
+        {/* Valor editable */}
         <input
           type="text"
           inputMode="decimal"
@@ -446,9 +468,25 @@ function SizeCombo({
           onKeyDown={(e) => {
             if (e.key === 'Enter') { commit((e.target as HTMLInputElement).value); (e.target as HTMLInputElement).blur(); }
             if (e.key === 'Escape') setDraft(null);
+            if (e.key === 'ArrowUp') { e.preventDefault(); step(1); }
+            if (e.key === 'ArrowDown') { e.preventDefault(); step(-1); }
           }}
-          className="bg-transparent w-full text-right font-mono text-11 outline-none disabled:cursor-not-allowed"
+          className="bg-transparent text-center font-mono text-11 outline-none disabled:cursor-not-allowed"
+          style={{ width: 30 }}
         />
+        {/* Segmento de unidad (convierte el valor) */}
+        <select
+          disabled={disabled}
+          value={unit}
+          onChange={(e) => onUnitChange(e.target.value as SizeUnit)}
+          title="Unidad del tamaño (convierte el valor)"
+          className="bg-bg-4 border-l border-line-2 text-11 px-0.5 outline-none cursor-pointer disabled:cursor-not-allowed"
+          style={{ width: 34 }}
+        >
+          {SIZE_UNITS.map((u) => (
+            <option key={u} value={u}>{u}</option>
+          ))}
+        </select>
       </div>
       <datalist id={listId}>
         {FONT_SIZE_PRESETS_PT.map((pt) => (
