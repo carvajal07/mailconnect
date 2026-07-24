@@ -4,13 +4,17 @@ import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import LayoutTree from '@/features/tree/LayoutTree';
 import Inspector from '@/features/properties/Inspector';
 import StylesPanel from '@/features/styles/StylesPanel';
+import StylePropsPanel from '@/features/styles/StylePropsPanel';
 import DataPanel from '@/features/data/DataPanel';
 import PagesStrip from './PagesStrip';
+import { useUIStore } from '@/store/uiStore';
 
 type Tab = 'layers' | 'styles' | 'data';
 
 export default function LeftPanel() {
   const [tab, setTab] = useState<Tab>('layers');
+  // Estilo/color enfocado → sus propiedades se editan abajo (en ambos tabs).
+  const styleTarget = useUIStore((s) => s.styleTarget);
 
   return (
     <div className="h-full flex flex-col">
@@ -66,7 +70,8 @@ export default function LeftPanel() {
             <div className="h-full flex flex-col">
               <SectionHeader title="Propiedades" />
               <div className="flex-1 min-h-0 overflow-auto">
-                <Inspector />
+                {/* Si hay un estilo/color enfocado, se edita AQUÍ; si no, el elemento. */}
+                {styleTarget ? <StylePropsPanel /> : <Inspector />}
               </div>
             </div>
           </Panel>
@@ -78,10 +83,35 @@ export default function LeftPanel() {
 
       {tab === 'styles' && (
         <div className="flex-1 min-h-0 flex flex-col">
-          <SectionHeader title="Estilos" />
-          <div className="flex-1 min-h-0">
-            <StylesPanel />
-          </div>
+        <PanelGroup direction="vertical" autoSaveId="left-panel-styles" className="flex-1 min-h-0">
+          <Panel defaultSize={60} minSize={25}>
+            <div className="h-full flex flex-col">
+              <SectionHeader title="Estilos" />
+              <div className="flex-1 min-h-0 overflow-auto">
+                <StylesPanel />
+              </div>
+            </div>
+          </Panel>
+          <PanelResizeHandle
+            className="group relative flex items-center justify-center"
+            style={{ height: 8, cursor: 'row-resize', background: 'var(--bg-2)' }}
+          >
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2" style={{ height: 2, background: 'var(--line-2)' }} />
+            <div
+              className="absolute inset-x-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity"
+              style={{ height: 2, background: 'var(--accent)' }}
+            />
+            <div className="relative rounded" style={{ width: 28, height: 3, background: 'var(--line-3)' }} />
+          </PanelResizeHandle>
+          <Panel defaultSize={40} minSize={15}>
+            <div className="h-full flex flex-col">
+              <SectionHeader title="Propiedades" />
+              <div className="flex-1 min-h-0 overflow-auto">
+                <StylePropsPanel />
+              </div>
+            </div>
+          </Panel>
+        </PanelGroup>
         </div>
       )}
 

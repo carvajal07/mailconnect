@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
+import { useUIStore } from '@/store/uiStore';
 import {
   ChevronDown, ChevronRight, PaintBucket, Palette, Pencil, Pilcrow, Plus,
   Slash, Square, Trash2, Type,
@@ -278,13 +279,14 @@ export default function StylesPanel() {
               {doc.assets.colors.map((c) => (
                 <div
                   key={c.id}
-                  className="flex items-center h-[28px] px-1 gap-2 select-none group hover:bg-bg-3"
+                  className="flex items-center h-[28px] px-1 gap-2 select-none group hover:bg-bg-3 cursor-pointer"
                   style={{
                     borderBottom: '1px solid var(--line-2)',
-                    ...(selectedElements.length > 0 ? { cursor: 'pointer' } : {}),
+                    ...(useUIStore.getState().styleTarget?.id === c.id
+                      ? { background: 'var(--accent-soft)' } : {}),
                   }}
-                  onClick={selectedElements.length > 0 ? () => applyColorToSelection(c.rgb) : undefined}
-                  title={selectedElements.length > 0 ? `Aplicar "${c.name}" a la selección` : c.name}
+                  onClick={() => useUIStore.getState().setStyleTarget({ kind: 'color', id: c.id })}
+                  title="Clic: editar abajo en Propiedades · doble clic: renombrar"
                 >
                   <input
                     type="color"
@@ -294,15 +296,21 @@ export default function StylesPanel() {
                     className="w-4 h-4 shrink-0 cursor-pointer rounded border-0 p-0 bg-transparent"
                     title="Editar color"
                   />
-                  <span className="flex-1 truncate text-11" style={{ color: 'var(--ink)' }}>{c.name}</span>
+                  <RenamableName
+                    name={c.name}
+                    onRename={(name) => updateColor(c.id, { name })}
+                  />
                   <span className="font-mono text-[9px] text-muted">{c.rgb}</span>
                   {selectedElements.length > 0 && (
-                    <span
+                    <button
+                      type="button"
                       className="text-[9px] font-semibold px-1 rounded opacity-0 group-hover:opacity-100"
                       style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
+                      title={`Aplicar "${c.name}" a la selección`}
+                      onClick={(e) => { e.stopPropagation(); applyColorToSelection(c.rgb); }}
                     >
                       Aplicar
-                    </span>
+                    </button>
                   )}
                   <button
                     type="button"
@@ -352,6 +360,8 @@ export default function StylesPanel() {
                       linkedCount={linkedCounts[item.id] ?? 0}
                       onApply={() => handleApply(key, item)}
                       onEdit={() => openEdit(key, item.id)}
+                      onFocusStyle={() => useUIStore.getState().setStyleTarget({ kind: key, id: item.id })}
+                      onRename={(name) => useDocumentStore.getState().updateStyle(key, item.id, { name })}
                     />
                   ))}
                 </div>
@@ -371,7 +381,7 @@ export default function StylesPanel() {
 /* ─── Fila de estilo individual ─── */
 
 function StyleItem({
-  styleKey, item, applicable, linkedCount, onApply, onEdit,
+  styleKey, item, applicable, linkedCount, onApply, onEdit, onFocusStyle, onRename,
 }: {
   styleKey: StyleKey;
   item: { id: string; name: string } & Record<string, unknown>;
@@ -379,27 +389,25 @@ function StyleItem({
   linkedCount: number;
   onApply: () => void;
   onEdit: () => void;
+  onFocusStyle: () => void;
+  onRename: (name: string) => void;
 }) {
+  const focused = useUIStore((s) => s.styleTarget?.id === item.id);
   return (
     <div
-      className="flex items-center h-[28px] px-1 gap-2 cursor-default select-none group hover:bg-bg-3"
+      className="flex items-center h-[28px] px-1 gap-2 cursor-pointer select-none group hover:bg-bg-3"
       style={{
         borderBottom: '1px solid var(--line-2)',
-        ...(applicable ? { cursor: 'pointer' } : {}),
+        ...(focused ? { background: 'var(--accent-soft)' } : {}),
       }}
-      onClick={applicable ? onApply : undefined}
-      title={applicable ? `Aplicar "${item.name}"` : item.name}
+      onClick={onFocusStyle}
+      title="Clic: editar abajo en Propiedades · doble clic: renombrar"
     >
       {/* Miniatura visual */}
       <StylePreview styleKey={styleKey} item={item} />
 
-      {/* Nombre */}
-      <span
-        className="flex-1 truncate text-11"
-        style={{ color: applicable ? 'var(--ink)' : 'var(--ink-2)' }}
-      >
-        {item.name}
-      </span>
+      {/* Nombre (doble clic para renombrar) */}
+      <RenamableName name={item.name} onRename={onRename} />
 
       {/* Elementos vinculados */}
       {linkedCount > 0 && (
@@ -412,26 +420,65 @@ function StyleItem({
         </span>
       )}
 
-      {/* Indicador aplicable */}
+      {/* Aplicar a la selección (botón explícito) */}
       {applicable && (
-        <span
+        <button
+          type="button"
           className="text-[9px] font-semibold px-1 rounded opacity-0 group-hover:opacity-100"
           style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
+          title={`Aplicar "${item.name}" a la selección`}
+          onClick={(e) => { e.stopPropagation(); onApply(); }}
         >
           Aplicar
-        </span>
+        </button>
       )}
 
-      {/* Editar */}
+      {/* Editor completo */}
       <button
         type="button"
-        title="Editar estilo"
+        title="Editor completo"
         onClick={(e) => { e.stopPropagation(); onEdit(); }}
         className="w-5 h-5 flex items-center justify-center rounded hover:bg-bg-4 text-muted opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
       >
         <Pencil size={11} />
       </button>
     </div>
+  );
+}
+
+/** Nombre editable con doble clic (renombrar en línea). */
+function RenamableName({ name, onRename }: { name: string; onRename: (n: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (editing && inputRef.current) { inputRef.current.focus(); inputRef.current.select(); }
+  }, [editing]);
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        defaultValue={name}
+        className="flex-1 text-11 px-1 rounded outline-none"
+        style={{ background: 'var(--bg-2)', color: 'var(--ink)', border: '1px solid var(--accent)' }}
+        onClick={(e) => e.stopPropagation()}
+        onBlur={(e) => { const v = e.currentTarget.value.trim(); if (v) onRename(v); setEditing(false); }}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') { const v = e.currentTarget.value.trim(); if (v) onRename(v); setEditing(false); }
+          if (e.key === 'Escape') setEditing(false);
+        }}
+      />
+    );
+  }
+  return (
+    <span
+      className="flex-1 truncate text-11"
+      style={{ color: 'var(--ink)' }}
+      onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
+    >
+      {name}
+    </span>
   );
 }
 
