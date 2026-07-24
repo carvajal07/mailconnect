@@ -15,6 +15,8 @@ export default function CircleElement({ el, zoom, onSelect, onChange, draggable 
   const s = MM_TO_PX * zoom;
   const rx = (el.width / 2) * s;
   const ry = (el.height / 2) * s;
+  // Sin relleno → el interior no intercepta el mouse (marquee iniciable dentro).
+  const hollow = el.fill === 'transparent';
   return (
     <Ellipse
       id={el.id}
@@ -30,6 +32,14 @@ export default function CircleElement({ el, zoom, onSelect, onChange, draggable 
       dash={el.dash?.map((v) => v * s)}
       dashEnabled={!!el.dash?.length}
       visible={el.visible}
+      hitStrokeWidth={Math.max(10, el.strokeWidth * s + 6)}
+      hitFunc={hollow ? (ctx, shape) => {
+        const e = shape as Konva.Ellipse;
+        ctx.beginPath();
+        (ctx as unknown as CanvasRenderingContext2D).ellipse(0, 0, e.radiusX(), e.radiusY(), 0, 0, Math.PI * 2);
+        ctx.closePath();
+        (ctx as unknown as { strokeShape: (sh: Konva.Shape) => void }).strokeShape(shape);
+      } : undefined}
       draggable={draggable && !el.locked}
       onMouseDown={(e) => onSelect(el.id, e.evt.shiftKey || e.evt.ctrlKey || e.evt.metaKey)}
       onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {

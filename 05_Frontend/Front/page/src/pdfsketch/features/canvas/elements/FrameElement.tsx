@@ -53,7 +53,9 @@ export default function FrameElement({ el, zoom, onSelect, onChange, draggable }
       onDragEnd={handleDragEnd}
       onTransformEnd={handleTransformEnd}
     >
-      {/* Fondo */}
+      {/* Fondo — interior HUECO cuando no hay relleno: el marquee de selección
+          se puede iniciar dentro del área; el frame se agarra por su borde
+          (hitStrokeWidth generoso) o por la etiqueta ÁREA. */}
       <Rect
         width={w}
         height={h}
@@ -62,8 +64,16 @@ export default function FrameElement({ el, zoom, onSelect, onChange, draggable }
         strokeWidth={el.strokeWidth * s}
         cornerRadius={el.cornerRadius * s}
         dash={[6 * zoom, 3 * zoom]}
+        hitStrokeWidth={Math.max(10, el.strokeWidth * s + 6)}
+        hitFunc={el.fill === 'transparent' ? (ctx, shape) => {
+          ctx.beginPath();
+          (ctx as unknown as CanvasRenderingContext2D).rect(0, 0, shape.width(), shape.height());
+          ctx.closePath();
+          (ctx as unknown as { strokeShape: (sh: Konva.Shape) => void }).strokeShape(shape);
+        } : undefined}
       />
-      {/* Etiqueta ÁREA en la esquina superior izquierda */}
+      {/* Etiqueta ÁREA en la esquina superior izquierda (interactiva: sirve de
+          "asa" para seleccionar/arrastrar el frame) */}
       <Rect
         x={0}
         y={0}
@@ -71,7 +81,6 @@ export default function FrameElement({ el, zoom, onSelect, onChange, draggable }
         height={10 * zoom}
         fill={el.stroke}
         cornerRadius={[el.cornerRadius * s, 0, 0, 0]}
-        listening={false}
       />
       <Text
         x={2 * zoom}

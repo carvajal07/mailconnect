@@ -53,6 +53,9 @@ export default function FlowableElement({ el, zoom, onSelect, onChange, draggabl
       onDragEnd={handleDragEnd}
       onTransformEnd={handleTransformEnd}
     >
+      {/* Interior HUECO (el fill azulado es decorativo): así el marquee de
+          selección se puede iniciar dentro de la sub-área. Se agarra por el
+          borde (hitStrokeWidth) o por su etiqueta. */}
       <Rect
         width={w}
         height={h}
@@ -60,15 +63,21 @@ export default function FlowableElement({ el, zoom, onSelect, onChange, draggabl
         stroke={el.stroke}
         strokeWidth={el.strokeWidth * s}
         dash={[3 * zoom, 3 * zoom]}
+        hitStrokeWidth={Math.max(10, el.strokeWidth * s + 6)}
+        hitFunc={(ctx, shape) => {
+          ctx.beginPath();
+          (ctx as unknown as CanvasRenderingContext2D).rect(0, 0, shape.width(), shape.height());
+          ctx.closePath();
+          (ctx as unknown as { strokeShape: (sh: Konva.Shape) => void }).strokeShape(shape);
+        }}
       />
-      {/* Etiqueta del tipo de flowable */}
+      {/* Etiqueta del tipo de flowable (asa de selección) */}
       <Text
         x={3 * zoom}
         y={3 * zoom}
         text={`↳ ${el.flowType === 'content' ? 'sub-área' : el.flowType}`}
         fontSize={6.5 * zoom}
         fill="#2563eb"
-        listening={false}
         opacity={0.7}
       />
     </Group>

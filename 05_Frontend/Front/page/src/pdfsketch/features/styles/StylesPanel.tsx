@@ -176,10 +176,8 @@ export default function StylesPanel() {
   const removeColor = useDocumentStore((s) => s.removeColor);
   const selectedIds = useSelectionStore((s) => s.selectedIds);
   const [editor, setEditor] = useState<StyleEditorTarget | null>(null);
-  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
-    colors: true,
-    textStyles: true, paragraphStyles: true, borderStyles: true, lineStyles: true, fillStyles: true,
-  });
+  // Todas las secciones CONTRAÍDAS por defecto (como el panel Recursos del Diseñador).
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
 
   const selectedElements = useMemo<ElementModel[]>(() => {
     if (selectedIds.length === 0) return [];

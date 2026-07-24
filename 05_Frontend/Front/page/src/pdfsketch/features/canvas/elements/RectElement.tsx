@@ -13,6 +13,10 @@ interface Props {
 
 export default function RectElement({ el, zoom, onSelect, onChange, draggable }: Props) {
   const s = MM_TO_PX * zoom;
+  // Sin relleno → el interior NO intercepta el mouse (se selecciona/arrastra por
+  // el borde, como en los editores vectoriales). Así el marquee de selección se
+  // puede iniciar DENTRO de un rectángulo hueco.
+  const hollow = el.fill === 'transparent';
   return (
     <Rect
       id={el.id}
@@ -29,6 +33,13 @@ export default function RectElement({ el, zoom, onSelect, onChange, draggable }:
       dash={el.dash?.map((v) => v * s)}
       dashEnabled={!!el.dash?.length}
       visible={el.visible}
+      hitStrokeWidth={Math.max(10, el.strokeWidth * s + 6)}
+      hitFunc={hollow ? (ctx, shape) => {
+        ctx.beginPath();
+        (ctx as unknown as CanvasRenderingContext2D).rect(0, 0, shape.width(), shape.height());
+        ctx.closePath();
+        (ctx as unknown as { strokeShape: (sh: Konva.Shape) => void }).strokeShape(shape);
+      } : undefined}
       draggable={draggable && !el.locked}
       onMouseDown={(e) => onSelect(el.id, e.evt.shiftKey || e.evt.ctrlKey || e.evt.metaKey)}
       onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {

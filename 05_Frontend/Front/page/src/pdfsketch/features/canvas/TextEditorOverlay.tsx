@@ -266,7 +266,11 @@ export default function TextEditorOverlay({ el, zoom, offsetX, offsetY, onCommit
           lineHeight: el.lineHeight,
           textAlign,
           background: 'rgba(255,255,255,0.97)',
-          border: '1.5px solid oklch(0.68 0.19 235)',
+          // El borde va como boxShadow para NO ocupar layout: un border real
+          // (box-sizing border-box) restaba 3px al ancho interno → el texto
+          // quebraba en otros puntos al editar y "parecía cambiar de tamaño".
+          boxShadow: '0 0 0 1.5px oklch(0.68 0.19 235)',
+          border: 'none',
           borderRadius: 2,
           outline: 'none',
           padding: 0,

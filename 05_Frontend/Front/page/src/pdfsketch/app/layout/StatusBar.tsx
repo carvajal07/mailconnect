@@ -8,7 +8,9 @@ function Sep() {
   return <div className="w-px h-4 bg-line-2 mx-2.5" />;
 }
 
-/** Botón "en caja" del estilo de la barra del Diseñador PDF. */
+/** Botón "en caja" del estilo de la barra del Diseñador PDF.
+ *  ⚠️ El padding va INLINE: el reset `.mc-sketch button { padding: 0 }` tiene
+ *  más especificidad que las utilidades `px-*` de Tailwind y las anula. */
 function BoxBtn({ onClick, title, active, children }: {
   onClick: () => void; title?: string; active?: boolean; children: ReactNode;
 }) {
@@ -17,10 +19,13 @@ function BoxBtn({ onClick, title, active, children }: {
       type="button"
       onClick={onClick}
       title={title}
-      className="h-[22px] px-3 rounded flex items-center gap-1.5 text-11 whitespace-nowrap"
-      style={active
-        ? { background: 'var(--accent-soft)', color: 'var(--accent)', border: '1px solid var(--accent)' }
-        : { background: 'var(--bg-1)', color: 'var(--ink-2)', border: '1px solid var(--line)' }}
+      className="h-[22px] rounded flex items-center gap-1.5 text-11 whitespace-nowrap"
+      style={{
+        padding: '0 12px',
+        ...(active
+          ? { background: 'var(--accent-soft)', color: 'var(--accent)', border: '1px solid var(--accent)' }
+          : { background: 'var(--bg-1)', color: 'var(--ink-2)', border: '1px solid var(--line)' }),
+      }}
     >
       {children}
     </button>
@@ -92,10 +97,13 @@ export default function StatusBar() {
             key={u}
             type="button"
             onClick={() => setUnit(u)}
-            className="h-[22px] px-2.5 rounded font-mono text-[10px]"
-            style={u === unit
-              ? { background: 'var(--accent)', color: '#ffffff', fontWeight: 700 }
-              : { background: 'var(--bg-1)', color: 'var(--ink-2)', border: '1px solid var(--line)' }}
+            className="h-[22px] rounded font-mono text-[10px]"
+            style={{
+              padding: '0 10px', // inline: el reset de botones anula las px-* de Tailwind
+              ...(u === unit
+                ? { background: 'var(--accent)', color: '#ffffff', fontWeight: 700 }
+                : { background: 'var(--bg-1)', color: 'var(--ink-2)', border: '1px solid var(--line)' }),
+            }}
             title={`Mostrar medidas en ${u}`}
           >
             {u}
@@ -110,8 +118,8 @@ export default function StatusBar() {
         <BoxBtn onClick={toggleGrid} active={showGrid} title="Mostrar/ocultar la grilla">
           <Grid3x3 size={11} /> Grilla
         </BoxBtn>
-        <BoxBtn onClick={toggleSnap} active={showSnap} title="Imantar a la grilla/guías">
-          <Magnet size={11} /> Snap
+        <BoxBtn onClick={toggleSnap} active={showSnap} title="Imantar los elementos a la grilla, márgenes y bordes de la hoja al arrastrar">
+          <Magnet size={11} /> Imán
         </BoxBtn>
         <BoxBtn onClick={toggleMargins} active={showMargins} title="Mostrar/ocultar la guía de márgenes">
           <SquareDashed size={11} /> Márgenes

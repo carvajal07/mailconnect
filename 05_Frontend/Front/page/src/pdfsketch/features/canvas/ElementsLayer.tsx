@@ -56,7 +56,15 @@ export default function ElementsLayer({ page, zoom, offsetX, offsetY, preview = 
   const activeTool = useToolStore((s) => s.active);
   const draggable = !preview && activeTool === 'select';
 
-  const multiDragRef = useRef<{ ids: string[]; committed: boolean } | null>(null);
+  const multiDragRef = useRef<{
+    ids: string[];
+    /** Posición INICIAL (mm, del modelo) de cada elemento seleccionado. */
+    startMm: Map<string, { x: number; y: number }>;
+    /** Posición inicial del NODO ancla en px (para calcular el delta). */
+    anchorId: string;
+    anchorStartPx: { x: number; y: number };
+    committed: boolean;
+  } | null>(null);
   const pendingCollapse = useRef<string | null>(null);
 
   function handleSelect(id: string, additive: boolean) {
@@ -97,10 +105,21 @@ export default function ElementsLayer({ page, zoom, offsetX, offsetY, preview = 
     pendingCollapse.current = null; // es un arrastre, no un clic-colapso
     // Los startDrag en cascada del proxy del Transformer también burbujean aquí.
     if (multiDragRef.current) return;
-    const id = (e.target as Konva.Node).id();
+    const node = e.target as Konva.Node;
+    const id = node.id();
     const sel = useSelectionStore.getState().selectedIds;
     if (id && sel.includes(id) && sel.length > 1) {
-      multiDragRef.current = { ids: [...sel], committed: false };
+      const startMm = new Map<string, { x: number; y: number }>();
+      for (const el of page.elements) {
+        if (sel.includes(el.id)) startMm.set(el.id, { x: el.x, y: el.y });
+      }
+      multiDragRef.current = {
+        ids: [...sel],
+        startMm,
+        anchorId: id,
+        anchorStartPx: { x: node.x(), y: node.y() },
+        committed: false,
+      };
     }
   }
 
@@ -138,8 +157,12 @@ export default function ElementsLayer({ page, zoom, offsetX, offsetY, preview = 
       return bestV;
     };
 
-    const nx = snapAxis(node.x(), w, targetsX);
-    const ny = snapAxis(node.y(), h, targetsY);
+    // La elipse usa su CENTRO como posición del nodo → convertir a esquina para
+    // snapear los BORDES y volver a centro al aplicar.
+    const offX = el.type === 'circle' ? w / 2 : 0;
+    const offY = el.type === 'circle' ? h / 2 : 0;
+    const nx = snapAxis(node.x() - offX, w, targetsX) + offX;
+    const ny = snapAxis(node.y() - offY, h, targetsY) + offY;
     if (nx !== node.x() || ny !== node.y()) node.position({ x: nx, y: ny });
   }
 
@@ -149,12 +172,20 @@ export default function ElementsLayer({ page, zoom, offsetX, offsetY, preview = 
     d.committed = true;
     const stage = (e.target as Konva.Node).getStage();
     const sc = MM_TO_PX * zoom;
+    // Commit RÍGIDO por delta: posición inicial del MODELO + desplazamiento del
+    // ancla. Es inmune a la semántica de posición de cada tipo de nodo (la
+    // elipse, por ejemplo, usa su CENTRO como posición del nodo — leer node.x()
+    // como el.x la hacía saltar medio ancho al soltar) y garantiza que las
+    // posiciones RELATIVAS de la selección se conservan exactas.
+    const anchorNode = stage?.findOne('#' + d.anchorId);
+    if (!anchorNode) { setTimeout(() => { multiDragRef.current = null; }, 0); return; }
+    const dx = (anchorNode.x() - d.anchorStartPx.x) / sc;
+    const dy = (anchorNode.y() - d.anchorStartPx.y) / sc;
     const patches: { id: string; patch: Partial<ElementModel> }[] = [];
-    for (const sid of d.ids) {
-      const n = stage?.findOne('#' + sid);
-      if (n) patches.push({ id: sid, patch: { x: n.x() / sc, y: n.y() / sc } as Partial<ElementModel> });
+    for (const [sid, p] of d.startMm) {
+      patches.push({ id: sid, patch: { x: p.x + dx, y: p.y + dy } as Partial<ElementModel> });
     }
-    if (patches.length) updateElements(patches);
+    if (patches.length && (dx !== 0 || dy !== 0)) updateElements(patches);
     // Los dragend de los demás nodos llegan síncronos en este mismo mouseup;
     // se limpia el ref DESPUÉS para que sus commits individuales sigan suprimidos.
     setTimeout(() => { multiDragRef.current = null; }, 0);
