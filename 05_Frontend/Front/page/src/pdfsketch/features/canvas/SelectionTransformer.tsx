@@ -50,6 +50,16 @@ export default function SelectionTransformer({ stageRef }: Props) {
 
   const accent = 'oklch(0.68 0.19 235)'; // --sel
 
+  // Imagen única con proporción bloqueada → el Transformer conserva el aspecto
+  // (solo anclajes de esquina) al redimensionar. `version` (updatedAt) hace que
+  // togglear "Conservar proporción" se refleje aquí.
+  void version;
+  const single = selectedIds.length === 1
+    ? useDocumentStore.getState().doc.pages.flatMap((p) => p.elements).find((e) => e.id === selectedIds[0])
+    : undefined;
+  const lockAspectImg = !!(single && single.type === 'image'
+    && (single as { lockAspect?: boolean }).lockAspect !== false);
+
   return (
     <Transformer
       ref={trRef}
@@ -61,7 +71,10 @@ export default function SelectionTransformer({ stageRef }: Props) {
       borderDash={[3, 3]}
       rotateAnchorOffset={24}
       rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
-      keepRatio={false}
+      keepRatio={lockAspectImg}
+      {...(lockAspectImg
+        ? { enabledAnchors: ['top-left', 'top-right', 'bottom-left', 'bottom-right'] }
+        : {})}
       flipEnabled={false}
       ignoreStroke
       boundBoxFunc={(oldBox, newBox) => {

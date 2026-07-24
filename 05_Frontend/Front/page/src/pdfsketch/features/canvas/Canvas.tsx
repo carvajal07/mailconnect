@@ -83,6 +83,7 @@ export default function Canvas() {
   const currentPageId = useDocumentStore((s) => s.currentPageId);
   const updateElement = useDocumentStore((s) => s.updateElement);
   const addElement = useDocumentStore((s) => s.addElement);
+  const addImageAsset = useDocumentStore((s) => s.addImageAsset);
   const select = useSelectionStore((s) => s.select);
   const uploadImage = useUploadStore((s) => s.uploadImage);
   const page = pages.find((p) => p.id === currentPageId) ?? pages[0];
@@ -401,12 +402,21 @@ export default function Canvas() {
       addElement(page.id, el);
       select([elId]);
       setActiveTool('select');
+      const assetName = file.name.replace(/\.[^.]+$/, '');
       // Sube a S3 (si hay uploader inyectado) y reemplaza el src por la URL pública,
       // que es la que el motor puede descargar para el PDF. Si falla, queda el local.
+      // Además la registra en Estilos → Imágenes (recurso reutilizable/arrastrable).
       if (uploadImage) {
         void uploadImage(file).then((url) => {
-          if (url) updateElement(elId, { src: url });
+          if (url) {
+            updateElement(elId, { src: url });
+            addImageAsset(assetName, url);
+          } else {
+            addImageAsset(assetName, src); // sin S3: al menos queda en la lista (local)
+          }
         });
+      } else {
+        addImageAsset(assetName, src);
       }
     };
     img.src = src;

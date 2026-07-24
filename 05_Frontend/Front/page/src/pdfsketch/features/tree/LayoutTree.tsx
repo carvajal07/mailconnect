@@ -108,7 +108,9 @@ export default function LayoutTree() {
     const node =
       (containing && tree.get(`pel:${containing.id}:${first}`)) ||
       (containing && tree.get(`pfl:${containing.id}:${first}`)) ||
-      tree.get(`lel:${first}`);
+      tree.get(`lel:${first}`) ||
+      tree.get(`ltx:${first}`) ||
+      tree.get(`imgfolder:${first}`);
     if (node) {
       // Selección INVERSA (lienzo → árbol): abre los grupos/página ancestros para
       // que el nodo sea visible, lo selecciona y lo desplaza a la vista.
@@ -217,21 +219,29 @@ function Node({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
     }
   }, [isRenaming]);
 
-  // Las imágenes (elemento o recurso) se pueden ARRASTRAR al lienzo (HTML5 DnD nativo,
-  // independiente del drag interno del árbol —desactivado— para reordenar).
+  // Las imágenes (elemento o recurso) se pueden ARRASTRAR al lienzo. OJO: la FILA
+  // es un drag-source de react-dnd (react-arborist); aunque el drag interno esté
+  // deshabilitado, su handler de `dragstart` hace preventDefault y CANCELARÍA el
+  // drag nativo. Por eso el arrastre se pone en un HIJO con stopPropagation, para
+  // que el evento no burbujee hasta la fila y react-dnd no lo cancele.
   const draggableImg = !!d.imgSrc;
+  const imgDragProps = draggableImg
+    ? {
+        draggable: true,
+        onDragStart: (e: React.DragEvent) => {
+          e.stopPropagation();
+          e.dataTransfer.setData('text/x-image-src', d.imgSrc!);
+          e.dataTransfer.setData('text/x-image-name', d.name);
+          e.dataTransfer.effectAllowed = 'copy';
+        },
+      }
+    : {};
 
   return (
     <div
       ref={dragHandle}
       style={style}
       className="flex items-center h-[22px] text-11 select-none cursor-default hover:bg-bg-3"
-      draggable={draggableImg || undefined}
-      onDragStart={draggableImg ? (e) => {
-        e.dataTransfer.setData('text/x-image-src', d.imgSrc!);
-        e.dataTransfer.setData('text/x-image-name', d.name);
-        e.dataTransfer.effectAllowed = 'copy';
-      } : undefined}
       onClick={() => {
         if (hasChildren && !isRenaming) node.toggle();
       }}
@@ -249,7 +259,12 @@ function Node({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
           node.isOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />
         ) : null}
       </button>
-      <span className="w-4 flex items-center justify-center text-muted">
+      <span
+        className="w-4 flex items-center justify-center text-muted"
+        style={draggableImg ? { cursor: 'grab' } : undefined}
+        title={draggableImg ? 'Arrastra al lienzo' : undefined}
+        {...imgDragProps}
+      >
         {d.assetList === 'colors' ? (
           <span
             className="inline-block rounded-sm"
@@ -259,6 +274,13 @@ function Node({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
               background: d.swatch || '#000000',
               border: '1px solid var(--line-2)',
             }}
+          />
+        ) : d.imgSrc ? (
+          <img
+            src={d.imgSrc}
+            alt=""
+            className="rounded-sm object-cover"
+            style={{ width: 12, height: 12, border: '1px solid var(--line-2)' }}
           />
         ) : (
           <Icon size={12} />
@@ -282,7 +304,11 @@ function Node({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
       ) : (
         <span
           className="flex-1 truncate px-1"
-          style={node.isSelected ? { color: 'var(--accent)' } : { color: 'var(--ink)' }}
+          style={{
+            ...(node.isSelected ? { color: 'var(--accent)' } : { color: 'var(--ink)' }),
+            ...(draggableImg ? { cursor: 'grab' } : {}),
+          }}
+          {...imgDragProps}
           onDoubleClick={(e) => {
             e.stopPropagation();
             if (d.kind === 'element' && d.elementId) {
@@ -329,6 +355,7 @@ function iconFor(n: TreeNode) {
     switch (n.id) {
       case 'g:pages': return Files;
       case 'g:elements': return Shapes;
+      case 'g:texts': return Type;
       case 'g:flows': return GitBranch;
       case 'g:fonts': return ALargeSmall;
       case 'g:colors': return Palette;
@@ -441,8 +468,18 @@ function buildTree(doc: DocumentModel): TreeNode[] {
           }),
       })),
     ),
+    // "Elementos" solo lista FIGURAS y LÍNEAS; los textos e imágenes van en su
+    // propio contenedor (Textos / Imágenes).
     group('g:elements', 'Elementos',
-      doc.pages.flatMap((p) => p.elements.filter((e) => e.type !== 'flowable').map((e) => elementNode(e, p.id, 'lel'))),
+      doc.pages.flatMap((p) => p.elements
+        .filter((e) => e.type === 'rect' || e.type === 'circle' || e.type === 'triangle'
+          || e.type === 'line' || e.type === 'pen')
+        .map((e) => elementNode(e, p.id, 'lel'))),
+    ),
+    group('g:texts', 'Textos',
+      doc.pages.flatMap((p) => p.elements
+        .filter((e) => e.type === 'text' || e.type === 'dataField')
+        .map((e) => elementNode(e, p.id, 'ltx'))),
     ),
     group('g:flows', 'Flujos', assetNodes('flow', doc.flows)),
     group('g:fonts', 'Fuentes', assetNodes('font', a.fonts, 'fonts')),

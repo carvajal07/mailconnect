@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { useDocumentStore } from '@/store/documentStore';
 import type { ImageEl } from '@/types/document';
 import { SectionTitle, SliderRow } from '../shared';
@@ -11,7 +11,9 @@ export default function ImageProps({ el }: Props) {
   const updateElement = useDocumentStore((s) => s.updateElement);
   const up = (patch: Partial<ImageEl>) => updateElement(el.id, patch);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [keepRatio, setKeepRatio] = useState(true);
+  // La proporción se guarda EN EL ELEMENTO (lockAspect) para que el Transformer del
+  // lienzo también la respete al redimensionar (no solo al reemplazar el archivo).
+  const keepRatio = el.lockAspect !== false;
 
   function handleReplaceFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -33,12 +35,12 @@ export default function ImageProps({ el }: Props) {
   }
 
   function handleKeepRatioChange(checked: boolean) {
-    setKeepRatio(checked);
+    up({ lockAspect: checked });
     if (checked && el.src) {
       const img = new window.Image();
       img.onload = () => {
         const ratio = img.naturalWidth / img.naturalHeight;
-        up({ height: el.width / ratio });
+        up({ lockAspect: true, height: el.width / ratio });
       };
       img.src = el.src;
     }

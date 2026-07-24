@@ -168,6 +168,8 @@ export interface ImageEl extends BaseEl {
   opacity: number;
   cropX?: number;
   cropY?: number;
+  /** Conservar proporción al redimensionar (default true si no está definido). */
+  lockAspect?: boolean;
 }
 
 export type BarcodeType =
