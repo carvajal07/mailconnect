@@ -1,0 +1,199 @@
+# PENDIENTES.md — Backlog por bloques
+
+> **Propósito:** lista maestra de pendientes para trabajar POR BLOQUES, salida de la
+> revisión profunda del proyecto (jul 2026). Complementa a `DESPLIEGUE.md` (checklist
+> de consola) y a `PLAN_MVP.md` (plan de salida). Convención: `[J]` = despliegue/consola
+> AWS · `[C]` = código · `[P]` = producto/decisión de negocio.
+>
+> Al cerrar un ítem, márcalo `[x]` y (si aplica) actualiza `DESPLIEGUE.md`/`CLAUDE.md`.
+
+---
+
+## BLOQUE 0 — Hecho en esta tanda (jul 2026) + su despliegue
+
+Código YA implementado y probado (suite completo en verde). Lo único abierto de este
+bloque son los pasos `[J]` de despliegue.
+
+- [x] `[C]` **Bloqueo progresivo de login**: 2º fallo avisa "queda 1 intento"; 3º fallo
+      → 5 min; reincidencia tras habilitarse → 1 h → 24 h (se mantiene). Login correcto
+      (desbloqueado) resetea contador y escalera. Con bloqueo VIGENTE ni la clave
+      correcta entra. (`Api_V1_Security_Login`; campos `failedLoginAttempts`/`lockUntil`/
+      `lockStage` en `user`; respuesta 429; audita `security.lockout`.)
+- [x] `[C]` **Revocación real de tokens**: el JWT lleva `sid` (id de sesión); los
+      Authorizers deniegan tokens sin `sid` o con sesión inactiva; Logout y
+      Change-password desactivan las sesiones; Refresh-token la valida y PRESERVA
+      `sid` + `tenantRole` (fix: antes el refresco PERDÍA el sub-rol → escalación
+      operator→owner). Front: la sesión pasa a `sessionStorage` (muere al cerrar
+      pestaña/ventana/navegador) con handshake entre pestañas abiertas + logout
+      difundido a todas las pestañas.
+- [x] `[C]` **Segunda barrera admin**: las 21 lambdas admin revalidan la FIRMA del JWT
+      (HS256, sin PyJWT) y exigen claim `role=admin`; el context solo ya no basta. El
+      mapping template inyecta el header Authorization como `authToken`.
+- [x] `[C]` **PBKDF2 a 600.000 iteraciones** (Login/Register/Change-password/User_Create)
+      con re-hash transparente en el siguiente login (el formato `pbkdf2$iter$hex` es
+      auto-descriptivo → sin migración).
+- [x] `[C]` **Paridad lienzo↔PDF (Estudio PDF)**: bordes/trazos en mm (salían ~2.8×
+      más delgados), líneas diagonales como línea real (rect rotado, no bloque),
+      rotación de texto/contentarea/tabla/QR en el motor, alineación de párrafos con
+      variables (`text-align` ya no se pierde), `font-family` por fragmento, alias de
+      fuentes (JetBrains Mono→Courier, Arial→Helvetica, Times New Roman→Times) y
+      estilos POR CELDA de tabla (align/bold/color/background).
+
+**Despliegue de esta tanda (hacer JUNTO):**
+
+- [ ] `[J]` Redesplegar `Api_V1_Security_{Login,Logout,Change-password,Refresh-token}`,
+      `Authorizer` y `Authorizer2`.
+- [ ] `[J]` IAM: permiso `dynamodb:GetItem` sobre la tabla **`session`** en los roles de
+      `Authorizer`, `Authorizer2` y `Refresh-token`; `dynamodb:UpdateItem` sobre `user`
+      en Login (contador de bloqueo) y `Scan`/`UpdateItem` sobre `session` en
+      Change-password (revocación).
+- [ ] `[J]` Redesplegar las 21 lambdas admin y **configurar la env `SECRET_KEY`** en
+      TODAS (la misma del Login). Sin la env, el gate cae al modo "solo context"
+      (compatibilidad de rollout) y la segunda barrera queda inactiva.
+- [ ] `[J]` Correr `deploy-api.yml` (el mapping template ahora inyecta `authToken`).
+      Orden seguro: primero API (template), luego lambdas — o el mismo push; la ventana
+      intermedia falla CERRADA (403 admin), nunca escala.
+- [ ] `[J]` **Aviso de corte:** al desplegar, TODOS los tokens vigentes quedan inválidos
+      (no traen `sid`) → los usuarios deben volver a iniciar sesión una vez.
+- [ ] `[J]` Bajar el **TTL del cache del Authorizer** en API Gateway a 60–300 s: la
+      revocación es efectiva cuando expira ese cache.
+- [ ] `[J]` Redesplegar `Api_V1_Template_Render-engine` (traductor + motor con los fixes
+      de paridad). Si aún no existe, ver Bloque 2.
+
+---
+
+## BLOQUE 1 — Seguridad (lo que sigue abierto)
+
+1. [ ] `[J]` **URGENTE — Redesplegar `Api_V1_Security_Register`** con el fix del 409 por
+       NIT (`DESPLIEGUE.md` §3e). Mientras no se despliegue, cualquiera que conozca el
+       NIT de una empresa entra a su tenant como owner.
+2. [ ] `[J]` **Rate limiting/WAF** en los endpoints públicos: `/Assistant/Ask` (costo
+       Bedrock ilimitado + jailbreak), `/Security/Register` y `/Security/Create-otp`
+       (email bombing vía SES). Usage plan + regla rate-based + alarma de gasto Bedrock.
+3. [ ] `[C]` **`realSendEnabled` fail-closed**: hoy `Prepare-batch`/`Login` asumen `True`
+       si falta el campo o falla la lectura. Un control de bloqueo debe denegar ante error.
+4. [ ] `[C]` **Blacklist Add/Delete**: eliminar el fallback al body (`nit`/`customerId`)
+       — usar `_resolve_tenant` (ya existe, es código muerto). Igual en `Cost_Estimate`.
+5. [ ] `[J]` **Secrets Manager** para `SECRET_KEY` y llaves Wompi (hoy env vars).
+6. [ ] `[C]` **Anti-enumeración**: homogeneizar mensajes (Login 423 vs 404, Register
+       email vs NIT, OTP 404) — decisión de producto: hoy priorizan UX.
+7. [ ] `[C]` **Sanitizar `dangerouslySetInnerHTML`** (DOMPurify) en HtmlBuilder/designer
+       — un XSS roba la sesión (mitigado en parte: el token ya no persiste al cerrar).
+8. [ ] `[J]` **S3 público** (`attachment/`, `resources/`): migrar a URLs prefirmadas o
+       CloudFront + OAC; acotar CORS a los orígenes del portal.
+9. [ ] `[C]` **Carrera de registro por email**: `Register` usa Scan sin condición — dos
+       registros concurrentes del mismo correo pueden duplicarse (usar GSI +
+       `ConditionExpression`).
+10. [ ] `[C]` **CAPTCHA** en registro y forgot-password (complementa el punto 2).
+
+---
+
+## BLOQUE 2 — Despliegues que desbloquean features YA construidas
+
+El front está terminado y el backend probado; solo falta la consola AWS
+(detalle exacto en `DESPLIEGUE.md` §3b–§3e):
+
+1. [ ] `[J]` **Programar envíos**: tabla `scheduledSend`, rol
+       `MailConnectSchedulerInvokeRole`, lambdas+rutas `Schedule_{Create,Fire,List,Cancel}`.
+2. [ ] `[J]` **PDF nivel básico + envío EAP-PDF**: layer xhtml2pdf, `Template_Render-pdf`,
+       `Template_Combination-EAP-PDF` + cola + trigger, redeploy `Send-batch-template-EAP`.
+3. [ ] `[J]` **Motor estándar (Estudio/Diseñador)**: `Api_V1_Template_Render-engine` +
+       ruta `/Template/Render-engine` + layer (reportlab, Pillow, qrcode, python-barcode)
+       + IAM (`GetItem messageTemplate`, S3 PutObject). **Verificar el GSI
+       `customerId-index` en `messageTemplate`** (sin él, List falla y el lanzador del
+       Estudio queda vacío).
+4. [ ] `[J]` **Cascada omnicanal**: tablas `cascadeRun`/`cascadeContact` (+GSIs), cron
+       `rate(10 min)` → `Cascade_Advance`, rutas `/Cascade/{Dispatch,List}`, IAM.
+5. [ ] `[J]` **Equipo del cliente**: `User_{Create,List,Delete}` + rutas + mapping
+       `tenantRole` + env `MAX_TEAM_USERS`.
+6. [ ] `[J]` **Copiloto IA**: lambda `Assistant_Copilot` + ruta + IAM Bedrock. `[C]`
+       re-habilitar el tab (`PortalSidebar` + `case` en `PortalPage`) cuando producto lo pida.
+7. [ ] `[P]` **Piloto E2E con cliente real** (gate final del MVP, `PLAN_MVP.md` Fase 1).
+
+---
+
+## BLOQUE 3 — Plantillas PDF avanzadas (Estudio): cerrar el ciclo
+
+1. [ ] `[C]` **Usarlas en campañas (CRÍTICO del flujo)**: hoy el selector EAP-PDF las
+       lista pero solo lee `html` → elegir una del Estudio falla ("No se encontró la
+       plantilla"). El pipeline de envío tampoco sabe renderizar `sketchJson`.
+       Plan: el combinador EAP-PDF detecta `messageTemplateId` con `sketchJson`/
+       `templateJson` y renderiza con el motor (traductor + pdf_engine) por
+       destinatario, pasando la fila del CSV como `data`. Mientras tanto: filtrar del
+       selector las plantillas sin `html` y ajustar el texto del editor ("guarda para
+       usarla en campañas" aún no aplica).
+2. [ ] `[C]` **Vista previa con datos de muestra**: `SketchStudio.handlePreview` no envía
+       `data` → las `{{variables}}` salen vacías y las tablas `repeatBy` sin filas.
+       Usar las `previewRows` de la base seleccionada (ya están en `dataSourceStore`).
+3. [ ] `[C]` Restos del traductor: `dash` (líneas/bordes punteados), `pen` y `flowable`
+       (omitidos con warning), opacidad/crop de imágenes, `fallback` del dataField,
+       interletra por fragmento en contentarea, fondos de página no sólidos.
+4. [ ] `[J]` Fuentes reales para cursivas de Inter (subir `Inter-Italic.ttf`/
+       `Inter-BoldItalic.ttf` a `fonts/`) si se quiere cursiva fiel (hoy cae a
+       Helvetica-Oblique).
+5. [ ] `[C]` Validar el tamaño del diseño al guardar (límite 400 KB del item de
+       DynamoDB) y aligerar la precarga del portal (List devuelve el `sketchJson`
+       completo de TODAS las plantillas).
+
+---
+
+## BLOQUE 4 — Producto (brechas vs. mercado)
+
+1. [ ] `[P]/[C]` **Segmentación de audiencias** (filtros sobre columnas de la base).
+2. [ ] `[P]/[C]` **Pruebas A/B** de asunto/plantilla con ganador por apertura.
+3. [ ] `[P]/[C]` **API pública + webhooks** para clientes (transaccional).
+4. [ ] `[C]` **Higiene de listas**: verificación previa (sintaxis+MX) antes del envío real.
+5. [ ] `[C]` **Centro de preferencias** del suscriptor (no solo desuscripción total).
+6. [ ] `[C]` **Reporte por destinatario** buscable ("¿qué le llegó a X?").
+7. [ ] `[C]` **2FA (TOTP)** para admins y owners (reutiliza la infraestructura OTP).
+8. [ ] `[C]` **Notificaciones al cliente**: campaña terminada, saldo bajo, rebote alto.
+9. [ ] `[P]` **Automatizaciones** (bienvenida/fechas) sobre el motor de la Cascada.
+10. [ ] `[P]` Decisiones abiertas: proveedor SMS definitivo, tarifas reales calibradas,
+        reembolso de fallidos, facturación fiscal DIAN (`PLAN_PREPAGO.md` §13).
+
+---
+
+## BLOQUE 5 — Tableros
+
+1. [ ] `[C]` **"Centro de mando" (admin)**: semáforo de operación (procesos atascados
+       >2 h, schedules `failed`, DLQs con mensajes), dinero del día (débitos/recargas +
+       solicitudes pendientes), top clientes en riesgo de reputación con tendencia,
+       últimas entradas de auditoría. Todo sale de tablas existentes + 1 llamada SQS.
+2. [ ] `[C]` **Series temporales** (30 días) en cliente y admin vía la preagregación
+       `sendSummary` (`PLAN_PREAGREGACION.md`): sparklines + área de
+       envíos/entregas/aperturas. De paso elimina los avisos de "datos parciales".
+3. [ ] `[C]` **"Salud de mi base"** (portal): crecimiento de válidos, rebotados
+       acumulados, desuscritos, heatmap día×hora de aperturas (alimenta la hora óptima
+       del Copiloto).
+
+---
+
+## BLOQUE 6 — Panel admin (funciones faltantes)
+
+1. [ ] `[C]` **Listado global de plantillas SES** (`ListTemplates`; hoy la tabla solo
+       muestra lo creado en la sesión).
+2. [ ] `[C]` **"Ver como cliente"** (impersonación auditada) para soporte.
+3. [ ] `[C]` **Acciones de soporte en la ficha**: reenviar activación, forzar reseteo,
+       **cerrar sesiones del usuario** (la revocación por `sid` ya lo permite:
+       basta desactivar sus sesiones).
+4. [ ] `[C]/[J]` **Colas/DLQ**: profundidad real de SQS + ver/redrive de DLQs desde la UI.
+5. [ ] `[C]` **Límites por cliente**: tope diario/por campaña y tasa máxima (hoy solo
+       existe el interruptor `realSendEnabled`).
+6. [ ] `[C]` **Dominios remitentes globales** (los `senderDomain` de todos los clientes
+       con su estado).
+7. [ ] `[C]` **Paginación/búsqueda server-side** en las tablas admin (adiós al patrón
+       `truncated`; se apoya en el Bloque 5.2).
+8. [ ] `[C]` **Export de auditoría** (CSV/rango de fechas).
+9. [ ] `[C]` **Panel de salud de despliegue**: verificación de qué rutas/lambdas/tablas
+       del checklist `[J]` existen realmente en AWS.
+
+---
+
+## BLOQUE 7 — Calidad / CI / limpieza
+
+1. [ ] `[C]` **Build del frontend en CI** (`npm ci && npx tsc -b && npm run build`):
+       hoy una regresión de TypeScript pasa el CI en verde.
+2. [ ] `[C]` Quitar el botón "Ver datos de ejemplo (demo)" de `ReportesSection` y los
+       endpoints placeholder muertos de `config/api.ts:40-73`.
+3. [ ] `[C]` Guard de CI para `VITE_AUTH_MOCK=false` en builds de producción.
+4. [ ] `[J]` Checklist post-deploy de `DESPLIEGUE.md` §7 (6 ítems sin marcar).
