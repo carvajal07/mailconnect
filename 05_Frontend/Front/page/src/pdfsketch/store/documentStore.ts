@@ -91,6 +91,32 @@ export function applyFillStyleProps(el: ElementModel, s: FillStyle): ElementMode
   return { ...el, ...patch } as ElementModel;
 }
 
+/** Etiqueta base por tipo de elemento (para el auto-nombrado: Texto, Texto_1, …). */
+export const ELEMENT_TYPE_LABELS: Record<string, string> = {
+  text: 'Texto', rect: 'Rectángulo', circle: 'Círculo', triangle: 'Triángulo', line: 'Línea',
+  pen: 'Trazo', image: 'Imagen', table: 'Tabla', qr: 'QR',
+  dataField: 'Campo', frame: 'Área', flowable: 'Sub-área',
+};
+
+/**
+ * Calcula un nombre único por tipo para un elemento nuevo: la primera pieza de
+ * un tipo se llama p. ej. "Texto", la siguiente "Texto_1", "Texto_2", … Salta
+ * los sufijos ya usados (por elementos renombrados o borrados) para no duplicar.
+ */
+function autoNameFor(doc: DocumentModel, type: string): string {
+  const label = ELEMENT_TYPE_LABELS[type] ?? type;
+  const used = new Set<string>();
+  for (const p of doc.pages) {
+    for (const e of p.elements) {
+      if (e.type === type && e.name) used.add(e.name);
+    }
+  }
+  if (!used.has(label)) return label;
+  let i = 1;
+  while (used.has(`${label}_${i}`)) i += 1;
+  return `${label}_${i}`;
+}
+
 export type StyleKey = 'textStyles' | 'paragraphStyles' | 'borderStyles' | 'lineStyles' | 'fillStyles';
 export type AnyStyleItem = TextStyle | ParagraphStyle | BorderStyle | LineStyle | FillStyle;
 
@@ -245,16 +271,21 @@ export const useDocumentStore = create<DocumentState>()(
         })),
 
       addElement: (pageId, el) =>
-        set((s) => ({
-          doc: {
-            ...s.doc,
-            pages: s.doc.pages.map((p) =>
-              p.id === pageId ? { ...p, elements: [...p.elements, el] } : p,
-            ),
-            updatedAt: new Date().toISOString(),
-          },
-          dirty: true,
-        })),
+        set((s) => {
+          // Cada elemento nuevo recibe un nombre propio (Texto, Texto_1, …) si no
+          // trae uno; así aparece identificable en el árbol de capas.
+          const named = el.name ? el : ({ ...el, name: autoNameFor(s.doc, el.type) } as ElementModel);
+          return {
+            doc: {
+              ...s.doc,
+              pages: s.doc.pages.map((p) =>
+                p.id === pageId ? { ...p, elements: [...p.elements, named] } : p,
+              ),
+              updatedAt: new Date().toISOString(),
+            },
+            dirty: true,
+          };
+        }),
 
       updateElement: (id, patch) =>
         set((s) => ({

@@ -230,6 +230,11 @@ export default function SketchStudio() {
         const blob = base64ToPdfBlob(res.data.pdfBase64);
         setPreviewWarnings(res.data.warnings ?? []);
         setPreviewUrl(URL.createObjectURL(blob));
+      } else if (res.statusCode === 404 || res.statusCode === 403 || res.statusCode === 0) {
+        // El motor del Estudio PDF usa /Template/Render-engine (ReportLab), que es
+        // DISTINTO de /Template/Render-pdf (xhtml2pdf, editor tipo Word). Si aún no
+        // está desplegado, el mensaje lo deja claro (es un pendiente de despliegue).
+        notify('La vista previa usa el motor /Template/Render-engine, que aún no está disponible. Pídele a tu administrador que despliegue esa ruta (es distinta de /Template/Render-pdf).', 'error');
       } else {
         notify(res.description || 'No se pudo generar el PDF.', 'error');
       }

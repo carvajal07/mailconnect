@@ -7,8 +7,8 @@ import Canvas from '@/features/canvas/Canvas';
 import PdfPreviewModal from '@/features/canvas/PdfPreviewModal';
 import { useUIStore } from '@/store/uiStore';
 
-const LEFT_MIN = 200;
-const LEFT_MAX = 460;
+const LEFT_MIN = 300;
+const LEFT_MAX = 520;
 
 /**
  * Layout del editor (flexbox):
@@ -33,7 +33,7 @@ export default function AppShell() {
   const showLeft = useUIStore((s) => s.panels.leftPanel);
   const showStatus = useUIStore((s) => s.panels.statusBar);
 
-  const [leftW, setLeftW] = useState(248);
+  const [leftW, setLeftW] = useState(340);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
 
   const onDragMove = useCallback((e: MouseEvent) => {
@@ -78,9 +78,18 @@ export default function AppShell() {
       <div className="flex-1 min-h-0 flex">
         {/* LeftRail */}
         {showRail && (
-          <div className="shrink-0 border-r border-line bg-bg-1 overflow-hidden" style={{ width: 44 }}>
-            <LeftRail />
-          </div>
+          <>
+            <div className="shrink-0 bg-bg-1 overflow-hidden" style={{ width: 44 }}>
+              <LeftRail />
+            </div>
+            {/* Separador (igual al que hay entre el panel y el lienzo, pero fijo) */}
+            <div className="shrink-0 relative" style={{ width: 6, background: 'var(--bg-0)' }}>
+              <div
+                className="absolute inset-y-0 left-1/2 -translate-x-1/2"
+                style={{ width: 2, background: 'var(--line-2)' }}
+              />
+            </div>
+          </>
         )}
 
         {/* LeftPanel (redimensionable) */}

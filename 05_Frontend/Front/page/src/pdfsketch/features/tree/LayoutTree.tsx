@@ -42,6 +42,8 @@ interface TreeNode {
   /** Para assets renombrables: lista de assets + id del item. */
   assetList?: AssetList;
   assetId?: string;
+  /** Muestra visual del color (para los items de la lista Colores). */
+  swatch?: string;
   children?: TreeNode[];
 }
 
@@ -105,7 +107,13 @@ export default function LayoutTree() {
       (containing && tree.get(`pel:${containing.id}:${first}`)) ||
       (containing && tree.get(`pfl:${containing.id}:${first}`)) ||
       tree.get(`lel:${first}`);
-    if (node) tree.select(node.id);
+    if (node) {
+      // Selección INVERSA (lienzo → árbol): abre los grupos/página ancestros para
+      // que el nodo sea visible, lo selecciona y lo desplaza a la vista.
+      node.openParents();
+      tree.select(node.id);
+      tree.scrollTo(node.id, 'center');
+    }
   }, [selectedIds, doc.pages]);
 
   function onSelect(nodes: NodeApi<TreeNode>[]) {
@@ -230,7 +238,19 @@ function Node({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
         ) : null}
       </button>
       <span className="w-4 flex items-center justify-center text-muted">
-        <Icon size={12} />
+        {d.assetList === 'colors' ? (
+          <span
+            className="inline-block rounded-sm"
+            style={{
+              width: 11,
+              height: 11,
+              background: d.swatch || '#000000',
+              border: '1px solid var(--line-2)',
+            }}
+          />
+        ) : (
+          <Icon size={12} />
+        )}
       </span>
 
       {isRenaming ? (
@@ -402,7 +422,14 @@ function buildTree(doc: DocumentModel): TreeNode[] {
     ),
     group('g:flows', 'Flujos', assetNodes('flow', doc.flows)),
     group('g:fonts', 'Fuentes', assetNodes('font', a.fonts, 'fonts')),
-    group('g:colors', 'Colores', assetNodes('color', a.colors, 'colors')),
+    group('g:colors', 'Colores', a.colors.map((c): TreeNode => ({
+      id: `color:${c.id}`,
+      name: c.name,
+      kind: 'asset',
+      assetList: 'colors',
+      assetId: c.id,
+      swatch: (c as { rgb?: string }).rgb || '#000000',
+    }))),
     group('g:images', 'Imágenes', [...assetNodes('img', a.images, 'images'), ...imageElements]),
     group('g:tables', 'Tablas', assetNodes('tbl', a.tables, 'tables')),
     group('g:rowSets', 'Filas', assetNodes('rs', a.rowSets, 'rowSets')),

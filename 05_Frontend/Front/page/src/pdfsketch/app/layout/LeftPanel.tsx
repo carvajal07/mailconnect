@@ -45,7 +45,6 @@ export default function LeftPanel() {
 
       {/* ── Contenido según tab ── */}
       {tab === 'layers' && (
-        <div className="flex-1 min-h-0 flex flex-col">
         <PanelGroup direction="vertical" autoSaveId="left-panel" className="flex-1 min-h-0">
           <Panel defaultSize={55} minSize={20}>
             <div className="h-full flex flex-col">
@@ -76,13 +75,9 @@ export default function LeftPanel() {
             </div>
           </Panel>
         </PanelGroup>
-        {/* Controles de hojas: FIJOS abajo del todo, después de Propiedades */}
-        <PagesStrip />
-        </div>
       )}
 
       {tab === 'styles' && (
-        <div className="flex-1 min-h-0 flex flex-col">
         <PanelGroup direction="vertical" autoSaveId="left-panel-styles" className="flex-1 min-h-0">
           <Panel defaultSize={60} minSize={25}>
             <div className="h-full flex flex-col">
@@ -112,7 +107,6 @@ export default function LeftPanel() {
             </div>
           </Panel>
         </PanelGroup>
-        </div>
       )}
 
       {tab === 'data' && (
@@ -123,6 +117,9 @@ export default function LeftPanel() {
           </div>
         </div>
       )}
+
+      {/* Controles de HOJAS: FIJOS abajo, visibles en TODOS los tabs */}
+      <PagesStrip />
     </div>
   );
 }
