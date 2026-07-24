@@ -1119,6 +1119,41 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
   letras, `_list_marker`, render smoke, `firstLineIndent`, multipárrafo, dash a
   segmentos, línea continua) + ajuste de `test_paridad_estilos.py`.
 
+### Estudio PDF (5ª tanda, ago 2026): selección en el lienzo + editores de estilos estilo Diseñador
+- **Selección rotación-consciente** (`Canvas.tsx`): el `onMouseDown` decidía "¿el clic
+  está sobre un elemento?" con el bbox SIN rotar → en un texto/forma girado, el clic
+  dentro de su caja visual caía "fuera", arrancaba el marquee y LIMPIABA la selección
+  (solo se podía seleccionar por el borde). Ahora `pointInElementMm` lleva el punto al
+  espacio local del elemento (rotación inversa alrededor de su x,y — la convención de
+  Konva) y el marquee interseca contra el AABB del elemento YA rotado (`rotatedAABBMm`).
+- **Formas sin relleno seleccionables por el interior**: se quitaron los `hitFunc` de
+  solo-borde de `Rect/Circle/Triangle/FrameElement` (con `fill: 'transparent'` Konva sí
+  registra el interior en el hit canvas). El clic en cualquier parte de la caja
+  selecciona; el marquee sigue arrancando solo FUERA de los elementos (decisión del
+  Canvas por modelo, no por hit de Konva).
+- **Editores de estilos con la anatomía del Diseñador** (`StyleEditorModal` — el de
+  BORDES se dejó como estaba, por pedido de producto):
+  - **Relleno** (tipo "Simple"): picker completo nuevo (`ColorPickerPanel.tsx`) — área
+    SV grande + barra de matiz + muestras actual|Nuevo + HTML con **gotero**
+    (EyeDropper API) + RGB + **CMYK** (conversión bidireccional) + opacidad. El HSV
+    interno conserva el matiz al pasar por negro/blanco.
+  - **Estilo de texto**: fila NOMBRE + preview "Ejemplo de texto — AaBbCc 123" + tabs
+    Fuente/Reglas/Super-Sub/Líneas/**Relleno**/Contorno/Borde. Fuente: Familia
+    (desplegable con las fuentes del editor), Peso, Tamaño (pt), **Fill** (selector de
+    rellenos del documento; elegir uno copia su color), Color, Bold/Italic (sincronizados
+    con `subFont`) y Small caps (→ `textTransform: uppercase`; el motor no tiene
+    versalitas reales). Contorno/Borde son tabs informativos (paridad visual).
+  - **Estilo de párrafo**: fila NOMBRE + preview de párrafo + tabs General/Listas/
+    Tabuladores/Flujo/Borde/Avanzado. General: Alineación, **V. Alineación** (nueva,
+    FUNCIONAL de punta a punta: `ParagraphStyle.vAlign` → `TextEl.vAlign` → canvas
+    (`TextElement` desplaza el contenido) → traductor emite `verticalAlign` → el motor
+    ya lo soportaba), sangrías izquierda/derecha/1ª línea (mm), espacios antes/después,
+    tipo de interlineado + interlineado. **Fix de semántica**: `lineSpacing` es
+    MULTIPLICADOR (default 1.2); el default viejo (5, pensado en mm) producía un
+    interlineado ×5 al vincular el estilo.
+- **Cobertura**: `test_render_engine.py::test_traductor_emite_vertical_align`; el motor
+  vendorizado del combinador EAP-PDF se resincronizó con estos cambios.
+
 ### Estudio PDF (4ª tanda, ago 2026): flechas de tamaño, bordes punteados y USO EN CAMPAÑAS
 - **Flechas ▲▼ del tamaño de fuente** (`FormatToolbar.SizeCombo`): ahora recorren SIEMPRE
   el tamaño del ELEMENTO (nueva prop `onStep`), aunque se esté editando. Antes, editando,

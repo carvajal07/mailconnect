@@ -610,3 +610,22 @@ def test_render_borde_discontinuo_smoke(mod):
     ]}]}
     res = mod.lambda_handler(_ctx({'sketch': {'schema': 'pdfsketch@1', 'document': doc}}), None)
     assert _pdf_bytes(res)[:5] == b'%PDF-'
+
+
+# ── Alineación vertical del texto (V. Alineación del estilo de párrafo) ──────
+
+def test_traductor_emite_vertical_align(mod):
+    from sketch_translator import translate_sketch
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 't', 'type': 'text', 'x': 10, 'y': 10, 'width': 100, 'height': 40,
+         'text': 'Centrado vertical', 'align': 'left', 'vAlign': 'middle',
+         'fontFamily': 'Helvetica', 'fontSize': 12, 'color': '#111111',
+         'fontWeight': 400, 'lineHeight': 1.3},
+    ]}]}
+    el = translate_sketch(doc)['templateJson']['pages'][0]['elements'][0]
+    assert el['paragraphStyle']['verticalAlign'] == 'middle'
+    # Sin vAlign (o inválido) → 'top' (default del motor).
+    doc['pages'][0]['elements'][0].pop('vAlign')
+    el = translate_sketch(doc)['templateJson']['pages'][0]['elements'][0]
+    assert el['paragraphStyle']['verticalAlign'] == 'top'
