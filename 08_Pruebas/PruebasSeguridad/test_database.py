@@ -109,6 +109,24 @@ def test_preview_rows_por_defecto_lista_vacia(db):
     assert resp['data']['files'][0]['previewRows'] == []
 
 
+def test_preview_rows_celda_json_no_se_trunca(db):
+    # Una celda con un ARRAY JSON (bases .json → tablas con repetición del Estudio)
+    # supera los 500 chars del tope normal: debe conservarse ÍNTEGRA (hasta 4000)
+    # para que la vista previa pueda parsearla; las celdas normales siguen a 500.
+    import json as _json
+    reg, lst, _ = db
+    movs = _json.dumps([{'Detalle': 'Movimiento %02d' % i, 'Valor': i * 100}
+                        for i in range(1, 25)])
+    assert len(movs) > 500
+    normal = 'x' * 600
+    _register(reg, columns=['Id', 'Correo', 'Nombre', 'movimientos', 'nota'],
+              previewRows=[['1', 'a@t.com', 'Ana', movs, normal]])
+    row = lst.lambda_handler(_ctx({}), None)['data']['files'][0]['previewRows'][0]
+    assert row[3] == movs                      # el JSON quedó completo (parseable)
+    assert _json.loads(row[3])[-1]['Detalle'] == 'Movimiento 24'
+    assert row[4] == 'x' * 500                 # la celda normal sí se acota a 500
+
+
 def test_fallback_por_empresa_cuando_customerid_no_coincide(db):
     # Registrada con CU1; se lista con un customerId distinto (desalineado) pero MISMA
     # empresa en el token → el fallback por nombre de empresa la encuentra.

@@ -87,14 +87,30 @@ def lambda_handler(event, context):
     raw_columns = payload.get('columns', [])
     columns = [str(c) for c in raw_columns] if isinstance(raw_columns, list) else []
 
-    # Vista previa persistente: primeras filas (sin encabezado). Se ACOTA (máx. 5 filas y
-    # 40 columnas, celdas a 500 chars) para no inflar el ítem de DynamoDB (límite 400 KB).
+    # Vista previa persistente: primeras filas (sin encabezado). Se ACOTA para no inflar
+    # el ítem de DynamoDB (límite 400 KB): máx. 5 filas × 40 columnas; celdas a 500 chars,
+    # SALVO las celdas con JSON embebido ('['/'{' — arrays de las bases .json que alimentan
+    # las tablas con repetición del Estudio), que conservan hasta 4000 chars para que la
+    # vista previa pueda parsearlas (truncado = JSON roto = tabla vacía en la vista previa;
+    # el envío real no se afecta porque lee el CSV completo de S3). Presupuesto total
+    # ~100 KB: las filas que se salgan se descartan.
     raw_preview = payload.get('previewRows', [])
     preview_rows = []
     if isinstance(raw_preview, list):
+        budget = 100_000
         for row in raw_preview[:5]:
-            if isinstance(row, list):
-                preview_rows.append([str(c)[:500] for c in row[:40]])
+            if not isinstance(row, list):
+                continue
+            cells = []
+            for c in row[:40]:
+                s = str(c)
+                cap = 4000 if s[:1] in ('[', '{') else 500
+                cells.append(s[:cap])
+            size = sum(len(x) for x in cells)
+            if size > budget:
+                break
+            budget -= size
+            preview_rows.append(cells)
 
     # Campos obligatorios (customerId/customer prefieren el context del Authorizer).
     try:

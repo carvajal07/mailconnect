@@ -1146,6 +1146,10 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
   (con la paginación de arriba si desborda). En el camino HTML, `render_variables`
   sustituye las listas como JSON (no repr de Python). La **vista previa** hace lo mismo
   (`SketchStudio.coerceSampleCell` sobre la primera fila de `previewRows`).
+  `Register-file` conserva las celdas JSON de `previewRows` hasta **4.000 chars** (las
+  normales a 500, presupuesto total ~100 KB): truncar el JSON lo dejaba imparseable y
+  la tabla de la vista previa salía vacía. **Especificación completa de los dos
+  formatos de archivo: `FORMATO_BASES.md`** (raíz).
 - **Flowable:** ya NO se omite con warning — se traduce como su **caja** (rect con borde
   discontinuo, igual que en el lienzo; el tinte `rgba()` decorativo no pasa al PDF). El
   vínculo flowable→flowable (continuar el flujo en otra sub-área) queda para una
@@ -1759,6 +1763,8 @@ README.md
 ---
 
 ## 7. Referencias rápidas
+- **Definición de los archivos de bases (CSV/JSON, columnas obligatorias, celdas con
+  arrays → tablas con repetición): `FORMATO_BASES.md`** (raíz).
 - **Checklist de despliegue consolidado (panel admin + pendientes): `DESPLIEGUE.md`** (raíz).
   Todo lo `[J]` (tablas, lambdas, rutas, IAM, mapping template de rol) y lo `[C]` (código pendiente).
 - **Plan de salida a producción (MVP) y canales SMS/WhatsApp/Voz: `PLAN_MVP.md`** (raíz).
