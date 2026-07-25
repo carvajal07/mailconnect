@@ -8,7 +8,6 @@ export type Tool =
   | 'circle'
   | 'triangle'
   | 'line'
-  | 'pen'
   | 'image'
   | 'table'
   | 'qr'

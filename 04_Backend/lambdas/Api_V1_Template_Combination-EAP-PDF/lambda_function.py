@@ -102,24 +102,48 @@ def render_variables(html, mapping):
     for k, v in mapping.items():
         norm.setdefault(_norm_key(k), v)
 
+    def _as_text(value):
+        # Valores coercionados a lista/objeto (celdas JSON) vuelven a texto JSON en
+        # el camino HTML (str() imprimiría el repr de Python).
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
+
     def repl(match):
         key = match.group(1).strip()
         if key in mapping:
-            return str(mapping[key])
+            return _as_text(mapping[key])
         if _norm_key(key) in norm:
-            return str(norm[_norm_key(key)])
+            return _as_text(norm[_norm_key(key)])
         return match.group(0)
 
     return re.sub(r'\{\{\s*([^{}]+?)\s*\}\}', repl, html)
 
 
+def _coerce_json_cell(value):
+    """Una celda cuyo texto ES JSON ('[…]' o '{…}') se parsea a su lista/objeto: así
+    una columna con un ARRAY de ítems alimenta el `dataSource` de las tablas del
+    Estudio (una fila repetida por ítem, con paginación si desborda). Si no parsea,
+    queda como texto literal (una llave suelta no rompe nada)."""
+    if isinstance(value, str):
+        s = value.strip()
+        if s[:1] in ('[', '{'):
+            try:
+                return json.loads(s)
+            except (ValueError, TypeError):
+                return value
+    return value
+
+
 def row_mapping(headers, row):
     """Construye {header: valor} desde una fila posicional del CSV. El BOM del primer
-    encabezado ('\ufeff', típico de CSV exportados de Excel) se quita de la clave."""
+    encabezado ('\ufeff', típico de CSV exportados de Excel) se quita de la clave.
+    Las celdas con JSON embebido (arrays/objetos de las bases .json) se parsean."""
     mapping = {}
     for i, head in enumerate(headers or []):
         value = row[i] if row and i < len(row) else ''
-        mapping[str(head).replace('\ufeff', '')] = '' if value is None else str(value)
+        value = '' if value is None else str(value)
+        mapping[str(head).replace('\ufeff', '')] = _coerce_json_cell(value)
     return mapping
 
 

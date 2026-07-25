@@ -1084,10 +1084,10 @@ Fixes de fidelidad en `sketch_translator.py` + `pdf_engine` (motor estándar):
 - **Cobertura**: 8 pruebas nuevas en `test_render_engine.py` (bordes en mm, diagonal
   rotada, alineación, celdas con estilo, font-family por span, alias de fuentes,
   parser, render con rotación).
-- ⚠️ Lo que SIGUE pendiente del Estudio (ver `PENDIENTES.md` Bloque 3): usar estas
-  plantillas en campañas EAP-PDF (el selector solo lee `html` y el combinador solo
-  renderiza HTML), vista previa con datos de muestra, `pen`/`flowable`,
-  opacidad/crop de imágenes, `fallback` del dataField.
+- ⚠️ Lo que SIGUE pendiente del Estudio (ver `PENDIENTES.md` Bloque 3): opacidad/crop
+  de imágenes, `fallback` del dataField. (Usarlas en campañas EAP-PDF ✅ 4ª tanda ·
+  vista previa con datos ✅ 6ª tanda · flowable/paginación/bases JSON ✅ 7ª tanda ·
+  `pen` eliminado del editor.)
 
 ### Estudio PDF (3ª tanda, ago 2026): UI del tamaño, líneas punteadas, viñetas, párrafo, color
 Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
@@ -1118,6 +1118,49 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 - **Cobertura**: pruebas nuevas en `test_render_engine.py` (parser de listas numeradas/
   letras, `_list_marker`, render smoke, `firstLineIndent`, multipárrafo, dash a
   segmentos, línea continua) + ajuste de `test_paridad_estilos.py`.
+
+### Estudio PDF (7ª tanda, ago 2026): flujo de la hoja (paginación), bases JSON con arrays, flowable, adiós pen
+- **Paginación del FLUJO (motor):** una tabla con `repeatBy` (dataSource) cuyo contenido
+  NO cabe en su alto ya no se encoge (antes `KeepInFrame mode='shrink'` la volvía
+  ilegible): las filas sobrantes **FLUYEN a hojas nuevas** — como en "Plantillas PDF
+  profesionales". `page_renderer._page_instances(page, ctx, registry)` mide el alto real
+  de cada fila (`table_renderer.measure_dynamic_rows`, `Table.wrap` de ReportLab) y
+  trocea el dataSource en chunks voraces que sí caben; cada chunk es una **instancia**
+  de la página (`$pageCount`/`$totalPages` cuentan el total expandido). El **encabezado
+  de la tabla se repite** en cada hoja y los demás elementos (título, logos, formas) se
+  repiten como **membrete**. El render recibe el chunk vía `rows_override`
+  (`_render_elements` → `render_table(..., rows_override=...)`, claves por `id()` del
+  elemento). Mínimo 1 fila por hoja (una fila más alta que la tabla la encoge
+  KeepInFrame, que queda como red de seguridad); si nada desborda, `[None]` = render
+  idéntico al de antes. Sin `dataSource` o con filas explícitas no hay paginación.
+- **Bases de datos .json (front):** la carga de bases acepta ahora **JSON** además de
+  CSV/Excel (`csv.ts`: `isJsonFile` + `jsonToRows`; `BasesDatosSection` suma `.json` al
+  input). Formatos: array de objetos `[{...}]` o envoltorio `{data|rows|records|items:
+  [...]}`. Se convierte a CSV EN EL NAVEGADOR (el backend no cambia): las columnas
+  obligatorias se reordenan a las posiciones del backend (1 Identificación · 2 contacto ·
+  3 Nombre, por sinónimos) y los campos ANIDADOS (arrays/objetos — p. ej. los
+  movimientos de un extracto) se serializan como **JSON dentro de la celda**.
+- **Celdas JSON → tablas con repetición:** el combinador EAP-PDF (`row_mapping` +
+  `_coerce_json_cell`) parsea las celdas que son JSON (`[`/`{`) → la variable llega como
+  LISTA al motor y alimenta el `dataSource` de la tabla del Estudio **por destinatario**
+  (con la paginación de arriba si desborda). En el camino HTML, `render_variables`
+  sustituye las listas como JSON (no repr de Python). La **vista previa** hace lo mismo
+  (`SketchStudio.coerceSampleCell` sobre la primera fila de `previewRows`).
+- **Flowable:** ya NO se omite con warning — se traduce como su **caja** (rect con borde
+  discontinuo, igual que en el lienzo; el tinte `rgba()` decorativo no pasa al PDF). El
+  vínculo flowable→flowable (continuar el flujo en otra sub-área) queda para una
+  siguiente iteración; el desborde de tablas pagina a hoja nueva.
+- **Pen ELIMINADO del editor** (decisión de producto: no se va a usar): fuera del union
+  `Tool`, de `DrawTool`/`isDrawTool`, del draft y de `draftToElement` (no quedaba botón
+  en el rail; era código muerto de creación). El TIPO `PenEl` y su render se conservan
+  para ver documentos viejos (el PDF los omite con warning).
+- **Motor vendorizado resincronizado** en `Api_V1_Template_Combination-EAP-PDF`
+  (pdf_engine + sketch_translator).
+- **Cobertura:** `test_render_engine.py` (tabla desbordada → varias hojas con la última
+  fila presente y encabezado/membrete repetidos; tabla que cabe → 1 hoja; flowable →
+  rect discontinuo sin warnings) y `test_combination_eap_pdf.py` (celda JSON → lista en
+  `row_mapping` + HTML como JSON; E2E: extracto con 30 movimientos en celda JSON →
+  PDF multipágina por destinatario con todo el contenido). Suite completo en verde.
 
 ### Estudio PDF (6ª tanda, ago 2026): variables RESUELTAS en vista previa y envío real
 - **Causa raíz del "no salen los datos de la variable":** la vista previa

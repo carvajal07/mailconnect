@@ -34,6 +34,7 @@ def render_table(
     page_h_pt: float,
     ctx: DocumentContext,
     registry: StyleRegistry,
+    rows_override: list | None = None,
 ) -> None:
     x, y, w, h = element_rect(
         element["x"], element["y"], element["width"], element["height"], page_h_pt
@@ -68,8 +69,9 @@ def render_table(
             row_idx += 1
             header_offset += 1
 
-    # Body — from dataSource variable or explicit rows
-    body_rows = _build_body_rows(body_cfg, element.get("dataSource"), columns, ctx, registry)
+    # Body — chunk de la paginación, dataSource o filas explícitas
+    body_rows = _build_body_rows(body_cfg, element.get("dataSource"), columns, ctx, registry,
+                                 rows_override=rows_override)
     body_start = row_idx
     for br in body_rows:
         all_rows.append(br)
@@ -143,15 +145,35 @@ def _build_header_rows(
     return [[RLParagraph(_esc(col.get("label", "")), style) for col in columns]]
 
 
+def _data_item_row(item, columns: list[dict], style) -> list:
+    """Fila de celdas (RLParagraph) desde un ítem del dataSource (dict o escalar)."""
+    if not isinstance(item, dict):
+        item = {"value": str(item)}
+    row = []
+    for col in columns:
+        # Try col.id first, then col.label as field key
+        field_key = col.get("id", col.get("label", ""))
+        label_key = col.get("label", "")
+        value = item.get(field_key) or item.get(label_key) or item.get(label_key.lower(), "")
+        row.append(RLParagraph(_esc(str(value)) if value is not None else "", style))
+    return row
+
+
 def _build_body_rows(
     body_cfg: dict,
     data_source: str | None,
     columns: list[dict],
     ctx: DocumentContext,
     registry: StyleRegistry,
+    rows_override: list | None = None,
 ) -> list[list]:
     fs = body_cfg.get("fontSize") or 8
     style = _cell_style(registry, font_size=fs)
+
+    # Paginación del flujo: el page_renderer ya troceó el dataSource y pasa el
+    # CHUNK de esta instancia de página (puede ser vacío en una continuación).
+    if rows_override is not None:
+        return [_data_item_row(item, columns, style) for item in rows_override]
 
     # Explicit rows defined in the template
     explicit = body_cfg.get("rows", [])
@@ -162,21 +184,36 @@ def _build_body_rows(
     if data_source:
         data = ctx.get_var(data_source)
         if isinstance(data, list):
-            rows = []
-            for item in data:
-                if not isinstance(item, dict):
-                    item = {"value": str(item)}
-                row = []
-                for col in columns:
-                    # Try col.id first, then col.label as field key
-                    field_key = col.get("id", col.get("label", ""))
-                    label_key = col.get("label", "")
-                    value = item.get(field_key) or item.get(label_key) or item.get(label_key.lower(), "")
-                    row.append(RLParagraph(str(value) if value is not None else "", style))
-                rows.append(row)
-            return rows
+            return [_data_item_row(item, columns, style) for item in data]
 
     return []
+
+
+def measure_dynamic_rows(
+    element: dict,
+    data: list,
+    registry: StyleRegistry,
+    total_w_pt: float,
+) -> tuple[float, list[float]]:
+    """(alto del encabezado, alto de cada fila del dataSource) en pt — lo usa la
+    paginación del flujo para decidir cuántas filas caben en cada hoja."""
+    columns = element.get("columns", [])
+    col_widths = _resolve_col_widths(columns, total_w_pt)
+    body_cfg = element.get("body", {})
+    style = _cell_style(registry, font_size=body_cfg.get("fontSize") or 8)
+
+    header_h = 0.0
+    header_cfg = element.get("header", {})
+    if header_cfg.get("enabled", True):
+        header_rows = _build_header_rows(header_cfg, columns, registry)
+        if header_rows:
+            header_h = Table(header_rows, colWidths=col_widths).wrap(total_w_pt, 100000)[1]
+
+    heights = []
+    for item in data:
+        row = _data_item_row(item, columns, style)
+        heights.append(Table([row], colWidths=col_widths).wrap(total_w_pt, 100000)[1])
+    return header_h, heights
 
 
 def _build_footer_rows(

@@ -19,7 +19,7 @@ from pdf_engine.renderers.shape_renderer import render_shape
 from pdf_engine.renderers.image_renderer import render_image
 from pdf_engine.renderers.qr_renderer import render_qr
 from pdf_engine.renderers.barcode_renderer import render_barcode
-from pdf_engine.renderers.table_renderer import render_table
+from pdf_engine.renderers.table_renderer import render_table, measure_dynamic_rows
 from pdf_engine.renderers.text_renderer import render_text
 
 
@@ -44,32 +44,38 @@ def render_pdf(
 
     buf = io.BytesIO()
     canvas: Canvas | None = None
-    total_pages = len([p for p in ctx.pages if p.get("visible", True)])
+
+    # Paginación del FLUJO: cada página del template puede expandirse a VARIAS
+    # instancias si una tabla con dataSource no cabe en su alto — las filas
+    # sobrantes FLUYEN a una hoja nueva (encabezado repetido; el resto de
+    # elementos fijos se repiten como membrete). Antes KeepInFrame las ENCOGÍA.
+    visible_pages = [p for p in ctx.pages if p.get("visible", True)]
+    page_plans = [(page, _page_instances(page, ctx, registry)) for page in visible_pages]
+    total_pages = sum(len(instances) for _, instances in page_plans)
 
     page_number = 0
-    for page in ctx.pages:
-        if not page.get("visible", True):
-            continue
-
-        page_number += 1
+    for page, instances in page_plans:
         size = page.get("size", {})
         w_pt = page_width_pt(_num(size.get("width"), 210))
         h_pt = page_height_pt(_num(size.get("height"), 297))
 
-        if canvas is None:
-            canvas = Canvas(buf, pagesize=(w_pt, h_pt))
-        else:
-            canvas.setPageSize((w_pt, h_pt))
+        for rows_overrides in instances:
+            page_number += 1
+            if canvas is None:
+                canvas = Canvas(buf, pagesize=(w_pt, h_pt))
+            else:
+                canvas.setPageSize((w_pt, h_pt))
 
-        page_vars = {
-            "$pageNumber": page_number,
-            "$pageCount":  total_pages,
-            "$totalPages": total_pages,
-        }
+            page_vars = {
+                "$pageNumber": page_number,
+                "$pageCount":  total_pages,
+                "$totalPages": total_pages,
+            }
 
-        _draw_background(canvas, page, w_pt, h_pt, registry)
-        _render_elements(canvas, page, h_pt, ctx, registry, fm, page_vars, assets_base_path)
-        canvas.showPage()
+            _draw_background(canvas, page, w_pt, h_pt, registry)
+            _render_elements(canvas, page, h_pt, ctx, registry, fm, page_vars,
+                             assets_base_path, rows_overrides=rows_overrides)
+            canvas.showPage()
 
     if canvas is None:
         canvas = Canvas(buf)
@@ -80,6 +86,67 @@ def render_pdf(
 
 
 # ── Page internals ────────────────────────────────────────────────────────────
+
+def _page_instances(page: dict, ctx: DocumentContext, registry: StyleRegistry) -> list:
+    """Plan de instancias (hojas físicas) de una página del template.
+
+    Sin desbordes → `[None]` (una sola hoja, render normal). Si una tabla con
+    `dataSource` no cabe en su alto, la página se expande a N hojas: cada
+    instancia es un dict `id(elemento) → chunk de filas` que el render usa como
+    `rows_override`. El encabezado de la tabla se repite en cada hoja y los
+    demás elementos se repiten como membrete. Antes KeepInFrame ENCOGÍA todo.
+    """
+    chunked: dict[int, list[list]] = {}
+    for element in page.get("elements", []):
+        if element.get("type") != "table" or not element.get("visible", True):
+            continue
+        if element.get("body", {}).get("rows"):
+            continue  # filas explícitas del editor: no hay flujo que paginar
+        source = element.get("dataSource")
+        if not source:
+            continue
+        data = ctx.get_var(source)
+        if not isinstance(data, list) or not data:
+            continue
+
+        total_w = mm(_num(element.get("width"), 0))
+        if total_w <= 0:
+            continue
+        try:
+            header_h, row_hs = measure_dynamic_rows(element, data, registry, total_w)
+        except Exception:
+            continue  # medición fallida → render normal (con shrink de respaldo)
+
+        avail = mm(_num(element.get("height"), 0)) - header_h
+        if avail <= 0 or sum(row_hs) <= avail:
+            continue  # cabe completo (o alto inválido) → sin paginación
+
+        # Empaquetado voraz: mínimo 1 fila por hoja (evita bucles con filas
+        # más altas que el área — esa fila puntual la encoge KeepInFrame).
+        chunks: list[list] = []
+        current: list = []
+        used = 0.0
+        for item, rh in zip(data, row_hs):
+            if current and used + rh > avail:
+                chunks.append(current)
+                current, used = [], 0.0
+            current.append(item)
+            used += rh
+        if current:
+            chunks.append(current)
+        chunked[id(element)] = chunks
+
+    if not chunked:
+        return [None]
+
+    n = max(len(chunks) for chunks in chunked.values())
+    return [
+        {key: (chunks[i] if i < len(chunks) else [])
+         for key, chunks in chunked.items()}
+        for i in range(n)
+    ]
+
+
 
 def _draw_background(
     canvas: Canvas,
@@ -106,6 +173,7 @@ def _render_elements(
     fm: FontManager,
     page_vars: dict,
     assets_base_path: str,
+    rows_overrides: dict | None = None,
 ) -> None:
     for element in page.get("elements", []):
         if not element.get("visible", True):
@@ -141,8 +209,10 @@ def _render_elements(
                            lambda: render_barcode(canvas, element, h_pt, ctx))
 
         elif el_type == "table":
+            override = (rows_overrides or {}).get(id(element))
             _with_rotation(canvas, element, h_pt,
-                           lambda: render_table(canvas, element, h_pt, ctx, registry))
+                           lambda: render_table(canvas, element, h_pt, ctx, registry,
+                                                rows_override=override))
 
 
 def _with_rotation(canvas: Canvas, element: dict, h_pt: float, draw) -> None:

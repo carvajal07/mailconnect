@@ -259,3 +259,72 @@ def test_render_variables_html_tolerante_a_case(combiner):
     mod, _, _, _ = combiner
     out = mod.render_variables('<p>Hola {{Nombre}} ({{ciudad}})</p>', {' nombre ': 'Ana', 'Ciudad': 'Bogotá'})
     assert out == '<p>Hola Ana (Bogotá)</p>'
+
+
+# ── Celdas con JSON embebido (arrays de las bases .json) ──────────────────────
+
+def test_row_mapping_parsea_celdas_json(combiner):
+    mod, _, _, _ = combiner
+    m = mod.row_mapping(
+        ['id', 'correo', 'nombre', 'movimientos'],
+        ['1', 'a@x.com', 'Ana', '[{"Detalle": "Compra", "Valor": "5000"}]'])
+    # La celda JSON se parsea a LISTA (alimenta el dataSource de las tablas).
+    assert isinstance(m['movimientos'], list)
+    assert m['movimientos'][0]['Detalle'] == 'Compra'
+    # Las celdas normales siguen siendo texto; un JSON roto queda como texto literal.
+    assert m['nombre'] == 'Ana'
+    m2 = mod.row_mapping(['x'], ['[esto no es json'])
+    assert m2['x'] == '[esto no es json'
+    # En el camino HTML, una variable-lista se sustituye como JSON (no repr de Python).
+    html = mod.render_variables('<p>{{movimientos}}</p>', m)
+    assert '"Detalle"' in html and "'Detalle'" not in html
+
+
+def test_tabla_repeat_por_destinatario_con_celda_json_y_paginacion(combiner):
+    # Flujo COMPLETO de las bases .json: la columna `movimientos` de la fila trae un
+    # ARRAY como JSON embebido → el combinador lo parsea, la tabla `repeatBy` del
+    # Estudio pinta una fila por ítem y, como no caben en el alto de la tabla, el
+    # PDF PAGINA a hojas nuevas (nada se pierde ni se encoge).
+    mod, _, _, s3 = combiner
+    sketch = {'schema': 'pdfsketch@1', 'document': {
+        'unit': 'mm',
+        'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'}, 'margin': {}, 'elements': [
+            {'id': 'df', 'type': 'dataField', 'x': 20, 'y': 12, 'width': 100, 'height': 8,
+             'binding': 'nombre', 'fallback': '', 'fontFamily': 'Helvetica', 'fontSize': 12, 'color': '#111111'},
+            {'id': 'tb', 'type': 'table', 'x': 15, 'y': 30, 'width': 180, 'height': 40,
+             'rotation': 0, 'visible': True, 'locked': False, 'zIndex': 2,
+             'columns': [{'widthPercent': 60, 'minWidth': 10, 'header': 'Detalle'},
+                         {'widthPercent': 40, 'minWidth': 10, 'header': 'Valor'}],
+             'rows': [[{'text': 'Detalle'}, {'text': 'Valor'}]],
+             'hasHeader': True, 'hasFooter': False, 'headerBackground': '#f1f5f9',
+             'borderWidth': 0.3, 'borderColor': '#94a3b8', 'rowFontSize': 9,
+             'repeatBy': 'movimientos'},
+        ]}],
+    }}
+    key = 'attachment/2026-07-22/estudio-extracto.json'
+    s3.put_object(Bucket=BUCKET, Key=key, Body=json.dumps(sketch).encode())
+    boto3.resource('dynamodb', region_name='us-east-1').Table('document').put_item(
+        Item={'documentId': 'd4', 'campaignId': 'camp-extracto', 'documentPath': key})
+
+    movimientos = [{'Detalle': 'Movimiento %02d' % i, 'Valor': '$ %d' % (i * 100)}
+                   for i in range(1, 31)]
+    body = {
+        'customerId': CID, 'customerName': CUST, 'nit': NIT, 'processId': PROC,
+        'campaignId': 'camp-extracto', 'attachment': True, 'fromEmail': 'no-reply@x.com',
+        'headers': ['id', 'correo', 'nombre', 'movimientos'], 'templateName': 'tmpl',
+        'part': 11, 'data': [['1', 'a@x.com', 'Ana', json.dumps(movimientos)]],
+        'samples': False,
+    }
+    res = mod.lambda_handler({'Records': [{'body': json.dumps(body)}]}, None)
+    assert res['statusCode'] == 200
+    pdf = s3.get_object(Bucket=BUCKET, Key='personalized/camp-extracto/Ana.pdf')['Body'].read()
+    assert pdf[:5] == b'%PDF-'
+    # Los 30 movimientos NO caben en 40 mm → el PDF trae VARIAS páginas.
+    import re as _re
+    n_pages = len(_re.findall(rb'/Type\s*/Page(?!s)', pdf))
+    assert n_pages >= 2
+    contenido = _pdf_text(pdf)
+    assert b'Ana' in contenido
+    assert b'Movimiento 01' in contenido
+    assert b'Movimiento 30' in contenido  # la última fila fluyó a otra hoja
+    assert b'{{' not in contenido

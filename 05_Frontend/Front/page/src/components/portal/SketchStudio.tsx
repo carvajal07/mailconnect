@@ -54,11 +54,23 @@ function collectDocBindings(doc: DocumentModel): string[] {
  * variable a VACÍO y la vista previa salía sin la información de la base.
  * Los bindings del lienzo sin valor de muestra quedan visibles como `{{campo}}`.
  */
+/** Celdas de muestra con JSON embebido (arrays/objetos de las bases .json) se parsean
+ *  para que las tablas con `repeatBy` muestren filas REALES en la vista previa. */
+function coerceSampleCell(value: unknown): unknown {
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (s.startsWith('[') || s.startsWith('{')) {
+      try { return JSON.parse(s); } catch { /* texto literal */ }
+    }
+  }
+  return value;
+}
+
 function buildPreviewData(doc: DocumentModel, source: SketchDataSource | null): Record<string, unknown> {
   const data: Record<string, unknown> = {};
   if (source) {
     const row = source.previewRows?.[0] ?? [];
-    source.columns.forEach((col, i) => { data[col] = row[i] ?? col; });
+    source.columns.forEach((col, i) => { data[col] = coerceSampleCell(row[i] ?? col); });
   }
   for (const b of collectDocBindings(doc)) {
     if (!(b in data)) data[b] = `{{${b}}}`;
