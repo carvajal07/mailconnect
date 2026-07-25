@@ -1152,9 +1152,22 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
   modelo interno: cada tipo hijo → UNA columna con el array JSON de sus líneas → alimenta
   las tablas `repeatBy` del Estudio). `BasesDatosSection`: detección automática + switch
   manual "Archivo multiregistro" (corrige la detección en ambos sentidos, p. ej. un solo
-  destinatario) y **editor de nombres de columna por tipo** (los nombres de los campos de
-  un sub-registro deben coincidir con los encabezados de la tabla en la plantilla). Sube
-  el CSV generado (`-registros.csv`, `;`); el backend no cambia.
+  destinatario). Sube el CSV generado (`-registros.csv`, `;`); el backend no cambia.
+- **Asistente de mapeo multiregistro (`MultiRecordWizard`, ago 2026):** el mapeo por
+  texto separado por comas se reemplazó por un **wizard de 3 pasos** (MUI Stepper):
+  (1) **Detección** — selector "¿En qué columna está el tipo de registro?" (posición
+  configurable, `tagCol`; default Columna 1) + chips de las etiquetas detectadas en la
+  muestra (primeras 20 líneas); (2) **Alias** — una tarjeta por canal con su volumen
+  (`ingresos • 4 líneas en la muestra`) y un "Nombre amigable" (para los hijos = el
+  nombre de la columna de la lista); (3) **Nombres de columna** — un input por columna
+  física (`Nombre del Campo N`) con placeholders sugeridos (Identificacion/Correo|
+  Celular/Nombre) y validación en vivo (vacíos → `Campo N`; repetidos dentro de un canal
+  → bloquean la subida). **Vista previa en tiempo real** de los encabezados mapeados. La
+  config se estructura en un mapa indexado por posición física (`buildMultiRecordMap`:
+  `{tagColumn, channels:{<tag>:{alias, isMaster, columns:{<pos 1-based>:<nombre>}}}}`).
+  `csv.ts` suma `MULTIRECORD_SAMPLE_LINES`, `maxColumns`, `suggestFieldName`,
+  `buildMultiRecordMap` y el parámetro `tagCol` a `detect`/`analyze`/`multiRecordToRows`;
+  `MultiRecordType` gana `alias` y `sampleCount`.
 - **Celdas JSON → tablas con repetición:** el combinador EAP-PDF (`row_mapping` +
   `_coerce_json_cell`) parsea las celdas que son JSON (`[`/`{`) → la variable llega como
   LISTA al motor y alimenta el `dataSource` de la tabla del Estudio **por destinatario**

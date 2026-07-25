@@ -145,19 +145,38 @@ egresos;1.000;arriendo
 
 Dos destinatarios; Ana con 1 ingreso y 2 egresos, Luis con 1 y 1.
 
-### 3.3 Detección y carga
+### 3.3 Detección y carga — Asistente paso a paso
 
-- **Detección automática:** en un CSV normal la primera línea es un encabezado ÚNICO;
-  si el valor de su columna 1 **se repite** como columna 1 de otras líneas, es una
-  etiqueta de tipo → el diálogo activa solo el modo multiregistro. El **switch
-  "Archivo multiregistro"** permite corregir la detección en ambos sentidos (p. ej. un
-  archivo con UN solo destinatario, donde la etiqueta principal no alcanza a repetirse).
-- **Nombres de columna:** como el archivo no trae encabezados, el diálogo los asigna
-  por defecto — línea principal: `Identificacion`, `Correo`/`Celular` (según el
-  canal), `Nombre`, `Campo4`… · sub-registros: `Campo1`…`CampoN` — y muestra **un
-  campo editable por tipo** para renombrarlos ANTES de subir (lista separada por
-  comas). ⚠️ Los nombres de los campos de un sub-registro deben coincidir con los
-  **encabezados de las columnas de la tabla** en la plantilla del Estudio (§5.2).
+Al cargar un CSV que parece multiregistro, el diálogo abre un **asistente (wizard) de
+3 pasos** (`MultiRecordWizard`) en lugar del mapeo por texto. La detección es
+automática: en un CSV normal la primera línea es un encabezado ÚNICO; si el valor de
+la columna identificadora **se repite** en otras líneas (mirando las primeras 20), es
+una etiqueta de tipo → se activa el asistente. Un **switch "Archivo multiregistro"**
+corrige la detección en ambos sentidos (p. ej. un archivo con UN solo destinatario,
+donde la etiqueta principal no alcanza a repetirse).
+
+- **Paso 1 — Detección del identificador:** un selector **"¿En qué columna está el
+  tipo de registro?"** (por defecto **Columna 1**) por si la etiqueta no está en la
+  primera posición, y las **etiquetas detectadas** en la muestra como chips (el
+  principal marcado).
+- **Paso 2 — Alias de los canales:** una tarjeta por canal con su etiqueta original,
+  el **volumen** (`ingresos • 4 líneas en la muestra`) y un campo **"Nombre amigable
+  para este canal"**. En los canales secundarios ese alias es además el **nombre de la
+  columna** que agrupa sus líneas (la que se vincula con una tabla en la plantilla).
+- **Paso 3 — Nombres de columna:** dentro de la tarjeta de cada canal, **un input por
+  cada columna física** detectada (`Nombre del Campo 1`, `Nombre del Campo 2`…), con
+  **placeholders sugeridos** (`Identificacion`, `Correo`/`Celular`, `Nombre` en el
+  principal). Validación en vivo: marca los campos vacíos (caen a `Campo N`) y los
+  **nombres repetidos** dentro de un canal (bloquean la subida). ⚠️ Los nombres de los
+  campos de un sub-registro deben coincidir con los **encabezados de las columnas de la
+  tabla** en la plantilla del Estudio (§5.2).
+
+La **vista previa inferior se actualiza en tiempo real** con los encabezados mapeados
+(las columnas de lista muestran "N ítems"). Internamente la configuración se
+estructura como un **mapa indexado por la posición física de la columna**
+(`buildMultiRecordMap`): `{ tagColumn, channels: { <tag>: { alias, isMaster,
+columns: { <posición 1-based>: <nombre> } } } }`.
+
 - **Conversión:** al modelo interno, en el navegador. El ejemplo de §3.2, con los
   campos de `ingresos`/`egresos` renombrados a `Valor, Concepto`, genera:
 
