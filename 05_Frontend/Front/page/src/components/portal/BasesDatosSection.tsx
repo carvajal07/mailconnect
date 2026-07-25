@@ -25,6 +25,7 @@ import {
   CircularProgress,
   Checkbox,
   FormControlLabel,
+  Switch,
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -43,7 +44,7 @@ import { isOk } from '../../services/apiClient';
 import { usePortalData } from '../../context/PortalDataContext';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
-import { analyzeCsv, DELIMITER_LABELS, requiredColumns, channelContactType, isSpreadsheetFile, readSpreadsheet, isJsonFile, jsonToRows, rowsToCsv, type CsvAnalysis, type ContactType, type Delimiter } from './csv';
+import { analyzeCsv, DELIMITER_LABELS, requiredColumns, channelContactType, isSpreadsheetFile, readSpreadsheet, isJsonFile, jsonToRows, rowsToCsv, detectDelimiter, detectMultiRecord, analyzeMultiRecordTypes, multiRecordToRows, type CsvAnalysis, type ContactType, type Delimiter, type MultiRecordType } from './csv';
 import { formatDateTime } from '../../utils/datetime';
 
 interface BaseDatos {
@@ -133,6 +134,12 @@ export const BasesDatosSection = () => {
   // el envío real: se envía el total de comunicaciones de la base aunque vayan al mismo
   // destinatario (lo respeta Prepare-batch, que por defecto deduplica).
   const [allowDuplicates, setAllowDuplicates] = useState(false);
+  // CSV MULTIREGISTRO (sin encabezado; columna 1 = tipo de registro): el archivo crudo
+  // se conserva para re-convertir cuando cambian los nombres de columna o el canal.
+  const [multiMode, setMultiMode] = useState(false);
+  const [multiTypes, setMultiTypes] = useState<MultiRecordType[] | null>(null);
+  const [multiTouched, setMultiTouched] = useState(false);
+  const [rawCsv, setRawCsv] = useState<{ text: string; delimiter: Delimiter; name: string; file: File } | null>(null);
 
   // Modal de progreso de la subida (2 pasos).
   type StepState = 'pending' | 'loading' | 'done' | 'error';
@@ -151,6 +158,68 @@ export const BasesDatosSection = () => {
     setDelimiter(';');
     setChannel('EMAIL');
     setAllowDuplicates(false);
+    setMultiMode(false);
+    setMultiTypes(null);
+    setMultiTouched(false);
+    setRawCsv(null);
+  };
+
+  // ── CSV multiregistro: conversión al modelo interno + edición de columnas ──
+
+  /** Re-convierte el archivo multiregistro con los tipos/nombres dados y re-analiza. */
+  const rebuildMulti = (src: { text: string; delimiter: Delimiter; name: string },
+                        ct: ContactType, types: MultiRecordType[]) => {
+    const rows = multiRecordToRows(src.text, src.delimiter, types);
+    const csv = rowsToCsv(rows, ';');
+    setFileText(csv);
+    setIsSpreadsheet(true); // delimitador fijo ';' (archivo generado), como Excel/JSON
+    setDelimiter(';');
+    setAnalysis(analyzeCsv(csv, ';', ct));
+    const base = src.name.replace(/\.(csv|txt)$/i, '');
+    setUploadFile(new File([csv], `${base}-registros.csv`, { type: 'text/csv' }));
+  };
+
+  const enterMultiMode = (src: { text: string; delimiter: Delimiter; name: string },
+                          ct: ContactType, types?: MultiRecordType[]) => {
+    try {
+      const tys = types ?? analyzeMultiRecordTypes(src.text, src.delimiter, ct).types;
+      setMultiMode(true);
+      setMultiTypes(tys);
+      rebuildMulti(src, ct, tys);
+    } catch (e) {
+      setMultiMode(false);
+      setMultiTypes(null);
+      notify(e instanceof Error ? e.message : 'No se pudo interpretar el archivo multiregistro.', 'error');
+    }
+  };
+
+  /** El usuario renombra las columnas de un tipo (lista separada por comas). */
+  const renameMultiType = (tag: string, value: string) => {
+    if (!rawCsv || !multiTypes) return;
+    const names = value.split(',').map((s) => s.trim());
+    const next = multiTypes.map((t) => (t.tag === tag ? { ...t, fieldNames: names } : t));
+    setMultiTypes(next);
+    setMultiTouched(true);
+    rebuildMulti(rawCsv, contact, next);
+  };
+
+  /** Activa/desactiva el modo multiregistro sobre el CSV cargado. */
+  const toggleMulti = (on: boolean) => {
+    if (!rawCsv) return;
+    if (on) {
+      setMultiTouched(false);
+      enterMultiMode(rawCsv, contact);
+    } else {
+      setMultiMode(false);
+      setMultiTypes(null);
+      setMultiTouched(false);
+      setIsSpreadsheet(false);
+      setFileText(rawCsv.text);
+      setUploadFile(rawCsv.file);
+      const a = analyzeCsv(rawCsv.text, rawCsv.delimiter, contact);
+      setDelimiter(a.delimiter);
+      setAnalysis(a);
+    }
   };
 
   const handleDelete = async (b: BaseDatos) => {
@@ -177,6 +246,10 @@ export const BasesDatosSection = () => {
     setAnalysis(null);
     setIsSpreadsheet(false);
     setUploadFile(null);
+    setMultiMode(false);
+    setMultiTypes(null);
+    setMultiTouched(false);
+    setRawCsv(null);
     if (!f) return;
 
     // Excel: se lee la primera hoja y se CONVIERTE a CSV en el navegador; a S3 sube el CSV
@@ -220,23 +293,44 @@ export const BasesDatosSection = () => {
       return;
     }
 
-    // CSV: se lee como texto (comportamiento de siempre) y se sube el archivo tal cual.
+    // CSV: se lee como texto. Si parece MULTIREGISTRO (sin encabezado; la columna 1 es
+    // el tipo de registro y se repite entre líneas), se convierte al modelo interno; si
+    // no, se analiza y sube tal cual (comportamiento de siempre). El switch del diálogo
+    // permite corregir la detección en ambos sentidos.
     const reader = new FileReader();
     reader.onload = () => {
       const text = String(reader.result ?? '');
+      const d = detectDelimiter(text);
+      const src = { text, delimiter: d, name: f.name, file: f };
+      setRawCsv(src);
+      if (detectMultiRecord(text, d)) {
+        enterMultiMode(src, contact);
+        return;
+      }
       setFileText(text);
       setUploadFile(f);
-      const a = analyzeCsv(text, undefined, contact);
+      const a = analyzeCsv(text, d, contact);
       setDelimiter(a.delimiter);
       setAnalysis(a);
     };
     reader.readAsText(f);
   };
 
-  // Al cambiar el canal, re-analiza con el tipo de contacto correspondiente.
+  // Al cambiar el canal, re-analiza con el tipo de contacto correspondiente. En modo
+  // multiregistro además se re-convierte (el nombre por defecto de la columna de
+  // contacto cambia Correo↔Celular, salvo que el usuario ya haya renombrado).
   const changeChannel = (ch: string) => {
     setChannel(ch);
-    if (fileText) setAnalysis(analyzeCsv(fileText, delimiter, channelContactType(ch)));
+    const ct = channelContactType(ch);
+    if (multiMode && rawCsv && multiTypes) {
+      const tys = multiTouched
+        ? multiTypes
+        : analyzeMultiRecordTypes(rawCsv.text, rawCsv.delimiter, ct).types;
+      setMultiTypes(tys);
+      rebuildMulti(rawCsv, ct, tys);
+      return;
+    }
+    if (fileText) setAnalysis(analyzeCsv(fileText, delimiter, ct));
   };
 
   const changeDelimiter = (d: Delimiter) => {
@@ -362,7 +456,9 @@ export const BasesDatosSection = () => {
         Sube tus listas de destinatarios (<strong>CSV, Excel .xlsx o JSON</strong> — el Excel y
         el JSON se convierten a CSV automáticamente; en el JSON, un campo con una LISTA —
         p.&nbsp;ej. los movimientos de un extracto — se conserva y alimenta las tablas con
-        repetición del Estudio PDF). Antes de subir, validamos el archivo en tu
+        repetición del Estudio PDF). También se acepta el <strong>CSV multiregistro</strong> (sin
+        encabezado, con la columna 1 como tipo de registro): se detecta solo y se agrupan los
+        sub-registros por destinatario. Antes de subir, validamos el archivo en tu
         navegador y contamos: <strong>Válidos</strong> (contacto de la columna 2 con formato
         correcto y sin duplicar) e <strong>Inválidos</strong> (contacto vacío o con formato
         inválido para el canal: correo mal escrito, o celular que no es E.164). La subida va a S3
@@ -532,12 +628,56 @@ export const BasesDatosSection = () => {
                 onChange={(e) => handleFile(e.target.files?.[0] || null)}
               />
             </Button>
-            {isSpreadsheet && (
+            {isSpreadsheet && !multiMode && (
               <Typography variant="caption" color="text.secondary">
                 Excel detectado: se leyó la <strong>primera hoja</strong> y se convirtió a CSV para subirla.
                 Si un celular o identificación sale como inválido, formatéalo como <strong>Texto</strong> en Excel
                 (para no perder el <code>+</code> ni los ceros a la izquierda).
               </Typography>
+            )}
+
+            {rawCsv && (
+              <FormControlLabel
+                control={<Switch checked={multiMode} onChange={(e) => toggleMulti(e.target.checked)} />}
+                label={
+                  <Typography variant="body2">
+                    Archivo <strong>multiregistro</strong> (sin encabezado; la columna 1 de cada línea es el
+                    <strong> tipo de registro</strong>)
+                  </Typography>
+                }
+              />
+            )}
+            {multiMode && multiTypes && (
+              <Alert severity="info" icon={false} sx={{ '& .MuiAlert-message': { width: '100%' } }}>
+                <Typography variant="body2" sx={{ mb: 1.5 }}>
+                  El tipo de la <strong>primera línea</strong> es el <strong>principal</strong> (el destinatario):
+                  sus campos deben venir en el orden <strong>tipo; Identificación;{' '}
+                  {contact === 'phone' ? 'Celular' : 'Correo'}; Nombre; extras…</strong>. Las líneas de los demás
+                  tipos se agrupan bajo el destinatario anterior y quedan como <strong>listas</strong> que
+                  alimentan las tablas con repetición del Estudio PDF. Como el archivo no trae encabezados,
+                  asigna aquí el <strong>nombre de cada columna</strong> (deben coincidir con los encabezados de
+                  las columnas de la tabla en la plantilla).
+                </Typography>
+                <Stack spacing={1}>
+                  {multiTypes.map((t) => (
+                    <Stack key={t.tag} direction="row" spacing={1} alignItems="center">
+                      <Chip
+                        size="small"
+                        color={t.isMaster ? 'primary' : 'default'}
+                        label={`${t.tag}${t.isMaster ? ' · principal' : ''} · ${t.count} línea${t.count === 1 ? '' : 's'}`}
+                        sx={{ minWidth: 150, justifyContent: 'flex-start' }}
+                      />
+                      <TextField
+                        size="small"
+                        fullWidth
+                        label="Columnas (separadas por coma)"
+                        value={t.fieldNames.join(', ')}
+                        onChange={(e) => renameMultiType(t.tag, e.target.value)}
+                      />
+                    </Stack>
+                  ))}
+                </Stack>
+              </Alert>
             )}
 
             {analysis && (

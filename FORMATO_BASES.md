@@ -1,12 +1,12 @@
-# FORMATO_BASES.md — Definición de los archivos de bases de datos (CSV y JSON)
+# FORMATO_BASES.md — Definición de los archivos de bases de datos (CSV, CSV multiregistro y JSON)
 
-> **Propósito:** especificación EXACTA de los dos formatos de archivo que acepta la
-> carga de **Bases de datos** del portal (además del Excel `.xlsx`, que es solo una
-> comodidad de entrada: se convierte a CSV con estas mismas reglas). Corresponde con
-> lo que está montado hoy en el código:
+> **Propósito:** especificación EXACTA de los formatos de archivo que acepta la carga
+> de **Bases de datos** del portal (además del Excel `.xlsx`, que es solo una comodidad
+> de entrada: se convierte a CSV con estas mismas reglas). Corresponde con lo que está
+> montado hoy en el código:
 >
 > - Front: `05_Frontend/Front/page/src/components/portal/csv.ts` (parser, análisis,
->   `jsonToRows`) y `BasesDatosSection.tsx` (carga y validación).
+>   `jsonToRows`, `multiRecordToRows`) y `BasesDatosSection.tsx` (carga y validación).
 > - Backend: `Api_V1_Email_Prepare-batch-template` (lectura POSICIONAL del CSV en
 >   muestras y envío real), `Api_V1_Database_Register-file` (registro + vista previa),
 >   `Api_V1_Template_Combination-EAP-PDF` (celdas JSON → tablas con repetición).
@@ -15,23 +15,28 @@
 
 ---
 
-## 1. Modelo de datos (aplica a los dos formatos)
+## 1. Modelo de datos interno (a lo que TODO se convierte)
 
-**Una fila = un destinatario.** No existe el concepto de "archivo multiregistro"
-clásico (donde una columna trae el TIPO de registro — `01` encabezado, `02` detalle —
-y cada tipo tiene su propio layout). En MailConnect **no hay columna de tipo de
-registro**: todas las filas tienen la misma estructura, y los datos "hijos" de un
-destinatario (por ejemplo, los movimientos de su extracto) viajan **dentro de una
-celda** de su propia fila, como un array JSON (ver §4).
+El pipeline de envío (Prepare-batch, combinadores, reportes) siempre consume **un CSV
+con encabezado donde una fila = un destinatario**. Los tres formatos de entrada llegan
+ahí por caminos distintos:
 
-| Concepto | Cómo se resuelve en MailConnect |
+| Formato de entrada | ¿Cómo llega al modelo interno? |
 |---|---|
-| ¿Cuáles son las columnas? | **CSV:** la PRIMERA fila del archivo es el encabezado (nombres de columna). **JSON:** las LLAVES de cada objeto son las columnas. |
-| ¿Dónde está el "tipo de registro"? | No existe. Una fila siempre es un destinatario. Los sub-registros van EMBEBIDOS como array JSON en una celda; el "tipo" del sub-registro es el **nombre de la columna** que lo contiene (`movimientos`, `facturas`, …). |
-| ¿Campos obligatorios? | Tres, y se validan **POR POSICIÓN** (el backend lee `line[0]`, `line[1]`, `line[2]`): 1ª **Identificación** · 2ª **Contacto** (correo o celular según el canal) · 3ª **Nombre**. |
-| ¿Campos adicionales? | Todas las demás columnas son libres y quedan disponibles como **variables `{{Columna}}`** en las plantillas. |
+| **CSV con encabezado** (§2) | Tal cual (es el modelo interno). |
+| **CSV multiregistro** sin encabezado (§3) | Se convierte EN EL NAVEGADOR: la línea principal → la fila del destinatario; los sub-registros → columnas con array JSON. |
+| **JSON** (§4) | Se convierte EN EL NAVEGADOR: cada objeto → una fila; los campos anidados → columnas con array JSON. |
+| **Excel .xlsx** | Primera hoja → CSV (comodidad de entrada; mismas reglas del §2). |
 
-### 1.1 Las 3 columnas obligatorias (orden fijo)
+**Sub-registros ("registros de múltiples tipos"):** los datos hijos de un destinatario
+(movimientos de un extracto, gastos de una tarjeta, facturas…) viven como **array JSON
+dentro de una celda** de su fila (§5). Ese array alimenta las **tablas con repetición**
+(`repeatBy`) del Estudio PDF, una fila por ítem y por destinatario, con paginación
+automática a hojas nuevas si desbordan.
+
+### 1.1 Las 3 columnas obligatorias (orden posicional fijo)
+
+El backend lee por POSICIÓN: `line[0]`, `line[1]`, `line[2]`.
 
 | Pos. | Columna | Contenido | Sinónimos aceptados en el encabezado* |
 |---|---|---|---|
@@ -39,67 +44,61 @@ celda** de su propia fila, como un array JSON (ver §4).
 | 2 | **Contacto** | Canal EMAIL → **correo**. Canales SMS/WhatsApp/Voz → **celular** (E.164 `+57…` o local colombiano de 10 dígitos) | Correo: `correo`, `email`, `emails`, `mail`, `correoelectronico` · Celular: `celular`, `telefono`, `movil`, `phone`, `cel`, `tel`, `numero`, `whatsapp`, `msisdn` |
 | 3 | **Nombre** | Nombre del destinatario | `nombre`, `nombres`, `name` |
 
-\* Los encabezados se comparan **normalizados**: minúsculas, sin acentos y solo
-`[a-z0-9]` (`normHeader` en `csv.ts`). Así `Correo Electrónico` ≡ `correoelectronico`
-y `Cédula` ≡ `cedula`.
+\* Comparación **normalizada**: minúsculas, sin acentos, solo `[a-z0-9]`
+(`Correo Electrónico` ≡ `correoelectronico`, `Cédula` ≡ `cedula`).
 
-**El canal se elige al cargar la base** (selector Correo/SMS/WhatsApp/Voz) y queda
-guardado en `databaseFile.channel`. Ese canal define qué se exige en la columna 2.
+**El canal se elige al cargar la base** (selector Correo/SMS/WhatsApp/Voz), queda en
+`databaseFile.channel` y define qué se exige en la columna 2. Las demás columnas son
+libres y quedan disponibles como **variables `{{Columna}}`** en las plantillas.
 
 ---
 
-## 2. Formato CSV
+## 2. Formato CSV con encabezado (modelo interno)
 
 ### 2.1 Estructura
 
 - **Codificación:** UTF-8 (el BOM `﻿` de Excel se tolera y se elimina).
-- **Fila 1 = encabezado** (obligatoria). Nombres de columna; son los que quedan
-  disponibles como variables `{{Columna}}`.
+- **Fila 1 = encabezado** (nombres de columna → las variables disponibles).
 - **Filas 2..N = datos**, una por destinatario. Filas totalmente vacías se descartan.
-- **Delimitador:** cualquiera de `;` `,` `TAB` `|`. Se **detecta solo** contando cuál
-  aparece más en la primera línea (el usuario puede corregirlo en el diálogo). Los CSV
-  que genera el sistema (desde Excel o JSON) usan siempre `;`.
-- **Comillas (RFC 4180):** una celda que contenga el delimitador, comillas o saltos de
-  línea va entre comillas dobles; las comillas internas se duplican (`""`). Tanto el
-  parser del navegador (`parseCsv`) como el del backend (`csv.reader` de Python) las
-  entienden — por eso una celda puede llevar un **JSON embebido** (§4) sin romper el
-  archivo.
+- **Delimitador:** `;` `,` `TAB` `|`. Se **detecta solo** contando cuál aparece más en
+  la primera línea (corregible en el diálogo). Los CSV que genera el sistema (desde
+  Excel, JSON o multiregistro) usan siempre `;`.
+- **Comillas (RFC 4180):** una celda con el delimitador, comillas o saltos de línea va
+  entre comillas dobles; las comillas internas se duplican (`""`). Así una celda puede
+  llevar un **JSON embebido** (§5) sin romper el archivo — tanto el parser del
+  navegador (`parseCsv`) como el del backend (`csv.reader` de Python) lo entienden.
 
 ### 2.2 Validación en el navegador (antes de subir)
 
-`analyzeCsv(text, delimitador, tipoContacto)` calcula y muestra en el diálogo:
+`analyzeCsv(text, delimitador, tipoContacto)` muestra en el diálogo:
 
-1. **Estructura obligatoria (por POSICIÓN):** compara el encabezado de las posiciones
-   1–3 contra los sinónimos de la tabla de §1.1 (según el canal elegido). Cada columna
-   sale con ✓/✗; si alguna falla, se muestra la advertencia *"La estructura no cumple
-   el orden requerido…"*. ⚠️ La advertencia **no bloquea** el botón "Subir a S3" — pero
-   un archivo mal posicionado enviará datos equivocados (el backend lee por posición),
-   así que debe corregirse.
-2. **Contactos:** sobre la columna 2 (o, si la posición 2 no valida, sobre la columna
-   detectada por nombre/contenido) cuenta:
+1. **Estructura obligatoria (por POSICIÓN):** el encabezado de las posiciones 1–3 se
+   compara contra los sinónimos de §1.1 según el canal. Cada columna sale ✓/✗; si
+   alguna falla aparece la advertencia *"La estructura no cumple el orden requerido…"*.
+   ⚠️ La advertencia **no bloquea** el botón "Subir a S3", pero un archivo mal
+   posicionado enviará datos equivocados (el backend lee por posición).
+2. **Contactos** (columna 2, o la detectada por nombre/contenido si la 2 no valida):
    - **Válidos:** formato correcto y sin repetir. Correo → regex estricta; celular →
-     `libphonenumber` con país por defecto `CO` (acepta `+573001234567` o `3001234567`).
+     `libphonenumber` (país por defecto `CO`: acepta `+573001234567` o `3001234567`).
    - **Inválidos:** vacíos o con formato imposible para el canal.
    - **Duplicados:** mismo contacto repetido (correos en minúsculas; celulares
-     normalizados, `3001234567` ≡ `+573001234567`).
+     normalizados: `3001234567` ≡ `+573001234567`).
 3. **Vista previa:** primeras filas del archivo.
 
-### 2.3 Qué hace el backend con el CSV (envío)
+### 2.3 Qué hace el backend en el envío
 
-`Prepare-batch` (muestras y envío real) lee el archivo de S3 así:
-
-- `next(reader)` → la **primera línea es el encabezado** (viaja en el mensaje SQS como
+- `next(reader)` → la primera línea es el encabezado (viaja en el mensaje SQS como
   `headers` para resolver variables).
-- Por cada fila: `line[0]` = identificación · `line[1]` = contacto · `line[2]` = nombre.
+- Por fila: `line[0]` identificación · `line[1]` contacto · `line[2]` nombre.
 - **Validación por canal** (`valid_contact`): correo (EM/EAU/EAP) o celular (SMS/WSP/
-  VOZ). Los celulares se **normalizan a E.164** (`normalize_phone`, `+57` por defecto);
-  un contacto inválido queda registrado con **estado 11** (no se encola).
+  VOZ) **normalizado a E.164** (`normalize_phone`, `+57` por defecto). Un contacto
+  inválido queda con **estado 11** y no se encola.
 - **Deduplicación** (`_contact_key`): por defecto el envío real deduplica por contacto
-  normalizado y el cobro se dimensiona sobre contactos DISTINTOS; si la base se cargó
-  con **"Permitir duplicados"**, se envía el total.
+  normalizado y el cobro va sobre contactos DISTINTOS; con la casilla **"Permitir
+  duplicados"** de la carga se envía el total.
 - **Filtros:** lista negra y desuscritos del cliente se excluyen en el envío real.
 
-### 2.4 Ejemplo mínimo (canal EMAIL, delimitador `;`)
+### 2.4 Ejemplo (canal EMAIL, delimitador `;`)
 
 ```csv
 Identificacion;Correo;Nombre;Ciudad;Cupo
@@ -107,13 +106,90 @@ Identificacion;Correo;Nombre;Ciudad;Cupo
 79345123;luis@correo.com;Luis Gómez;Cali;1200000
 ```
 
-`Ciudad` y `Cupo` quedan disponibles como `{{Ciudad}}` y `{{Cupo}}` en las plantillas.
+---
+
+## 3. Formato CSV MULTIREGISTRO (sin encabezado; columna 1 = tipo de registro)
+
+Layout clásico de archivos planos jerárquicos: **no hay fila de encabezado** y la
+**columna 1 de cada línea es la ETIQUETA del tipo de registro**. Un destinatario ocupa
+VARIAS líneas: su línea principal + las líneas de sus sub-registros.
+
+### 3.1 Reglas del formato
+
+1. **El tipo de la PRIMERA línea es el tipo PRINCIPAL** (el destinatario). No se
+   declara en ninguna parte: se infiere de la primera línea del archivo.
+2. **Cada línea principal abre un registro.** Todas las líneas siguientes de otros
+   tipos (`ingresos`, `egresos`, `detalles`, …) pertenecen a ESE destinatario, hasta
+   la próxima línea principal. Un mismo tipo puede repetirse N veces por destinatario.
+3. **Contrato de la línea principal:** `tipo;identificación;contacto;nombre;extras…` —
+   los 3 obligatorios de §1.1 **en ese orden** después de la etiqueta (el backend lee
+   por posición). El contacto es correo o celular según el canal elegido.
+4. **Líneas de sub-registro:** `tipo;campo1;campo2;…` — estructura libre por tipo
+   (cada tipo puede tener distinto número de campos; si varía entre líneas del mismo
+   tipo, se toma el máximo y las cortas se rellenan con vacío).
+5. Líneas con la columna 1 vacía, o sub-registros ANTES de la primera línea principal,
+   se ignoran.
+6. Delimitadores y comillas: las mismas reglas del §2.1.
+
+### 3.2 Ejemplo
+
+```csv
+principal;1030567890;ana@correo.com;Ana Pérez
+ingresos;20.000;sueldo
+egresos;10.000;arriendo
+egresos;5.000;servicios
+principal;79345123;luis@correo.com;Luis Gómez
+ingresos;30.000;sueldo
+egresos;1.000;arriendo
+```
+
+Dos destinatarios; Ana con 1 ingreso y 2 egresos, Luis con 1 y 1.
+
+### 3.3 Detección y carga
+
+- **Detección automática:** en un CSV normal la primera línea es un encabezado ÚNICO;
+  si el valor de su columna 1 **se repite** como columna 1 de otras líneas, es una
+  etiqueta de tipo → el diálogo activa solo el modo multiregistro. El **switch
+  "Archivo multiregistro"** permite corregir la detección en ambos sentidos (p. ej. un
+  archivo con UN solo destinatario, donde la etiqueta principal no alcanza a repetirse).
+- **Nombres de columna:** como el archivo no trae encabezados, el diálogo los asigna
+  por defecto — línea principal: `Identificacion`, `Correo`/`Celular` (según el
+  canal), `Nombre`, `Campo4`… · sub-registros: `Campo1`…`CampoN` — y muestra **un
+  campo editable por tipo** para renombrarlos ANTES de subir (lista separada por
+  comas). ⚠️ Los nombres de los campos de un sub-registro deben coincidir con los
+  **encabezados de las columnas de la tabla** en la plantilla del Estudio (§5.2).
+- **Conversión:** al modelo interno, en el navegador. El ejemplo de §3.2, con los
+  campos de `ingresos`/`egresos` renombrados a `Valor, Concepto`, genera:
+
+```csv
+Identificacion;Correo;Nombre;ingresos;egresos
+1030567890;ana@correo.com;Ana Pérez;"[{""Valor"":""20.000"",""Concepto"":""sueldo""}]";"[{""Valor"":""10.000"",""Concepto"":""arriendo""},{""Valor"":""5.000"",""Concepto"":""servicios""}]"
+79345123;luis@correo.com;Luis Gómez;"[{""Valor"":""30.000"",""Concepto"":""sueldo""}]";"[{""Valor"":""1.000"",""Concepto"":""arriendo""}]"
+```
+
+  Es decir: **cada tipo hijo se vuelve UNA columna** (con el nombre de su etiqueta)
+  cuyo valor es el array JSON de sus líneas. A S3 sube ese CSV generado (sufijo
+  `-registros.csv`, delimitador `;`); el backend no cambia.
+- **Validación:** después de la conversión aplican las MISMAS reglas del §2.2. Ojo:
+  como los nombres de las 3 primeras columnas son generados, la señal útil es el
+  conteo de **válidos/inválidos** — si la línea principal no trae el contacto en la
+  posición 2 del contrato (§3.1.3), los destinatarios saldrán inválidos.
+
+### 3.4 Límites
+
+- **Un solo tipo principal** por archivo (el de la primera línea).
+- **Un nivel de jerarquía:** principal → sub-registros. No hay sub-sub-registros
+  (para eso, el formato JSON con objetos anidados dentro del ítem tampoco despliega
+  más de un nivel en tablas — ver §5.4).
+- El "tipo" de cada sub-registro queda implícito en su columna; no se conserva la
+  intercalación GLOBAL entre tipos distintos (los `ingresos` y `egresos` de un
+  destinatario son listas separadas, cada una en su orden original).
 
 ---
 
-## 3. Formato JSON
+## 4. Formato JSON
 
-### 3.1 Formas aceptadas
+### 4.1 Formas aceptadas
 
 **(a) Array de objetos** — cada objeto es UN destinatario:
 
@@ -124,52 +200,32 @@ Identificacion;Correo;Nombre;Ciudad;Cupo
 ]
 ```
 
-**(b) Objeto envoltorio** — la lista viene bajo una de estas llaves (la primera que
-sea un array): `data`, `rows`, `records`, `items`, `destinatarios`, `registros`:
+**(b) Objeto envoltorio** — la lista bajo una de estas llaves (la primera que sea un
+array): `data`, `rows`, `records`, `items`, `destinatarios`, `registros`.
 
-```json
-{ "data": [ { "cedula": "...", "correo": "...", "nombre": "..." }, … ] }
-```
+Errores (mensaje en el diálogo): no parsea → *"El archivo no es un JSON válido."* ·
+no es array ni envoltorio con array, o vacío → *"El JSON debe ser un array de objetos…"*
+· un elemento no es objeto → *"Cada registro del JSON debe ser un objeto { campo: valor }."*
 
-Cualquier otra forma se rechaza con un error claro en el diálogo:
-- No parsea → *"El archivo no es un JSON válido."*
-- No es array (ni envoltorio con array) o está vacío → *"El JSON debe ser un array de
-  objetos (o traer la lista en "data"/"rows"/"records"/"items")."*
-- Un elemento no es objeto (p. ej. un array o un escalar suelto) → *"Cada registro del
-  JSON debe ser un objeto { campo: valor }."*
+### 4.2 Columnas y obligatorias
 
-### 3.2 Cómo se derivan las columnas
+- **Columnas = unión de las llaves** de todos los objetos, en orden de aparición.
+- **Reordenamiento automático:** las 3 obligatorias se buscan por los **sinónimos** de
+  §1.1 y se mueven a las posiciones 1–2–3. El orden de las llaves en el archivo NO
+  importa (ventaja sobre el CSV). Si una obligatoria no aparece por sinónimos, la
+  validación de estructura la marcará ✗ (hay que renombrar el campo en el archivo).
 
-- **Columnas = unión de las llaves** de todos los objetos, en orden de aparición (si un
-  registro trae una llave que otros no tienen, la columna existe para todos y queda
-  vacía donde falte).
-- **Reordenamiento automático de las obligatorias:** se buscan por los **sinónimos** de
-  §1.1 (misma normalización) y se mueven a las posiciones 1–2–3 que exige el backend
-  (`Identificación`, contacto según el canal elegido, `Nombre`). El resto de columnas
-  conserva su orden. Es la ventaja del JSON sobre el CSV: **el orden de las llaves no
-  importa**, el sistema las acomoda.
-- Si alguna obligatoria **no se encuentra** por sinónimos, no se inventa: la validación
-  de estructura (§2.2, la misma) la marcará ✗ y habrá que renombrar el campo en el
-  archivo.
+### 4.3 Valores
 
-### 3.3 Valores: escalares y ANIDADOS
-
-| Valor en el JSON | Cómo queda en la celda del CSV generado |
+| Valor JSON | En la celda del CSV generado |
 |---|---|
 | `string` | Tal cual |
-| `number` | Texto sin notación científica (enteros completos) |
+| `number` | Texto sin notación científica |
 | `boolean` | `true` / `false` |
-| `null` / ausente | Celda vacía |
-| **`array` u `object`** | **JSON serializado DENTRO de la celda** (ver §4) |
+| `null` / ausente | Vacío |
+| **`array` / `object`** | **JSON serializado dentro de la celda** (§5) |
 
-### 3.4 Conversión y subida
-
-El JSON se convierte a CSV **en el navegador** (`jsonToRows` + `rowsToCsv`, delimitador
-`;`) y a S3 sube **ese CSV** con el nombre `archivo.csv`. El backend no cambió: todo el
-pipeline (Prepare-batch, combinadores, reportes) sigue leyendo CSV. Después de la
-conversión aplican las MISMAS validaciones del §2.2.
-
-### 3.5 Ejemplo completo (extracto con movimientos, canal EMAIL)
+### 4.4 Ejemplo (extracto con movimientos)
 
 ```json
 [
@@ -180,66 +236,55 @@ conversión aplican las MISMAS validaciones del §2.2.
     "saldo": 2450000,
     "movimientos": [
       { "Fecha": "2026-07-01", "Detalle": "Compra supermercado", "Valor": "-185.000" },
-      { "Fecha": "2026-07-03", "Detalle": "Abono nómina",        "Valor": "+3.200.000" },
-      { "Fecha": "2026-07-10", "Detalle": "Pago tarjeta",        "Valor": "-950.000" }
+      { "Fecha": "2026-07-03", "Detalle": "Abono nómina",        "Valor": "+3.200.000" }
     ]
   }
 ]
 ```
 
-Genera este CSV (las obligatorias reordenadas; el array queda como JSON en la celda,
-entre comillas porque contiene `,` y `"`):
-
-```csv
-cedula;correo;nombre;saldo;movimientos
-1030567890;ana@correo.com;Ana Pérez;2450000;"[{""Fecha"": ""2026-07-01"", ""Detalle"": ""Compra supermercado"", ""Valor"": ""-185.000""}, …]"
-```
+El JSON se convierte a CSV en el navegador (`jsonToRows` + `rowsToCsv`, `;`) y a S3
+sube ese CSV. Después aplican las validaciones del §2.2.
 
 ---
 
-## 4. Celdas con array (sub-registros) → tablas con repetición
+## 5. Celdas con array (sub-registros) → tablas con repetición
 
-Así se logra el equivalente al "archivo multiregistro": los registros hijos van en una
-**columna con nombre** dentro de la fila del destinatario.
+El punto de encuentro de los tres formatos: los registros hijos de un destinatario van
+en una **columna con nombre**, como array JSON, dentro de su fila.
 
-1. **En la base:** la columna (p. ej. `movimientos`) trae un array JSON de objetos.
-   En un `.json` sale natural (§3.3); en un CSV hecho a mano hay que escribir el JSON
-   en la celda respetando las comillas del §2.1.
-2. **En la plantilla del Estudio PDF:** la tabla se vincula con `repeatBy =
-   movimientos` (panel de Datos). **Las llaves de cada ítem deben llamarse IGUAL que
-   los encabezados de las columnas de la tabla** (en el ejemplo: columnas `Fecha`,
-   `Detalle`, `Valor`). La comparación es exacta (o minúsculas como último recurso).
+1. **Origen del array:** columna de tipo hijo del multiregistro (§3.3), campo anidado
+   del JSON (§4.3), o JSON escrito a mano en una celda del CSV (§2.1, con comillas).
+2. **En la plantilla del Estudio PDF:** la tabla se vincula con `repeatBy = <nombre de
+   la columna>` (panel de Datos). **Las llaves de cada ítem deben llamarse IGUAL que
+   los encabezados de las columnas de la tabla** (comparación exacta, o minúsculas
+   como último recurso). Por eso el diálogo del multiregistro permite renombrar
+   `Campo1, Campo2…` a nombres reales (`Valor, Concepto`).
 3. **En el envío real (EAP-PDF):** el combinador parsea la celda (`_coerce_json_cell`:
-   toda celda que empiece por `[` o `{` se intenta parsear; si no parsea, queda como
-   texto literal) → la variable llega como LISTA al motor → la tabla pinta **una fila
-   por ítem, por destinatario**. Si las filas no caben en el alto de la tabla, el PDF
-   **pagina a hojas nuevas** (encabezado de tabla repetido; los demás elementos como
-   membrete).
-4. **En la vista previa del Estudio:** mismo comportamiento con la primera fila de
-   muestra de la base (`coerceSampleCell`).
-5. **En el camino HTML** (editor básico xhtml2pdf): una variable-lista se sustituye
-   como texto JSON (no hay tabla con repetición en ese nivel).
+   toda celda que empiece por `[` o `{`; si no parsea, queda como texto literal) → la
+   variable llega como LISTA al motor → la tabla pinta **una fila por ítem, por
+   destinatario**. Si no caben en el alto de la tabla, el PDF **pagina a hojas
+   nuevas** (encabezado de tabla repetido; los demás elementos como membrete).
+4. **En la vista previa del Estudio:** igual, con la primera fila de muestra de la
+   base (`coerceSampleCell`).
+5. **En el camino HTML** (editor básico xhtml2pdf) y en SMS/WhatsApp/Voz: una
+   variable-lista se sustituye como texto JSON (no hay tablas con repetición ahí).
 
-**Límites prácticos:**
-- El JSON de la celda debe ser **array de objetos planos** para alimentar la tabla
-  (objetos anidados dentro del ítem no se despliegan en columnas).
-- La **vista previa persistente** de la base guarda las celdas JSON hasta **4.000
-  caracteres** (las normales a 500). Un array más largo se trunca SOLO en esa vista
-  previa (el envío real siempre lee el CSV completo de S3).
-- Un solo nivel de anidamiento útil: destinatario → lista de ítems. No hay listas
-  dentro de listas.
+**Límites:** array de **objetos planos** (objetos anidados dentro del ítem no se
+despliegan en columnas); un nivel de anidamiento útil (destinatario → ítems). La vista
+previa persistente guarda las celdas JSON hasta **4.000 caracteres** (las normales a
+500); un array más largo se trunca SOLO en esa vista previa — el envío real siempre
+lee el CSV completo de S3.
 
 ---
 
-## 5. Qué pasa con las columnas después de la carga
+## 6. Qué pasa con las columnas después de la carga
 
-- `Database/Register-file` guarda `columns` (los encabezados) y `previewRows` (máx. 5
+- `Database/Register-file` guarda `columns` (encabezados) y `previewRows` (máx. 5
   filas × 40 columnas; celdas a 500 chars, JSON a 4.000, presupuesto total ~100 KB).
   De ahí salen el "ver detalle", el selector de variables (`DatabaseFieldPicker`) y el
   panel de Datos del Estudio.
 - **Variables por canal:**
-  - **Email (EM/EAU/EAP):** `{{Columna}}` en plantillas SES/HTML/DOCX/PDF (cualquier
-    columna del encabezado).
+  - **Email (EM/EAU/EAP):** `{{Columna}}` en plantillas SES/HTML/DOCX/PDF.
   - **SMS / Voz:** `{{Columna}}` dentro del texto del mensaje.
   - **WhatsApp:** los parámetros `{{1}}, {{2}}, …` de la plantilla HSM se llenan **por
     posición** con las columnas desde Nombre en adelante (`{{1}}` = columna 3,
@@ -250,17 +295,22 @@ Así se logra el equivalente al "archivo multiregistro": los registros hijos van
 
 ---
 
-## 6. Preguntas frecuentes
+## 7. Preguntas frecuentes
 
-**¿Puedo mezclar filas de distintos "tipos" (encabezado/detalle) en el mismo CSV?**
-No. Ese layout multiregistro no existe: cada fila debe ser un destinatario completo.
-Los detalles van como array JSON en una celda de la fila de su destinatario (§4). Si
-la fuente de datos exporta multiregistro clásico, hay que transformarla a este modelo
-(el `.json` con arrays anidados es el camino directo).
+**¿Puedo mezclar líneas de distintos tipos (principal/detalle) en el mismo CSV?**
+Sí — ese es exactamente el formato **multiregistro** del §3: sin encabezado, columna 1
+= tipo, la primera línea define el tipo principal y los demás tipos se agrupan bajo el
+destinatario anterior. El sistema lo detecta solo y lo convierte al modelo interno.
 
 **¿El orden de las columnas importa?**
-En CSV, sí para las 3 obligatorias (posiciones 1–2–3); el resto es libre. En JSON no:
-el sistema reordena las obligatorias por sinónimos.
+CSV con encabezado: sí para las 3 obligatorias (posiciones 1–2–3), el resto libre.
+Multiregistro: sí en la línea principal (`tipo;identificación;contacto;nombre;…`).
+JSON: no — el sistema reordena las obligatorias por sinónimos.
+
+**¿Cómo sabe el sistema qué columna trae el tipo de registro?**
+Solo aplica al multiregistro: SIEMPRE es la **columna 1** de cada línea, y el tipo
+principal es el de la **primera línea** del archivo. En los otros formatos no hay
+columna de tipo (una fila/objeto = un destinatario).
 
 **¿Qué pasa si un contacto es inválido?**
 En la carga solo se informa (contadores). En el envío real no se encola y queda con
@@ -268,4 +318,4 @@ estado 11 (email/celular inválido) en el reporte.
 
 **¿Los duplicados se envían?**
 Por defecto no (se deduplica por contacto normalizado y el cobro va sobre contactos
-distintos). Con la casilla "Permitir duplicados" al cargar la base, se envía el total.
+distintos). Con "Permitir duplicados" al cargar la base, se envía el total.

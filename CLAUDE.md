@@ -1140,6 +1140,21 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
   obligatorias se reordenan a las posiciones del backend (1 Identificación · 2 contacto ·
   3 Nombre, por sinónimos) y los campos ANIDADOS (arrays/objetos — p. ej. los
   movimientos de un extracto) se serializan como **JSON dentro de la celda**.
+- **CSV MULTIREGISTRO (sin encabezado) (ago 2026):** la carga acepta también el layout
+  clásico donde **la columna 1 de cada línea es el TIPO de registro** y no hay fila de
+  encabezado: el tipo de la PRIMERA línea es el **principal** (el destinatario, con
+  contrato `tipo;identificación;contacto;nombre;extras…`) y las líneas siguientes de
+  otros tipos (`ingresos`, `egresos`, …) son sus sub-registros hasta la próxima línea
+  principal. `csv.ts`: `detectMultiRecord` (heurística: el valor de la columna 1 de la
+  línea 1 se repite en otras líneas → es etiqueta, no encabezado),
+  `analyzeMultiRecordTypes` (inventario de tipos + nombres de columna por defecto:
+  Identificacion/Correo|Celular/Nombre + Campo1…N) y `multiRecordToRows` (conversión al
+  modelo interno: cada tipo hijo → UNA columna con el array JSON de sus líneas → alimenta
+  las tablas `repeatBy` del Estudio). `BasesDatosSection`: detección automática + switch
+  manual "Archivo multiregistro" (corrige la detección en ambos sentidos, p. ej. un solo
+  destinatario) y **editor de nombres de columna por tipo** (los nombres de los campos de
+  un sub-registro deben coincidir con los encabezados de la tabla en la plantilla). Sube
+  el CSV generado (`-registros.csv`, `;`); el backend no cambia.
 - **Celdas JSON → tablas con repetición:** el combinador EAP-PDF (`row_mapping` +
   `_coerce_json_cell`) parsea las celdas que son JSON (`[`/`{`) → la variable llega como
   LISTA al motor y alimenta el `dataSource` de la tabla del Estudio **por destinatario**
@@ -1763,8 +1778,9 @@ README.md
 ---
 
 ## 7. Referencias rápidas
-- **Definición de los archivos de bases (CSV/JSON, columnas obligatorias, celdas con
-  arrays → tablas con repetición): `FORMATO_BASES.md`** (raíz).
+- **Definición de los archivos de bases (CSV con encabezado, CSV MULTIREGISTRO sin
+  encabezado con columna 1 = tipo de registro, y JSON; columnas obligatorias, celdas
+  con arrays → tablas con repetición): `FORMATO_BASES.md`** (raíz).
 - **Checklist de despliegue consolidado (panel admin + pendientes): `DESPLIEGUE.md`** (raíz).
   Todo lo `[J]` (tablas, lambdas, rutas, IAM, mapping template de rol) y lo `[C]` (código pendiente).
 - **Plan de salida a producción (MVP) y canales SMS/WhatsApp/Voz: `PLAN_MVP.md`** (raíz).
