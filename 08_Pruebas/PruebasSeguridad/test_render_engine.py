@@ -629,3 +629,47 @@ def test_traductor_emite_vertical_align(mod):
     doc['pages'][0]['elements'][0].pop('vAlign')
     el = translate_sketch(doc)['templateJson']['pages'][0]['elements'][0]
     assert el['paragraphStyle']['verticalAlign'] == 'top'
+
+
+def _pdf_text(pdf_bytes):
+    """Texto de los content streams del PDF (Flate directo o ASCII85+Flate de
+    ReportLab). Permite verificar que las VARIABLES quedaron resueltas DENTRO del
+    PDF (los smoke de %PDF- no detectaban un render sin contenido)."""
+    import base64 as _b64
+    import re as _re
+    import zlib as _zlib
+    out = b''
+    for m in _re.finditer(rb'stream\r?\n(.*?)endstream', pdf_bytes, _re.S):
+        data = m.group(1).strip()
+        try:
+            out += _zlib.decompress(data)
+            continue
+        except Exception:
+            pass
+        try:
+            out += _zlib.decompress(_b64.a85decode(data, adobe=True))
+        except Exception:
+            out += data
+    return out
+
+
+def test_render_con_data_resuelve_variables_en_el_pdf(mod):
+    # Flujo de la VISTA PREVIA del Estudio: el front manda `data` (muestra de la
+    # base) y el PDF debe salir con los VALORES, no vacío ni con {{tokens}}.
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 'df', 'type': 'dataField', 'x': 20, 'y': 20, 'width': 120, 'height': 10,
+         'binding': 'Nombre', 'fallback': '', 'fontFamily': 'Helvetica', 'fontSize': 14,
+         'color': '#111111'},
+        {'id': 't', 'type': 'text', 'x': 20, 'y': 40, 'width': 150, 'height': 10,
+         'text': 'Correo: {{correo}}', 'align': 'left', 'fontFamily': 'Helvetica',
+         'fontSize': 12, 'color': '#111111', 'fontWeight': 400, 'lineHeight': 1.3},
+    ]}]}
+    res = mod.lambda_handler(_ctx({
+        'sketch': {'schema': 'pdfsketch@1', 'document': doc},
+        'data': {'Nombre': 'jhon', 'correo': 'correo1@correo.com'},
+    }), None)
+    contenido = _pdf_text(_pdf_bytes(res))
+    assert b'jhon' in contenido
+    assert b'correo1@correo.com' in contenido
+    assert b'{{' not in contenido

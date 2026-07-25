@@ -1119,6 +1119,29 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
   letras, `_list_marker`, render smoke, `firstLineIndent`, multipárrafo, dash a
   segmentos, línea continua) + ajuste de `test_paridad_estilos.py`.
 
+### Estudio PDF (6ª tanda, ago 2026): variables RESUELTAS en vista previa y envío real
+- **Causa raíz del "no salen los datos de la variable":** la vista previa
+  (`SketchStudio.handlePreview`) llamaba a `/Template/Render-engine` **sin `data`** →
+  el motor resuelve toda variable ausente a VACÍO (`resolve_var` → `''`) y el PDF salía
+  sin la información de la base. El pipeline en sí estaba bien (verificado extrayendo el
+  TEXTO de los PDFs generados: dataField y `{{campo}}` resuelven correctamente cuando
+  llega `data`).
+- **Fix vista previa:** `handlePreview` construye `data` con las columnas de la base
+  seleccionada en el panel de Datos + su primera fila de `previewRows`
+  (`buildPreviewData`); los bindings usados en el lienzo sin valor de muestra se envían
+  como `{{campo}}` para que se VEAN como no resueltos (no en blanco).
+- **Robustez del envío real** (`Combination-EAP-PDF`): el binding del editor sale de
+  `databaseFile.columns` (front) pero los `headers` del mensaje salen del CSV CRUDO que
+  lee Prepare-batch → pueden diferir en **BOM** (`﻿` en la 1ª columna, típico de
+  Excel), espacios o mayúsculas. `row_mapping` quita el BOM y
+  `augment_mapping_for_template` crea alias saneados para cada variable del template
+  (data-var, QR por variable, dataSource de tablas); `render_variables` (camino HTML)
+  también tolera case/espacios. La clave exacta siempre gana.
+- **Pruebas endurecidas:** helper `_pdf_text` (descomprime los content streams
+  Flate/ASCII85 de ReportLab) → los tests del Estudio verifican que el VALOR de la
+  variable está DENTRO del PDF y que no quedan `{{tokens}}` (antes solo se miraba la
+  cabecera `%PDF-`, que dejó pasar exactamente este bug).
+
 ### Estudio PDF (5ª tanda, ago 2026): selección en el lienzo + editores de estilos estilo Diseñador
 - **Selección rotación-consciente** (`Canvas.tsx`): el `onMouseDown` decidía "¿el clic
   está sobre un elemento?" con el bbox SIN rotar → en un texto/forma girado, el clic

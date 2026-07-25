@@ -121,12 +121,17 @@ El front está terminado y el backend probado; solo falta la consola AWS
        resuelven. El HTML del editor básico sigue por xhtml2pdf. ⚠️ `[J]`: el layer del
        combinador debe sumar el motor (`reportlab`, `Pillow`, `qrcode`,
        `python-barcode`, `beautifulsoup4`, `lxml`) además de `xhtml2pdf`.
-2. [ ] `[C]` **Vista previa con datos de muestra**: `SketchStudio.handlePreview` no envía
-       `data` → las `{{variables}}` salen vacías y las tablas `repeatBy` sin filas.
-       Usar las `previewRows` de la base seleccionada (ya están en `dataSourceStore`).
+2. [x] `[C]` ✅ **Vista previa con datos de muestra (ago 2026)**: `handlePreview` ya envía
+       `data` (columnas + primera fila de `previewRows` de la base seleccionada en el
+       panel de Datos); los bindings sin muestra quedan visibles como `{{campo}}`. El
+       envío real quedó además **tolerante a BOM/espacios/mayúsculas** entre el binding
+       del editor y el encabezado crudo del CSV (alias saneados en el combinador). Las
+       pruebas ahora verifican el CONTENIDO del PDF (texto extraído), no solo `%PDF-`.
 3. [ ] `[C]` Restos del traductor: `pen` y `flowable` (omitidos con warning),
        opacidad/crop de imágenes, `fallback` del dataField, interletra por fragmento en
-       contentarea, fondos de página no sólidos. (Líneas/bordes punteados: ✅ hechos.)
+       contentarea, fondos de página no sólidos, tabla `repeatBy` en la vista previa
+       (necesita una lista en `data`; hoy solo van valores planos de la fila).
+       (Líneas/bordes punteados: ✅ hechos.)
 4. [ ] `[J]` Fuentes reales para cursivas de Inter (subir `Inter-Italic.ttf`/
        `Inter-BoldItalic.ttf` a `fonts/`) si se quiere cursiva fiel (hoy cae a
        Helvetica-Oblique).

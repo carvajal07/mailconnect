@@ -26,6 +26,45 @@ import SketchThumbnail from './SketchThumbnail';
 import { useDocumentStore, emptyDocument } from '../../pdfsketch/store/documentStore';
 import { useDataSourceStore, type SketchDataSource } from '../../pdfsketch/store/dataSourceStore';
 import { toEnvelope, serializeToJson, deserializeFromJson } from '../../pdfsketch/json/documentJson';
+import type { DocumentModel, TextEl, DataFieldEl, QrEl } from '../../pdfsketch/types/document';
+
+/** Bindings (variables) usados en el lienzo: spans de texto, `{{campo}}` en texto
+ *  plano, dataFields y códigos QR/barras con variable. */
+function collectDocBindings(doc: DocumentModel): string[] {
+  const out = new Set<string>();
+  const varRe = /\{\{\s*([^{}]+?)\s*\}\}/g;
+  for (const page of doc.pages) {
+    for (const el of page.elements) {
+      if (el.type === 'text') {
+        for (const sp of (el as TextEl).spans ?? []) if (sp.binding) out.add(sp.binding);
+        for (const m of ((el as TextEl).text ?? '').matchAll(varRe)) out.add(m[1]);
+      } else if (el.type === 'dataField' && (el as DataFieldEl).binding) {
+        out.add((el as DataFieldEl).binding);
+      } else if (el.type === 'qr' && (el as QrEl).variable) {
+        out.add((el as QrEl).variable!);
+      }
+    }
+  }
+  return [...out];
+}
+
+/**
+ * Datos de MUESTRA para la vista previa: las columnas de la base seleccionada con
+ * su primera fila de vista previa (previewRows). Sin esto, el motor resolvía toda
+ * variable a VACÍO y la vista previa salía sin la información de la base.
+ * Los bindings del lienzo sin valor de muestra quedan visibles como `{{campo}}`.
+ */
+function buildPreviewData(doc: DocumentModel, source: SketchDataSource | null): Record<string, unknown> {
+  const data: Record<string, unknown> = {};
+  if (source) {
+    const row = source.previewRows?.[0] ?? [];
+    source.columns.forEach((col, i) => { data[col] = row[i] ?? col; });
+  }
+  for (const b of collectDocBindings(doc)) {
+    if (!(b in data)) data[b] = `{{${b}}}`;
+  }
+  return data;
+}
 
 /**
  * ESTUDIO PDF (nivel MEDIO de plantillas PDF) — editor de lienzo pdfsketch.
@@ -280,8 +319,12 @@ export default function SketchStudio() {
     setRendering(true);
     try {
       const doc = useDocumentStore.getState().doc;
+      // Muestra de datos: la base seleccionada en el panel de Datos (previewRows).
+      const ds = useDataSourceStore.getState();
+      const selected = ds.sources.find((s) => s.id === ds.selectedId) ?? null;
       const res = await pdfEngineService.render({
         sketch: toEnvelope(doc) as unknown as Record<string, unknown>,
+        data: buildPreviewData(doc, selected),
         filename: `${saveName || doc.name || 'documento'}.pdf`,
       });
       if (isOk(res) && res.data?.pdfBase64) {
