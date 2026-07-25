@@ -96,23 +96,6 @@ export default function DraftOverlay({ draft, zoom, offsetX, offsetY }: Props) {
     );
   }
 
-  if (draft.tool === 'pen') {
-    const pts = (draft.pointsMm ?? []).flatMap((p) => [p.x * s, p.y * s]);
-    return (
-      <Line
-        x={offsetX}
-        y={offsetY}
-        points={pts}
-        stroke={STROKE}
-        strokeWidth={1}
-        tension={0.5}
-        lineCap="round"
-        lineJoin="round"
-        listening={false}
-      />
-    );
-  }
-
   return null;
 }
 

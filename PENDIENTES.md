@@ -121,16 +121,32 @@ El front está terminado y el backend probado; solo falta la consola AWS
        resuelven. El HTML del editor básico sigue por xhtml2pdf. ⚠️ `[J]`: el layer del
        combinador debe sumar el motor (`reportlab`, `Pillow`, `qrcode`,
        `python-barcode`, `beautifulsoup4`, `lxml`) además de `xhtml2pdf`.
-2. [ ] `[C]` **Vista previa con datos de muestra**: `SketchStudio.handlePreview` no envía
-       `data` → las `{{variables}}` salen vacías y las tablas `repeatBy` sin filas.
-       Usar las `previewRows` de la base seleccionada (ya están en `dataSourceStore`).
-3. [ ] `[C]` Restos del traductor: `pen` y `flowable` (omitidos con warning),
-       opacidad/crop de imágenes, `fallback` del dataField, interletra por fragmento en
-       contentarea, fondos de página no sólidos. (Líneas/bordes punteados: ✅ hechos.)
-4. [ ] `[J]` Fuentes reales para cursivas de Inter (subir `Inter-Italic.ttf`/
+2. [x] `[C]` ✅ **Vista previa con datos de muestra (ago 2026)**: `handlePreview` ya envía
+       `data` (columnas + primera fila de `previewRows` de la base seleccionada en el
+       panel de Datos); los bindings sin muestra quedan visibles como `{{campo}}`. El
+       envío real quedó además **tolerante a BOM/espacios/mayúsculas** entre el binding
+       del editor y el encabezado crudo del CSV (alias saneados en el combinador). Las
+       pruebas ahora verifican el CONTENIDO del PDF (texto extraído), no solo `%PDF-`.
+3. [x] `[C]` ✅ **Flujo de la hoja + bases JSON (ago 2026)**: (a) la herramienta `pen`
+       se ELIMINÓ del editor (fuera de alcance; los docs viejos con pen se siguen
+       viendo en el lienzo y el PDF los omite con warning); (b) `flowable` ya se
+       traduce al PDF como su caja (rect con borde discontinuo); (c) **paginación del
+       flujo**: una tabla `repeatBy` cuyo contenido no cabe en su alto FLUYE a hojas
+       nuevas (encabezado de tabla repetido, el resto de elementos como membrete) —
+       antes KeepInFrame lo encogía hasta lo ilegible; (d) **bases .json**: la carga
+       de bases acepta JSON (array de objetos → CSV en el navegador); un campo con un
+       ARRAY (p. ej. movimientos de un extracto) queda como JSON dentro de la celda y
+       el combinador/vista previa lo parsean para alimentar la tabla `repeatBy` por
+       destinatario. Pendiente de esta línea (siguiente iteración): vínculo
+       flowable→flowable (continuar el flujo en OTRA sub-área de la misma hoja, no
+       solo en hoja nueva).
+4. [ ] `[C]` Restos del traductor: opacidad/crop de imágenes, `fallback` del
+       dataField, interletra por fragmento en contentarea, fondos de página no
+       sólidos. (Líneas/bordes punteados y tabla `repeatBy` en vista previa: ✅ hechos.)
+5. [ ] `[J]` Fuentes reales para cursivas de Inter (subir `Inter-Italic.ttf`/
        `Inter-BoldItalic.ttf` a `fonts/`) si se quiere cursiva fiel (hoy cae a
        Helvetica-Oblique).
-5. [ ] `[C]` Validar el tamaño del diseño al guardar (límite 400 KB del item de
+6. [ ] `[C]` Validar el tamaño del diseño al guardar (límite 400 KB del item de
        DynamoDB) y aligerar la precarga del portal (List devuelve el `sketchJson`
        completo de TODAS las plantillas).
 

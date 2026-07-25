@@ -311,6 +311,77 @@ export async function readSpreadsheet(file: File): Promise<string[][]> {
   return rawRows.map((r) => (Array.isArray(r) ? r.map(cellToString) : []));
 }
 
+// ─────────────────────────── Soporte de JSON (.json) ───────────────────────────
+// Igual que el Excel: el JSON se convierte a CSV EN EL NAVEGADOR y se sube a S3 como
+// CSV (el backend no cambia). Formatos aceptados: un ARRAY de objetos `[{...}, ...]`
+// (cada objeto = un destinatario) o un objeto envoltorio `{ data|rows|records|items:
+// [{...}] }`. Los valores ANIDADOS (arrays u objetos — p. ej. la lista de movimientos
+// de un extracto) se guardan como JSON DENTRO de la celda; el motor de PDF del Estudio
+// los parsea para alimentar tablas con `repeatBy` (una fila por ítem, y si desbordan
+// el alto de la tabla el PDF pagina a una hoja nueva).
+
+/** ¿El archivo es JSON, por extensión o tipo MIME? */
+export const isJsonFile = (file: File): boolean =>
+  /\.json$/i.test(file.name) || /\bjson\b/i.test(file.type);
+
+const WRAPPER_KEYS = ['data', 'rows', 'records', 'items', 'destinatarios', 'registros'] as const;
+
+/** Un valor de celda del JSON → texto para el CSV. Escalares como texto plano;
+ *  arrays/objetos como JSON embebido (los parsea el motor / la vista previa). */
+function jsonCellToString(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  if (Array.isArray(v) || (typeof v === 'object' && !(v instanceof Date))) return JSON.stringify(v);
+  return cellToString(v);
+}
+
+/**
+ * Convierte el texto de un archivo .json en filas CSV (encabezado + datos).
+ * Reordena las columnas OBLIGATORIAS a las posiciones que lee el backend
+ * (1 Identificación · 2 contacto · 3 Nombre) buscándolas por sinónimos; el resto
+ * de campos conserva su orden de aparición. Lanza Error (mensaje en español) si
+ * el JSON no es un array de objetos.
+ */
+export function jsonToRows(text: string, contact: ContactType = 'email'): string[][] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.replace(/^﻿/, ''));
+  } catch {
+    throw new Error('El archivo no es un JSON válido.');
+  }
+
+  let records: unknown[] | null = Array.isArray(parsed) ? parsed : null;
+  if (!records && parsed && typeof parsed === 'object') {
+    for (const key of WRAPPER_KEYS) {
+      const v = (parsed as Record<string, unknown>)[key];
+      if (Array.isArray(v)) { records = v; break; }
+    }
+  }
+  if (!records || records.length === 0) {
+    throw new Error('El JSON debe ser un array de objetos (o traer la lista en "data"/"rows"/"records"/"items").');
+  }
+  if (!records.every((r) => r && typeof r === 'object' && !Array.isArray(r))) {
+    throw new Error('Cada registro del JSON debe ser un objeto { campo: valor }.');
+  }
+
+  // Columnas = unión de llaves en orden de aparición.
+  const keys: string[] = [];
+  for (const rec of records as Record<string, unknown>[]) {
+    for (const k of Object.keys(rec)) if (!keys.includes(k)) keys.push(k);
+  }
+
+  // Obligatorias primero, en el ORDEN posicional del backend (por sinónimos).
+  const ordered: string[] = [];
+  for (const col of requiredColumns(contact)) {
+    const hit = keys.find((k) => !ordered.includes(k) && col.synonyms.includes(normHeader(k)));
+    if (hit) ordered.push(hit);
+  }
+  for (const k of keys) if (!ordered.includes(k)) ordered.push(k);
+
+  const rows = (records as Record<string, unknown>[]).map((rec) =>
+    ordered.map((k) => jsonCellToString(rec[k])));
+  return [ordered, ...rows];
+}
+
 /** Serializa filas a texto CSV (comillas donde el valor contenga el delimitador, comillas o
  *  saltos de línea) — mismo criterio que parseCsv, para poder re-analizarlo y subirlo. */
 export function rowsToCsv(rows: string[][], delimiter: Delimiter = ';'): string {

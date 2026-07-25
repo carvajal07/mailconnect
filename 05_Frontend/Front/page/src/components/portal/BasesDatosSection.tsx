@@ -43,7 +43,7 @@ import { isOk } from '../../services/apiClient';
 import { usePortalData } from '../../context/PortalDataContext';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
-import { analyzeCsv, DELIMITER_LABELS, requiredColumns, channelContactType, isSpreadsheetFile, readSpreadsheet, rowsToCsv, type CsvAnalysis, type ContactType, type Delimiter } from './csv';
+import { analyzeCsv, DELIMITER_LABELS, requiredColumns, channelContactType, isSpreadsheetFile, readSpreadsheet, isJsonFile, jsonToRows, rowsToCsv, type CsvAnalysis, type ContactType, type Delimiter } from './csv';
 import { formatDateTime } from '../../utils/datetime';
 
 interface BaseDatos {
@@ -197,6 +197,29 @@ export const BasesDatosSection = () => {
       return;
     }
 
+    // JSON: array de objetos → se CONVIERTE a CSV en el navegador (a S3 sube el CSV;
+    // el backend no cambia). Los campos anidados (arrays/objetos) quedan como JSON
+    // DENTRO de la celda — alimentan tablas con repetición en el Estudio PDF.
+    if (isJsonFile(f)) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const rows = jsonToRows(String(reader.result ?? ''), contact);
+          const csv = rowsToCsv(rows, ';');
+          setFileText(csv);
+          setIsSpreadsheet(true); // delimitador fijo ';' (archivo generado), como el Excel
+          setDelimiter(';');
+          setAnalysis(analyzeCsv(csv, ';', contact));
+          const csvName = f.name.replace(/\.json$/i, '') + '.csv';
+          setUploadFile(new File([csv], csvName, { type: 'text/csv' }));
+        } catch (e) {
+          notify(e instanceof Error ? e.message : 'No se pudo leer el JSON.', 'error');
+        }
+      };
+      reader.readAsText(f);
+      return;
+    }
+
     // CSV: se lee como texto (comportamiento de siempre) y se sube el archivo tal cual.
     const reader = new FileReader();
     reader.onload = () => {
@@ -227,7 +250,7 @@ export const BasesDatosSection = () => {
       return;
     }
     if (!uploadFile || !analysis) {
-      notify('Selecciona un archivo CSV o Excel.', 'warning');
+      notify('Selecciona un archivo CSV, Excel o JSON.', 'warning');
       return;
     }
 
@@ -336,8 +359,10 @@ export const BasesDatosSection = () => {
       </Stack>
 
       <Alert severity="info" sx={{ mb: 2 }}>
-        Sube tus listas de destinatarios (<strong>CSV o Excel .xlsx</strong> — el Excel se
-        convierte a CSV automáticamente). Antes de subir, validamos el archivo en tu
+        Sube tus listas de destinatarios (<strong>CSV, Excel .xlsx o JSON</strong> — el Excel y
+        el JSON se convierten a CSV automáticamente; en el JSON, un campo con una LISTA —
+        p.&nbsp;ej. los movimientos de un extracto — se conserva y alimenta las tablas con
+        repetición del Estudio PDF). Antes de subir, validamos el archivo en tu
         navegador y contamos: <strong>Válidos</strong> (contacto de la columna 2 con formato
         correcto y sin duplicar) e <strong>Inválidos</strong> (contacto vacío o con formato
         inválido para el canal: correo mal escrito, o celular que no es E.164). La subida va a S3
@@ -499,10 +524,10 @@ export const BasesDatosSection = () => {
             </Box>
 
             <Button variant="outlined" component="label" startIcon={<CloudUploadIcon />}>
-              {file ? `Archivo: ${file.name} (${formatBytes(file.size)})` : 'Seleccionar archivo CSV o Excel'}
+              {file ? `Archivo: ${file.name} (${formatBytes(file.size)})` : 'Seleccionar archivo CSV, Excel o JSON'}
               <input
                 type="file"
-                accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.json,application/json"
                 hidden
                 onChange={(e) => handleFile(e.target.files?.[0] || null)}
               />

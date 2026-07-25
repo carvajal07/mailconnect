@@ -22,8 +22,9 @@ Mapeo y limitaciones (v1):
     en `<p style="text-align:…">` (el motor la aplica; antes salía a la izq.).
   - rect → shape rectangle · circle → shape ellipse · frame → shape rectangle.
   - line → rectángulo DELGADO centrado en el segmento y ROTADO su ángulo (las
-    diagonales se ven como línea, no como bloque); pen (trazo libre) y
-    flowable se OMITEN.
+    diagonales se ven como línea, no como bloque); pen (trazo libre, docs
+    viejos) se OMITE. flowable → su caja (rect con borde discontinuo); una
+    tabla dataSource que desborda su alto PAGINA a hoja nueva (page_renderer).
   - image → `image` con `source.kind='url'` (URLs http(s), p. ej. el prefijo
     público `resources/` del bucket del cliente). Los `data:` URI se omiten.
   - table → modelo simple del motor (header/body/dataSource/alternateRowFill)
@@ -193,6 +194,8 @@ class _Translator:
             return self._table(el, base)
         if el_type == "qr":
             return self._barcode(el, base)
+        if el_type == "flowable":
+            return self._flowable(el, base)
 
         self.warnings.append(
             "Elemento '{}' ({}) no soportado por el motor; se omitió.".format(
@@ -354,6 +357,20 @@ class _Translator:
             "type": "shape", "shape": "triangle",
             "fill": _fill(el.get("fill"), el.get("opacity"), el.get("fillGradient")),
             "border": _border(el.get("stroke"), self._stroke_mm(el), dash_mm=self._dash_mm(el)),
+        })
+        return base
+
+    def _flowable(self, el: dict, base: dict) -> dict:
+        # La sub-área de flujo se emite como su CAJA (rect con borde discontinuo),
+        # igual que se ve en el lienzo (antes se omitía con warning). El vínculo
+        # flowable→flowable no existe en el motor: el desborde de tablas con
+        # dataSource FLUYE a hoja nueva (page_renderer._page_instances).
+        base.update({
+            "type": "shape", "shape": "rectangle",
+            "fill": _fill(el.get("fill"), el.get("opacity")),
+            "border": _border(el.get("stroke") or "#94a3b8",
+                              max(self._stroke_mm(el) or 0.25, 0.25),
+                              dash_mm=self._dash_mm(el) or [1.0, 1.0]),
         })
         return base
 

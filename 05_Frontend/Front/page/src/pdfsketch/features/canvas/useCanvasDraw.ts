@@ -11,13 +11,12 @@ import type {
   FlowableEl,
   FrameEl,
   LineEl,
-  PenEl,
   RectEl,
   TextEl,
   TriangleEl,
 } from '@/types/document';
 
-export type DrawTool = 'rect' | 'circle' | 'triangle' | 'line' | 'pen' | 'text' | 'frame' | 'image';
+export type DrawTool = 'rect' | 'circle' | 'triangle' | 'line' | 'text' | 'frame' | 'image';
 
 /** Caja (en mm) que dibuja la herramienta de imagen antes de abrir el diálogo. */
 export interface ImageBox { x: number; y: number; w: number; h: number; }
@@ -26,14 +25,12 @@ export interface Draft {
   tool: DrawTool;
   startMm: { x: number; y: number };
   currentMm: { x: number; y: number };
-  /** Puntos acumulados en mm, sólo para `pen`. */
-  pointsMm?: { x: number; y: number }[];
   /** Si true, rect/circle mantienen proporción 1:1 (Shift). */
   constrain: boolean;
 }
 
 export function isDrawTool(t: Tool): t is DrawTool {
-  return t === 'rect' || t === 'circle' || t === 'triangle' || t === 'line' || t === 'pen' || t === 'text' || t === 'frame' || t === 'image';
+  return t === 'rect' || t === 'circle' || t === 'triangle' || t === 'line' || t === 'text' || t === 'frame' || t === 'image';
 }
 
 interface Args {
@@ -82,7 +79,6 @@ export function useCanvasDraw({ offsetX, offsetY, zoom, pageId, nextZIndex, onIm
         tool: activeTool,
         startMm: m,
         currentMm: m,
-        pointsMm: activeTool === 'pen' ? [m] : undefined,
         constrain: e.evt.shiftKey,
       });
       return true;
@@ -95,14 +91,7 @@ export function useCanvasDraw({ offsetX, offsetY, zoom, pageId, nextZIndex, onIm
       if (!draft) return false;
       const m = pointerMm(e.target.getStage());
       if (!m) return false;
-      setDraft((d) => {
-        if (!d) return d;
-        const next: Draft = { ...d, currentMm: m, constrain: e.evt.shiftKey };
-        if (d.tool === 'pen') {
-          next.pointsMm = [...(d.pointsMm ?? []), m];
-        }
-        return next;
-      });
+      setDraft((d) => (d ? { ...d, currentMm: m, constrain: e.evt.shiftKey } : d));
       return true;
     },
     [draft, pointerMm],
@@ -256,26 +245,6 @@ function draftToElement(d: Draft, zIndex: number): ElementModel | null {
       points: [d.startMm.x, d.startMm.y, end.x, end.y],
       stroke: '#111111',
       strokeWidth: 0.25,
-    };
-    return el;
-  }
-
-  if (d.tool === 'pen') {
-    const pts = d.pointsMm ?? [];
-    if (pts.length < 2) return null;
-    const xs = pts.map((p) => p.x);
-    const ys = pts.map((p) => p.y);
-    const el: PenEl = {
-      ...baseCommon,
-      type: 'pen',
-      x: 0,
-      y: 0,
-      width: Math.max(0.5, Math.max(...xs) - Math.min(...xs)),
-      height: Math.max(0.5, Math.max(...ys) - Math.min(...ys)),
-      points: pts.flatMap((p) => [p.x, p.y]),
-      stroke: '#111111',
-      strokeWidth: 0.25,
-      tension: 0.5,
     };
     return el;
   }

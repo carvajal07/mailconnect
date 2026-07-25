@@ -83,26 +83,99 @@ _PAGE_CSS = {
 }
 
 
+def _norm_key(key):
+    """Clave saneada para comparar encabezados/bindings: sin BOM, sin espacios y en
+    minúsculas. El binding del editor sale de `databaseFile.columns` (front) y el
+    encabezado del envío sale del CSV crudo que lee Prepare-batch → pueden diferir
+    en BOM ('\ufeff' en la 1ª columna), espacios o mayúsculas."""
+    return str(key).replace('\ufeff', '').strip().lower()
+
+
 def render_variables(html, mapping):
-    """Reemplaza `{{ campo }}` (espacios opcionales) por su valor; deja las no resueltas."""
+    """Reemplaza `{{ campo }}` (espacios opcionales) por su valor; deja las no resueltas.
+    Busca la clave EXACTA y, si no está, la versión saneada (BOM/espacios/mayúsculas)."""
     if not html:
         return ''
     if not mapping:
         return html
+    norm = {}
+    for k, v in mapping.items():
+        norm.setdefault(_norm_key(k), v)
+
+    def _as_text(value):
+        # Valores coercionados a lista/objeto (celdas JSON) vuelven a texto JSON en
+        # el camino HTML (str() imprimiría el repr de Python).
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
 
     def repl(match):
         key = match.group(1).strip()
-        return str(mapping[key]) if key in mapping else match.group(0)
+        if key in mapping:
+            return _as_text(mapping[key])
+        if _norm_key(key) in norm:
+            return _as_text(norm[_norm_key(key)])
+        return match.group(0)
 
     return re.sub(r'\{\{\s*([^{}]+?)\s*\}\}', repl, html)
 
 
+def _coerce_json_cell(value):
+    """Una celda cuyo texto ES JSON ('[…]' o '{…}') se parsea a su lista/objeto: así
+    una columna con un ARRAY de ítems alimenta el `dataSource` de las tablas del
+    Estudio (una fila repetida por ítem, con paginación si desborda). Si no parsea,
+    queda como texto literal (una llave suelta no rompe nada)."""
+    if isinstance(value, str):
+        s = value.strip()
+        if s[:1] in ('[', '{'):
+            try:
+                return json.loads(s)
+            except (ValueError, TypeError):
+                return value
+    return value
+
+
 def row_mapping(headers, row):
-    """Construye {header: valor} desde una fila posicional del CSV."""
+    """Construye {header: valor} desde una fila posicional del CSV. El BOM del primer
+    encabezado ('\ufeff', típico de CSV exportados de Excel) se quita de la clave.
+    Las celdas con JSON embebido (arrays/objetos de las bases .json) se parsean."""
     mapping = {}
     for i, head in enumerate(headers or []):
         value = row[i] if row and i < len(row) else ''
-        mapping[str(head)] = '' if value is None else str(value)
+        value = '' if value is None else str(value)
+        mapping[str(head).replace('\ufeff', '')] = _coerce_json_cell(value)
+    return mapping
+
+
+_VAR_ATTR_RE = re.compile(r'data-var="([^"]+)"')
+
+
+def augment_mapping_for_template(template_json, mapping):
+    """Para el render con el MOTOR: por cada variable del template (data-var de los
+    contentareas, QR/barcode por variable, dataSource de tablas) que no esté en el
+    mapping con su clave exacta, crea un alias desde el encabezado equivalente
+    (comparación saneada). Así `{{Nombre}}` resuelve aunque el CSV diga ` nombre`."""
+    norm = {}
+    for k in list(mapping.keys()):
+        norm.setdefault(_norm_key(k), k)
+
+    names = set()
+    for area in (template_json.get('contentAreas') or []):
+        for m in _VAR_ATTR_RE.finditer(area.get('content') or ''):
+            names.add(m.group(1))
+    for page in (template_json.get('pages') or []):
+        for el in (page.get('elements') or []):
+            if el.get('type') in ('qr', 'barcode') and el.get('valueSource') == 'variable':
+                names.add(str(el.get('value') or ''))
+            if el.get('type') == 'table' and el.get('dataSource'):
+                names.add(str(el.get('dataSource')))
+
+    for name in names:
+        if not name or name in mapping:
+            continue
+        hit = norm.get(_norm_key(name))
+        if hit is not None:
+            mapping[name] = mapping[hit]
     return mapping
 
 
@@ -186,10 +259,13 @@ def parse_template_content(raw):
 
 def render_engine_pdf(template_json, mapping):
     """Renderiza el templateJson con el motor pasando `mapping` (columna→valor) como
-    data → las variables `data-var`/`{{campo}}` se resuelven por destinatario."""
+    data → las variables `data-var`/`{{campo}}` se resuelven por destinatario.
+    El mapping se AUMENTA con alias saneados para que el binding del editor resuelva
+    aunque el encabezado del CSV difiera en BOM/espacios/mayúsculas."""
     from pdf_engine.normalize import normalize
     from pdf_engine.page_renderer import render_pdf
-    ctx = normalize(template_json, mapping or {})
+    data = augment_mapping_for_template(template_json, dict(mapping or {}))
+    ctx = normalize(template_json, data)
     return render_pdf(ctx)
 
 

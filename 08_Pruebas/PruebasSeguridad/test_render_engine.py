@@ -629,3 +629,128 @@ def test_traductor_emite_vertical_align(mod):
     doc['pages'][0]['elements'][0].pop('vAlign')
     el = translate_sketch(doc)['templateJson']['pages'][0]['elements'][0]
     assert el['paragraphStyle']['verticalAlign'] == 'top'
+
+
+def _pdf_text(pdf_bytes):
+    """Texto de los content streams del PDF (Flate directo o ASCII85+Flate de
+    ReportLab). Permite verificar que las VARIABLES quedaron resueltas DENTRO del
+    PDF (los smoke de %PDF- no detectaban un render sin contenido)."""
+    import base64 as _b64
+    import re as _re
+    import zlib as _zlib
+    out = b''
+    for m in _re.finditer(rb'stream\r?\n(.*?)endstream', pdf_bytes, _re.S):
+        data = m.group(1).strip()
+        try:
+            out += _zlib.decompress(data)
+            continue
+        except Exception:
+            pass
+        try:
+            out += _zlib.decompress(_b64.a85decode(data, adobe=True))
+        except Exception:
+            out += data
+    return out
+
+
+def test_render_con_data_resuelve_variables_en_el_pdf(mod):
+    # Flujo de la VISTA PREVIA del Estudio: el front manda `data` (muestra de la
+    # base) y el PDF debe salir con los VALORES, no vacío ni con {{tokens}}.
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 'df', 'type': 'dataField', 'x': 20, 'y': 20, 'width': 120, 'height': 10,
+         'binding': 'Nombre', 'fallback': '', 'fontFamily': 'Helvetica', 'fontSize': 14,
+         'color': '#111111'},
+        {'id': 't', 'type': 'text', 'x': 20, 'y': 40, 'width': 150, 'height': 10,
+         'text': 'Correo: {{correo}}', 'align': 'left', 'fontFamily': 'Helvetica',
+         'fontSize': 12, 'color': '#111111', 'fontWeight': 400, 'lineHeight': 1.3},
+    ]}]}
+    res = mod.lambda_handler(_ctx({
+        'sketch': {'schema': 'pdfsketch@1', 'document': doc},
+        'data': {'Nombre': 'jhon', 'correo': 'correo1@correo.com'},
+    }), None)
+    contenido = _pdf_text(_pdf_bytes(res))
+    assert b'jhon' in contenido
+    assert b'correo1@correo.com' in contenido
+    assert b'{{' not in contenido
+
+
+# ── Paginación del flujo (tablas dataSource que desbordan) ────────────────────
+
+def _n_pages(pdf_bytes):
+    """Número de páginas del PDF (objetos /Type /Page, excluyendo /Pages)."""
+    import re as _re
+    return len(_re.findall(rb'/Type\s*/Page(?!s)', pdf_bytes))
+
+
+def _doc_tabla_repeat(alto_mm):
+    """Doc del Estudio con una tabla `repeatBy: items` de `alto_mm` de alto y un
+    título fijo (membrete) — para probar el flujo a hojas nuevas."""
+    return {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                     'margin': {}, 'elements': [
+        {'id': 'titulo', 'type': 'text', 'x': 15, 'y': 10, 'width': 100, 'height': 8,
+         'text': 'Extracto', 'align': 'left', 'fontFamily': 'Helvetica', 'fontSize': 12,
+         'color': '#111111', 'fontWeight': 700, 'lineHeight': 1.2},
+        {'id': 'tb', 'type': 'table', 'x': 15, 'y': 25, 'width': 180, 'height': alto_mm,
+         'rotation': 0, 'visible': True, 'locked': False, 'zIndex': 2,
+         'columns': [{'widthPercent': 50, 'minWidth': 10, 'header': 'Concepto'},
+                     {'widthPercent': 50, 'minWidth': 10, 'header': 'Valor'}],
+         'rows': [[{'text': 'Concepto'}, {'text': 'Valor'}]],
+         'hasHeader': True, 'hasFooter': False, 'headerBackground': '#f1f5f9',
+         'borderWidth': 0.3, 'borderColor': '#94a3b8', 'rowFontSize': 9,
+         'repeatBy': 'items'},
+    ]}]}
+
+
+def test_paginacion_tabla_desborda_fluye_a_hojas_nuevas(mod):
+    # 40 movimientos en una tabla de 40 mm: NO caben → el PDF debe crecer a varias
+    # hojas con las filas sobrantes (antes KeepInFrame las ENCOGÍA hasta lo ilegible).
+    items = [{'Concepto': 'Movimiento %02d' % i, 'Valor': '$ %d' % (i * 1000)}
+             for i in range(1, 41)]
+    res = mod.lambda_handler(_ctx({
+        'sketch': {'schema': 'pdfsketch@1', 'document': _doc_tabla_repeat(40)},
+        'data': {'items': items},
+    }), None)
+    pdf = _pdf_bytes(res)
+    assert _n_pages(pdf) >= 2, 'la tabla desbordada debe paginar a más hojas'
+    contenido = _pdf_text(pdf)
+    assert b'Movimiento 01' in contenido
+    # La ÚLTIMA fila fluyó a una hoja siguiente (no se perdió ni se encogió).
+    assert b'Movimiento 40' in contenido
+    # El encabezado de la tabla se repite en las hojas de continuación.
+    assert contenido.count(b'Concepto') >= 2
+    # El resto de elementos (título) se repite como membrete.
+    assert contenido.count(b'Extracto') >= 2
+
+
+def test_paginacion_tabla_que_cabe_una_sola_hoja(mod):
+    items = [{'Concepto': 'A', 'Valor': '1'}, {'Concepto': 'B', 'Valor': '2'}]
+    res = mod.lambda_handler(_ctx({
+        'sketch': {'schema': 'pdfsketch@1', 'document': _doc_tabla_repeat(120)},
+        'data': {'items': items},
+    }), None)
+    pdf = _pdf_bytes(res)
+    assert _n_pages(pdf) == 1
+    contenido = _pdf_text(pdf)
+    assert b'A' in contenido and b'B' in contenido
+
+
+# ── Flowable → caja con borde discontinuo (ya no se omite) ────────────────────
+
+def test_traductor_flowable_como_caja_discontinua(mod):
+    from sketch_translator import translate_sketch
+    doc = {'unit': 'mm', 'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'},
+                                    'margin': {}, 'elements': [
+        {'id': 'fl', 'type': 'flowable', 'frameId': 'fr1', 'x': 20, 'y': 20,
+         'width': 100, 'height': 50, 'rotation': 0, 'visible': True, 'locked': False,
+         'zIndex': 1, 'fill': 'rgba(37,99,235,0.06)', 'stroke': '#93c5fd',
+         'strokeWidth': 0.3, 'flowType': 'content'},
+    ]}]}
+    out = translate_sketch(doc)
+    els = out['templateJson']['pages'][0]['elements']
+    assert len(els) == 1
+    assert els[0]['type'] == 'shape' and els[0]['shape'] == 'rectangle'
+    assert els[0]['border']['unified']['dash'], 'el flowable lleva borde discontinuo'
+    # El tinte rgba() del lienzo es decorativo (no es color hex) → sin relleno.
+    assert els[0]['fill'] is None
+    assert out['warnings'] == []

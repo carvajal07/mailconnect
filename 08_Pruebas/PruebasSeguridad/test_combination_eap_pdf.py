@@ -82,6 +82,29 @@ def combiner():
         os.environ.pop('URL_SQS_EAP', None)
 
 
+
+
+def _pdf_text(pdf_bytes):
+    """Texto de los content streams del PDF (Flate directo o ASCII85+Flate de
+    ReportLab). Permite verificar que las VARIABLES quedaron resueltas DENTRO del
+    PDF (los smoke de %PDF- no detectaban un render sin contenido)."""
+    import base64 as _b64
+    import re as _re
+    import zlib as _zlib
+    out = b''
+    for m in _re.finditer(rb'stream\r?\n(.*?)endstream', pdf_bytes, _re.S):
+        data = m.group(1).strip()
+        try:
+            out += _zlib.decompress(data)
+            continue
+        except Exception:
+            pass
+        try:
+            out += _zlib.decompress(_b64.a85decode(data, adobe=True))
+        except Exception:
+            out += data
+    return out
+
 def _event(data, part=0, samples=False, campaign=CAMP):
     body = {
         'customerId': CID, 'customerName': CUST, 'nit': NIT, 'processId': PROC,
@@ -164,6 +187,10 @@ def test_renderiza_plantilla_estudio_con_variables(combiner):
     # PDF REAL del motor (no el stub HTML) → el pipeline del lienzo funciona de punta a punta.
     pdf = s3.get_object(Bucket=BUCKET, Key='personalized/camp-estudio/Ana.pdf')['Body'].read()
     assert pdf[:5] == b'%PDF-'
+    # Las variables quedaron RESUELTAS dentro del PDF (dataField y {{ciudad}}).
+    contenido = _pdf_text(pdf)
+    assert b'Ana' in contenido and 'Bogotá'.encode('utf-8') not in b'' and b'Bogot' in contenido
+    assert b'{{' not in contenido
     # Se re-emite a Send-EAP como cualquier EAP-PDF.
     msgs = sqs.receive_message(QueueUrl=q, MaxNumberOfMessages=10).get('Messages', [])
     assert len(msgs) == 1 and json.loads(msgs[0]['Body'])['documentFormat'] == 'PDF'
@@ -177,3 +204,127 @@ def test_parse_template_content_detecta_formato(combiner):
         {'schema': 'pdfsketch@1', 'document': {'unit': 'mm', 'pages': [
             {'size': {'width': 210, 'height': 297, 'unit': 'mm'}, 'margin': {}, 'elements': []}]}}))
     assert kind == 'template' and isinstance(tj.get('pages'), list)
+
+
+def test_variables_resuelven_con_bom_y_mayusculas_distintas(combiner):
+    # ROBUSTEZ del envío real: el binding del editor ('Nombre') sale de las columnas
+    # registradas por el front, pero los headers del mensaje salen del CSV CRUDO que
+    # lee Prepare-batch → pueden traer BOM (1ª columna) o distinto case/espacios.
+    # El combinador debe resolver igual (alias saneados).
+    mod, _, _, s3 = combiner
+    sketch = {'schema': 'pdfsketch@1', 'document': {
+        'unit': 'mm',
+        'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'}, 'margin': {}, 'elements': [
+            {'id': 'df', 'type': 'dataField', 'x': 20, 'y': 20, 'width': 100, 'height': 10,
+             'binding': 'Nombre', 'fallback': '', 'fontFamily': 'Helvetica', 'fontSize': 14, 'color': '#111111'},
+            {'id': 'df2', 'type': 'dataField', 'x': 20, 'y': 40, 'width': 100, 'height': 10,
+             'binding': 'identificacion', 'fallback': '', 'fontFamily': 'Helvetica', 'fontSize': 12, 'color': '#111111'},
+        ]}],
+    }}
+    key = 'attachment/2026-07-22/estudio-bom.json'
+    s3.put_object(Bucket=BUCKET, Key=key, Body=json.dumps(sketch).encode())
+    boto3.resource('dynamodb', region_name='us-east-1').Table('document').put_item(
+        Item={'documentId': 'd3', 'campaignId': 'camp-bom', 'documentPath': key})
+
+    # Headers del CSV crudo: BOM en la 1ª columna + case distinto (' nombre ').
+    body = {
+        'customerId': CID, 'customerName': CUST, 'nit': NIT, 'processId': PROC,
+        'campaignId': 'camp-bom', 'attachment': True, 'fromEmail': 'no-reply@x.com',
+        'headers': ['﻿Identificacion', 'correo', ' nombre '], 'templateName': 'tmpl',
+        'part': 9, 'data': [['123', 'a@x.com', 'Ana']], 'samples': False,
+    }
+    res = mod.lambda_handler({'Records': [{'body': json.dumps(body)}]}, None)
+    assert res['statusCode'] == 200
+    pdf = s3.get_object(Bucket=BUCKET, Key='personalized/camp-bom/Ana.pdf')['Body'].read()
+    assert pdf[:5] == b'%PDF-'
+    # Pese al BOM y al case distinto, ambas variables quedaron resueltas.
+    contenido = _pdf_text(pdf)
+    assert b'Ana' in contenido and b'123' in contenido and b'{{' not in contenido
+
+
+def test_augment_mapping_alias_saneados(combiner):
+    mod, _, _, _ = combiner
+    tj = {'contentAreas': [{'content': '<p><span class="var-tag" data-var="Nombre">{{Nombre}}</span></p>'}],
+          'pages': [{'elements': [{'type': 'qr', 'valueSource': 'variable', 'value': 'Correo'}]}]}
+    mapping = mod.augment_mapping_for_template(tj, {' nombre ': 'Ana', '﻿Correo': 'a@x.com'})
+    assert mapping['Nombre'] == 'Ana'          # binding ≠ header solo por espacios/case
+    assert mapping['Correo'] == 'a@x.com'      # BOM en el header
+
+    # La clave EXACTA siempre gana sobre el alias.
+    m2 = mod.augment_mapping_for_template(tj, {'Nombre': 'Exacta', 'nombre': 'Alias'})
+    assert m2['Nombre'] == 'Exacta'
+
+
+def test_render_variables_html_tolerante_a_case(combiner):
+    mod, _, _, _ = combiner
+    out = mod.render_variables('<p>Hola {{Nombre}} ({{ciudad}})</p>', {' nombre ': 'Ana', 'Ciudad': 'Bogotá'})
+    assert out == '<p>Hola Ana (Bogotá)</p>'
+
+
+# ── Celdas con JSON embebido (arrays de las bases .json) ──────────────────────
+
+def test_row_mapping_parsea_celdas_json(combiner):
+    mod, _, _, _ = combiner
+    m = mod.row_mapping(
+        ['id', 'correo', 'nombre', 'movimientos'],
+        ['1', 'a@x.com', 'Ana', '[{"Detalle": "Compra", "Valor": "5000"}]'])
+    # La celda JSON se parsea a LISTA (alimenta el dataSource de las tablas).
+    assert isinstance(m['movimientos'], list)
+    assert m['movimientos'][0]['Detalle'] == 'Compra'
+    # Las celdas normales siguen siendo texto; un JSON roto queda como texto literal.
+    assert m['nombre'] == 'Ana'
+    m2 = mod.row_mapping(['x'], ['[esto no es json'])
+    assert m2['x'] == '[esto no es json'
+    # En el camino HTML, una variable-lista se sustituye como JSON (no repr de Python).
+    html = mod.render_variables('<p>{{movimientos}}</p>', m)
+    assert '"Detalle"' in html and "'Detalle'" not in html
+
+
+def test_tabla_repeat_por_destinatario_con_celda_json_y_paginacion(combiner):
+    # Flujo COMPLETO de las bases .json: la columna `movimientos` de la fila trae un
+    # ARRAY como JSON embebido → el combinador lo parsea, la tabla `repeatBy` del
+    # Estudio pinta una fila por ítem y, como no caben en el alto de la tabla, el
+    # PDF PAGINA a hojas nuevas (nada se pierde ni se encoge).
+    mod, _, _, s3 = combiner
+    sketch = {'schema': 'pdfsketch@1', 'document': {
+        'unit': 'mm',
+        'pages': [{'size': {'width': 210, 'height': 297, 'unit': 'mm'}, 'margin': {}, 'elements': [
+            {'id': 'df', 'type': 'dataField', 'x': 20, 'y': 12, 'width': 100, 'height': 8,
+             'binding': 'nombre', 'fallback': '', 'fontFamily': 'Helvetica', 'fontSize': 12, 'color': '#111111'},
+            {'id': 'tb', 'type': 'table', 'x': 15, 'y': 30, 'width': 180, 'height': 40,
+             'rotation': 0, 'visible': True, 'locked': False, 'zIndex': 2,
+             'columns': [{'widthPercent': 60, 'minWidth': 10, 'header': 'Detalle'},
+                         {'widthPercent': 40, 'minWidth': 10, 'header': 'Valor'}],
+             'rows': [[{'text': 'Detalle'}, {'text': 'Valor'}]],
+             'hasHeader': True, 'hasFooter': False, 'headerBackground': '#f1f5f9',
+             'borderWidth': 0.3, 'borderColor': '#94a3b8', 'rowFontSize': 9,
+             'repeatBy': 'movimientos'},
+        ]}],
+    }}
+    key = 'attachment/2026-07-22/estudio-extracto.json'
+    s3.put_object(Bucket=BUCKET, Key=key, Body=json.dumps(sketch).encode())
+    boto3.resource('dynamodb', region_name='us-east-1').Table('document').put_item(
+        Item={'documentId': 'd4', 'campaignId': 'camp-extracto', 'documentPath': key})
+
+    movimientos = [{'Detalle': 'Movimiento %02d' % i, 'Valor': '$ %d' % (i * 100)}
+                   for i in range(1, 31)]
+    body = {
+        'customerId': CID, 'customerName': CUST, 'nit': NIT, 'processId': PROC,
+        'campaignId': 'camp-extracto', 'attachment': True, 'fromEmail': 'no-reply@x.com',
+        'headers': ['id', 'correo', 'nombre', 'movimientos'], 'templateName': 'tmpl',
+        'part': 11, 'data': [['1', 'a@x.com', 'Ana', json.dumps(movimientos)]],
+        'samples': False,
+    }
+    res = mod.lambda_handler({'Records': [{'body': json.dumps(body)}]}, None)
+    assert res['statusCode'] == 200
+    pdf = s3.get_object(Bucket=BUCKET, Key='personalized/camp-extracto/Ana.pdf')['Body'].read()
+    assert pdf[:5] == b'%PDF-'
+    # Los 30 movimientos NO caben en 40 mm → el PDF trae VARIAS páginas.
+    import re as _re
+    n_pages = len(_re.findall(rb'/Type\s*/Page(?!s)', pdf))
+    assert n_pages >= 2
+    contenido = _pdf_text(pdf)
+    assert b'Ana' in contenido
+    assert b'Movimiento 01' in contenido
+    assert b'Movimiento 30' in contenido  # la última fila fluyó a otra hoja
+    assert b'{{' not in contenido
