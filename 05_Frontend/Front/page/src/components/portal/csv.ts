@@ -383,11 +383,11 @@ export function jsonToRows(text: string, contact: ContactType = 'email'): string
 }
 
 // ──────────────── Soporte de CSV MULTIREGISTRO (sin encabezado) ────────────────
-// Layout clásico "multiregistro": el archivo NO trae fila de encabezado y la
-// COLUMNA 1 de cada línea es la ETIQUETA del TIPO de registro. El tipo de la
-// PRIMERA línea es el tipo PRINCIPAL (el destinatario); cada línea principal abre
-// un registro y las líneas siguientes de otros tipos (ingresos, egresos,
-// detalles, …) son sus SUB-REGISTROS, hasta la próxima línea principal:
+// Layout clásico "multiregistro": el archivo NO trae fila de encabezado y una
+// COLUMNA (por defecto la 1) de cada línea es la ETIQUETA del TIPO de registro. El
+// tipo de la PRIMERA línea es el tipo PRINCIPAL (el destinatario); cada línea
+// principal abre un registro y las líneas siguientes de otros tipos (ingresos,
+// egresos, detalles, …) son sus SUB-REGISTROS, hasta la próxima línea principal:
 //
 //   principal;1030567890;ana@correo.com;Ana Pérez
 //   ingresos;20.000;sueldo
@@ -401,99 +401,161 @@ export function jsonToRows(text: string, contact: ContactType = 'email'): string
 // mecánica de las bases .json, que alimenta las tablas `repeatBy` del Estudio PDF.
 //
 // CONTRATO de la línea principal: `tipo;identificación;contacto;nombre;extras…`
-// (los 3 obligatorios en ese orden, porque el backend lee por posición).
-// Como el archivo no trae nombres de columna, se asignan por defecto
-// (Identificacion/Correo|Celular/Nombre + Campo4…; hijos Campo1…CampoN) y el
-// usuario puede renombrarlos en el diálogo de carga ANTES de subir.
+// (los 3 obligatorios en ese orden después de la etiqueta, porque el backend lee
+// por posición). Como el archivo no trae nombres de columna, el ASISTENTE de carga
+// (MultiRecordWizard) los mapea: alias amigable por canal + un nombre por columna.
+
+/** Líneas de muestra que lee el asistente para detectar tipos y volúmenes. */
+export const MULTIRECORD_SAMPLE_LINES = 20;
 
 export interface MultiRecordType {
-  /** Etiqueta de la columna 1 (tal cual viene en el archivo). */
+  /** Etiqueta del tipo de registro (valor de la columna identificadora), tal cual. */
   tag: string;
+  /** Nombre amigable del canal. Para los tipos HIJO es además el NOMBRE de la columna
+   *  del array en el CSV generado (lo que se vincula con `repeatBy` en la plantilla). */
+  alias: string;
   /** ¿Es el tipo principal (el de la primera línea = el destinatario)? */
   isMaster: boolean;
-  /** Cuántas líneas de este tipo trae el archivo. */
+  /** Líneas de este tipo en TODO el archivo. */
   count: number;
-  /** Máximo de campos de datos (sin contar la etiqueta). */
+  /** Líneas de este tipo en la MUESTRA (primeras MULTIRECORD_SAMPLE_LINES). */
+  sampleCount: number;
+  /** Máximo de campos de datos (columnas sin contar la etiqueta). */
   maxFields: number;
-  /** Nombres de columna asignados (editables en el diálogo de carga). */
+  /** Nombre asignado a cada columna física de datos (editable en el asistente). */
   fieldNames: string[];
+}
+
+/** Mapa de salida indexado por POSICIÓN FÍSICA de columna (1-based), listo para el
+ *  backend / trazabilidad. `tagColumn` es la columna identificadora; cada canal
+ *  lista sus columnas de datos por su posición física en la línea original. */
+export interface MultiRecordColumnMap {
+  tagColumn: number; // 1-based
+  channels: Record<string, {
+    alias: string;
+    isMaster: boolean;
+    columns: Record<number, string>; // posición física 1-based → nombre de campo
+  }>;
+}
+
+/** Campos de datos de una línea = todas las columnas MENOS la identificadora. */
+const dataFieldsOf = (r: string[], tagCol: number): string[] =>
+  r.filter((_, i) => i !== tagCol);
+
+/** Posiciones físicas (0-based) de las columnas de datos, excluyendo `tagCol`. */
+function dataFieldPositions(maxFields: number, tagCol: number): number[] {
+  const positions: number[] = [];
+  let p = 0;
+  while (positions.length < maxFields) {
+    if (p !== tagCol) positions.push(p);
+    p++;
+  }
+  return positions;
+}
+
+/** Sugerencia de nombre para la columna `i` de un canal (placeholder del asistente). */
+export function suggestFieldName(isMaster: boolean, i: number, contact: ContactType): string {
+  if (isMaster) {
+    if (i === 0) return 'Identificacion';
+    if (i === 1) return contact === 'phone' ? 'Celular' : 'Correo';
+    if (i === 2) return 'Nombre';
+  }
+  return `Campo ${i + 1}`;
+}
+
+/** Alias por defecto del canal (el principal se rotula; los hijos toman su etiqueta). */
+const defaultChannelAlias = (isMaster: boolean, tag: string): string =>
+  isMaster ? 'Datos del destinatario' : tag;
+
+function defaultFieldNames(isMaster: boolean, n: number, contact: ContactType): string[] {
+  return Array.from({ length: n }, (_, i) => suggestFieldName(isMaster, i, contact));
 }
 
 /**
  * ¿El CSV parece MULTIREGISTRO? En un CSV normal la primera línea es un encabezado
- * ÚNICO; si el valor de su columna 1 se repite como columna 1 de otras líneas, esa
- * columna es una etiqueta de tipo de registro (no un nombre de campo).
+ * ÚNICO; si el valor de la columna identificadora (`tagCol`, 0-based) se repite en
+ * otras líneas, esa columna es una etiqueta de tipo de registro (no un nombre de
+ * campo). La detección mira solo la MUESTRA (primeras N líneas), como el asistente.
  */
-export function detectMultiRecord(text: string, forcedDelimiter?: Delimiter): boolean {
+export function detectMultiRecord(text: string, forcedDelimiter?: Delimiter, tagCol = 0): boolean {
   const delimiter = forcedDelimiter ?? detectDelimiter(text);
-  const rows = parseCsv(text, delimiter);
+  const rows = parseCsv(text, delimiter).slice(0, MULTIRECORD_SAMPLE_LINES);
   if (rows.length < 2) return false;
-  const first = (rows[0][0] ?? '').trim();
+  const first = (rows[0][tagCol] ?? '').trim();
   if (!first) return false;
-  return rows.slice(1).some((r) => (r[0] ?? '').trim() === first);
+  return rows.slice(1).some((r) => (r[tagCol] ?? '').trim() === first);
 }
 
-function defaultFieldNames(isMaster: boolean, n: number, contact: ContactType): string[] {
-  const names: string[] = isMaster
-    ? ['Identificacion', contact === 'phone' ? 'Celular' : 'Correo', 'Nombre']
-    : [];
-  while (names.length < n) names.push(`Campo${names.length + 1}`);
-  return names;
+/** Cantidad de columnas de la línea más ancha (para el selector de posición del tag). */
+export function maxColumns(text: string, forcedDelimiter?: Delimiter): number {
+  const delimiter = forcedDelimiter ?? detectDelimiter(text);
+  const rows = parseCsv(text, delimiter).slice(0, MULTIRECORD_SAMPLE_LINES);
+  return rows.reduce((m, r) => Math.max(m, r.length), 0);
 }
 
 /**
- * Inventario de los tipos de registro del archivo (en orden de aparición), con
- * nombres de columna POR DEFECTO según el canal. El tipo de la primera línea es
- * el principal. Lanza Error (mensaje en español) si el archivo no sirve.
+ * Inventario de los tipos de registro del archivo (en orden de aparición), con alias
+ * y nombres de columna POR DEFECTO según el canal. El tipo de la primera línea es el
+ * principal. `tagCol` (0-based) indica qué columna trae la etiqueta del tipo.
+ * Lanza Error (mensaje en español) si el archivo no sirve.
  */
 export function analyzeMultiRecordTypes(
   text: string,
   forcedDelimiter: Delimiter | undefined,
   contact: ContactType,
+  tagCol = 0,
 ): { delimiter: Delimiter; types: MultiRecordType[] } {
   const delimiter = forcedDelimiter ?? detectDelimiter(text);
   const rows = parseCsv(text, delimiter);
-  const masterTag = (rows[0]?.[0] ?? '').trim();
-  if (!masterTag) throw new Error('La primera línea no trae la etiqueta del tipo de registro (columna 1).');
+  const masterTag = (rows[0]?.[tagCol] ?? '').trim();
+  if (!masterTag) throw new Error('La primera línea no trae la etiqueta del tipo de registro en esa columna.');
 
   const order: string[] = [];
-  const info = new Map<string, { count: number; maxFields: number }>();
-  for (const r of rows) {
-    const tag = (r[0] ?? '').trim();
-    if (!tag) continue;
+  const info = new Map<string, { count: number; sampleCount: number; maxFields: number }>();
+  rows.forEach((r, idx) => {
+    const tag = (r[tagCol] ?? '').trim();
+    if (!tag) return;
     if (!info.has(tag)) {
-      info.set(tag, { count: 0, maxFields: 0 });
+      info.set(tag, { count: 0, sampleCount: 0, maxFields: 0 });
       order.push(tag);
     }
     const e = info.get(tag)!;
     e.count++;
-    e.maxFields = Math.max(e.maxFields, r.length - 1);
-  }
+    if (idx < MULTIRECORD_SAMPLE_LINES) e.sampleCount++;
+    e.maxFields = Math.max(e.maxFields, dataFieldsOf(r, tagCol).length);
+  });
 
   const types = order.map((tag) => {
     const e = info.get(tag)!;
     const isMaster = tag === masterTag;
-    return { tag, isMaster, count: e.count, maxFields: e.maxFields,
-             fieldNames: defaultFieldNames(isMaster, e.maxFields, contact) };
+    return {
+      tag, isMaster, count: e.count, sampleCount: e.sampleCount, maxFields: e.maxFields,
+      alias: defaultChannelAlias(isMaster, tag),
+      fieldNames: defaultFieldNames(isMaster, e.maxFields, contact),
+    };
   });
   return { delimiter, types };
 }
 
-/** Nombre efectivo de un campo (los vacíos caen a CampoN, para no perder datos). */
+/** Nombre efectivo de un campo (los vacíos caen a "Campo N", para no perder datos). */
 const fieldName = (names: string[], i: number): string =>
-  (names[i] ?? '').trim() || `Campo${i + 1}`;
+  (names[i] ?? '').trim() || `Campo ${i + 1}`;
+
+/** Nombre efectivo de la columna del array de un tipo hijo (alias o su etiqueta). */
+const childColumnName = (t: MultiRecordType): string => (t.alias || '').trim() || t.tag;
 
 /**
  * Convierte el texto MULTIREGISTRO en filas del modelo interno (encabezado + una
- * fila por destinatario). Los campos de la línea principal quedan como columnas;
- * cada tipo hijo queda como UNA columna (con el nombre de su etiqueta) cuyo valor
- * es el array JSON de sus líneas (objetos con los `fieldNames` del tipo). Las
- * líneas de tipo desconocido o anteriores a la primera línea principal se ignoran.
+ * fila por destinatario). Los campos de la línea principal quedan como columnas
+ * (con sus `fieldNames`); cada tipo hijo queda como UNA columna (con su `alias`)
+ * cuyo valor es el array JSON de sus líneas (objetos con los `fieldNames` del tipo).
+ * Las líneas de tipo desconocido o anteriores a la primera línea principal se ignoran.
  */
 export function multiRecordToRows(
   text: string,
   delimiter: Delimiter,
   types: MultiRecordType[],
+  tagCol = 0,
 ): string[][] {
   const master = types.find((t) => t.isMaster);
   if (!master) throw new Error('No se detectó el tipo de registro principal (el de la primera línea).');
@@ -503,7 +565,7 @@ export function multiRecordToRows(
   const nMaster = Math.max(master.maxFields, master.fieldNames.length);
   const header = [
     ...Array.from({ length: nMaster }, (_, i) => fieldName(master.fieldNames, i)),
-    ...childTypes.map((t) => t.tag),
+    ...childTypes.map(childColumnName),
   ];
 
   const out: string[][] = [header];
@@ -521,9 +583,9 @@ export function multiRecordToRows(
 
   const rows = parseCsv(text, delimiter);
   for (const r of rows) {
-    const tag = (r[0] ?? '').trim();
+    const tag = (r[tagCol] ?? '').trim();
     if (!tag) continue;
-    const data = r.slice(1).map((c) => String(c));
+    const data = dataFieldsOf(r, tagCol).map((c) => String(c));
     if (tag === master.tag) {
       flush();
       current = { fields: data, children: new Map() };
@@ -540,6 +602,22 @@ export function multiRecordToRows(
   }
   flush();
   return out;
+}
+
+/**
+ * Mapa de salida indexado por POSICIÓN FÍSICA de columna (1-based) — la estructura
+ * canónica de la configuración, para trazabilidad o para enviarla al backend. Deriva
+ * de los mismos `types` que alimentan `multiRecordToRows`.
+ */
+export function buildMultiRecordMap(types: MultiRecordType[], tagCol = 0): MultiRecordColumnMap {
+  const channels: MultiRecordColumnMap['channels'] = {};
+  for (const t of types) {
+    const positions = dataFieldPositions(Math.max(t.maxFields, t.fieldNames.length), tagCol);
+    const columns: Record<number, string> = {};
+    positions.forEach((physical, i) => { columns[physical + 1] = fieldName(t.fieldNames, i); });
+    channels[t.tag] = { alias: t.isMaster ? t.alias : childColumnName(t), isMaster: t.isMaster, columns };
+  }
+  return { tagColumn: tagCol + 1, channels };
 }
 
 /** Serializa filas a texto CSV (comillas donde el valor contenga el delimitador, comillas o
