@@ -25,6 +25,7 @@ import TuneIcon from '@mui/icons-material/Tune';
 import DnsIcon from '@mui/icons-material/Dns';
 import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
 import SupportAgentIcon from '@mui/icons-material/SupportAgent';
+import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 
 interface SidebarProps {
   activeSection: string;
@@ -50,6 +51,7 @@ export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
     { id: 'plantillas-pre', label: 'Plantillas prediseñadas', icon: <ViewQuiltIcon /> },
     { id: 'configuracion', label: 'Configuración', icon: <SettingsIcon /> },
     { id: 'auditoria', label: 'Auditoría', icon: <HistoryIcon /> },
+    { id: 'despliegue', label: 'Salud de despliegue', icon: <HealthAndSafetyIcon /> },
   ];
 
   return (

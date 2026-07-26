@@ -26,6 +26,32 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Panel de salud de despliegue (ago 2026, Bloque K)
+- **`Api_V1_Admin_Deployment-health` (`POST /Admin/Deployment-health`, admin + 2ª barrera):**
+  verifica CONTRA AWS si los recursos que el repo declara `[J]` existen de verdad — ataca la
+  deriva "construido pero no desplegado". Secciones (cada chequeo **best-effort**: sin el
+  permiso IAM → `unknown`, no penaliza): **tablas** núcleo (DescribeTable → ACTIVE/missing;
+  las on-demand `assistantRateLimit`/`notificationLog` no penalizan si faltan), **colas** del
+  pipeline + sus DLQ (GetQueueUrl), **lambdas críticas** (GetFunctionConfiguration → existe +
+  las admin/JWT llevan `SECRET_KEY` + las de pipeline tienen su event source mapping ENABLED),
+  y el **total de funciones** desplegadas (ListFunctions). Devuelve `sections[]` + `summary`
+  (ok/warning/error/unknown). Estados por ítem: ok · missing · inactive · unwired · no-secret ·
+  unknown.
+- **Front:** sección admin **"Salud de despliegue"** (`DespliegueSection`, tab `despliegue`):
+  chips de resumen + acordeones por sección (abiertos si no están OK) con tabla recurso/estado/
+  detalle; aviso de que "sin verificar" = falta el permiso IAM de lectura, no que el recurso
+  falte. `deploymentHealthService`.
+- ⚠️ **No exhaustivo:** cubre el conjunto CRÍTICO (seguridad, admin, pipeline y features
+  recientes) embebido en `CRITICAL_LAMBDAS`/`CORE_TABLES`/`PIPELINE_QUEUES` — al agregar una
+  lambda/tabla/cola crítica nueva hay que sumarla al manifiesto de la lambda.
+- **Cobertura:** `test_deployment_health.py` (5: gate admin, tabla faltante→missing, on-demand
+  ausente no penaliza, colas existentes/faltantes, el resumen suma todos los ítems).
+- ⚠️ `[J]`: ruta admin `/Admin/Deployment-health` **ya en routes.json** + env `SECRET_KEY`
+  (2ª barrera). IAM solo-lectura (best-effort): `dynamodb:DescribeTable`, `sqs:GetQueueUrl`,
+  **`lambda:GetFunctionConfiguration/ListFunctions/ListEventSourceMappings`** (el rol de
+  convención no las incluye → agregar por `role-map.json` o inline; sin ellas, la sección de
+  lambdas sale `unknown` pero tablas/colas siguen).
+
 ### Notificaciones al owner + centro de preferencias (ago 2026, Bloque H)
 - **Notificaciones al owner (por correo, opt-in):** el cliente controla `customer.notify`
   (`{reputation, digest, lowBalance, lowBalanceThreshold}`, FAIL-OPEN: reputación+saldo bajo ON,
@@ -421,6 +447,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Config/Set` | `{ key, value }` (**admin**) | 200 ok · 400 key/valor inválido. Crea `platformConfig` si no existe |
 | `Admin/Audit` | `{ month?, action?, actor?, dateFrom?, dateTo? }` (**admin**) | 200 `data:{entries:[{date, actor, action, target, detail}], count, actions[], truncated}` (bitácora, solo lectura; `dateFrom/dateTo` YYYY-MM-DD inclusivo = rango del export CSV de la UI) |
 | `Admin/Control-center` | `{}` (**admin**) | 200 `data:{pipeline:{stuckProcesses[], stuckCount, failedSchedules[], queues:[{queue, depth, oldestSeconds, dlqDepth, level}]}, money:{todayDebits, todayTopups, pendingTopups, platformBalance}, reputation:{top:[{company, sent, bounceRate, complaintRate, level, trend}]}, health:{services:[{service, status, detail, metric?}]}, audit[], generatedAt}` — **Centro de mando** (operación en vivo; cada sección best-effort) |
+| `Admin/Deployment-health` | `{}` (**admin**) | 200 `data:{sections:[{key, title, level, ok, total, items:[{name, status, detail}]}], summary:{ok, warning, error, unknown}, generatedAt}` — **Salud de despliegue**: verifica contra AWS que lambdas/tablas/colas/`SECRET_KEY`/triggers críticos existan (deriva "construido pero no desplegado"; best-effort → `unknown` sin el permiso IAM) |
 | `Admin/Recipient-lookup` | `{ customerId, contact }` (**admin**) | 200 `data:{company, timeline:[{date, campaignName, channel, state, stateLabel, detail}], count, truncated, lists:{blacklisted, unsubscribed}}` · 404 cliente. "¿Qué le llegó a X?" — línea de tiempo por contacto (correo o celular, normaliza E.164) |
 | `Admin/User-support` | `{ userId, action: resend-activation\|force-reset\|revoke-sessions }` (**admin**) | 200 ok · 400 · 404 · 409 (activación con cuenta ya activa). Acciones de soporte auditadas (`support.*`): reenvía activación (enlace nuevo 24 h), envía OTP de reseteo (hasheado, compatible con Validate-otp), o desactiva TODAS las sesiones del usuario (revocación por `sid`) |
 | `Admin/Templates` | `{}` (**admin**) | 200 `data:{templates:[{name, customerPrefix, createdAt}], count, truncated}` — listado GLOBAL de plantillas SES (`ListTemplates` paginado) |

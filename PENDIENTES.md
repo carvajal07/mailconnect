@@ -257,8 +257,16 @@ El front está terminado y el backend probado; solo falta la consola AWS
        `truncated`; se apoya en el Bloque 5.2).
 8. [x] `[C]` ✅ **Export de auditoría (ago 2026)**: filtros `dateFrom`/`dateTo` en
        `Admin/Audit` + botón "Exportar CSV" en la sección (exporta lo filtrado).
-9. [ ] `[C]` **Panel de salud de despliegue**: verificación de qué rutas/lambdas/tablas
-       del checklist `[J]` existen realmente en AWS.
+9. [x] `[C]` ✅ **Panel de salud de despliegue (ago 2026, Bloque K)**:
+       `Api_V1_Admin_Deployment-health` (`/Admin/Deployment-health`, admin, ya en
+       routes.json) verifica CONTRA AWS que las tablas núcleo (DescribeTable→ACTIVE), las
+       colas del pipeline + DLQ (GetQueueUrl) y las lambdas críticas (existen + `SECRET_KEY`
+       en las admin/JWT + event source mapping en las de pipeline) existan de verdad; cada
+       chequeo best-effort (sin permiso IAM → `unknown`). Sección admin "Salud de despliegue"
+       (`DespliegueSection`) con resumen + acordeones. ⚠️ `[J]`: env `SECRET_KEY` + IAM
+       `dynamodb:DescribeTable`/`sqs:GetQueueUrl`/`lambda:GetFunctionConfiguration/
+       ListFunctions/ListEventSourceMappings` (estas de lambda por role-map/inline; sin ellas
+       la sección de lambdas sale `unknown`). NO exhaustivo: cubre el conjunto crítico embebido.
 
 ---
 

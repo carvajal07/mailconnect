@@ -17,6 +17,7 @@
     { "path": "/Admin/Requeue",            "lambda": "Api_V1_Admin_Requeue",            "admin": true },
     { "path": "/Admin/Audit",              "lambda": "Api_V1_Admin_Audit",              "admin": true },
     { "path": "/Admin/Control-center",     "lambda": "Api_V1_Admin_Control-center",     "admin": true },
+    { "path": "/Admin/Deployment-health",  "lambda": "Api_V1_Admin_Deployment-health",  "admin": true },
     { "path": "/Admin/Recipient-lookup",   "lambda": "Api_V1_Admin_Recipient-lookup",   "admin": true },
     { "path": "/Admin/User-support",       "lambda": "Api_V1_Admin_User-support",       "admin": true },
     { "path": "/Admin/Templates",          "lambda": "Api_V1_Admin_Templates",          "admin": true },

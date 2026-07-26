@@ -24,6 +24,7 @@ import { FacturacionSection } from '../../components/admin/FacturacionSection';
 import { JobsSection } from '../../components/admin/JobsSection';
 import { ConfiguracionSection } from '../../components/admin/ConfiguracionSection';
 import { AuditoriaSection } from '../../components/admin/AuditoriaSection';
+import { DespliegueSection } from '../../components/admin/DespliegueSection';
 import { PlantillasSection } from '../../components/admin/PlantillasSection';
 import { AdminCampanasSection } from '../../components/admin/AdminCampanasSection';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
@@ -92,6 +93,8 @@ export const AdminPage = () => {
         return <ConfiguracionSection />;
       case 'auditoria':
         return <AuditoriaSection />;
+      case 'despliegue':
+        return <DespliegueSection />;
       case 'campanas':
         return <AdminCampanasSection />;
       default:
