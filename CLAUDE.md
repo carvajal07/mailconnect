@@ -26,6 +26,49 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Centro de mando + caja de soporte admin (ago 2026)
+- **Centro de mando (`CentroMandoSection` + `Api_V1_Admin_Control-center`)**: tablero de
+  **operación en vivo**, nueva página de ENTRADA del admin (tab `centro`, default de
+  `/admin`; el "Panel de control" histórico sigue como tab aparte). Secciones (cada una
+  **best-effort** e independiente): resumen de chips por área; **salud de servicios**
+  (cuota SES 24h con barra de uso + envío habilitado/deshabilitado, tablas DynamoDB núcleo
+  ACTIVE, colas SQS accesibles); **pipeline** (procesos atascados en `Enviando/Procesando`
+  >2 h, schedules `failed`, tabla de colas con profundidad + edad del mensaje más viejo +
+  **DLQs** — DLQ con mensajes = crítico); **dinero del día** (débitos/recargas de hoy,
+  solicitudes pendientes, saldo agregado de la plataforma); **reputación en riesgo** (top 5
+  por rebote/queja de los últimos 7 días CON tendencia vs los 7 anteriores, leyendo el
+  rollup `{tenant}_sendSummary` por processId — barato, sin escanear sendStatus); y últimas
+  10 entradas de auditoría. **Auto-refresco cada 60 s** (switch). Umbrales: rebote 5/10%,
+  queja 0.1/0.5% (los de SES), cuota SES 80%, backlog 1000 msgs / 30 min.
+- **Soporte (`SoporteSection`, tab `soporte`)**, 3 pestañas: **Buscar destinatario**
+  (`Api_V1_Admin_Recipient-lookup`: cliente + correo/celular → línea de tiempo de TODOS
+  sus envíos con estado y detalle + banderas de lista negra/desuscrito; celular se
+  normaliza a E.164); **Dominios remitentes** (`Api_V1_Admin_Domains`: los `senderDomain`
+  de todos los clientes con empresa y estado, pendientes primero); **Plantillas SES**
+  (`Api_V1_Admin_Templates`: listado GLOBAL con filtro/paginación — cierra el aviso de
+  "solo lo creado en la sesión").
+- **Acciones de soporte en la ficha del cliente** (`ClientesSection` +
+  `Api_V1_Admin_User-support`, auditadas `support.*`): **reenviar activación** (solo
+  cuentas inactivas; enlace nuevo de 24 h), **forzar reseteo** (OTP hasheado compatible
+  con el flujo "¿olvidaste tu contraseña?") y **cerrar sesiones** (desactiva `session`;
+  revocación real por el claim `sid`).
+- **Export de auditoría**: `Admin/Audit` acepta `dateFrom`/`dateTo` (YYYY-MM-DD) y la
+  sección tiene botón **"Exportar CSV"** (BOM UTF-8, `;`, exporta lo filtrado).
+- **Cobertura:** `test_control_center.py` (7: gate, atascados, DLQ crítica, dinero del día,
+  reputación con tendencia, salud, auditoría), `test_admin_support.py` (13: lookup por
+  correo/celular normalizado + listas, las 3 acciones de soporte + auditoría + gates,
+  plantillas y dominios globales), `test_admin_audit.py` (+1 rango de fechas).
+- ⚠️ `[J]` (despliegue): 5 lambdas nuevas (`Api_V1_Admin_{Control-center,Recipient-lookup,
+  User-support,Templates,Domains}` — el CD las crea) + rutas ya en `routes.json` (admin) +
+  env `SECRET_KEY` en las 5 (2ª barrera; User-support además `SENDER_EMAIL`/
+  `ACTIVATION_URL`/`OTP_EXPIRATION_MIN`). IAM: Control-center (Scans de process/
+  scheduledSend/walletTransaction/customerBalance/adminAudit, `BatchGetItem *_sendSummary`,
+  `sqs:GetQueueUrl/GetQueueAttributes`, `ses:GetSendQuota/GetAccountSendingEnabled`,
+  `dynamodb:DescribeTable`); Recipient-lookup (`GetItem customer`, `Scan *_sendStatus`,
+  `BatchGetItem process`, `GetItem *_blackList/*_unsubscribe`); User-support (`GetItem user`,
+  `PutItem userActivation/oneTimePassword/adminAudit`, `Scan/UpdateItem session`,
+  `ses:SendEmail`); Templates (`ses:ListTemplates`); Domains (`Scan senderDomain/customer`).
+
 ### IP de envío dedicada por cliente (ago 2026)
 - **Qué:** el admin asigna un **configuration set de SES** por cliente desde `/admin`
   **"IP de envío"** (`IpEnvioSection`): tabla de todos los clientes (Pool general vs IP
@@ -223,7 +266,12 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Admin/Jobs` | `{ month?, state? }` (**admin**) | 200 `data:{jobs:[{campaignName, company, channelLabel, processState, campaignState, sent, registersToSend, progress, blocked{}}], counts, truncated}` (solo lectura) |
 | `Config/Get` | `{}` (**admin**) | 200 `data:{settings:[{key, label, group, type, default, value, isOverridden, consumers[]}]}` |
 | `Config/Set` | `{ key, value }` (**admin**) | 200 ok · 400 key/valor inválido. Crea `platformConfig` si no existe |
-| `Admin/Audit` | `{ month?, action?, actor? }` (**admin**) | 200 `data:{entries:[{date, actor, action, target, detail}], count, actions[], truncated}` (bitácora, solo lectura) |
+| `Admin/Audit` | `{ month?, action?, actor?, dateFrom?, dateTo? }` (**admin**) | 200 `data:{entries:[{date, actor, action, target, detail}], count, actions[], truncated}` (bitácora, solo lectura; `dateFrom/dateTo` YYYY-MM-DD inclusivo = rango del export CSV de la UI) |
+| `Admin/Control-center` | `{}` (**admin**) | 200 `data:{pipeline:{stuckProcesses[], stuckCount, failedSchedules[], queues:[{queue, depth, oldestSeconds, dlqDepth, level}]}, money:{todayDebits, todayTopups, pendingTopups, platformBalance}, reputation:{top:[{company, sent, bounceRate, complaintRate, level, trend}]}, health:{services:[{service, status, detail, metric?}]}, audit[], generatedAt}` — **Centro de mando** (operación en vivo; cada sección best-effort) |
+| `Admin/Recipient-lookup` | `{ customerId, contact }` (**admin**) | 200 `data:{company, timeline:[{date, campaignName, channel, state, stateLabel, detail}], count, truncated, lists:{blacklisted, unsubscribed}}` · 404 cliente. "¿Qué le llegó a X?" — línea de tiempo por contacto (correo o celular, normaliza E.164) |
+| `Admin/User-support` | `{ userId, action: resend-activation\|force-reset\|revoke-sessions }` (**admin**) | 200 ok · 400 · 404 · 409 (activación con cuenta ya activa). Acciones de soporte auditadas (`support.*`): reenvía activación (enlace nuevo 24 h), envía OTP de reseteo (hasheado, compatible con Validate-otp), o desactiva TODAS las sesiones del usuario (revocación por `sid`) |
+| `Admin/Templates` | `{}` (**admin**) | 200 `data:{templates:[{name, customerPrefix, createdAt}], count, truncated}` — listado GLOBAL de plantillas SES (`ListTemplates` paginado) |
+| `Admin/Domains` | `{}` (**admin**) | 200 `data:{domains:[{domainId, customerId, company, kind, domain, status, createdAt}], count}` — dominios/correos remitentes de TODOS los clientes (pendientes primero) |
 | `Balance/Get` | `{ limit? }` (tenant del token) | 200 `data:{customerId, balance, currency, transactions:[{txId, type, amount, balanceAfter, status, reference, bank, detail, rejectReason, createdAt}], count}` (saldo + movimientos; lee por GSI `customerId-createdAt-index` con fallback a Scan) |
 | `Balance/Topup-manual-request` | `{ amount (COP>0), proofS3Path, bank?, reference?, note? }` (tenant del token) | 201 `data:{txId, status:'pending'}` · 400 · 403. Crea la solicitud manual `pending` (no toca el saldo); el comprobante ya se subió a S3 (get-urlS3, documentType=document) |
 | `Balance/Topup-manual` | `{ customerId, amount (COP>0), note? }` (**admin**) | 200 `data:{balance, txId}` · 400 · 403. **Ajuste directo** (crédito) del admin — tipo `adjustment` (correcciones/cortesías); distinto de la solicitud del cliente |

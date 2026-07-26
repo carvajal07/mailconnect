@@ -13,6 +13,8 @@ import {
 } from '@mui/material';
 import { Sidebar } from '../../components/admin/Sidebar';
 import { DashboardSection } from '../../components/admin/DashboardSection';
+import { CentroMandoSection } from '../../components/admin/CentroMandoSection';
+import { SoporteSection } from '../../components/admin/SoporteSection';
 import { ClientesSection } from '../../components/admin/ClientesSection';
 import { FuncionesClienteSection } from '../../components/admin/FuncionesClienteSection';
 import { IpEnvioSection } from '../../components/admin/IpEnvioSection';
@@ -35,7 +37,8 @@ import { PortalDataProvider } from '../../context/PortalDataContext';
 const DRAWER_WIDTH = 240;
 
 export const AdminPage = () => {
-  const [activeSection, setActiveSection] = useState('dashboard');
+  // El Centro de mando (operación en vivo) es la página de entrada del admin.
+  const [activeSection, setActiveSection] = useState('centro');
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
   const user = getUser();
@@ -61,6 +64,10 @@ export const AdminPage = () => {
 
   const renderSection = () => {
     switch (activeSection) {
+      case 'centro':
+        return <CentroMandoSection />;
+      case 'soporte':
+        return <SoporteSection />;
       case 'dashboard':
         return <DashboardSection />;
       case 'clientes':

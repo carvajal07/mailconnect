@@ -34,6 +34,10 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import PersonIcon from '@mui/icons-material/Person';
+import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead';
+import LockResetIcon from '@mui/icons-material/LockReset';
+import LogoutIcon from '@mui/icons-material/Logout';
+import { supportService, type UserSupportAction } from '../../services/supportService';
 import { customerService } from '../../services/customerService';
 import type { CustomerSummary, CustomerDetail, CustomerUser, UserRole, TenantRole } from '../../services/customerService';
 import { isOk } from '../../services/apiClient';
@@ -65,6 +69,32 @@ export const ClientesSection = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [savingSend, setSavingSend] = useState(false);
   const [roleBusy, setRoleBusy] = useState<string | null>(null);
+  const [supportBusy, setSupportBusy] = useState<string | null>(null);
+
+  /** Acciones de SOPORTE sobre un usuario (backend /Admin/User-support, auditadas). */
+  const supportAction = async (u: CustomerUser, action: UserSupportAction) => {
+    const texts: Record<UserSupportAction, { title: string; message: string }> = {
+      'resend-activation': {
+        title: 'Reenviar activación',
+        message: `¿Reenviar el correo de activación a ${u.email}? Se genera un enlace nuevo (24 h).`,
+      },
+      'force-reset': {
+        title: 'Restablecer contraseña',
+        message: `¿Enviar a ${u.email} un código para restablecer su contraseña? El usuario define la clave nueva con "¿Olvidaste tu contraseña?".`,
+      },
+      'revoke-sessions': {
+        title: 'Cerrar sesiones',
+        message: `¿Cerrar TODAS las sesiones de ${u.email}? Sus tokens quedan revocados (deberá iniciar sesión de nuevo).`,
+      },
+    };
+    const ok = await confirm({ ...texts[action], confirmText: 'Confirmar' });
+    if (!ok) return;
+    setSupportBusy(u.userId);
+    const res = await supportService.userAction(u.userId, action);
+    setSupportBusy(null);
+    if (isOk(res)) notify(res.description || 'Acción realizada.', 'success');
+    else notify(res.description || 'No se pudo realizar la acción.', 'error');
+  };
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = refreshCustomers;
@@ -346,12 +376,40 @@ export const ClientesSection = () => {
                             <Chip size="small" variant="outlined" color={u.active ? 'success' : 'warning'}
                               label={u.active ? 'Activo' : 'Inactivo'} />
                           </TableCell>
-                          <TableCell align="right">
+                          <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
                             <Tooltip title={u.role === 'admin' ? 'Quitar administrador' : 'Promover a administrador'}>
                               <span>
                                 <IconButton size="small" color={u.role === 'admin' ? 'error' : 'primary'}
                                   onClick={() => changeRole(u)} disabled={roleBusy === u.userId}>
                                   {roleBusy === u.userId ? <CircularProgress size={16} /> : (u.role === 'admin' ? <PersonIcon fontSize="small" /> : <AdminPanelSettingsIcon fontSize="small" />)}
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                            {/* Acciones de SOPORTE (auditadas): activación / reseteo / sesiones. */}
+                            {!u.active && (
+                              <Tooltip title="Reenviar correo de activación">
+                                <span>
+                                  <IconButton size="small" onClick={() => supportAction(u, 'resend-activation')}
+                                    disabled={supportBusy === u.userId}>
+                                    <MarkEmailReadIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            )}
+                            <Tooltip title="Enviar código para restablecer la contraseña">
+                              <span>
+                                <IconButton size="small" onClick={() => supportAction(u, 'force-reset')}
+                                  disabled={supportBusy === u.userId}>
+                                  <LockResetIcon fontSize="small" />
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                            <Tooltip title="Cerrar todas sus sesiones (revoca los tokens vivos)">
+                              <span>
+                                <IconButton size="small" color="warning"
+                                  onClick={() => supportAction(u, 'revoke-sessions')}
+                                  disabled={supportBusy === u.userId}>
+                                  <LogoutIcon fontSize="small" />
                                 </IconButton>
                               </span>
                             </Tooltip>

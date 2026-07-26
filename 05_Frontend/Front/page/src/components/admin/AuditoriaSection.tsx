@@ -21,6 +21,7 @@ import {
   InputAdornment,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import HistoryIcon from '@mui/icons-material/History';
 import SearchIcon from '@mui/icons-material/Search';
 import PaidIcon from '@mui/icons-material/Paid';
@@ -79,6 +80,8 @@ export const AuditoriaSection = () => {
   const [month, setMonth] = useState('');
   const [action, setAction] = useState('');
   const [actor, setActor] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [data, setData] = useState<AuditData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -88,12 +91,33 @@ export const AuditoriaSection = () => {
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
-    const res = await auditService.list(month, action, actor.trim());
+    const res = await auditService.list(month, action, actor.trim(), dateFrom, dateTo);
     setLoading(false);
     if (isOk(res) && res.data) setData(res.data);
     else setError(res.description || 'No se pudo cargar la auditoría.');
     setPage(0); // vuelve a la primera página al recargar/filtrar
-  }, [month, action, actor]);
+  }, [month, action, actor, dateFrom, dateTo]);
+
+  /** Exporta las entradas FILTRADAS (todas, no solo la página) a CSV. */
+  const exportCsv = () => {
+    const entries = data?.entries ?? [];
+    if (!entries.length) return;
+    const esc = (v: string) => {
+      const s = String(v ?? '');
+      return s.includes(';') || s.includes('"') || /[\r\n]/.test(s)
+        ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const rows = [['Fecha', 'Actor', 'Empresa', 'Acción', 'Objetivo', 'Detalle']]
+      .concat(entries.map((e) => [e.date, e.actor, e.customer, e.action, e.target, e.detail]));
+    const csv = rows.map((r) => r.map(esc).join(';')).join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const range = dateFrom || dateTo ? `_${dateFrom || 'inicio'}_a_${dateTo || 'hoy'}` : (month ? `_${month}` : '');
+    a.download = `auditoria${range}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
 
   useEffect(() => {
     load();
@@ -112,7 +136,13 @@ export const AuditoriaSection = () => {
           <HistoryIcon color="primary" />
           <Typography variant="h4">Auditoría</Typography>
         </Stack>
-        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={load} disabled={loading}>Refrescar</Button>
+        <Stack direction="row" spacing={1}>
+          <Button variant="outlined" startIcon={<FileDownloadIcon />} onClick={exportCsv}
+                  disabled={loading || !(data?.entries?.length)}>
+            Exportar CSV
+          </Button>
+          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={load} disabled={loading}>Refrescar</Button>
+        </Stack>
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Registro de acciones sensibles: <strong>seguridad</strong> (ingresos, contraseñas
@@ -149,6 +179,11 @@ export const AuditoriaSection = () => {
             onChange={(e) => setActor(e.target.value)}
             InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>) }}
           />
+          <TextField type="date" size="small" label="Desde" value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)} InputLabelProps={{ shrink: true }}
+            helperText="Rango para el export" />
+          <TextField type="date" size="small" label="Hasta" value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)} InputLabelProps={{ shrink: true }} />
         </Stack>
       </Paper>
 

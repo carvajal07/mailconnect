@@ -170,10 +170,15 @@ El front está terminado y el backend probado; solo falta la consola AWS
 
 ## BLOQUE 5 — Tableros
 
-1. [ ] `[C]` **"Centro de mando" (admin)**: semáforo de operación (procesos atascados
-       >2 h, schedules `failed`, DLQs con mensajes), dinero del día (débitos/recargas +
-       solicitudes pendientes), top clientes en riesgo de reputación con tendencia,
-       últimas entradas de auditoría. Todo sale de tablas existentes + 1 llamada SQS.
+1. [x] `[C]` ✅ **"Centro de mando" (admin) (ago 2026)**: tab nuevo (página de ENTRADA del
+       admin, `CentroMandoSection` + `Api_V1_Admin_Control-center`): semáforo del pipeline
+       (procesos atascados >2 h, schedules `failed`, profundidad de colas y DLQs), dinero
+       del día (débitos/recargas + solicitudes pendientes + saldo plataforma), top 5 en
+       riesgo de reputación CON tendencia (7d vs 7d, del rollup `sendSummary`), **salud de
+       servicios** (cuota SES con barra de uso + envío habilitado, tablas DynamoDB núcleo,
+       colas SQS accesibles) y últimas 10 de auditoría. Auto-refresco 60 s. ⚠️ `[J]`: ruta
+       `/Admin/Control-center` (ya en routes.json) + IAM (sqs:GetQueueUrl/GetQueueAttributes,
+       ses:GetSendQuota/GetAccountSendingEnabled, dynamodb:DescribeTable + Scans).
 2. [ ] `[C]` **Series temporales** (30 días) en cliente y admin vía la preagregación
        `sendSummary` (pre-agregación, ver `CLAUDE.md`): sparklines + área de
        envíos/entregas/aperturas. De paso elimina los avisos de "datos parciales".
@@ -185,20 +190,28 @@ El front está terminado y el backend probado; solo falta la consola AWS
 
 ## BLOQUE 6 — Panel admin (funciones faltantes)
 
-1. [ ] `[C]` **Listado global de plantillas SES** (`ListTemplates`; hoy la tabla solo
-       muestra lo creado en la sesión).
+1. [x] `[C]` ✅ **Listado global de plantillas SES (ago 2026)**: `Api_V1_Admin_Templates`
+       (`ListTemplates` paginado, prefijo de cliente derivado del nombre) + tab
+       Soporte → "Plantillas SES" con filtro y paginación.
 2. [ ] `[C]` **"Ver como cliente"** (impersonación auditada) para soporte.
-3. [ ] `[C]` **Acciones de soporte en la ficha**: reenviar activación, forzar reseteo,
-       **cerrar sesiones del usuario** (la revocación por `sid` ya lo permite:
-       basta desactivar sus sesiones).
-4. [ ] `[C]/[J]` **Colas/DLQ**: profundidad real de SQS + ver/redrive de DLQs desde la UI.
+3. [x] `[C]` ✅ **Acciones de soporte en la ficha (ago 2026)**: `Api_V1_Admin_User-support`
+       (reenviar activación — solo inactivos, enlace nuevo 24 h; forzar reseteo — OTP
+       hasheado compatible con Validate-otp; **cerrar sesiones** — desactiva `session`,
+       revocación efectiva por `sid`). Auditadas (`support.*`); botones por usuario en
+       la ficha de Clientes. También **"¿qué le llegó a X?"**: `Api_V1_Admin_Recipient-lookup`
+       + tab Soporte → "Buscar destinatario" (línea de tiempo por contacto con estado por
+       envío + banderas de lista negra/desuscrito).
+4. [ ] `[C]/[J]` **Colas/DLQ**: ver/redrive de DLQs desde la UI (la PROFUNDIDAD ya se ve
+       en el Centro de mando; falta operar).
 5. [ ] `[C]` **Límites por cliente**: tope diario/por campaña y tasa máxima (hoy solo
        existe el interruptor `realSendEnabled`).
-6. [ ] `[C]` **Dominios remitentes globales** (los `senderDomain` de todos los clientes
-       con su estado).
+6. [x] `[C]` ✅ **Dominios remitentes globales (ago 2026)**: `Api_V1_Admin_Domains` (scan
+       `senderDomain` + nombre de empresa) + tab Soporte → "Dominios remitentes"
+       (pendientes primero).
 7. [ ] `[C]` **Paginación/búsqueda server-side** en las tablas admin (adiós al patrón
        `truncated`; se apoya en el Bloque 5.2).
-8. [ ] `[C]` **Export de auditoría** (CSV/rango de fechas).
+8. [x] `[C]` ✅ **Export de auditoría (ago 2026)**: filtros `dateFrom`/`dateTo` en
+       `Admin/Audit` + botón "Exportar CSV" en la sección (exporta lo filtrado).
 9. [ ] `[C]` **Panel de salud de despliegue**: verificación de qué rutas/lambdas/tablas
        del checklist `[J]` existen realmente en AWS.
 
