@@ -37,8 +37,9 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import { campaignsService } from '../../services/campaignsService';
-import { databaseService, type DatabaseFile } from '../../services/databaseService';
+import { databaseService, type DatabaseFile, type HygieneReport } from '../../services/databaseService';
 import { getUser } from '../../services/authService';
 import { isOk } from '../../services/apiClient';
 import { usePortalData } from '../../context/PortalDataContext';
@@ -109,6 +110,10 @@ export const BasesDatosSection = () => {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [viewBase, setViewBase] = useState<BaseDatos | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Higiene de listas (verificación previa): reporte + diálogo.
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  const [hygiene, setHygiene] = useState<HygieneReport | null>(null);
+  const [hygieneOpen, setHygieneOpen] = useState(false);
 
   const loadingList = databases.loading;
   const bases: BaseDatos[] = databases.items.map((f) => {
@@ -201,6 +206,20 @@ export const BasesDatosSection = () => {
       const a = analyzeCsv(rawCsv.text, rawCsv.delimiter, contact);
       setDelimiter(a.delimiter);
       setAnalysis(a);
+    }
+  };
+
+  /** Verificación de HIGIENE de la base (Database/Verify): sintaxis, duplicados,
+   *  desechables, cuentas de rol y dominios no resolubles. Abre el reporte. */
+  const handleVerify = async (b: BaseDatos) => {
+    setVerifyingId(b.id);
+    const res = await databaseService.verify(b.id);
+    setVerifyingId(null);
+    if (isOk(res) && res.data) {
+      setHygiene(res.data);
+      setHygieneOpen(true);
+    } else {
+      notify(res.description || 'No se pudo verificar la base (¿la ruta /Database/Verify está desplegada?).', 'error');
     }
   };
 
@@ -518,6 +537,13 @@ export const BasesDatosSection = () => {
                       <VisibilityIcon />
                     </IconButton>
                   </Tooltip>
+                  <Tooltip title="Verificar higiene (sintaxis, duplicados, dominios desechables o inexistentes)">
+                    <span>
+                      <IconButton color="success" onClick={() => handleVerify(b)} disabled={verifyingId === b.id}>
+                        {verifyingId === b.id ? <CircularProgress size={20} /> : <HealthAndSafetyIcon />}
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                   <Tooltip title="Eliminar base">
                     <span>
                       <IconButton color="error" onClick={() => handleDelete(b)} disabled={deletingId === b.id}>
@@ -778,6 +804,85 @@ export const BasesDatosSection = () => {
           <Button variant="contained" onClick={closeProgress} disabled={uploading}>
             {uploading ? <CircularProgress size={20} color="inherit" /> : 'Aceptar'}
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Reporte de HIGIENE de la base (verificación previa al envío real) */}
+      <Dialog open={hygieneOpen} onClose={() => setHygieneOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Higiene de la base{hygiene ? ` — ${hygiene.fileName}` : ''}</DialogTitle>
+        <DialogContent dividers>
+          {hygiene && (
+            <Stack spacing={2}>
+              <Stack direction="row" spacing={1.5} alignItems="center">
+                <Typography variant="h3" fontWeight={800} color={
+                  hygiene.level === 'ok' ? 'success.main' : hygiene.level === 'warning' ? 'warning.main' : 'error.main'
+                }>
+                  {hygiene.hygieneScore}%
+                </Typography>
+                <Box>
+                  <Chip
+                    size="small"
+                    color={hygiene.level === 'ok' ? 'success' : hygiene.level === 'warning' ? 'warning' : 'error'}
+                    label={hygiene.level === 'ok' ? 'Saludable' : hygiene.level === 'warning' ? 'Atención' : 'Crítica'}
+                  />
+                  <Typography variant="caption" display="block" color="text.secondary">
+                    {hygiene.counts.valid.toLocaleString('es-CO')} de {hygiene.analyzed.toLocaleString('es-CO')} contactos limpios
+                    {hygiene.truncated ? ` (analizados los primeros ${hygiene.analyzed.toLocaleString('es-CO')} de ${hygiene.total.toLocaleString('es-CO')})` : ''}
+                  </Typography>
+                </Box>
+              </Stack>
+
+              {hygiene.level !== 'ok' && (
+                <Alert severity={hygiene.level === 'warning' ? 'warning' : 'error'}>
+                  Enviar a contactos inválidos, desechables o de dominios inexistentes dispara los
+                  rebotes y daña la reputación del remitente. Depura la base antes del envío real.
+                </Alert>
+              )}
+
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                <Chip size="small" variant="outlined" color="error" label={`Sintaxis inválida: ${hygiene.counts.invalidSyntax}`} />
+                <Chip size="small" variant="outlined" color="warning" label={`Duplicados: ${hygiene.counts.duplicates}`} />
+                {hygiene.contactType === 'correo' && (
+                  <>
+                    <Chip size="small" variant="outlined" color="error" label={`Desechables: ${hygiene.counts.disposable}`} />
+                    <Chip size="small" variant="outlined" color="error" label={`Dominio inexistente: ${hygiene.counts.unresolvableDomains}`} />
+                    <Chip size="small" variant="outlined" label={`Cuentas de rol: ${hygiene.counts.roleAccounts}`} />
+                  </>
+                )}
+              </Stack>
+
+              {(['invalidSyntax', 'duplicates', 'disposable', 'unresolvableDomains', 'roleAccounts'] as const)
+                .filter((k) => (hygiene.samples[k] || []).length > 0)
+                .map((k) => (
+                  <Box key={k}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      {{
+                        invalidSyntax: 'Ejemplos con sintaxis inválida',
+                        duplicates: 'Ejemplos duplicados',
+                        disposable: 'Ejemplos en dominios desechables',
+                        unresolvableDomains: 'Ejemplos con dominio inexistente',
+                        roleAccounts: 'Cuentas de rol (advertencia: apertura baja, más quejas)',
+                      }[k]}
+                    </Typography>
+                    <Paper variant="outlined" sx={{ p: 1, maxHeight: 120, overflow: 'auto' }}>
+                      <Typography variant="caption" component="div" sx={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                        {(hygiene.samples[k] || []).join('\n')}
+                      </Typography>
+                    </Paper>
+                  </Box>
+                ))}
+
+              {hygiene.contactType === 'correo' && hygiene.domains && hygiene.domains.skipped > 0 && (
+                <Typography variant="caption" color="text.secondary">
+                  Se consultaron {hygiene.domains.checked} dominios; {hygiene.domains.skipped} quedaron
+                  sin consultar por el tope por verificación (no penalizan el puntaje).
+                </Typography>
+              )}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setHygieneOpen(false)}>Cerrar</Button>
         </DialogActions>
       </Dialog>
 

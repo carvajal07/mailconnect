@@ -57,6 +57,7 @@
     { "path": "/Database/List",            "lambda": "Api_V1_Database_List" },
     { "path": "/Database/Register-file",   "lambda": "Api_V1_Database_Register-file" },
     { "path": "/Database/Delete",          "lambda": "Api_V1_Database_Delete" },
+    { "path": "/Database/Verify",          "lambda": "Api_V1_Database_Verify" },
     { "path": "/Blacklist/List",           "lambda": "Api_V1_Blacklist_List" },
     { "path": "/Blacklist/Add",            "lambda": "Api_V1_Blacklist_Add" },
     { "path": "/Blacklist/Delete",         "lambda": "Api_V1_Blacklist_Delete" },

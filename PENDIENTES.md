@@ -66,9 +66,15 @@ bloque son los pasos `[J]` de despliegue.
 
 1. [x] `[J]` ✅ **`Api_V1_Security_Register`** desplegado (ago 2026): rechaza (409) el
        registro bajo un NIT ya existente. Cerrado.
-2. [ ] `[J]` **Rate limiting/WAF** en los endpoints públicos: `/Assistant/Ask` (costo
-       Bedrock ilimitado + jailbreak), `/Security/Register` y `/Security/Create-otp`
-       (email bombing vía SES). Usage plan + regla rate-based + alarma de gasto Bedrock.
+2. [~] **Rate limiting endpoints públicos**: ✅ `[C]` (ago 2026, Bloque E) `/Assistant/Ask`
+       tiene ahora limitador PROPIO en DynamoDB (por IP: 6/min y 60/día; tope GLOBAL
+       2000/día que acota el costo Bedrock aunque roten IPs; 429 con mensaje del widget;
+       fail-open + tabla `assistantRateLimit` on-demand con TTL) y `/Assistant/Copilot`
+       limita draft/rewrite por TENANT (10/min, 200/día). Envs `ASSISTANT_RATE_*` /
+       `COPILOT_RATE_*`. ⚠️ Sigue pendiente `[J]`: WAF/usage plan de API Gateway (capa de
+       infraestructura: corta las invocaciones, no solo Bedrock) y el rate-limit de
+       `/Security/Register` + `/Security/Create-otp` (email bombing vía SES) + alarma
+       de gasto de Bedrock.
 3. [ ] `[C]` **`realSendEnabled` fail-closed**: hoy `Prepare-batch`/`Login` asumen `True`
        si falta el campo o falla la lectura. Un control de bloqueo debe denegar ante error.
 4. [ ] `[C]` **Blacklist Add/Delete**: eliminar el fallback al body (`nit`/`customerId`)
@@ -157,7 +163,15 @@ El front está terminado y el backend probado; solo falta la consola AWS
 1. [ ] `[P]/[C]` **Segmentación de audiencias** (filtros sobre columnas de la base).
 2. [ ] `[P]/[C]` **Pruebas A/B** de asunto/plantilla con ganador por apertura.
 3. [ ] `[P]/[C]` **API pública + webhooks** para clientes (transaccional).
-4. [ ] `[C]` **Higiene de listas**: verificación previa (sintaxis+MX) antes del envío real.
+4. [x] `[C]` ✅ **Higiene de listas (ago 2026, Bloque E)**: `Api_V1_Database_Verify`
+       (POST `/Database/Verify`, ya en routes.json) — verificación previa de la base:
+       sintaxis, duplicados, dominios DESECHABLES (lista embebida), cuentas de ROL
+       (advertencia) y dominio RESOLUBLE en DNS (MX real si el layer trae dnspython;
+       si no, getaddrinfo); celulares: E.164 + duplicados. Reporte con score/nivel +
+       ejemplos, resumen persistido en `databaseFile.hygiene`. Botón "Verificar
+       higiene" (escudo) en Bases de datos con diálogo del reporte. ⚠️ `[J]`: IAM
+       `GetItem/UpdateItem databaseFile` + `s3:GetObject` buckets de cliente; layer
+       dnspython OPCIONAL para MX real.
 5. [ ] `[C]` **Centro de preferencias** del suscriptor (no solo desuscripción total).
 6. [ ] `[C]` **Reporte por destinatario** buscable ("¿qué le llegó a X?").
 7. [ ] `[C]` **2FA (TOTP)** para admins y owners (reutiliza la infraestructura OTP).
@@ -211,8 +225,13 @@ El front está terminado y el backend probado; solo falta la consola AWS
        envío + banderas de lista negra/desuscrito).
 4. [ ] `[C]/[J]` **Colas/DLQ**: ver/redrive de DLQs desde la UI (la PROFUNDIDAD ya se ve
        en el Centro de mando; falta operar).
-5. [ ] `[C]` **Límites por cliente**: tope diario/por campaña y tasa máxima (hoy solo
-       existe el interruptor `realSendEnabled`).
+5. [~] **Límites por cliente**: ✅ `[C]` (ago 2026, Bloque E) **tope por campaña y tope
+       diario** de destinatarios (customer.sendingLimits; 0 = sin tope): gate en
+       Prepare-batch ANTES de cobrar (429 `SendingLimitExceeded`, libera el lock, no
+       toca saldo; el diario suma los `registersToSend` reales de HOY sin muestras),
+       administrado desde la ficha de Clientes ("Cuotas de envío", `Customer/Update
+       {limits}` con merge + auditoría `customer.limits`). ⚠️ Pendiente: **tasa máxima**
+       (mensajes/hora) — exige pacing en los workers SQS, otra iteración.
 6. [x] `[C]` ✅ **Dominios remitentes globales (ago 2026)**: `Api_V1_Admin_Domains` (scan
        `senderDomain` + nombre de empresa) + tab Soporte → "Dominios remitentes"
        (pendientes primero).

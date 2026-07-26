@@ -81,11 +81,13 @@ export const LandingFloating = ({ whatsappUrl }: { whatsappUrl: string }) => {
       ...m,
       res.ok
         ? { role: 'assistant', text: res.answer as string }
-        : {
-            role: 'assistant',
-            text: 'Ahora mismo no puedo responder. ¿Te ayudamos por WhatsApp?',
-            fallback: true,
-          },
+        : res.reason === 'rate'
+          ? { role: 'assistant', text: res.error || 'Espera un momento e intenta de nuevo.' }
+          : {
+              role: 'assistant',
+              text: 'Ahora mismo no puedo responder. ¿Te ayudamos por WhatsApp?',
+              fallback: true,
+            },
     ]);
     scrollDown();
   };

@@ -68,6 +68,10 @@ export const ClientesSection = () => {
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [savingSend, setSavingSend] = useState(false);
+  // Cuotas de envío (texto del form; '' o 0 = sin tope).
+  const [limitCampaign, setLimitCampaign] = useState('');
+  const [limitDay, setLimitDay] = useState('');
+  const [savingLimits, setSavingLimits] = useState(false);
   const [roleBusy, setRoleBusy] = useState<string | null>(null);
   const [supportBusy, setSupportBusy] = useState<string | null>(null);
 
@@ -127,8 +131,11 @@ export const ClientesSection = () => {
     setDetailLoading(true);
     const res = await customerService.detail(c.customerId);
     setDetailLoading(false);
-    if (isOk(res) && res.data) setDetail(res.data);
-    else notify(res.description || 'No se pudo cargar la ficha.', 'error');
+    if (isOk(res) && res.data) {
+      setDetail(res.data);
+      setLimitCampaign(String(res.data.customer.sendingLimits?.maxPerCampaign || ''));
+      setLimitDay(String(res.data.customer.sendingLimits?.maxPerDay || ''));
+    } else notify(res.description || 'No se pudo cargar la ficha.', 'error');
   };
 
   const closeFicha = () => {
@@ -149,6 +156,26 @@ export const ClientesSection = () => {
       notify(`Envíos reales ${next ? 'habilitados' : 'deshabilitados'}.`, next ? 'success' : 'warning');
     } else {
       notify(res.description || 'No se pudo actualizar.', 'error');
+    }
+  };
+
+  /** Guarda las cuotas de envío (tope por campaña / diario; 0 = sin tope). */
+  const saveLimits = async () => {
+    if (!detail) return;
+    const maxPerCampaign = Math.max(parseInt(limitCampaign, 10) || 0, 0);
+    const maxPerDay = Math.max(parseInt(limitDay, 10) || 0, 0);
+    setSavingLimits(true);
+    const res = await customerService.setLimits(detail.customer.customerId, { maxPerCampaign, maxPerDay });
+    setSavingLimits(false);
+    if (isOk(res)) {
+      setDetail({
+        ...detail,
+        customer: { ...detail.customer, sendingLimits: { maxPerCampaign, maxPerDay } },
+      });
+      refreshCustomers();
+      notify('Cuotas de envío guardadas.', 'success');
+    } else {
+      notify(res.description || 'No se pudieron guardar las cuotas.', 'error');
     }
   };
 
@@ -324,6 +351,37 @@ export const ClientesSection = () => {
                       <Switch checked={detail.customer.realSendEnabled} onChange={toggleSend} color="success" />
                     )}
                   </Stack>
+                </Stack>
+              </Paper>
+
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                <Typography fontWeight={700}>Cuotas de envío</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Tope de destinatarios del envío real (0 o vacío = sin tope). Protege la
+                  reputación compartida y el gasto: al excederlas el envío se bloquea (429).
+                </Typography>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 1.5 }} alignItems="center">
+                  <TextField
+                    label="Máx. por campaña"
+                    size="small"
+                    type="number"
+                    value={limitCampaign}
+                    onChange={(e) => setLimitCampaign(e.target.value)}
+                    inputProps={{ min: 0 }}
+                    sx={{ width: { xs: '100%', sm: 180 } }}
+                  />
+                  <TextField
+                    label="Máx. por día"
+                    size="small"
+                    type="number"
+                    value={limitDay}
+                    onChange={(e) => setLimitDay(e.target.value)}
+                    inputProps={{ min: 0 }}
+                    sx={{ width: { xs: '100%', sm: 180 } }}
+                  />
+                  <Button variant="outlined" size="small" onClick={saveLimits} disabled={savingLimits}>
+                    {savingLimits ? <CircularProgress size={18} /> : 'Guardar cuotas'}
+                  </Button>
                 </Stack>
               </Paper>
 

@@ -26,6 +26,52 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Protección de reputación, límites y costos (ago 2026, Bloque E)
+- **Rate limiting del chatbot público (`Api_V1_Assistant_Ask`)**: el endpoint es público y
+  cada pregunta invoca un modelo de PAGO → limitador de ventana fija en DynamoDB (tabla
+  **`assistantRateLimit`**, PK `rlKey`, TTL `expiresAt`; la crea la lambda on-demand):
+  por IP `ASSISTANT_RATE_PER_MINUTE` (default 6) y `ASSISTANT_RATE_PER_DAY` (default 60),
+  más un tope **GLOBAL** diario `ASSISTANT_RATE_GLOBAL_PER_DAY` (default 2000) que acota
+  el costo total de Bedrock aunque el atacante rote IPs. Exceso → **429** con mensaje
+  amable (el widget `LandingFloating` lo muestra; `assistantService` gana `reason:'rate'`).
+  FALLA ABIERTO (error de DynamoDB → responde) y el chequeo va ANTES de invocar Bedrock.
+  **`Assistant_Copilot`**: mismo patrón/tabla pero por TENANT y SOLO en `draft`/`rewrite`
+  (`COPILOT_RATE_PER_MINUTE` 10 / `_PER_DAY` 200); `analyze` (determinista) no se limita.
+- **Cuotas de envío por cliente (`customer.sendingLimits`)**: el admin fija **tope de
+  destinatarios por campaña** y **tope diario** desde la ficha de Clientes ("Cuotas de
+  envío"; 0/vacío = sin tope). `Customer/Update` acepta `limits` (merge por clave,
+  auditado `customer.limits`); `Customer/List`/`Detail` los devuelven. **Gate en
+  Prepare-batch** (`check_sending_limits`, envío real): corre tras el lock y ANTES de
+  cobrar; si excede → `SendingLimitExceeded` → libera el lock y responde **429** (sin
+  tocar saldo, sin marcar Error). El tope diario suma `registersToSend` de los procesos
+  REALES de hoy (scan de `process` por customerName+fecha, muestras excluidas) — solo
+  corre si hay tope configurado. Fail-open si falla la lectura de límites. ⚠️ Pendiente:
+  tasa máxima (msgs/hora) — exige pacing en los workers.
+- **Higiene de listas (`Api_V1_Database_Verify`, POST `/Database/Verify`)**: verificación
+  PREVIA de una base registrada. Correo: sintaxis, duplicados, dominios **desechables**
+  (lista embebida + env `HYGIENE_DISPOSABLE_EXTRA`), cuentas de **rol** (info@, noreply@…
+  advertencia, no bajan score) y **dominio resoluble** (MX real con dnspython si el layer
+  está; si no `socket.getaddrinfo`; cache por dominio, tope `HYGIENE_MAX_DOMAINS` 200 —
+  lo saltado no penaliza). Celular: E.164 (+57) + duplicados. Devuelve counts + ejemplos
+  (20 c/u) + `hygieneScore` (0-100; penalizan sintaxis/dup/desechable/no-resoluble) +
+  `level` ok≥95/warning≥85/critical, y PERSISTE el resumen en `databaseFile.hygiene`.
+  Front: botón escudo "Verificar higiene" en **Bases de datos** + diálogo del reporte
+  (`databaseService.verify`). Tope `HYGIENE_MAX_ROWS` 20000 (más allá: truncated).
+- **Cobertura:** `test_assistant_ratelimit.py` (6: 429 por minuto sin invocar el modelo,
+  IPs independientes, tope global, fail-open + tabla on-demand, Copilot por tenant,
+  analyze sin límite), `test_sending_limits.py` (6: topes campaña/diario con muestras y
+  otros clientes excluidos, fail-open, Update merge + auditoría + List, negativos→0),
+  `test_database_verify.py` (6: reporte completo, base limpia, celular, 403/404/400,
+  tope de dominios no penaliza). `test_assistant.py` apaga el limitador (se prueba aparte).
+- ⚠️ `[J]` (despliegue): lambda `Api_V1_Database_Verify` (el CD la crea) + ruta
+  `/Database/Verify` **ya en routes.json**; IAM: Ask/Copilot `dynamodb:UpdateItem/
+  CreateTable/DescribeTable/UpdateTimeToLive` sobre `assistantRateLimit`; Database_Verify
+  `dynamodb:GetItem/UpdateItem databaseFile` + `s3:GetObject` (buckets de cliente), layer
+  dnspython OPCIONAL (sin él, el chequeo MX cae a resolución de dominio); Prepare-batch
+  ya tenía GetItem `customer` y Scan `process`. Envs `ASSISTANT_RATE_*`/`COPILOT_RATE_*`/
+  `HYGIENE_*` opcionales (defaults arriba). El WAF/throttling de API Gateway sigue
+  recomendado como capa extra (PENDIENTES Bloque 1.2).
+
 ### Series de 30 días + adiós "datos parciales" (ago 2026, Bloque A)
 - **Serie temporal del cliente:** nueva lambda **`Api_V1_Reports_Series`** (POST
   `/Report/Series`, identidad del Authorizer): serie DIARIA CONTINUA de los últimos N días
@@ -277,8 +323,9 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, previewRows?, duplicates?, allowDuplicates?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`). `previewRows` = primeras filas (máx. 5) para la vista previa persistente. `allowDuplicates` = si el envío real NO filtra contactos repetidos |
 | `Database/List` | `{ customerId }` | 200 `data:{files[], count}` (incluye `columns`, `previewRows`, `validEmails`, `invalidEmails`) |
 | `Database/Delete` | `{ databaseFileId }` | 200 ok · 403 otro cliente · 404 no existe. Borra el registro (no el CSV en S3) |
+| `Database/Verify` | `{ databaseFileId }` (tenant del token) | 200 `data:{counts{valid,invalidSyntax,duplicates,disposable,roleAccounts,unresolvableDomains}, samples, domains, hygieneScore, level, truncated}` · 403 · 404 · 502 S3. **Higiene de listas**: verificación previa de la base (correo: sintaxis/duplicados/desechables/rol/dominio resoluble · celular: E.164/duplicados). Persiste el resumen en `databaseFile.hygiene` |
 | `Customer/List` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, realSendEnabled}], count}` |
-| `Customer/Update` | `{ customerId, realSendEnabled? (bool), features? ({clave:bool}) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales y/o **banderas de funciones** por cliente (merge por clave). Devuelve `data:{realSendEnabled, featureFlags}`. Audita `customer.realSend` / `customer.features` |
+| `Customer/Update` | `{ customerId, realSendEnabled? (bool), features? ({clave:bool}), limits? ({maxPerCampaign, maxPerDay}) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales, **banderas de funciones** y/o **cuotas de envío** por cliente (merge por clave; 0 = sin tope). Devuelve `data:{realSendEnabled, featureFlags, sendingLimits}`. Audita `customer.realSend` / `customer.features` / `customer.limits` |
 | `SendingConfig/List` | `{}` (**admin**) | 200 `data:{configs:[{customerId, configurationSet, poolName, ips[], enabled, notes, updatedAt}], count}`. IP de envío dedicada por cliente (tabla `sendingConfig`) |
 | `SendingConfig/Set` | `{ customerId, configurationSet, poolName?, ips?[], enabled?=true, notes? }` o `{ customerId, remove:true }` (**admin**) | 200 ok · 400 datos. Upsert de la IP dedicada (config set SES) o baja (`remove` → pool general). Crea la tabla on-demand. Audita `sendingConfig.set/remove` |
 | `MessageTemplate/Create` | `{ channel:SMS\|WSP\|DOCX\|PDF, name, body?/hsmName?+language?+params?/s3Path?+params?/html? }` | 201 `data:{messageTemplateId}` · 400 datos. SMS necesita `body`, WSP `hsmName`, DOCX `s3Path`, **PDF `html`** (el HTML del editor) |
@@ -316,7 +363,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Admin/Balances` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, balance, updatedAt}], totals:{balance}, recentTransactions[], count}` (saldo de todos, menor primero + ledger global) |
 | `Balance/Topup-init` | `{ amount (COP≥20000) }` (tenant del token) | 200 `data:{reference, amountInCents, currency, publicKey, signatureIntegrity, redirectUrl?}` · 400. Firma de integridad Wompi; crea el intento `pending` en el ledger |
 | `Wallet/Wompi-webhook` | **público/proxy sin authorizer** (evento Wompi firmado) | 200 ack. Verifica la firma del evento y acredita **idempotente** por `reference` (pending→approved, `TransactWriteItems`); nunca acredita desde el redirect del navegador |
-| `Assistant/Ask` | **público/proxy sin authorizer** `{ question }` | 200 `{answer}` · 400 vacía · 502 modelo no disponible. Asistente de IA (AWS Bedrock Converse, modelo Claude) con prompt de sistema aterrizado en MailConnect; responde en español, solo sobre la plataforma. Lo usan los botones flotantes de la landing |
+| `Assistant/Ask` | **público/proxy sin authorizer** `{ question }` | 200 `{answer}` · 400 vacía · **429 límite de uso** (por IP 6/min · 60/día + tope global 2000/día, tabla `assistantRateLimit`) · 502 modelo no disponible. Asistente de IA (AWS Bedrock Converse, modelo Claude) con prompt de sistema aterrizado en MailConnect; responde en español, solo sobre la plataforma. Lo usan los botones flotantes de la landing |
 | `Cascade/Dispatch` | `{ name, dataPath, waitMinutes?, successCriterion?, steps:[{channel(EM\|SMS\|WSP\|VOZ), content}] }` | 201 `data:{cascadeRunId, contacts, debited}` · 400 · 402 saldo · 403. Lanza la **cascada omnicanal** (Opción A): crea el run + un contacto por fila, filtra consentimiento del canal 0, encola el paso 0 y debita su costo. |
 | `Cascade/List` | `{}` (tenant del token) | 200 `data:{runs:[{cascadeRunId, name, steps, status, counts{total,confirmed,exhausted,inFlight,budget}, createdAt}], count}` |
 | `Cascade/Advance` | (EventBridge cron; sin body) | Tick del motor: por cada contacto vencido lee el estado en `sendStatus`, y confirma/escala/agota/frena por saldo (`decide_next`). Escala encolando el siguiente canal + debitando |

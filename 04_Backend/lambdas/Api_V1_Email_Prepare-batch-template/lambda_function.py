@@ -13,6 +13,7 @@ from datetime import datetime
 
 import boto3
 import pandas as pd
+from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
 
 #pylint: disable=C0301
@@ -372,6 +373,13 @@ class RealSendNotApproved(Exception):
     flujo), NO se bloquea (compatibilidad con el envío directo previo)."""
 
 
+class SendingLimitExceeded(Exception):
+    """El envío real excede una CUOTA del cliente (customer.sendingLimits: tope de
+    destinatarios por campaña y/o tope diario). Protege la reputación SES compartida y
+    el gasto: un cliente no puede despachar más de lo que el admin le autorizó. El
+    handler responde 429. Cuota ausente o 0 = sin tope (fail-open)."""
+
+
 def _wallet_ledger(st, tx_type, amount, balance_after, detail):
     """Escribe SIEMPRE un movimiento en walletTransaction (ledger auditable). Best-effort:
     el saldo ya se movió atómicamente; si el ledger falla se loguea, no se revierte.
@@ -689,6 +697,65 @@ def is_real_send_enabled(customer_id_value:str)->bool:
     except Exception as e:
         print("No se pudo verificar realSendEnabled ({}); se asume habilitado".format(e))
     return True
+
+
+def get_sending_limits(customer_id_value:str)->dict:
+    """Cuotas de envío del cliente (customer.sendingLimits): maxPerCampaign (destinatarios
+    por envío real) y maxPerDay (destinatarios despachados por día). 0/ausente = sin tope.
+    Fail-open ante cualquier error de lectura (no bloquear envíos por un GetItem caído)."""
+    try:
+        item = table_customer.get_item(
+            Key={'customerId': customer_id_value},
+            ProjectionExpression='sendingLimits').get('Item') or {}
+        lim = item.get('sendingLimits') or {}
+        return {'maxPerCampaign': int(lim.get('maxPerCampaign', 0) or 0),
+                'maxPerDay': int(lim.get('maxPerDay', 0) or 0)}
+    except Exception as e:
+        print('No se pudieron leer los límites de envío ({}); sin tope'.format(e))
+        return {'maxPerCampaign': 0, 'maxPerDay': 0}
+
+
+def sent_today_count(customer_name_value:str)->int:
+    """Destinatarios ya DESPACHADOS HOY por el cliente: suma de registersToSend de sus
+    procesos reales (sin muestras) con fecha de hoy (UTC). Alimenta el tope diario."""
+    today = time.strftime('%Y-%m-%d', time.gmtime())
+    total = 0
+    kwargs = {'FilterExpression': (Attr('customerName').eq(customer_name_value)
+                                   & Attr('date').begins_with(today))}
+    while True:
+        resp = table_process.scan(**kwargs)
+        for p in resp.get('Items', []):
+            if p.get('isSamples') or str(p.get('processState', '')) == 'Muestras':
+                continue
+            try:
+                total += int(p.get('registersToSend', 0))
+            except (TypeError, ValueError):
+                pass
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            return total
+        kwargs['ExclusiveStartKey'] = last
+
+
+def check_sending_limits(st:'ProcessState', recipients_count:int)->None:
+    """Gate de CUOTAS del envío real: lanza SendingLimitExceeded (handler → 429) si el
+    envío excede el tope por campaña o el tope diario del cliente. Sin límites
+    configurados no hace NINGUNA lectura extra (el scan diario solo corre con tope)."""
+    limits = get_sending_limits(st.customer_id)
+    max_campaign = limits['maxPerCampaign']
+    if max_campaign and recipients_count > max_campaign:
+        raise SendingLimitExceeded(
+            'El envío ({} destinatarios) excede el tope por campaña de tu cuenta '
+            '({}). Divide la base o pide al administrador ampliar el límite.'.format(
+                recipients_count, max_campaign))
+    max_day = limits['maxPerDay']
+    if max_day:
+        used = sent_today_count(st.customer_name)
+        if used + recipients_count > max_day:
+            raise SendingLimitExceeded(
+                'El envío excede el tope DIARIO de tu cuenta ({} de {} destinatarios ya '
+                'despachados hoy). Intenta mañana o pide ampliar el límite.'.format(
+                    used, max_day))
 
 
 def get_customer_nit(customer_id_value:str):
@@ -1535,6 +1602,9 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
     debited = 0
     try:
         recipients_count = count_base_rows(temp_file, delimiter, allow_duplicates)
+        # Gate de CUOTAS (tope por campaña / tope diario) ANTES de cobrar: si excede,
+        # se libera el lock y el handler responde 429 (sin tocar el saldo).
+        check_sending_limits(st, recipients_count)
         cost = _campaign_cost(st.customer_id, channel_name, recipients_count, document_format, delivery_mode)
         if cost > 0:
             new_balance = reserve_balance(st, cost, data["campaignName"])
@@ -1542,9 +1612,9 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
                 debited = cost
                 print("Saldo reservado: ${} por {} destinatarios (saldo: ${})".format(
                     cost, recipients_count, new_balance))
-    except InsufficientBalance:
-        # Saldo insuficiente: se libera el lock (campaña vuelve a ser enviable) y se
-        # propaga → el handler responde 402. NO se marca la campaña en Error.
+    except (InsufficientBalance, SendingLimitExceeded):
+        # Saldo insuficiente o cuota excedida: se libera el lock (campaña vuelve a ser
+        # enviable) y se propaga → el handler responde 402/429. NO se marca en Error.
         release_real_send_lock(st, previous_state)
         raise
     except Exception:
@@ -2029,6 +2099,14 @@ def lambda_handler(event, context):
         description = str(e)
         status = False
         status_code = 402
+        print(description)
+    except SendingLimitExceeded as e:
+        # Cuota de envío del cliente excedida (tope por campaña / diario): 429, sin
+        # marcar Error. El lock ya se liberó, la campaña sigue enviable (con menos base
+        # o al día siguiente, o cuando el admin amplíe el límite).
+        description = str(e)
+        status = False
+        status_code = 429
         print(description)
     except Exception as e:
         # WORKER SQS (cola de partes): la invocación debe FALLAR (propagar) si algo sale mal, para
