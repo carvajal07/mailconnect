@@ -163,6 +163,7 @@ export const LoginPage = () => {
           realSendEnabled: res.data.realSendEnabled,
           role: res.data.role,
           tenantRole: res.data.tenantRole,
+          featureFlags: res.data.featureFlags,
           email: formData.email,
         });
         // Los admin (personal interno) van al panel /admin; los clientes al portal /panel.

@@ -26,6 +26,31 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Funciones por cliente (feature flags) (ago 2026)
+- **Qué:** el admin enciende/apaga cada **tab** y **función** del portal **por cliente**
+  desde una nueva sección `/admin` **"Funciones por cliente"** (`FuncionesClienteSection`):
+  selector de cliente + lista agrupada con un **`Switch` verde/gris** por función (verde =
+  habilitada). Ejemplos: apagar Plantillas PDF avanzadas (Estudio) o profesionales
+  (Diseñador), el mapeo de CSV multiregistro, la importación de JSON, etc.
+- **Backend:** las banderas viven en **`customer.featureFlags`** (map `{clave: bool}`).
+  Convención **FAIL-OPEN**: clave ausente o `true` = habilitada; solo `false` la apaga
+  (los clientes viejos sin el campo conservan todo). `Customer/Update` acepta ahora un
+  map `features` (parcial) y hace **merge por clave** (lee el ítem, mergea y reescribe;
+  auditado `customer.features`); `Customer/List` devuelve `featureFlags`; **Login** los
+  incluye en `data.featureFlags` (aplican en el próximo inicio de sesión del cliente).
+- **Frontend:** catálogo único en `src/config/features.ts` (`FEATURE_CATALOG` +
+  `featureEnabled`/`tabEnabled`, FAIL-OPEN). Claves `tab:<id>` (mismo id de `PORTAL_TABS`)
+  y `func:<x>` (funciones puntuales: `func:csv_multiregistro`, `func:json_import`). El
+  portal (`PortalSidebar`/`PortalPage`) oculta los tabs deshabilitados (además del RBAC de
+  sub-rol) y `BasesDatosSection` gatea el asistente multiregistro y la carga JSON. La
+  sesión (`SessionUser.featureFlags`) se guarda al loguear.
+- **Cobertura:** `08_Pruebas/PruebasSeguridad/test_customer_admin.py` (setear funciones,
+  merge que no pisa otras, string→bool, realSend+features juntos, 404, List incluye flags).
+- ⚠️ `[J]` (despliegue): campo `featureFlags` en la tabla `customer` (lo crea `Customer/Update`
+  on-demand); **IAM `dynamodb:GetItem` sobre `customer` en `Api_V1_Customer_Update`** (antes
+  solo hacía `UpdateItem`); `Login`/`Customer_List` ya leían la tabla. No hay rutas ni lambdas
+  nuevas (reusa `/Customer/Update` y `/Customer/List`).
+
 ---
 
 ## 1. Resumen de lo trabajado en estas sesiones
@@ -126,7 +151,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Database/List` | `{ customerId }` | 200 `data:{files[], count}` (incluye `columns`, `previewRows`, `validEmails`, `invalidEmails`) |
 | `Database/Delete` | `{ databaseFileId }` | 200 ok · 403 otro cliente · 404 no existe. Borra el registro (no el CSV en S3) |
 | `Customer/List` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, realSendEnabled}], count}` |
-| `Customer/Update` | `{ customerId, realSendEnabled (bool) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales |
+| `Customer/Update` | `{ customerId, realSendEnabled? (bool), features? ({clave:bool}) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales y/o **banderas de funciones** por cliente (merge por clave). Devuelve `data:{realSendEnabled, featureFlags}`. Audita `customer.realSend` / `customer.features` |
 | `MessageTemplate/Create` | `{ channel:SMS\|WSP\|DOCX\|PDF, name, body?/hsmName?+language?+params?/s3Path?+params?/html? }` | 201 `data:{messageTemplateId}` · 400 datos. SMS necesita `body`, WSP `hsmName`, DOCX `s3Path`, **PDF `html`** (el HTML del editor) |
 | `MessageTemplate/List` | `{ customerId, channel? }` | 200 `data:{templates[], count}` (desc por fecha; filtra por canal si se envía) |
 | `MessageTemplate/Delete` | `{ messageTemplateId }` | 200 ok · 403 otro cliente · 404 no existe |

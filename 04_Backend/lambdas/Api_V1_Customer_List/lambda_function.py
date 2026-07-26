@@ -98,6 +98,9 @@ def _clean(item):
         out[key] = int(value) if isinstance(value, Decimal) else value
     # Clientes antiguos sin el campo se consideran habilitados (fail-open).
     out['realSendEnabled'] = bool(item.get('realSendEnabled', True))
+    # Banderas de funciones por cliente ({key: bool}); ausente = todo habilitado.
+    flags = item.get('featureFlags') or {}
+    out['featureFlags'] = {str(k): bool(v) for k, v in flags.items()} if isinstance(flags, dict) else {}
     return out
 
 
@@ -112,7 +115,7 @@ def lambda_handler(event, context):
     try:
         items = []
         scan_kwargs = {
-            'ProjectionExpression': 'customerId, company, companyTin, realSendEnabled, #d',
+            'ProjectionExpression': 'customerId, company, companyTin, realSendEnabled, featureFlags, #d',
             'ExpressionAttributeNames': {'#d': 'date'},
         }
         while True:

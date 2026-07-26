@@ -128,55 +128,108 @@ def _is_admin(event):
     claims = _jwt_claims(_bearer_token(event))
     return bool(claims) and str(claims.get('role', '')).lower() == 'admin'
 
+def _as_bool(v):
+    """Bool tolerante: acepta bool o string ('true'/'1'/'si'…) desde el mapping/proxy."""
+    if isinstance(v, str):
+        return v.strip().lower() in ('true', '1', 'yes', 'si', 'sí')
+    return bool(v)
+
+
+# Tope defensivo del número de banderas de funciones que se guardan por cliente.
+_MAX_FEATURE_FLAGS = 100
+
+
+def _sanitize_features(raw):
+    """Normaliza el map de funciones {key: bool} recibido del admin: claves str
+    acotadas, valores bool, y un tope de entradas. Devuelve {} si no es un dict."""
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for k, v in raw.items():
+        key = str(k).strip()[:80]
+        if key:
+            out[key] = _as_bool(v)
+        if len(out) >= _MAX_FEATURE_FLAGS:
+            break
+    return out
+
+
 def lambda_handler(event, context):
     if not _is_admin(event):
         return {'status': False, 'statusCode': 403, 'description': 'Acceso restringido a administradores.'}
     payload = _get_payload(event)
     customer_id = payload.get('customerId')
     raw_flag = payload.get('realSendEnabled')
+    features = _sanitize_features(payload.get('features'))
 
-    if not customer_id or raw_flag is None:
+    if not customer_id or (raw_flag is None and not features):
         return {
             'status': False,
             'statusCode': 400,
-            'description': 'Indica customerId y realSendEnabled (true/false).'
+            'description': 'Indica customerId y realSendEnabled (true/false) o features ({clave: bool}).'
         }
 
-    # Aceptar bool o string ('true'/'false'/'1'/'0') desde el mapping/proxy.
-    if isinstance(raw_flag, str):
-        real_send_enabled = raw_flag.strip().lower() in ('true', '1', 'yes', 'si', 'sí')
-    else:
-        real_send_enabled = bool(raw_flag)
-
     try:
-        # customerId es la PK: update condicional (atómico, sin Scan previo).
-        # attribute_exists evita crear un ítem fantasma si el cliente no existe.
+        # Se lee el estado actual para (a) confirmar que el cliente existe y (b) mergear
+        # las banderas de funciones POR CLAVE sin pisar las demás. La carrera entre dos
+        # admins editando el MISMO cliente es despreciable (panel administrativo); el
+        # UpdateItem posterior lleva ConditionExpression para no crear un ítem fantasma.
+        old = table_customer.get_item(Key={'customerId': customer_id}).get('Item')
+        if not old:
+            return {'status': False, 'statusCode': 404, 'description': 'El cliente no existe.'}
+        company = old.get('company') or customer_id
+
+        set_parts = []
+        values = {}
+        real_send_enabled = None
+        if raw_flag is not None:
+            real_send_enabled = _as_bool(raw_flag)
+            set_parts.append('realSendEnabled = :rse')
+            values[':rse'] = real_send_enabled
+
+        merged_flags = {str(k): bool(v) for k, v in (old.get('featureFlags') or {}).items()}
+        if features:
+            merged_flags.update(features)
+            set_parts.append('featureFlags = :ff')
+            values[':ff'] = merged_flags
+
         try:
-            resp = table_customer.update_item(
+            table_customer.update_item(
                 Key={'customerId': customer_id},
-                UpdateExpression='SET realSendEnabled = :v',
+                UpdateExpression='SET ' + ', '.join(set_parts),
                 ConditionExpression='attribute_exists(customerId)',
-                ExpressionAttributeValues={':v': real_send_enabled},
-                ReturnValues='ALL_OLD'
+                ExpressionAttributeValues=values,
             )
         except ClientError as ce:
             if ce.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
                 return {'status': False, 'statusCode': 404, 'description': 'El cliente no existe.'}
             raise
 
-        old = resp.get('Attributes') or {}
-        company = old.get('company') or customer_id
-        prev = old.get('realSendEnabled')
-        prev_lbl = 'habilitados' if prev else ('deshabilitados' if prev is not None else 'sin definir')
-        estado = 'habilitados' if real_send_enabled else 'deshabilitados'
-        # Objetivo legible (nombre de empresa, no el id).
-        _audit(event, 'customer.realSend', company,
-               'Envíos reales del cliente {}: {} → {}'.format(company, prev_lbl, estado))
+        # Auditoría + descripción según lo que se tocó.
+        parts = []
+        if real_send_enabled is not None:
+            prev = old.get('realSendEnabled')
+            prev_lbl = 'habilitados' if prev else ('deshabilitados' if prev is not None else 'sin definir')
+            estado = 'habilitados' if real_send_enabled else 'deshabilitados'
+            _audit(event, 'customer.realSend', company,
+                   'Envíos reales del cliente {}: {} → {}'.format(company, prev_lbl, estado))
+            parts.append('envíos reales {}'.format(estado))
+        if features:
+            resumen = ', '.join('{}={}'.format(k, 'on' if v else 'off') for k, v in features.items())
+            _audit(event, 'customer.features', company,
+                   'Funciones del cliente {}: {}'.format(company, resumen))
+            parts.append('funciones actualizadas ({})'.format(len(features)))
+
         return {
             'status': True,
             'statusCode': 200,
-            'description': f'Envíos reales {estado} para el cliente.',
-            'data': {'customerId': customer_id, 'realSendEnabled': real_send_enabled}
+            'description': 'Cliente actualizado: ' + (' y '.join(parts) if parts else 'sin cambios') + '.',
+            'data': {
+                'customerId': customer_id,
+                'realSendEnabled': real_send_enabled if real_send_enabled is not None
+                                    else bool(old.get('realSendEnabled', True)),
+                'featureFlags': merged_flags,
+            }
         }
     except Exception as e:
         print('Error actualizando el cliente: {}'.format(e))

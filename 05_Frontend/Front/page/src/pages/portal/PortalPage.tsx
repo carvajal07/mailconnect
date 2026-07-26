@@ -9,6 +9,7 @@ import {
   Menu,
   MenuItem,
   Avatar,
+  Alert,
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
@@ -37,6 +38,7 @@ import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
 import { authService, clearSession, broadcastLogout, getUser, getTenantRole } from '../../services/authService';
 import { canAccessTab } from '../../config/portalAccess';
+import { tabEnabled } from '../../config/features';
 import { PortalDataProvider } from '../../context/PortalDataContext';
 
 export const PortalPage = () => {
@@ -63,6 +65,15 @@ export const PortalPage = () => {
   const renderSection = () => {
     // Guardia RBAC: si el rol no puede ver el tab activo, cae al tab por defecto.
     if (!canAccessTab(role, activeSection)) return <HtmlBuilderSection />;
+    // Guardia de FUNCIÓN: si el admin apagó este tab para el cliente, aviso claro
+    // (el tab ya no aparece en el sidebar, pero la sección activa podría apuntar ahí).
+    if (!tabEnabled(user?.featureFlags, activeSection)) {
+      return (
+        <Alert severity="info" sx={{ m: 1 }}>
+          Esta función no está habilitada para tu cuenta. Si la necesitas, contáctanos.
+        </Alert>
+      );
+    }
     switch (activeSection) {
       case 'html':
         return <HtmlBuilderSection />;

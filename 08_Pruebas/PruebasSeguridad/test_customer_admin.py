@@ -113,6 +113,72 @@ def test_update_sin_datos_400(cust):
     assert upd.lambda_handler(_admin({'customerId': 'CU1'}), None)['statusCode'] == 400
 
 
+def _customer(cid):
+    return boto3.resource('dynamodb', region_name='us-east-1').Table('customer').get_item(
+        Key={'customerId': cid})['Item']
+
+
+def test_update_setea_funciones(cust):
+    # El admin apaga dos funciones del cliente → se guardan en featureFlags.
+    _, upd = cust
+    resp = upd.lambda_handler(_admin({'customerId': 'CU1',
+                                      'features': {'tab:estudio': False, 'func:json_import': False}}), None)
+    assert resp['statusCode'] == 200
+    assert resp['data']['featureFlags']['tab:estudio'] is False
+    item = _customer('CU1')
+    assert item['featureFlags']['tab:estudio'] is False
+    assert item['featureFlags']['func:json_import'] is False
+    # realSendEnabled no se tocó (sigue habilitado).
+    assert item['realSendEnabled'] is True
+
+
+def test_update_funciones_merge_no_pisa_otras(cust):
+    # Dos ediciones sucesivas: la 2ª no borra la bandera de la 1ª (merge por clave).
+    _, upd = cust
+    upd.lambda_handler(_admin({'customerId': 'CU1', 'features': {'tab:estudio': False}}), None)
+    upd.lambda_handler(_admin({'customerId': 'CU1', 'features': {'tab:disenador': False}}), None)
+    flags = _customer('CU1')['featureFlags']
+    assert flags['tab:estudio'] is False
+    assert flags['tab:disenador'] is False
+    # Reencender una función (merge con True).
+    upd.lambda_handler(_admin({'customerId': 'CU1', 'features': {'tab:estudio': True}}), None)
+    assert _customer('CU1')['featureFlags']['tab:estudio'] is True
+
+
+def test_update_funciones_acepta_string(cust):
+    # Valores como string ('false') desde el mapping/proxy se normalizan a bool.
+    _, upd = cust
+    upd.lambda_handler(_admin({'customerId': 'CU2', 'features': {'tab:sms': 'false'}}), None)
+    assert _customer('CU2')['featureFlags']['tab:sms'] is False
+
+
+def test_update_realsend_y_funciones_juntos(cust):
+    _, upd = cust
+    resp = upd.lambda_handler(_admin({'customerId': 'CU1', 'realSendEnabled': False,
+                                      'features': {'tab:estudio': False}}), None)
+    assert resp['statusCode'] == 200
+    item = _customer('CU1')
+    assert item['realSendEnabled'] is False
+    assert item['featureFlags']['tab:estudio'] is False
+
+
+def test_update_funciones_cliente_inexistente_404(cust):
+    _, upd = cust
+    assert upd.lambda_handler(_admin({'customerId': 'NOPE', 'features': {'tab:sms': False}}),
+                              None)['statusCode'] == 404
+
+
+def test_list_incluye_feature_flags(cust):
+    lst, upd = cust
+    upd.lambda_handler(_admin({'customerId': 'CU1', 'features': {'tab:estudio': False}}), None)
+    resp = lst.lambda_handler(_admin({}), None)
+    beta = next(c for c in resp['data']['customers'] if c['company'] == 'Beta')
+    assert beta['featureFlags']['tab:estudio'] is False
+    # El cliente sin banderas devuelve un map vacío (todo habilitado por defecto).
+    alfa = next(c for c in resp['data']['customers'] if c['company'] == 'Alfa')
+    assert alfa['featureFlags'] == {}
+
+
 # --- Ficha de cliente (Customer/Detail) + cambio de rol (User/SetRole) --------------
 
 def _pk_table(name, pk):
