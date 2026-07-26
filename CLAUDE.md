@@ -378,6 +378,25 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   añade al rol ACTUAL de la función, sin esperar a que el rol se recree) — así
   `Api_V1_Assistant_Ask` y `Api_V1_Assistant_Copilot` (las dos únicas que usan Bedrock) reciben
   el permiso en el próximo push aunque su rol ya exista.
+- **Bloqueante DISTINTO (no es IAM): medio de pago de AWS Marketplace (ago 2026).** Con el IAM
+  ya correcto, Bedrock puede seguir rechazando la invocación con `AccessDeniedException:
+  INVALID_PAYMENT_INSTRUMENT — A valid payment instrument must be provided... Your AWS
+  Marketplace subscription for this model cannot be completed`. Los modelos Anthropic en
+  Bedrock se activan como una suscripción de **AWS Marketplace** (el "Model access" de la
+  consola de Bedrock la crea por debajo) y esa suscripción exige que la **cuenta de AWS**
+  (no la lambda, no el IAM) tenga un **método de pago válido** en Billing. No es un `[J]` de
+  código/IAM — lo resuelve quien administra la cuenta de AWS (facturación), no algo
+  desplegable desde este repo:
+  1. **Billing and Cost Management → Payment preferences**: agregar/verificar una tarjeta
+     válida (si la cuenta es de una organización con facturación consolidada, el método de
+     pago vive en la cuenta **pagadora**, no necesariamente en la cuenta donde corren las
+     lambdas).
+  2. **Amazon Bedrock → Model access**: confirmar que el acceso al modelo (Claude Haiku/
+     Sonnet/Opus) siga en estado "Access granted" (si quedó en error, reintentar la
+     solicitud tras arreglar el pago).
+  3. Esperar los ~2 minutos que indica el propio mensaje de error antes de reintentar.
+  Arregla esto UNA vez a nivel de cuenta y desbloquea **ambas** lambdas de Bedrock a la vez
+  (no hay nada que tocar por lambda).
 
 ### Rol del Asistente IA (ago 2026)
 > Es un endpoint **público, sin sesión** (cualquiera en internet le escribe) y **sin tools**:
