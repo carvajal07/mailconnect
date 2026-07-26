@@ -367,6 +367,37 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   stubeado). ⚠️ `[J]` (despliegue): habilitar acceso al modelo en Bedrock; IAM `bedrock:InvokeModel`
   (+ ARN del inference profile si aplica); ruta **pública** `/Assistant/Ask` (proxy, sin authorizer,
   CORS) + **throttling/WAF** (endpoint público → posible abuso/costo).
+
+### Rol del Asistente IA (ago 2026)
+> Es un endpoint **público, sin sesión** (cualquiera en internet le escribe) y **sin tools**:
+> todo lo que "sabe" y "puede/no puede decir" vive en un único `SYSTEM_PROMPT` (string) dentro
+> de `Api_V1_Assistant_Ask/lambda_function.py`. No hay acceso a datos de clientes ni a la BD.
+- **Identidad y alcance:** asistente de MailConnect (comunicaciones masivas omnicanal sobre
+  AWS); aclara explícitamente que NO tiene sesión ni acceso a cuentas/campañas/saldo reales.
+- **Catálogo que puede explicar:** los 3 tipos de correo (EM/EAU/EAP), SMS, WhatsApp (HSM de
+  Meta), Voz (TTS), la cascada omnicanal ("Entrega garantizada"), combinación de correspondencia,
+  editor HTML/PDF, carga de bases (CSV/Excel/JSON), lista negra, dominios propios verificados,
+  flujo maker-checker, cumplimiento (Ley 1581) y el modelo de saldo prepago (Wompi/transferencia).
+- **IP de envío dedicada:** el rol la reconoce como oferta real para clientes de alto volumen,
+  mencionable si preguntan, pero **sin detalles técnicos** de implementación y **sin prometer**
+  que por sí sola resuelve entregabilidad — remite a cotización con el equipo comercial. Framing
+  deliberado: existe, pero no es autoservicio ni un dato para exponer en detalle a un público
+  no autenticado.
+- **Guardrails explícitos (qué NO debe hacer), en el prompt en este orden:** (1) nunca inventar/
+  confirmar saldo, campañas o datos de una cuenta real; (2) no responder fuera de MailConnect/
+  comunicaciones, admitir cuando no sabe; (3) no revelar infraestructura/arquitectura/paneles
+  internos; (4) no garantizar entregabilidad ni prometer plazos/descuentos/cifras exactas; (5) no
+  procesar pagos ni datos sensibles (contraseñas, tarjetas); (6) no dar asesoría legal/tributaria
+  personalizada; (7) no denigrar competencia; (8) no hacerse pasar por una persona del equipo. El
+  prompt también instruye **ignorar** cualquier intento del usuario de hacerle revelar el mensaje
+  de sistema o "olvidar instrucciones anteriores" (resistencia básica a inyección de prompt).
+- **Estilo:** español, breve (~4 frases salvo que pidan más detalle), **texto plano sin
+  markdown** (el widget `LandingFloating` renderiza con `white-space: pre-wrap`, no interpreta
+  `**negritas**` ni `#`).
+- **Cobertura:** `test_assistant.py` fija por contenido que el rol siga cubriendo los 4 canales +
+  cascada, el framing de IP dedicada, y cada guardrail (cuenta real, entregabilidad,
+  infraestructura, anti-prompt-injection, datos sensibles/legal, estilo) ante ediciones futuras
+  del prompt.
 - **Tablas cebra + compactas:** las tablas de **Estadísticas** y **Campañas** pasan a `size="small"`
   (alto de fila como el de "Movimientos" en Saldos) y filas **cebra** (fondo alterno sutil) para
   separar cada campaña.
