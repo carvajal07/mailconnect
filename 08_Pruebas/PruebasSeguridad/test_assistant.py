@@ -99,3 +99,57 @@ def test_body_como_dict_directo(mod):
     resp = mod.lambda_handler({'question': 'hola'}, None)
     assert resp['statusCode'] == 200
     assert json.loads(resp['body'])['answer'] == 'ok'
+
+
+# ── Rol del asistente (SYSTEM_PROMPT): cobertura de contenido y guardrails ────
+# El "rol" completo vive en un único string (no hay tools ni acceso a datos reales).
+# Estas pruebas fijan que el catálogo de canales/funciones y los guardrails de qué
+# SÍ/NO puede decir sigan presentes ante cualquier edición futura del prompt.
+
+def test_prompt_cubre_los_4_canales_y_cascada(mod):
+    p = mod.SYSTEM_PROMPT
+    for kw in ('EM ', 'EAU', 'EAP', 'SMS', 'WhatsApp', 'Voz', 'cascada'):
+        assert kw in p, f'falta "{kw}" en el rol del asistente'
+
+
+def test_prompt_ofrece_ip_dedicada_sin_detalle_tecnico(mod):
+    p = mod.SYSTEM_PROMPT
+    assert 'IP' in p and 'dedicada' in p
+    # Se ofrece como opción de negocio (alto volumen, coordinada con el equipo)...
+    assert 'volumen' in p.lower()
+    # ...pero el guardrail de infraestructura sigue prohibiendo detalles técnicos.
+    assert 'detalles técnicos' in p or 'infraestructura' in p
+
+
+def test_prompt_prohibe_datos_de_cuenta_reales(mod):
+    p = mod.SYSTEM_PROMPT
+    assert 'NUNCA inventes ni confirmes el saldo' in p
+
+
+def test_prompt_prohibe_garantias_de_entregabilidad(mod):
+    p = mod.SYSTEM_PROMPT
+    assert 'No garantices entregabilidad' in p
+
+
+def test_prompt_prohibe_revelar_infraestructura_interna(mod):
+    p = mod.SYSTEM_PROMPT
+    assert 'infraestructura' in p.lower()
+    assert 'paneles internos' in p
+
+
+def test_prompt_resistente_a_ignorar_instrucciones(mod):
+    p = mod.SYSTEM_PROMPT
+    assert 'ignorar instrucciones anteriores' in p
+    assert 'mensaje de sistema' in p
+
+
+def test_prompt_no_asesoria_legal_ni_datos_sensibles(mod):
+    p = mod.SYSTEM_PROMPT
+    assert 'contraseñas' in p
+    assert 'asesoría legal' in p
+
+
+def test_prompt_estilo_texto_plano_y_espanol(mod):
+    p = mod.SYSTEM_PROMPT
+    assert 'español' in p
+    assert 'markdown' in p

@@ -24,7 +24,7 @@ name: Desplegar Lambdas
 #       S3        → AmazonS3FullAccess
 #       SNS       → AmazonSNSFullAccess
 #       Scheduler → AmazonEventBridgeSchedulerFullAccess (EventBridge Scheduler)
-#       Bedrock   → AmazonBedrockFullAccess (asistente IA)
+#       Bedrock   → AmazonBedrockFullAccess + inline BedrockMarketplace (asistente IA; ver abajo)
 #       EUM       → inline sms-voice:* (End User Messaging: SMS y Voz)
 #       Social    → inline social-messaging:* (End User Messaging Social: WhatsApp)
 #       Invoke    → inline lambda:InvokeFunction (invocar otras lambdas)
@@ -39,6 +39,16 @@ name: Desplegar Lambdas
 #   el trigger ("execution role does not have permissions to call ReceiveMessage"). Solo se
 #   reconcilian roles de convención (Lambda_*) o ausentes; un rol personalizado NO se pisa
 #   (se avisa) — usa role-map.json para mapear un folder a un rol propio.
+#   BEDROCK + AWS MARKETPLACE: invocar algunos modelos de Bedrock (p. ej. Claude) exige,
+#   además de `bedrock:InvokeModel`, los permisos `aws-marketplace:Subscribe/Unsubscribe/
+#   ViewSubscriptions` (AWS valida la suscripción al modelo vía Marketplace la primera vez que
+#   se invoca) — error típico sin esto: "AccessDeniedException ... marketplace" al llamar
+#   Converse/InvokeModel. `AmazonBedrockFullAccess` NO los incluye, así que se agrega aparte
+#   como política INLINE `BedrockMarketplace` en cualquier rol con el token `Bedrock`. Se
+#   reconcilia en CADA despliegue (no solo al crear el rol) sobre el rol ACTUAL de la función
+#   —igual que la reconciliación de SQS de arriba— para que las lambdas de Bedrock ya
+#   desplegadas (`Api_V1_Assistant_Ask`, `Api_V1_Assistant_Copilot`) reciban el permiso sin
+#   tener que recrear su rol.
 #
 # ── Triggers y colas SQS (04_Backend/lambdas/trigger-map.json) ──────────────
 # En CADA despliegue de una carpeta, el workflow asegura (idempotente) los
@@ -238,6 +248,49 @@ jobs:
               Invoke) echo "lambda:InvokeFunction" ;;
               *)      echo "" ;;
             esac
+          }
+
+          uses_bedrock() {  # $1 = carpeta fuente → true si el código invoca Bedrock
+            grep -rhoaE "boto3\.(client|resource)\(\s*[\"'](bedrock-runtime|bedrock)[\"']" \
+              "$1" --include='*.py' 2>/dev/null | grep -q .
+          }
+
+          ensure_bedrock_marketplace() {  # $1 = rol → añade (idempotente) el inline extra que
+            # exige Bedrock además de bedrock:InvokeModel (ver nota "BEDROCK + AWS MARKETPLACE"
+            # en la cabecera del archivo). put-role-policy es PUT: repetirlo no duplica nada.
+            local role="$1"
+            cat > /tmp/bedrock-marketplace.json <<'POLICY'
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "aws-marketplace:Subscribe",
+                  "aws-marketplace:Unsubscribe",
+                  "aws-marketplace:ViewSubscriptions"
+                ],
+                "Resource": "*"
+              }
+            ]
+          }
+          POLICY
+            aws iam put-role-policy --role-name "$role" --policy-name "BedrockMarketplace" \
+              --policy-document file:///tmp/bedrock-marketplace.json
+            echo "      + inline BedrockMarketplace (aws-marketplace:Subscribe/Unsubscribe/ViewSubscriptions) en $role"
+          }
+
+          reconcile_bedrock() {  # $1=folder $2=fn → asegura BedrockMarketplace en el rol ACTUAL
+            # de la función (no solo al crear el rol): así una lambda de Bedrock ya desplegada
+            # recibe el permiso en el próximo despliegue, sin tener que recrear su rol.
+            local folder="$1" fn="$2" src cur_role cur_name
+            src="$DIR/$folder"
+            uses_bedrock "$src" || return 0
+            cur_role=$(aws lambda get-function-configuration --function-name "$fn" --query Role --output text 2>/dev/null || true)
+            cur_name="${cur_role##*/}"
+            [ -n "$cur_name" ] || return 0
+            echo "   🔑 $fn invoca Bedrock; verificando el inline BedrockMarketplace en su rol ($cur_name)"
+            ensure_bedrock_marketplace "$cur_name"
           }
 
           detect_role() {  # deduce el rol de los boto3.client|resource() del código
@@ -460,6 +513,9 @@ jobs:
               if [ -n "$arn" ]; then
                 aws iam attach-role-policy --role-name "$role" --policy-arn "$arn"
                 echo "      + ${arn##*/}"
+                # Bedrock exige ADEMÁS el inline de marketplace (ver nota en la cabecera del
+                # archivo); AmazonBedrockFullAccess no lo incluye.
+                [ "$t" = "Bedrock" ] && ensure_bedrock_marketplace "$role"
               elif [ -n "$actions" ]; then
                 printf '{ "Version": "2012-10-17", "Statement": [ { "Effect": "Allow", "Action": [ "%s" ], "Resource": "*" } ] }' "$actions" > /tmp/inline.json
                 aws iam put-role-policy --role-name "$role" --policy-name "${t}Full" \
@@ -603,6 +659,9 @@ jobs:
               # trigger SQS exige que el rol de EJECUCIÓN pueda ReceiveMessage; una función vieja
               # puede tener un rol sin el token _SQS → sin esto, el event source mapping falla.
               reconcile_role "$folder" "$fn"
+              # Si la lambda invoca Bedrock, asegura el inline BedrockMarketplace en su rol
+              # ACTUAL (independiente de si ese rol es nuevo o ya existía).
+              reconcile_bedrock "$folder" "$fn"
               ensure_triggers "$folder" "$fn"
               echo "| $folder | $fn | actualizada | $runtime | $(role_for "$folder" "$src") | $TRIGGER_NOTE |" >> "$SUMMARY"
             else
@@ -645,6 +704,10 @@ jobs:
               fi
               aws lambda wait function-active-v2 --function-name "$fn"
               echo "✅  $fn CREADA ($LAMBDA_RUNTIME, rol $role)."
+              # Red de seguridad: si role-map.json mapeó esta carpeta a un rol EXISTENTE que no
+              # incluye el token Bedrock en su nombre, ensure_role no le añadió el inline; se
+              # verifica aquí también.
+              reconcile_bedrock "$folder" "$fn"
               ensure_triggers "$folder" "$fn"
               echo "   ⚠️  Recuerda configurar aparte: variables de entorno y layers (ver DESPLIEGUE.md)."
               echo "| $folder | $fn | 🆕 creada | $LAMBDA_RUNTIME | $role | $TRIGGER_NOTE |" >> "$SUMMARY"
