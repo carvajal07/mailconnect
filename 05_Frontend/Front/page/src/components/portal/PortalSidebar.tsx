@@ -34,6 +34,7 @@ import DnsIcon from '@mui/icons-material/Dns';
 import type { ReactNode } from 'react';
 import { getUser, getTenantRole } from '../../services/authService';
 import { canAccessTab } from '../../config/portalAccess';
+import { tabEnabled } from '../../config/features';
 
 export interface PortalTab {
   id: string;
@@ -78,9 +79,12 @@ interface PortalSidebarProps {
 
 export const PortalSidebar = ({ activeSection, onSectionChange, collapsed }: PortalSidebarProps) => {
   const width = collapsed ? DRAWER_WIDTH_MINI : DRAWER_WIDTH_FULL;
-  // RBAC: solo se muestran los tabs permitidos para el sub-rol de la sesión.
-  const role = getTenantRole(getUser());
-  const tabs = PORTAL_TABS.filter((t) => canAccessTab(role, t.id));
+  // Se muestran los tabs permitidos por el sub-rol (RBAC) Y habilitados para el
+  // cliente (feature flags que el admin puede apagar por cliente).
+  const user = getUser();
+  const role = getTenantRole(user);
+  const flags = user?.featureFlags;
+  const tabs = PORTAL_TABS.filter((t) => canAccessTab(role, t.id) && tabEnabled(flags, t.id));
 
   return (
     <Drawer

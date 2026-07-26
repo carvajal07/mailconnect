@@ -258,9 +258,13 @@ def select_client(customerId):
     # ítem (login fallaba intermitentemente al crecer la tabla).
     item = table_customer.get_item(
         Key={'customerId': customerId},
-        ProjectionExpression='company, companyTin, realSendEnabled').get('Item') or {}
+        ProjectionExpression='company, companyTin, realSendEnabled, featureFlags').get('Item') or {}
     # Si el cliente es antiguo y no tiene el campo, se asume habilitado (fail-open).
-    return item.get('company', ''), item.get('companyTin', ''), bool(item.get('realSendEnabled', True))
+    # featureFlags = banderas de funciones por cliente ({key: bool}); ausente = todo habilitado.
+    flags = item.get('featureFlags') or {}
+    flags = {str(k): bool(v) for k, v in flags.items()} if isinstance(flags, dict) else {}
+    return (item.get('company', ''), item.get('companyTin', ''),
+            bool(item.get('realSendEnabled', True)), flags)
 
 def select_name(userDataId):
     # userDataId es la PK de `userData` → GetItem O(1) (antes Scan+filter).
@@ -294,6 +298,7 @@ def lambda_handler(event, context):
     token = ""
     userId = ""
     realSendEnabled = True
+    feature_flags = {}
     role = "client"
     tenantRole = "owner"
     try:
@@ -379,7 +384,7 @@ def lambda_handler(event, context):
                         role = item_user.get('role', 'client') or 'client'
                         # Sub-rol de empresa (default 'owner' para cuentas antiguas).
                         tenantRole = item_user.get('tenantRole', 'owner') or 'owner'
-                        customer, companyTin, realSendEnabled = select_client(customerId)
+                        customer, companyTin, realSendEnabled, feature_flags = select_client(customerId)
                         userDataId = item_user['userDataId']
                         name = select_name(userDataId)
                         # La sesión se registra ANTES de emitir el token y es OBLIGATORIA:
@@ -464,7 +469,8 @@ def lambda_handler(event, context):
                 'name': name,
                 'realSendEnabled': realSendEnabled,
                 'role': role,
-                'tenantRole': tenantRole
+                'tenantRole': tenantRole,
+                'featureFlags': feature_flags
             }
         }
 

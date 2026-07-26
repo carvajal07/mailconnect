@@ -27,6 +27,8 @@ export interface CustomerSummary {
   company: string;
   companyTin?: string | number;
   realSendEnabled: boolean;
+  /** Banderas de funciones del cliente ({clave: bool}); ausente/true = habilitada. */
+  featureFlags?: Record<string, boolean>;
   date?: string;
 }
 
@@ -63,6 +65,17 @@ export const customerService = {
     realSendEnabled: boolean,
   ): Promise<ApiResponse<{ customerId?: string; realSendEnabled?: boolean }>> =>
     apiPost(CUSTOMER_ENDPOINTS.UPDATE, { customerId, realSendEnabled }),
+
+  /**
+   * Enciende/apaga funciones (tabs y funciones) de un cliente (admin). `features` es
+   * un map parcial {clave: bool} (se mergea con las banderas ya guardadas). Devuelve
+   * el estado efectivo de todas las banderas tras el merge.
+   */
+  setFeatures: (
+    customerId: string,
+    features: Record<string, boolean>,
+  ): Promise<ApiResponse<{ customerId?: string; featureFlags?: Record<string, boolean> }>> =>
+    apiPost(CUSTOMER_ENDPOINTS.UPDATE, { customerId, features }),
 
   /** Ficha de un cliente: sus datos + los usuarios de la empresa (admin). */
   detail: (customerId: string): Promise<ApiResponse<CustomerDetail>> =>

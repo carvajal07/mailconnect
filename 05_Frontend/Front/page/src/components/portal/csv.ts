@@ -314,17 +314,21 @@ export async function readSpreadsheet(file: File): Promise<string[][]> {
 // ─────────────────────────── Soporte de JSON (.json) ───────────────────────────
 // Igual que el Excel: el JSON se convierte a CSV EN EL NAVEGADOR y se sube a S3 como
 // CSV (el backend no cambia). Formatos aceptados: un ARRAY de objetos `[{...}, ...]`
-// (cada objeto = un destinatario) o un objeto envoltorio `{ data|rows|records|items:
-// [{...}] }`. Los valores ANIDADOS (arrays u objetos — p. ej. la lista de movimientos
-// de un extracto) se guardan como JSON DENTRO de la celda; el motor de PDF del Estudio
-// los parsea para alimentar tablas con `repeatBy` (una fila por ítem, y si desbordan
-// el alto de la tabla el PDF pagina a una hoja nueva).
+// (cada objeto = un destinatario) o un objeto envoltorio con la lista bajo una llave
+// conocida `{ "Documents"|"data"|"rows"|"records"|"items": [{...}] }` (SIN importar
+// mayúsculas) o, en su defecto, la PRIMERA propiedad de nivel superior que sea un array.
+// Se toleran comas finales (`,]`/`,}`) comunes en exportaciones. Los valores ANIDADOS
+// (arrays u objetos — p. ej. la lista de movimientos de un extracto) se guardan como
+// JSON DENTRO de la celda; el motor de PDF del Estudio los parsea para alimentar tablas
+// con `repeatBy` (una fila por ítem, y si desbordan el alto de la tabla pagina a hoja nueva).
 
 /** ¿El archivo es JSON, por extensión o tipo MIME? */
 export const isJsonFile = (file: File): boolean =>
   /\.json$/i.test(file.name) || /\bjson\b/i.test(file.type);
 
-const WRAPPER_KEYS = ['data', 'rows', 'records', 'items', 'destinatarios', 'registros'] as const;
+// Llaves envoltorio conocidas (comparación SIN mayúsculas): la lista de destinatarios
+// puede venir bajo cualquiera de estas — p. ej. `{ "Documents": [...] }`.
+const WRAPPER_KEYS = ['documents', 'data', 'rows', 'records', 'items', 'destinatarios', 'registros'] as const;
 
 /** Un valor de celda del JSON → texto para el CSV. Escalares como texto plano;
  *  arrays/objetos como JSON embebido (los parsea el motor / la vista previa). */
@@ -334,30 +338,75 @@ function jsonCellToString(v: unknown): string {
   return cellToString(v);
 }
 
+/** Parsea JSON tolerando comas finales antes de `]`/`}` (comunes en exportaciones).
+ *  Primero intenta el parse ESTRICTO; solo si falla limpia las comas colgantes (sin
+ *  tocar las que van dentro de cadenas). Lanza Error si sigue sin ser JSON válido. */
+function parseJsonLoose(text: string): unknown {
+  const clean = text.replace(/^﻿/, '');
+  try {
+    return JSON.parse(clean);
+  } catch {
+    // Quita comas finales SOLO fuera de cadenas (respeta comillas y escapes).
+    let out = '';
+    let inStr = false;
+    for (let i = 0; i < clean.length; i++) {
+      const c = clean[i];
+      if (inStr) {
+        out += c;
+        if (c === '\\') { out += clean[++i] ?? ''; continue; }
+        if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') { inStr = true; out += c; continue; }
+      if (c === ',') {
+        // ¿es una coma colgante? (solo espacios hasta el próximo ] o })
+        let j = i + 1;
+        while (j < clean.length && /\s/.test(clean[j])) j++;
+        if (clean[j] === ']' || clean[j] === '}') continue; // se omite
+      }
+      out += c;
+    }
+    return JSON.parse(out);
+  }
+}
+
 /**
  * Convierte el texto de un archivo .json en filas CSV (encabezado + datos).
- * Reordena las columnas OBLIGATORIAS a las posiciones que lee el backend
- * (1 Identificación · 2 contacto · 3 Nombre) buscándolas por sinónimos; el resto
- * de campos conserva su orden de aparición. Lanza Error (mensaje en español) si
- * el JSON no es un array de objetos.
+ * Acepta un array de objetos `[{...}]`, o un objeto envoltorio con la lista bajo una
+ * llave conocida (`Documents`/`data`/`rows`/`records`/`items`/… — sin importar
+ * mayúsculas) o, en su defecto, la PRIMERA propiedad que sea un array. Reordena las
+ * columnas OBLIGATORIAS a las posiciones que lee el backend (1 Identificación · 2
+ * contacto · 3 Nombre) por sinónimos; el resto conserva su orden. Lanza Error (mensaje
+ * en español) si el JSON no es un array de objetos.
  */
 export function jsonToRows(text: string, contact: ContactType = 'email'): string[][] {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text.replace(/^﻿/, ''));
+    parsed = parseJsonLoose(text);
   } catch {
     throw new Error('El archivo no es un JSON válido.');
   }
 
   let records: unknown[] | null = Array.isArray(parsed) ? parsed : null;
   if (!records && parsed && typeof parsed === 'object') {
+    const obj = parsed as Record<string, unknown>;
+    // Índice de llaves en minúsculas → nombre real, para el match case-insensitive.
+    const byLower = new Map<string, string>();
+    for (const k of Object.keys(obj)) byLower.set(k.toLowerCase(), k);
+    // 1) Llaves envoltorio conocidas (sin mayúsculas).
     for (const key of WRAPPER_KEYS) {
-      const v = (parsed as Record<string, unknown>)[key];
-      if (Array.isArray(v)) { records = v; break; }
+      const actual = byLower.get(key);
+      if (actual && Array.isArray(obj[actual])) { records = obj[actual] as unknown[]; break; }
+    }
+    // 2) Fallback: la primera propiedad de nivel superior cuyo valor sea un array.
+    if (!records) {
+      for (const k of Object.keys(obj)) {
+        if (Array.isArray(obj[k])) { records = obj[k] as unknown[]; break; }
+      }
     }
   }
   if (!records || records.length === 0) {
-    throw new Error('El JSON debe ser un array de objetos (o traer la lista en "data"/"rows"/"records"/"items").');
+    throw new Error('El JSON debe ser un array de objetos (o traer la lista en "Documents"/"data"/"rows"/"records"/"items").');
   }
   if (!records.every((r) => r && typeof r === 'object' && !Array.isArray(r))) {
     throw new Error('Cada registro del JSON debe ser un objeto { campo: valor }.');

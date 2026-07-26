@@ -1,32 +1,30 @@
 '''
-Lambda ADMIN para listar los clientes (tabla `customer`).
+Lambda ADMIN para listar la configuración de IP de envío dedicada por cliente
+(tabla `sendingConfig`, PK `customerId`).
 
-Ruta: POST /Customer/List  (integración no-proxy, envelope estándar)
+Ruta: POST /SendingConfig/List  (integración no-proxy, envelope estándar)
 Request:  {}  (sin filtros; es un endpoint administrativo)
-Respuesta: 200 { data: { customers: [{ customerId, company, companyTin,
-                                        realSendEnabled, date }], count } }
+Respuesta: 200 { data: { configs: [{ customerId, configurationSet, poolName, ips[],
+                                      enabled, notes, updatedAt }], count } }
 
-⚠️ Este endpoint devuelve TODOS los clientes (no está acotado por tenant), por eso
-debe quedar restringido a un rol administrador en el despliegue (Authorizer de admin
-o ruta separada). Pendiente [J]/seguridad: role-based access.
+Modelo de IP dedicada en SES: un cliente que NO está en esta tabla (o está con
+enabled=false) envía por el pool GENERAL (config set por defecto, donde envían todos).
+Un cliente con enabled=true envía por SU `configurationSet` (que en SES está cableado a
+su pool de IP dedicada). El ruteo real lo aplica Prepare-batch (resuelve el config set)
+y las lambdas Send-EM/EAU/EAP (lo pasan a SES como ConfigurationSetName).
+
+⚠️ Endpoint administrativo: restringido a rol admin (segunda barrera JWT).
 '''
 import json
 import boto3
 from decimal import Decimal
+from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource('dynamodb')
-table_customer = dynamodb.Table('customer')
+table_config = dynamodb.Table('sendingConfig')
 
 
 # ── Gate admin con SEGUNDA BARRERA (firma del JWT) ───────────────────────────
-# El context del Authorizer puede falsificarse si una ruta no-proxy queda sin
-# mapping template (passthrough del body directo a la lambda). El JWT no: viene
-# firmado (HS256) con SECRET_KEY. Con SECRET_KEY configurada, este gate EXIGE un
-# token valido con claim role=admin (llega por el header Authorization en proxy,
-# o por el campo `authToken` que inyecta el mapping template en no-proxy). Sin
-# SECRET_KEY configurada se usa solo el context (compatibilidad de rollout);
-# configurarla en esta lambda es requisito de despliegue (ver PENDIENTES.md).
-# Verificacion manual con stdlib (hmac/base64): sin dependencia del layer PyJWT.
 import base64 as _b64
 import hashlib as _hashlib
 import hmac as _hmac
@@ -38,7 +36,6 @@ _JWT_SECRET = _os.environ.get('SECRET_KEY', '')
 
 
 def _jwt_claims(token):
-    """Valida firma HS256 + exp del JWT con SECRET_KEY y devuelve sus claims (o None)."""
     try:
         header_b64, payload_b64, sig_b64 = str(token).split('.')
 
@@ -62,8 +59,6 @@ def _jwt_claims(token):
 
 
 def _bearer_token(event):
-    """Token de la peticion: header Authorization (proxy) o el campo `authToken`
-    que inyecta el mapping template no-proxy ($input.params('Authorization'))."""
     raw = ''
     if isinstance(event, dict):
         for k, v in (event.get('headers') or {}).items():
@@ -91,16 +86,13 @@ def _is_admin(event):
     claims = _jwt_claims(_bearer_token(event))
     return bool(claims) and str(claims.get('role', '')).lower() == 'admin'
 
+
 def _clean(item):
-    """Normaliza el item para JSON: Decimal → int, y realSendEnabled por defecto True."""
     out = {}
     for key, value in item.items():
         out[key] = int(value) if isinstance(value, Decimal) else value
-    # Clientes antiguos sin el campo se consideran habilitados (fail-open).
-    out['realSendEnabled'] = bool(item.get('realSendEnabled', True))
-    # Banderas de funciones por cliente ({key: bool}); ausente = todo habilitado.
-    flags = item.get('featureFlags') or {}
-    out['featureFlags'] = {str(k): bool(v) for k, v in flags.items()} if isinstance(flags, dict) else {}
+    out['enabled'] = bool(item.get('enabled', True))
+    out['ips'] = list(item.get('ips') or [])
     return out
 
 
@@ -110,36 +102,47 @@ def lambda_handler(event, context):
             'status': False,
             'statusCode': 403,
             'description': 'Acceso restringido a administradores.',
-            'data': {'customers': [], 'count': 0}
+            'data': {'configs': [], 'count': 0}
         }
     try:
         items = []
-        scan_kwargs = {
-            'ProjectionExpression': 'customerId, company, companyTin, realSendEnabled, featureFlags, #d',
-            'ExpressionAttributeNames': {'#d': 'date'},
-        }
+        scan_kwargs = {}
         while True:
-            response = table_customer.scan(**scan_kwargs)
+            response = table_config.scan(**scan_kwargs)
             items.extend(_clean(i) for i in response.get('Items', []))
             last_key = response.get('LastEvaluatedKey')
             if not last_key:
                 break
             scan_kwargs['ExclusiveStartKey'] = last_key
 
-        # Orden alfabético por empresa para la tabla del admin.
-        items.sort(key=lambda x: str(x.get('company', '')).lower())
-
+        items.sort(key=lambda x: str(x.get('customerId', '')))
         return {
             'status': True,
             'statusCode': 200,
-            'description': 'Clientes registrados',
-            'data': {'customers': items, 'count': len(items)}
+            'description': 'Configuración de IP de envío por cliente',
+            'data': {'configs': items, 'count': len(items)}
         }
-    except Exception as e:
-        print('Error listando clientes: {}'.format(e))
+    except ClientError as ce:
+        # La tabla puede no existir aún (primera vez) → lista vacía, no es error.
+        if ce.response.get('Error', {}).get('Code') == 'ResourceNotFoundException':
+            return {
+                'status': True,
+                'statusCode': 200,
+                'description': 'Sin configuraciones (la tabla no existe todavía)',
+                'data': {'configs': [], 'count': 0}
+            }
+        print('Error listando sendingConfig: {}'.format(ce))
         return {
             'status': False,
             'statusCode': 500,
-            'description': 'Error no controlado al listar los clientes',
-            'data': {'customers': [], 'count': 0}
+            'description': 'Error no controlado al listar la configuración de envío',
+            'data': {'configs': [], 'count': 0}
+        }
+    except Exception as e:
+        print('Error listando sendingConfig: {}'.format(e))
+        return {
+            'status': False,
+            'statusCode': 500,
+            'description': 'Error no controlado al listar la configuración de envío',
+            'data': {'configs': [], 'count': 0}
         }

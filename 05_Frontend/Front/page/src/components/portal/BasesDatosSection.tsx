@@ -46,6 +46,7 @@ import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
 import { analyzeCsv, DELIMITER_LABELS, requiredColumns, channelContactType, isSpreadsheetFile, readSpreadsheet, isJsonFile, jsonToRows, rowsToCsv, detectDelimiter, detectMultiRecord, type CsvAnalysis, type ContactType, type Delimiter } from './csv';
 import MultiRecordWizard, { type MultiRecordResult } from './MultiRecordWizard';
+import { featureEnabled, FEATURE_CSV_MULTIRECORD, FEATURE_JSON_IMPORT } from '../../config/features';
 import { formatDateTime } from '../../utils/datetime';
 
 interface BaseDatos {
@@ -120,6 +121,10 @@ export const BasesDatosSection = () => {
   const customer = getUser()?.customer ?? '';
   const customerId = getUser()?.customerId ?? '';
   const userId = getUser()?.userId ?? '';
+  // Funciones que el admin puede apagar por cliente (feature flags de la sesión).
+  const featureFlags = getUser()?.featureFlags;
+  const jsonImportEnabled = featureEnabled(featureFlags, FEATURE_JSON_IMPORT);
+  const csvMultiEnabled = featureEnabled(featureFlags, FEATURE_CSV_MULTIRECORD);
   const [file, setFile] = useState<File | null>(null);
   // Archivo que realmente se sube a S3: para CSV es el mismo; para Excel es el CSV convertido.
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -250,6 +255,11 @@ export const BasesDatosSection = () => {
     // el backend no cambia). Los campos anidados (arrays/objetos) quedan como JSON
     // DENTRO de la celda — alimentan tablas con repetición en el Estudio PDF.
     if (isJsonFile(f)) {
+      if (!jsonImportEnabled) {
+        notify('La importación de bases en JSON no está habilitada para tu cuenta.', 'warning');
+        setFile(null);
+        return;
+      }
       const reader = new FileReader();
       reader.onload = () => {
         try {
@@ -278,7 +288,8 @@ export const BasesDatosSection = () => {
       const text = String(reader.result ?? '');
       const d = detectDelimiter(text);
       setRawCsv({ text, delimiter: d, name: f.name, file: f });
-      if (detectMultiRecord(text, d)) {
+      // Solo se activa el mapeo multiregistro si la función está habilitada para el cliente.
+      if (csvMultiEnabled && detectMultiRecord(text, d)) {
         // El asistente (montado por multiMode) hace la detección/mapeo y emite el CSV.
         setMultiMode(true);
         return;
@@ -421,12 +432,15 @@ export const BasesDatosSection = () => {
       </Stack>
 
       <Alert severity="info" sx={{ mb: 2 }}>
-        Sube tus listas de destinatarios (<strong>CSV, Excel .xlsx o JSON</strong> — el Excel y
-        el JSON se convierten a CSV automáticamente; en el JSON, un campo con una LISTA —
-        p.&nbsp;ej. los movimientos de un extracto — se conserva y alimenta las tablas con
-        repetición del Estudio PDF). También se acepta el <strong>CSV multiregistro</strong> (sin
-        encabezado, con la columna 1 como tipo de registro): se detecta solo y se agrupan los
-        sub-registros por destinatario. Antes de subir, validamos el archivo en tu
+        Sube tus listas de destinatarios (<strong>CSV, Excel .xlsx{jsonImportEnabled ? ' o JSON' : ''}</strong>
+        {jsonImportEnabled
+          ? <> — el Excel y el JSON se convierten a CSV automáticamente; en el JSON, un campo con una
+              LISTA — p.&nbsp;ej. los movimientos de un extracto — se conserva y alimenta las tablas con
+              repetición del Estudio PDF)</>
+          : <> — el Excel se convierte a CSV automáticamente)</>}.
+        {csvMultiEnabled && <> También se acepta el <strong>CSV multiregistro</strong> (sin
+          encabezado, con la columna 1 como tipo de registro): se detecta solo y se agrupan los
+          sub-registros por destinatario.</>} Antes de subir, validamos el archivo en tu
         navegador y contamos: <strong>Válidos</strong> (contacto de la columna 2 con formato
         correcto y sin duplicar) e <strong>Inválidos</strong> (contacto vacío o con formato
         inválido para el canal: correo mal escrito, o celular que no es E.164). La subida va a S3
@@ -588,10 +602,12 @@ export const BasesDatosSection = () => {
             </Box>
 
             <Button variant="outlined" component="label" startIcon={<CloudUploadIcon />}>
-              {file ? `Archivo: ${file.name} (${formatBytes(file.size)})` : 'Seleccionar archivo CSV, Excel o JSON'}
+              {file ? `Archivo: ${file.name} (${formatBytes(file.size)})`
+                : `Seleccionar archivo CSV, Excel${jsonImportEnabled ? ' o JSON' : ''}`}
               <input
                 type="file"
-                accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.json,application/json"
+                accept={'.csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel'
+                  + (jsonImportEnabled ? ',.json,application/json' : '')}
                 hidden
                 onChange={(e) => handleFile(e.target.files?.[0] || null)}
               />
@@ -604,7 +620,7 @@ export const BasesDatosSection = () => {
               </Typography>
             )}
 
-            {rawCsv && (
+            {rawCsv && csvMultiEnabled && (
               <FormControlLabel
                 control={<Switch checked={multiMode} onChange={(e) => toggleMulti(e.target.checked)} />}
                 label={

@@ -37,6 +37,8 @@ export interface LoginData {
   role?: string;
   /** Sub-rol dentro de la empresa (RBAC): owner|approver|operator (default owner). */
   tenantRole?: string;
+  /** Banderas de funciones del cliente ({clave: bool}); ausente/true = habilitada. */
+  featureFlags?: Record<string, boolean>;
 }
 
 export interface RegisterPayload {
@@ -66,6 +68,9 @@ export interface SessionUser {
   role?: string;
   /** Sub-rol dentro de la empresa (RBAC): owner|approver|operator (default owner). */
   tenantRole?: string;
+  /** Banderas de funciones del cliente ({clave: bool}); ausente/true = habilitada.
+   *  El portal oculta/deshabilita tabs y funciones que el admin haya apagado. */
+  featureFlags?: Record<string, boolean>;
   email: string;
 }
 

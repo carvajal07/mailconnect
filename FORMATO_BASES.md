@@ -219,12 +219,21 @@ Identificacion;Correo;Nombre;ingresos;egresos
 ]
 ```
 
-**(b) Objeto envoltorio** — la lista bajo una de estas llaves (la primera que sea un
-array): `data`, `rows`, `records`, `items`, `destinatarios`, `registros`.
+**(b) Objeto envoltorio** — la lista bajo una llave conocida (**sin importar
+mayúsculas**): `Documents`, `data`, `rows`, `records`, `items`, `destinatarios`,
+`registros`; o, en su defecto, la **primera propiedad de nivel superior que sea un
+array**. Ejemplo:
+
+```json
+{ "Documents": [ { "IdUnico": "00000127850", "Canal_Datos": "MUPEINT" }, … ] }
+```
+
+Se toleran las **comas finales** (`,]` / `,}`) comunes en exportaciones.
 
 Errores (mensaje en el diálogo): no parsea → *"El archivo no es un JSON válido."* ·
-no es array ni envoltorio con array, o vacío → *"El JSON debe ser un array de objetos…"*
-· un elemento no es objeto → *"Cada registro del JSON debe ser un objeto { campo: valor }."*
+no es array ni envoltorio con array, o vacío → *"El JSON debe ser un array de objetos
+(o traer la lista en "Documents"/"data"/"rows"/"records"/"items")."* · un elemento no
+es objeto → *"Cada registro del JSON debe ser un objeto { campo: valor }."*
 
 ### 4.2 Columnas y obligatorias
 
