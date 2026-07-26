@@ -233,7 +233,17 @@ El front está terminado y el backend probado; solo falta la consola AWS
 1. [x] `[C]` ✅ **Listado global de plantillas SES (ago 2026)**: `Api_V1_Admin_Templates`
        (`ListTemplates` paginado, prefijo de cliente derivado del nombre) + tab
        Soporte → "Plantillas SES" con filtro y paginación.
-2. [ ] `[C]` **"Ver como cliente"** (impersonación auditada) para soporte.
+2. [x] `[C]` ✅ **"Ver como cliente" (impersonación auditada) (ago 2026, Bloque D)**:
+       `Api_V1_Admin_Impersonate` (`/Admin/Impersonate`, admin, ya en routes.json) emite un
+       token de sesión del tenant en SOLO LECTURA (`role=client`, `tenantRole=operator`,
+       `readonly=true`, `impersonatedBy`, exp 30 min, sesión revocable), auditado
+       `support.impersonate`. Enforcement en 3 capas: Authorizers reenvían `readonly`/
+       `impersonatedBy` (+ mapping template); Prepare-batch rechaza `readonly` (403, ni
+       muestras ni real); apiClient bloquea los endpoints de escritura + operator RBAC corta
+       aprobar/programar/enviar. Front: botón "Ver como cliente" en la ficha + chip de aviso
+       "solo lectura" + "Salir de la vista" (restaura la sesión del admin sin re-login). ⚠️
+       `[J]`: env `SECRET_KEY` + IAM `GetItem customer`/`PutItem session`/`PutItem adminAudit`;
+       redesplegar Authorizers + mapping template para que reenvíen los claims nuevos.
 3. [x] `[C]` ✅ **Acciones de soporte en la ficha (ago 2026)**: `Api_V1_Admin_User-support`
        (reenviar activación — solo inactivos, enlace nuevo 24 h; forzar reseteo — OTP
        hasheado compatible con Validate-otp; **cerrar sesiones** — desactiva `session`,

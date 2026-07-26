@@ -2003,6 +2003,15 @@ def lambda_handler(event, context):
         # accidente una campaña homónima de otro cliente. Fail-open de rollout: sin customerId
         # en el context (rutas aún sin el mapping template) se busca solo por nombre (legado).
         auth_ctx = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
+        # IMPERSONACIÓN de soporte (readonly): una sesión "ver como cliente" NUNCA envía
+        # (ni muestras ni real). Se rechaza aquí, antes de tocar la campaña/saldo. El front
+        # ya oculta el botón, pero esto es la defensa REAL (no es puenteable desde el cliente).
+        if str(auth_ctx.get('readonly', '')).lower() in ('true', '1'):
+            print('Sesión de solo lectura (impersonación); se bloquea el envío.')
+            return {'statusCode': 403, 'headers': CORS_HEADERS,
+                    'body': json.dumps({'status': False, 'status_code': 403,
+                        'description': 'Estás en una vista de soporte (solo lectura); '
+                                       'no se puede enviar desde aquí.'})}
         auth_customer_id = str(auth_ctx.get('customerId') or '').strip() or None
         response_campaign = select_campaign(campaign_name, auth_customer_id)
         print(response_campaign)

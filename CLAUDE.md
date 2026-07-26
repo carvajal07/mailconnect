@@ -26,6 +26,36 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Impersonación auditada "ver como cliente" (ago 2026, Bloque D)
+- **`Api_V1_Admin_Impersonate` (`POST /Admin/Impersonate`, admin + 2ª barrera):** emite un
+  token de SESIÓN del tenant (customerId/customer/nit del cliente) para que el admin vea el
+  portal como ese cliente, pero de **bajo privilegio y solo lectura**: `role=client` (no abre
+  /admin), `tenantRole=operator` (los gates RBAC de sub-rol ya bloquean aprobar/rechazar/
+  programar/ENVÍO REAL → la impersonación no gasta saldo ni dispara campañas), `readonly=true`
+  + `impersonatedBy=<admin>`, `exp` corto (`IMPERSONATION_TTL_MIN` 30 min) y `sid` de una
+  **sesión REAL** (revocable, marcada `impersonation:true`). Token firmado con stdlib HS256
+  (sin PyJWT). Audita `support.impersonate`.
+- **Enforcement en 3 capas:** (1) `Authorizer`/`Authorizer2` reenvían `readonly`/`impersonatedBy`
+  en el context (+ mapping template `sync_api.py`); (2) **Prepare-batch** rechaza (403) toda
+  sesión `readonly` ANTES de tocar campaña/saldo (ni muestras ni real — barrera server-side no
+  puenteable); (3) el **apiClient** bloquea los endpoints de escritura (denylist `READONLY_
+  BLOCKED`) en una sesión readonly, y el resto de mutaciones peligrosas (aprobar/programar/
+  enviar) las corta el `tenantRole=operator`.
+- **Front:** botón **"Ver como cliente"** en la ficha de Clientes (`ClientesSection`) →
+  `impersonateService.start` → `enterImpersonation` (guarda la sesión del admin en
+  `mc_admin_token`/`_user` y entra al portal). El portal muestra un **chip de advertencia**
+  "Viendo como {empresa} · solo lectura" + botón **"Salir de la vista"** (`exitImpersonation`
+  restaura la sesión del admin y vuelve a /admin, sin re-login). `isImpersonating`/
+  `isReadOnlySession` en `authService`; la caché del portal se limpia al entrar/salir para no
+  mezclar tenants.
+- **Cobertura:** `test_impersonation.py` (6: gate admin, 400 sin id, 404 cliente, token
+  readonly+operator+impersonatedBy + sesión + auditoría, Authorizer reenvía readonly,
+  Prepare-batch rechaza readonly), `test_mapping_template.py` (+`impersonatedBy`/`readonly`).
+- ⚠️ `[J]`: lambda `Api_V1_Admin_Impersonate` (el CD la crea) + ruta admin `/Admin/Impersonate`
+  **ya en routes.json** + env `SECRET_KEY` (firma el token + 2ª barrera); IAM `GetItem customer`,
+  `PutItem session`, `PutItem adminAudit`. Redesplegar los **Authorizers** + el **mapping
+  template** (`deploy-api.yml`) para que reenvíen `readonly`/`impersonatedBy`.
+
 ### Panel de salud de despliegue (ago 2026, Bloque K)
 - **`Api_V1_Admin_Deployment-health` (`POST /Admin/Deployment-health`, admin + 2ª barrera):**
   verifica CONTRA AWS si los recursos que el repo declara `[J]` existen de verdad — ataca la
@@ -448,6 +478,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Admin/Audit` | `{ month?, action?, actor?, dateFrom?, dateTo? }` (**admin**) | 200 `data:{entries:[{date, actor, action, target, detail}], count, actions[], truncated}` (bitácora, solo lectura; `dateFrom/dateTo` YYYY-MM-DD inclusivo = rango del export CSV de la UI) |
 | `Admin/Control-center` | `{}` (**admin**) | 200 `data:{pipeline:{stuckProcesses[], stuckCount, failedSchedules[], queues:[{queue, depth, oldestSeconds, dlqDepth, level}]}, money:{todayDebits, todayTopups, pendingTopups, platformBalance}, reputation:{top:[{company, sent, bounceRate, complaintRate, level, trend}]}, health:{services:[{service, status, detail, metric?}]}, audit[], generatedAt}` — **Centro de mando** (operación en vivo; cada sección best-effort) |
 | `Admin/Deployment-health` | `{}` (**admin**) | 200 `data:{sections:[{key, title, level, ok, total, items:[{name, status, detail}]}], summary:{ok, warning, error, unknown}, generatedAt}` — **Salud de despliegue**: verifica contra AWS que lambdas/tablas/colas/`SECRET_KEY`/triggers críticos existan (deriva "construido pero no desplegado"; best-effort → `unknown` sin el permiso IAM) |
+| `Admin/Impersonate` | `{ customerId }` (**admin**) | 200 `data:{token, customer, customerId, companyTin, expiresInMinutes, impersonatedBy}` · 400 · 404. **"Ver como cliente"**: emite un token de sesión del tenant en SOLO LECTURA (`role=client`, `tenantRole=operator`, `readonly=true`, `impersonatedBy`, exp 30 min, sesión revocable). Audita `support.impersonate` |
 | `Admin/Recipient-lookup` | `{ customerId, contact }` (**admin**) | 200 `data:{company, timeline:[{date, campaignName, channel, state, stateLabel, detail}], count, truncated, lists:{blacklisted, unsubscribed}}` · 404 cliente. "¿Qué le llegó a X?" — línea de tiempo por contacto (correo o celular, normaliza E.164) |
 | `Admin/User-support` | `{ userId, action: resend-activation\|force-reset\|revoke-sessions }` (**admin**) | 200 ok · 400 · 404 · 409 (activación con cuenta ya activa). Acciones de soporte auditadas (`support.*`): reenvía activación (enlace nuevo 24 h), envía OTP de reseteo (hasheado, compatible con Validate-otp), o desactiva TODAS las sesiones del usuario (revocación por `sid`) |
 | `Admin/Templates` | `{}` (**admin**) | 200 `data:{templates:[{name, customerPrefix, createdAt}], count, truncated}` — listado GLOBAL de plantillas SES (`ListTemplates` paginado) |

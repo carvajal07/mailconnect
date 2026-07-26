@@ -11,8 +11,11 @@ import {
   Avatar,
   Alert,
 } from '@mui/material';
+import { Chip, Button } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import LogoutIcon from '@mui/icons-material/Logout';
 import { useNavigate } from 'react-router-dom';
 import { PortalSidebar, DRAWER_WIDTH_FULL, DRAWER_WIDTH_MINI } from '../../components/portal/PortalSidebar';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
@@ -36,7 +39,7 @@ import { MiCuentaSection } from '../../components/portal/MiCuentaSection';
 import { CampanasSection } from '../../components/admin/CampanasSection';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { Logo } from '../../components/Logo';
-import { authService, clearSession, broadcastLogout, getUser, getTenantRole } from '../../services/authService';
+import { authService, clearSession, broadcastLogout, getUser, getTenantRole, isImpersonating, exitImpersonation } from '../../services/authService';
 import { canAccessTab } from '../../config/portalAccess';
 import { tabEnabled } from '../../config/features';
 import { PortalDataProvider } from '../../context/PortalDataContext';
@@ -49,6 +52,13 @@ export const PortalPage = () => {
   const user = getUser();
   // RBAC: sub-rol de empresa (owner|approver|operator) para gatear los módulos/tabs.
   const role = getTenantRole(user);
+  const impersonating = isImpersonating(user);
+
+  // Salir de la vista "como cliente": restaura la sesión del admin y vuelve a /admin.
+  const exitImpersonationView = () => {
+    const restored = exitImpersonation();
+    navigate(restored ? '/admin' : '/login');
+  };
 
   const drawerWidth = collapsed ? DRAWER_WIDTH_MINI : DRAWER_WIDTH_FULL;
 
@@ -142,8 +152,21 @@ export const PortalPage = () => {
             {collapsed ? <MenuIcon /> : <MenuOpenIcon />}
           </IconButton>
           <Logo height="34px" />
+          {impersonating && (
+            <Chip
+              icon={<VisibilityIcon />}
+              color="warning"
+              label={`Viendo como ${user?.customer || 'cliente'} · solo lectura`}
+              sx={{ ml: 2, fontWeight: 600, display: { xs: 'none', sm: 'flex' } }}
+            />
+          )}
           <Box sx={{ flexGrow: 1 }} />
-          {user?.name && (
+          {impersonating ? (
+            <Button color="warning" variant="outlined" size="small" startIcon={<LogoutIcon />}
+              onClick={exitImpersonationView} sx={{ mr: 1 }}>
+              Salir de la vista
+            </Button>
+          ) : user?.name && (
             <Typography variant="body2" sx={{ mr: 1.5, color: 'text.secondary', display: { xs: 'none', md: 'block' } }}>
               Hola, <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>{user.name}</Box>
             </Typography>

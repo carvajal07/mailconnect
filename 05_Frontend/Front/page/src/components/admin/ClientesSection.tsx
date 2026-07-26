@@ -29,6 +29,7 @@ import {
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import SearchIcon from '@mui/icons-material/Search';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ApartmentIcon from '@mui/icons-material/Apartment';
@@ -44,7 +45,9 @@ import { isOk } from '../../services/apiClient';
 import { formatDateTime } from '../../utils/datetime';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
-import { getUser } from '../../services/authService';
+import { getUser, enterImpersonation } from '../../services/authService';
+import { impersonateService } from '../../services/impersonateService';
+import { useNavigate } from 'react-router-dom';
 import { usePortalData } from '../../context/PortalDataContext';
 
 /**
@@ -100,6 +103,39 @@ export const ClientesSection = () => {
     else notify(res.description || 'No se pudo realizar la acción.', 'error');
   };
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [impersonatingId, setImpersonatingId] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  /** "Ver como cliente": entra al portal del tenant en SOLO LECTURA (auditado). */
+  const impersonate = async (c: CustomerSummary) => {
+    const ok = await confirm({
+      title: `Ver como ${c.company}`,
+      message: `Entrarás al portal de "${c.company}" en modo SOLO LECTURA para dar soporte. `
+        + 'La acción queda auditada y podrás volver a administración cuando quieras.',
+      confirmText: 'Entrar (solo lectura)',
+    });
+    if (!ok) return;
+    setImpersonatingId(c.customerId);
+    const res = await impersonateService.start(c.customerId);
+    setImpersonatingId(null);
+    if (isOk(res) && res.data?.token) {
+      enterImpersonation(res.data.token, {
+        userId: getUser()?.userId ?? '',
+        name: `Soporte · ${res.data.customer}`,
+        customer: res.data.customer,
+        customerId: res.data.customerId,
+        nit: res.data.companyTin,
+        role: 'client',
+        tenantRole: 'operator',
+        readonly: true,
+        impersonatedBy: res.data.impersonatedBy,
+        email: getUser()?.email ?? '',
+      });
+      navigate('/panel');
+    } else {
+      notify(res.description || 'No se pudo iniciar la vista como cliente.', 'error');
+    }
+  };
 
   const load = refreshCustomers;
 
@@ -481,7 +517,14 @@ export const ClientesSection = () => {
             </Stack>
           )}
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ justifyContent: 'space-between' }}>
+          <Button
+            startIcon={impersonatingId ? <CircularProgress size={16} /> : <VisibilityIcon />}
+            onClick={() => detail && impersonate(detail.customer)}
+            disabled={!detail || !!impersonatingId}
+          >
+            Ver como cliente
+          </Button>
           <Button onClick={closeFicha}>Cerrar</Button>
         </DialogActions>
       </Dialog>

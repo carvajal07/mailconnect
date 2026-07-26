@@ -1,5 +1,23 @@
 import { AUTH_API_BASE } from '../config/api';
-import { getToken, isTokenExpired, sessionExpired } from './authService';
+import { getToken, isTokenExpired, sessionExpired, isReadOnlySession } from './authService';
+
+// Fragmentos de ruta que MUTAN datos: en una sesión de SOLO LECTURA (impersonación de
+// soporte) el apiClient los bloquea antes de salir a la red. Es una barrera de UX/defensa
+// en profundidad — la barrera REAL del envío está en el backend (Prepare-batch rechaza
+// readonly + el token es tenantRole=operator, que ya no puede aprobar/programar/enviar).
+const READONLY_BLOCKED = [
+  '/Create-', '/Update', '/Delete', '/Register-file', '/Prefirm-url',
+  '/Send-batch-template', '/Approve', '/Reject', '/Request-approval',
+  '/Schedule/Create', '/Schedule/Cancel', '/Blacklist/Add', '/Blacklist/Delete',
+  '/Domain/Add', '/Domain/Delete', '/MessageTemplate/Create', '/MessageTemplate/Delete',
+  '/User/Create', '/User/Delete', '/Balance/Topup', '/Cascade/Dispatch',
+  '/Security/Change-password', '/Security/Totp', '/SendingConfig/Set',
+];
+
+function blockedByReadOnly(path: string): boolean {
+  if (!isReadOnlySession()) return false;
+  return READONLY_BLOCKED.some((frag) => path.includes(frag));
+}
 
 /**
  * Cliente HTTP compartido para los módulos del panel (plantillas, campañas...).
@@ -25,6 +43,15 @@ async function request<T = unknown>(
   body?: unknown,
   useAuth = true,
 ): Promise<ApiResponse<T>> {
+  // Vista de soporte (solo lectura): no se permiten mutaciones.
+  if (method === 'POST' && blockedByReadOnly(path)) {
+    return {
+      status: false,
+      statusCode: 403,
+      description: 'Estás en una vista de soporte (solo lectura). Sal de la vista para hacer cambios.',
+    };
+  }
+
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (useAuth) {
     const token = getToken();
