@@ -367,6 +367,17 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   stubeado). ⚠️ `[J]` (despliegue): habilitar acceso al modelo en Bedrock; IAM `bedrock:InvokeModel`
   (+ ARN del inference profile si aplica); ruta **pública** `/Assistant/Ask` (proxy, sin authorizer,
   CORS) + **throttling/WAF** (endpoint público → posible abuso/costo).
+- **IAM `aws-marketplace` para Bedrock (ago 2026):** invocar Claude por Bedrock exige, además de
+  `bedrock:InvokeModel`, los permisos `aws-marketplace:Subscribe/Unsubscribe/ViewSubscriptions`
+  (AWS valida la suscripción al modelo vía Marketplace en la primera invocación; sin esto el
+  error típico es `AccessDeniedException` mencionando `marketplace` al llamar Converse/
+  InvokeModel). `AmazonBedrockFullAccess` **no** los incluye. `deploy-lambdas.yml` ahora agrega
+  un inline `BedrockMarketplace` a cualquier rol con el token `Bedrock` — tanto al **crear** el
+  rol (`ensure_role`) como en **cada despliegue** de una lambda que invoque Bedrock
+  (`reconcile_bedrock`, detecta `boto3.client('bedrock'|'bedrock-runtime')` en el código y se lo
+  añade al rol ACTUAL de la función, sin esperar a que el rol se recree) — así
+  `Api_V1_Assistant_Ask` y `Api_V1_Assistant_Copilot` (las dos únicas que usan Bedrock) reciben
+  el permiso en el próximo push aunque su rol ya exista.
 
 ### Rol del Asistente IA (ago 2026)
 > Es un endpoint **público, sin sesión** (cualquiera en internet le escribe) y **sin tools**:
