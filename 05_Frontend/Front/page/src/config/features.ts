@@ -100,3 +100,23 @@ export const tabEnabled = (
   flags: Record<string, boolean> | undefined,
   tabId: string,
 ): boolean => featureEnabled(flags, `tab:${tabId}`);
+
+/**
+ * Canal de campaña → clave de función que lo gobierna. Si el admin apaga el tab de
+ * plantillas del canal (p. ej. WhatsApp), ese canal no se ofrece al crear campañas ni
+ * en la cascada. Los canales de correo (EM/EAU/EAP) y Voz no se gatean (siempre visibles).
+ */
+const CHANNEL_FEATURE: Record<string, string> = {
+  SMS: 'tab:sms',
+  WSP: 'tab:whatsapp',
+  WHATSAPP: 'tab:whatsapp',
+};
+
+/** ¿El canal de campaña está habilitado para este cliente? (canal sin clave → sí). */
+export const channelEnabled = (
+  flags: Record<string, boolean> | undefined,
+  channel: string,
+): boolean => {
+  const key = CHANNEL_FEATURE[String(channel || '').toUpperCase()];
+  return !key || featureEnabled(flags, key);
+};

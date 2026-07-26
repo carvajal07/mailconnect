@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import {
   Table,
   TableBody,
@@ -5,6 +6,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Chip,
   Stack,
   Tooltip,
@@ -43,6 +45,14 @@ interface Props {
 
 export const WalletTxTable = ({ transactions, emptyText = 'Sin movimientos.', showCompany = false }: Props) => {
   const cols = showCompany ? 6 : 5;
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
+  // Al cambiar el conjunto (refresco) vuelve a la primera página.
+  useEffect(() => { setPage(0); }, [transactions]);
+  const pageRows = useMemo(
+    () => transactions.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
+    [transactions, page, rowsPerPage],
+  );
   return (
     <TableContainer component={Paper} variant="outlined">
       <Table size="small">
@@ -64,7 +74,7 @@ export const WalletTxTable = ({ transactions, emptyText = 'Sin movimientos.', sh
               </TableCell>
             </TableRow>
           )}
-          {transactions.map((t) => {
+          {pageRows.map((t) => {
             const credit = t.amount >= 0;
             const status = (t.status || '') as WalletTxStatus;
             const applied = status !== 'pending' && status !== 'declined';   // ya afectó el saldo
@@ -106,6 +116,19 @@ export const WalletTxTable = ({ transactions, emptyText = 'Sin movimientos.', sh
           })}
         </TableBody>
       </Table>
+      {transactions.length > 10 && (
+        <TablePagination
+          component="div"
+          count={transactions.length}
+          page={page}
+          onPageChange={(_, p) => setPage(p)}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={(e) => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}
+          rowsPerPageOptions={[10, 25, 50, 100]}
+          labelRowsPerPage="Filas por página"
+          labelDisplayedRows={({ from, to, count }) => `${from}–${to} de ${count}`}
+        />
+      )}
     </TableContainer>
   );
 };

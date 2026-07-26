@@ -20,6 +20,8 @@ import ScheduleIcon from '@mui/icons-material/Schedule';
 import type { CascadeChannel, CascadeStep, SuccessCriterion } from '../../services/cascadeService';
 import type { MessageTemplate } from '../../services/messageTemplatesService';
 import type { TemplateSummary } from '../../services/templatesService';
+import { getUser } from '../../services/authService';
+import { channelEnabled } from '../../config/features';
 
 /**
  * Editor de la CASCADA como FLUJO (React Flow). Reglas del grafo:
@@ -359,7 +361,7 @@ const Inner = ({ initialSteps, onStepsChange }: { initialSteps: CascadeStep[]; o
       <Box>
         <Stack direction="row" spacing={1} sx={{ mb: 1 }} flexWrap="wrap" useFlexGap alignItems="center">
           <Typography variant="caption" color="text.secondary">Arrastra un canal al lienzo →</Typography>
-          {CHANNELS.map((c) => (
+          {CHANNELS.filter((c) => channelEnabled(getUser()?.featureFlags, c.ch)).map((c) => (
             <Box key={c.ch} draggable
               onDragStart={(e) => { e.dataTransfer.setData(DND_MIME, c.ch); e.dataTransfer.effectAllowed = 'move'; }}
               sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, py: 0.5, borderRadius: 1.5, cursor: 'grab',

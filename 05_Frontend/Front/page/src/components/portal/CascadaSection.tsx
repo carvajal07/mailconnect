@@ -21,6 +21,7 @@ import type { CascadeChannel, CascadeStep, CascadeRun, SuccessCriterion } from '
 import { templatesService } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
 import { getUser } from '../../services/authService';
+import { channelEnabled } from '../../config/features';
 import { CascadaFlowBuilder, toMinutes } from './CascadaFlowBuilder';
 import type { WaitUnit } from './CascadaFlowBuilder';
 import { formatDateTime } from '../../utils/datetime';
@@ -45,6 +46,12 @@ export const CascadaSection = () => {
   // cargan aparte con templatesService.list (mismo patrón que el form de campaña).
   const sessionCustomer = getUser()?.customer ?? '';
   const sessionCustomerId = getUser()?.customerId ?? '';
+  // Canales disponibles según las funciones habilitadas para el cliente (el admin puede
+  // apagar, p. ej., WhatsApp → no aparece en los pasos de la cascada).
+  const availableChannels = useMemo(
+    () => CHANNELS.filter((ch) => channelEnabled(getUser()?.featureFlags, ch)),
+    [],
+  );
 
   const [name, setName] = useState('');
   const [dataPath, setDataPath] = useState('');
@@ -54,10 +61,14 @@ export const CascadaSection = () => {
   const [waitUnit, setWaitUnit] = useState<WaitUnit>('hora');
   const waitMinutes = toMinutes(waitValue, waitUnit) ?? 60;
   const [criterion, setCriterion] = useState<SuccessCriterion>('delivered');
-  const [steps, setSteps] = useState<CascadeStep[]>([
-    { channel: 'WSP', content: '' },
-    { channel: 'SMS', content: '' },
-  ]);
+  const [steps, setSteps] = useState<CascadeStep[]>(() => {
+    // Pasos por defecto: WSP + SMS, pero solo los canales habilitados para el cliente
+    // (si ambos están apagados, cae a Correo, que nunca se gatea).
+    const flags = getUser()?.featureFlags;
+    const wanted = (['WSP', 'SMS'] as CascadeChannel[]).filter((ch) => channelEnabled(flags, ch));
+    const use = wanted.length ? wanted : (['EM'] as CascadeChannel[]);
+    return use.map((channel) => ({ channel, content: '' }));
+  });
   // Modo de definición: 'basico' (lista ordenada) o 'flujo' (editor de nodos tipo React Flow).
   const [mode, setMode] = useState<'basico' | 'flujo'>('basico');
   const [submitting, setSubmitting] = useState(false);
@@ -209,7 +220,7 @@ export const CascadaSection = () => {
                 <Stack key={i} direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
                   <Chip label={i + 1} size="small" color="primary" sx={{ fontWeight: 700 }} />
                   <TextField select size="small" label="Canal" value={st.channel} onChange={(e) => setStep(i, { channel: e.target.value as CascadeChannel, content: '' })} sx={{ minWidth: 130 }}>
-                    {CHANNELS.map((ch) => <MenuItem key={ch} value={ch}>{CHANNEL_LABEL[ch]}</MenuItem>)}
+                    {availableChannels.map((ch) => <MenuItem key={ch} value={ch}>{CHANNEL_LABEL[ch]}</MenuItem>)}
                   </TextField>
                   <Box sx={{ flex: 1, width: '100%' }}>{contentControl(st, i)}</Box>
                   <Stack direction="row">

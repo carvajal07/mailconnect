@@ -22,6 +22,8 @@
     { "path": "/Admin/Topup-reject",       "lambda": "Api_V1_Admin_Topup-reject",       "admin": true },
     { "path": "/Config/Get",               "lambda": "Api_V1_Config_Get",               "admin": true },
     { "path": "/Config/Set",               "lambda": "Api_V1_Config_Set",               "admin": true },
+    { "path": "/SendingConfig/List",       "lambda": "Api_V1_SendingConfig_List",       "admin": true },
+    { "path": "/SendingConfig/Set",        "lambda": "Api_V1_SendingConfig_Set",        "admin": true },
     { "path": "/Balance/Topup-manual",     "lambda": "Api_V1_Balance_Topup-manual",     "admin": true },
 
     { "path": "/Campaign/List",            "lambda": "Api_V1_Campaign_List" },

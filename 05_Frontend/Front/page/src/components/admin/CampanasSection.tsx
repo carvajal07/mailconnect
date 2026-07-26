@@ -37,6 +37,7 @@ import StorageIcon from '@mui/icons-material/Storage';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import { getUser } from '../../services/authService';
+import { channelEnabled } from '../../config/features';
 import { campaignsService } from '../../services/campaignsService';
 import type { CampaignSummary } from '../../services/campaignsService';
 import { readPdfDrafts } from '../../services/pdfTemplatesService';
@@ -247,6 +248,18 @@ export const CampanasSection = () => {
       notify(res.description || 'No se pudo eliminar la campaña.', 'error');
     }
   };
+
+  // Canales disponibles según las funciones habilitadas para el cliente (el admin puede
+  // apagar, p. ej., WhatsApp → no aparece en el selector ni se puede crear una campaña WSP).
+  const flags = getUser()?.featureFlags;
+  const CHANNEL_OPTIONS = [
+    { value: 'EM', label: 'EM — Email marketing' },
+    { value: 'EAU', label: 'EAU — Adjunto único' },
+    { value: 'EAP', label: 'EAP — Adjunto personalizado' },
+    { value: 'SMS', label: 'SMS — Mensaje de texto' },
+    { value: 'WSP', label: 'WSP — WhatsApp (plantilla)' },
+    { value: 'VOZ', label: 'VOZ — Llamada con mensaje de voz' },
+  ].filter((c) => channelEnabled(flags, c.value));
 
   const isSms = formData.channelName === 'SMS';
   const isWsp = formData.channelName === 'WSP';
@@ -641,12 +654,9 @@ export const CampanasSection = () => {
                     label="Canal"
                     onChange={(e) => handleInputChange('channelName', e.target.value)}
                   >
-                    <MenuItem value="EM">EM — Email marketing</MenuItem>
-                    <MenuItem value="EAU">EAU — Adjunto único</MenuItem>
-                    <MenuItem value="EAP">EAP — Adjunto personalizado</MenuItem>
-                    <MenuItem value="SMS">SMS — Mensaje de texto</MenuItem>
-                    <MenuItem value="WSP">WSP — WhatsApp (plantilla)</MenuItem>
-                    <MenuItem value="VOZ">VOZ — Llamada con mensaje de voz</MenuItem>
+                    {CHANNEL_OPTIONS.map((c) => (
+                      <MenuItem key={c.value} value={c.value}>{c.label}</MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
                 <FormControl fullWidth disabled={!isAttachment}>
