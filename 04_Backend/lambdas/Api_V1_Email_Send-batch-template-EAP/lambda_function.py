@@ -57,6 +57,12 @@ global customer_name
 global tenant
 global process_id
 global custom_fields_pattern
+global configuration_set
+
+# Config set SES por defecto (pool GENERAL). El mensaje SQS trae el del cliente
+# (configurationSet → IP dedicada, resuelto por Prepare-batch desde sendingConfig).
+DEFAULT_CONFIGURATION_SET = os.environ.get('SES_CONFIGURATION_SET', 'default')
+configuration_set = DEFAULT_CONFIGURATION_SET
 
 
 #Configurar el cliente de DynamoDB
@@ -307,6 +313,7 @@ def lambda_handler(event, context):
     global customer_name
     global tenant
     global process_id
+    global configuration_set
 
     status = True
     description = "Campaña enviandose correctamente"
@@ -355,6 +362,8 @@ def lambda_handler(event, context):
         campaign_id = json_body["campaignId"]
         is_samples = bool(json_body.get("samples", False))  # muestras → contar si sale bien
         from_email = json_body["fromEmail"]
+        # Config set SES → IP dedicada del cliente (o el general); fallback defensivo.
+        configuration_set = json_body.get("configurationSet") or DEFAULT_CONFIGURATION_SET
         headers = json_body["headers"]
         template_name = json_body["templateName"]
         part = json_body["part"]
@@ -592,7 +601,7 @@ def lambda_handler(event, context):
                     response = ses.send_raw_email(
                         Source=from_email,
                         Destinations=[email],
-                        ConfigurationSetName="default",
+                        ConfigurationSetName=configuration_set,
                         Tags=default_tags,
                         RawMessage={'Data': msg.as_string()}
                     )
@@ -676,7 +685,7 @@ def lambda_handler(event, context):
                     response = ses.send_raw_email(
                         Source=from_email,
                         Destinations=[email],
-                        ConfigurationSetName="default",
+                        ConfigurationSetName=configuration_set,
                         Tags=default_tags,
                         RawMessage={'Data': msg.as_string()}
                     )

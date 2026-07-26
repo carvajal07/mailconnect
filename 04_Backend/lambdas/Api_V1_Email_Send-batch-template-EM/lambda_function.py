@@ -48,6 +48,12 @@ global template_name
 global from_email
 global process_detail_id
 global process_id
+global configuration_set
+
+# Config set SES por defecto (pool GENERAL). El mensaje SQS trae el del cliente
+# (configurationSet, resuelto por Prepare-batch desde sendingConfig → IP dedicada).
+DEFAULT_CONFIGURATION_SET = os.environ.get('SES_CONFIGURATION_SET', 'default')
+configuration_set = DEFAULT_CONFIGURATION_SET
 
 #Separar librerias
 #poner primero las variables estaticas
@@ -280,7 +286,7 @@ def send_bulk(data:list, headers:list, start:int, end:int, default_tags:dict)->N
     response = ses.send_bulk_templated_email(
         Source=from_email,
         Template=template_name,
-        ConfigurationSetName="default",
+        ConfigurationSetName=configuration_set,
         Destinations=destinations,
         DefaultTags=default_tags,
         DefaultTemplateData='{}'
@@ -361,6 +367,7 @@ def lambda_handler(event:dict, context:dict):
     global from_email
     global process_detail_id
     global process_id
+    global configuration_set
 
     # Obtener la fecha y hora actual
     now = datetime.utcnow()
@@ -388,6 +395,9 @@ def lambda_handler(event:dict, context:dict):
         # OK se cuenta 1 en campaign.samplesSentCount (no se cuenta si el envío falla).
         is_samples = bool(json_body.get("samples", False))
         from_email = json_body["fromEmail"]
+        # Config set SES → IP dedicada del cliente (o el general). Lo resolvió Prepare-batch
+        # y viaja en el mensaje; fallback defensivo al general para mensajes viejos en vuelo.
+        configuration_set = json_body.get("configurationSet") or DEFAULT_CONFIGURATION_SET
         headers = json_body["headers"]
         template_name = json_body["templateName"]
         part = json_body["part"]

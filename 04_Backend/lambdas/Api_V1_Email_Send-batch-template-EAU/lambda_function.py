@@ -71,6 +71,12 @@ global campaign_id
 global from_email
 global subject
 global process_detail_id
+global configuration_set
+
+# Config set SES por defecto (pool GENERAL). El mensaje SQS trae el del cliente
+# (configurationSet → IP dedicada, resuelto por Prepare-batch desde sendingConfig).
+DEFAULT_CONFIGURATION_SET = os.environ.get('SES_CONFIGURATION_SET', 'default')
+configuration_set = DEFAULT_CONFIGURATION_SET
 global process_id
 global personalized_subject
 global personalized_body
@@ -253,7 +259,7 @@ def send_email(email, msg, tags, from_email):
             Destinations=[email],
             RawMessage={'Data': msg.as_string()},
             Tags=tags,
-            ConfigurationSetName="default"
+            ConfigurationSetName=configuration_set
         )
         print(f"Email enviado a {email}")
         return response
@@ -452,7 +458,7 @@ def send_bulk(data:list, headers:list, start:int, end:int, tags:dict)->None:
                 Destinations=emails,
                 RawMessage={'Data': msg.as_string()},
                 Tags=tags,
-                ConfigurationSetName="default"
+                ConfigurationSetName=configuration_set
             )
             print(response)
             
@@ -534,6 +540,7 @@ def lambda_handler(event, context):
     global subject
     global process_detail_id
     global process_id
+    global configuration_set
     global personalized_subject
     global personalized_body
     global personalized_text
@@ -565,6 +572,8 @@ def lambda_handler(event, context):
         is_samples = bool(json_body.get("samples", False))  # muestras → contar al terminar OK
         attachment = json_body["attachment"]
         from_email = json_body["fromEmail"]
+        # Config set SES → IP dedicada del cliente (o el general); fallback defensivo.
+        configuration_set = json_body.get("configurationSet") or DEFAULT_CONFIGURATION_SET
         headers = json_body["headers"]
         template_name = json_body["templateName"]
         part = json_body["part"]

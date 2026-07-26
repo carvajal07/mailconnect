@@ -72,6 +72,11 @@ CORS_HEADERS = {
 # NIT sobre el nombre de empresa; hay fallback al esquema viejo por nombre en las lecturas.
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 
+# Configuration set SES por defecto (pool GENERAL, por donde envían todos). Un cliente
+# con IP dedicada (tabla `sendingConfig`, enabled) usa SU config set en vez de este. El
+# ruteo de la IP dedicada en SES se hace por config set → pool de IP dedicada.
+DEFAULT_CONFIGURATION_SET = os.environ.get('SES_CONFIGURATION_SET', 'default')
+
 
 def tenant_key(nit):
     """Llave de tenant para nombres de recursos por cliente (tablas y buckets): el NIT
@@ -137,6 +142,7 @@ class ProcessState:
         self.voice_message = ''  # texto TTS (solo canal VOZ)
         self.nit = None          # NIT (companyTin) del cliente → llave de recursos por cliente
         self.is_samples = False  # True en el flujo de MUESTRAS → el worker cuenta el envío OK
+        self.configuration_set = DEFAULT_CONFIGURATION_SET  # config set SES → IP dedicada del cliente
 
     @property
     def tenant(self):
@@ -166,6 +172,27 @@ table_database = dynamodb.Table('databaseFile')
 # creación de la campaña; el texto guardado en campaign.template queda solo como respaldo.
 table_message_template = dynamodb.Table('messageTemplate')
 _audit_table = dynamodb.Table('adminAudit')
+# IP de envío dedicada por cliente (config set SES → pool de IP dedicada). Ausente o
+# enabled=false → el cliente usa el config set GENERAL (DEFAULT_CONFIGURATION_SET).
+table_sending_config = dynamodb.Table('sendingConfig')
+
+
+def resolve_configuration_set(customer_id):
+    """Config set SES del cliente para el ruteo de la IP: su `configurationSet` si está en
+    `sendingConfig` con enabled=true; si no, el general (DEFAULT_CONFIGURATION_SET). Defensivo:
+    ante cualquier error (tabla ausente, sin permiso) cae al general (fail-open, sin romper el
+    envío). Solo aplica a los canales de EMAIL (SES); SMS/WhatsApp/Voz no lo usan."""
+    if not customer_id:
+        return DEFAULT_CONFIGURATION_SET
+    try:
+        item = table_sending_config.get_item(Key={'customerId': customer_id}).get('Item')
+        if item and bool(item.get('enabled', True)):
+            cfg = str(item.get('configurationSet') or '').strip()
+            if cfg:
+                return cfg
+    except Exception as e:
+        print('resolve_configuration_set fallback al general: {}'.format(e))
+    return DEFAULT_CONFIGURATION_SET
 
 # --- Cobro PREPAGO (monedero) -------------------------------------------------
 # El envío REAL debita el saldo del cliente ANTES de trocear (bloqueo DURO por saldo).
@@ -716,6 +743,7 @@ def build_ctx(st:'ProcessState')->dict:
         "voiceMessage": st.voice_message,  # texto TTS (solo canal VOZ)
         "nit": st.nit,                   # NIT → bucket S3 en las lambdas de envío (.document)
         "samples": bool(st.is_samples),  # True → el worker cuenta el envío de muestra OK (por campaignId)
+        "configurationSet": st.configuration_set,  # config set SES → IP dedicada del cliente (Send-EM/EAU/EAP)
     }
 
 
@@ -1650,6 +1678,7 @@ def procesar_parte(st, job)->None:
     st.sms_body = job.get('smsBody', '')
     st.wsp_template = job.get('wspTemplate', '')
     st.voice_message = job.get('voiceMessage', '')
+    st.configuration_set = job.get('configurationSet', DEFAULT_CONFIGURATION_SET)
 
     part = job['part']
     registers_for_message = job['registersForMessage']
@@ -1799,6 +1828,9 @@ def lambda_handler(event, context):
                 st.customer_id = response_campaign['Items'][0]["customerId"]
                 # NIT del cliente → define el bucket S3 (por NIT, no por nombre).
                 st.nit = get_customer_nit(st.customer_id)
+                # Config set SES → IP dedicada del cliente (o el general si no tiene). Viaja
+                # en cada mensaje SQS (build_ctx) para que Send-EM/EAU/EAP lo pasen a SES.
+                st.configuration_set = resolve_configuration_set(st.customer_id)
                 consecutive = response_campaign['Items'][0]["consecutive"]
                 channel_name = response_campaign['Items'][0]["channel"]
                 st.channel = channel_name  # define el tipo de contacto (correo vs celular E.164)

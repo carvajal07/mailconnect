@@ -26,6 +26,55 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### IP de envío dedicada por cliente (ago 2026)
+- **Qué:** el admin asigna un **configuration set de SES** por cliente desde `/admin`
+  **"IP de envío"** (`IpEnvioSection`): tabla de todos los clientes (Pool general vs IP
+  dedicada) + diálogo (config set, pool, IPs informativas, habilitar/deshabilitar, notas).
+- **Modelo SES:** en SES no se envía "por una IP" directo — la IP dedicada vive en un
+  **pool de IP dedicada** y un **configuration set** apunta a ese pool (delivery options →
+  `SendingPoolName`). Enviar con `ConfigurationSetName=<config set del cliente>` enruta por
+  su IP. Un cliente **sin fila** (o deshabilitado) usa el config set **general**
+  (`SES_CONFIGURATION_SET`, default `default`) = el pool por donde envían todos.
+- **Backend:** tabla **`sendingConfig`** (PK `customerId`: `configurationSet`, `poolName`,
+  `ips[]`, `enabled`, `notes`, `updatedAt`) + lambdas `Api_V1_SendingConfig_{List,Set}`
+  (admin, 2ª barrera JWT, auditado `sendingConfig.set/remove`; `Set` crea la tabla
+  on-demand, acepta `remove:true` para volver al general). **Ruteo:** `Prepare-batch`
+  resuelve el config set del cliente (`resolve_configuration_set`, fail-open al general) y
+  lo mete en `build_ctx` (`configurationSet`); **`Send-EM/EAU/EAP`** lo pasan a SES en vez
+  del `"default"` hardcodeado (fallback defensivo al general para mensajes viejos en vuelo).
+  Solo aplica a los canales de correo (SMS/WhatsApp/Voz no usan config set de IP).
+- **Cobertura:** `08_Pruebas/PruebasSeguridad/test_sending_config.py` (List/Set admin gate,
+  upsert, remove, enabled string→bool; `resolve_configuration_set` general vs dedicado vs
+  deshabilitado; `build_ctx`/`prepare_message` llevan el config set).
+- ⚠️ `[J]` (despliegue): tabla `sendingConfig` (la crea `Set` on-demand); lambdas
+  `Api_V1_SendingConfig_{List,Set}` (crear vacías) + rutas `/SendingConfig/{List,Set}`
+  (authorizer + CORS, **admin-only**, mapping template de `role`/`authToken`); env
+  `SECRET_KEY` en ambas (2ª barrera); IAM `dynamodb:GetItem/PutItem/DeleteItem/Scan/
+  CreateTable/DescribeTable` sobre `sendingConfig` + `PutItem adminAudit`; **`dynamodb:GetItem
+  sendingConfig`** en `Prepare-batch`; env `SES_CONFIGURATION_SET` en Prepare-batch/Send-EM/
+  EAU/EAP (opcional; default `default`). **En SES:** crear el pool de IP dedicada, mover la
+  IP al pool, crear el config set del cliente apuntando al pool y **replicar su event
+  destination (SNS)** para no perder rebotes/quejas en `Email_ReceptionStatus`.
+
+### Canal Voz — estado y pendientes (ago 2026)
+> El código de Voz (`Api_V1_Voice_Send-batch`) está COMPLETO y al día (idempotencia por
+> parte, E.164, estados en `{tenant}_sendStatus`, muestras, `Context` para
+> `Messaging_ReceptionStatus`). Lo "desatendido" es la **configuración/infra**, no el código.
+- **Dónde se configura:** por **env vars** de la lambda `Api_V1_Voice_Send-batch`:
+  `VOICE_ORIGINATION_IDENTITY` (obligatoria — número/pool con capacidad de **voz** en AWS
+  End User Messaging), `VOICE_ID` (voz Polly, default `LUPE`), `VOICE_CONFIGURATION_SET`
+  (opcional, para eventos), `VOICE_BODY_TEXT_TYPE` (`TEXT`|`SSML`). Sin
+  `VOICE_ORIGINATION_IDENTITY` la lambda **lanza** y no procesa el lote.
+- **Pendientes `[J]`/producto de Voz:** (1) habilitar un **número con capacidad de voz** en
+  End User Messaging y ponerlo en `VOICE_ORIGINATION_IDENTITY`; (2) crear la cola
+  `Voice_Send-batch` + trigger (ya en `trigger-map.json`); (3) IAM `sms-voice:SendVoiceMessage`
+  en el rol de la lambda; (4) **estados de entrega**: crear el **configuration set de voz**
+  con event destination → SNS y suscribir `Api_V1_Messaging_ReceptionStatus` (hoy Voz solo
+  registra estado 1 "llamada iniciada"/3 "fallo"; sin el config set no hay 2 "contestada");
+  (5) **tarifa** real por minuto (`basePerMinute`/`avgMinutes` en `pricingRate`, hoy indicativa);
+  (6) producto: **consentimiento/opt-out** de voz (Ley 1581 / robocall), **ventana horaria**
+  permitida, reintentos y `SSML` para pausas/número hablado. El estimador ya mapea `VOZ→VOICE`.
+
 ### Funciones por cliente (feature flags) (ago 2026)
 - **Qué:** el admin enciende/apaga cada **tab** y **función** del portal **por cliente**
   desde una nueva sección `/admin` **"Funciones por cliente"** (`FuncionesClienteSection`):
@@ -152,6 +201,8 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Database/Delete` | `{ databaseFileId }` | 200 ok · 403 otro cliente · 404 no existe. Borra el registro (no el CSV en S3) |
 | `Customer/List` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, realSendEnabled}], count}` |
 | `Customer/Update` | `{ customerId, realSendEnabled? (bool), features? ({clave:bool}) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales y/o **banderas de funciones** por cliente (merge por clave). Devuelve `data:{realSendEnabled, featureFlags}`. Audita `customer.realSend` / `customer.features` |
+| `SendingConfig/List` | `{}` (**admin**) | 200 `data:{configs:[{customerId, configurationSet, poolName, ips[], enabled, notes, updatedAt}], count}`. IP de envío dedicada por cliente (tabla `sendingConfig`) |
+| `SendingConfig/Set` | `{ customerId, configurationSet, poolName?, ips?[], enabled?=true, notes? }` o `{ customerId, remove:true }` (**admin**) | 200 ok · 400 datos. Upsert de la IP dedicada (config set SES) o baja (`remove` → pool general). Crea la tabla on-demand. Audita `sendingConfig.set/remove` |
 | `MessageTemplate/Create` | `{ channel:SMS\|WSP\|DOCX\|PDF, name, body?/hsmName?+language?+params?/s3Path?+params?/html? }` | 201 `data:{messageTemplateId}` · 400 datos. SMS necesita `body`, WSP `hsmName`, DOCX `s3Path`, **PDF `html`** (el HTML del editor) |
 | `MessageTemplate/List` | `{ customerId, channel? }` | 200 `data:{templates[], count}` (desc por fecha; filtra por canal si se envía) |
 | `MessageTemplate/Delete` | `{ messageTemplateId }` | 200 ok · 403 otro cliente · 404 no existe |
