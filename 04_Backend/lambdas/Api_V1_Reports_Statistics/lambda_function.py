@@ -46,8 +46,12 @@ def tenant_key(nit):
 # (evento no llegó / tabla no provisionada), cae al scan de ESE proceso (correcto, acotado).
 _SUMMARY_FIELDS = ('enviados', 'entregados', 'abiertos', 'clics', 'rebotes', 'quejas')
 
-# Tope de procesos a agregar por llamada (evita barridos enormes; se registra si trunca).
-MAX_PROCESSES = 300
+# Topes de procesos por llamada. Con la preagregación, leer el resumen de un proceso es
+# O(1) (GetItem) → el tope absoluto puede ser generoso; el tope BAJO aplica solo al camino
+# CARO (proceso sin fila de resumen → query completa de sus estados). Con el rollup
+# poblado (backfill_send_summary) el aviso de "datos parciales" desaparece en la práctica.
+MAX_PROCESSES = 5000        # absoluto (lecturas O(1) del rollup)
+MAX_FALLBACK_QUERIES = 150  # camino caro (procesos sin rollup)
 
 # Prioridad del estado "actual" de un mensaje (mayor gana). Números = tabla de estados.
 STATE_PRIORITY = {1: 1, 9: 2, 8: 3, 3: 4, 2: 5, 6: 6, 10: 7, 7: 8, 4: 9, 5: 10}
@@ -221,9 +225,10 @@ def lambda_handler(event, context):
                 continue
             procs_by_campaign[p.get('campaignId')].append(p)
 
-        # 3) Agregación por campaña (con tope de procesos).
+        # 3) Agregación por campaña. El tope BAJO solo aplica al camino caro (sin rollup).
         result = []
         scanned = 0
+        fallback_used = 0
         truncated = False
         for c in campaigns:
             campaign_id = c.get('campaignId')
@@ -247,8 +252,13 @@ def lambda_handler(event, context):
                     item = None
                 if item:
                     counts = {k: _to_int(item.get(k, 0)) for k in _SUMMARY_FIELDS}
-                # 2) Fallback: agregación por scan de los estados de ESE proceso.
+                # 2) Fallback: agregación por query de los estados de ESE proceso (caro,
+                #    acotado aparte; los procesos CON rollup se siguen agregando igual).
                 if counts is None:
+                    if fallback_used >= MAX_FALLBACK_QUERIES:
+                        truncated = True
+                        continue
+                    fallback_used += 1
                     status_table = dynamodb.Table(f'{tenant}_sendStatus')
                     counts = _counts_from_states(_current_state_per_message(_query_process(status_table, process_id)))
                 for k in totals:
@@ -267,7 +277,9 @@ def lambda_handler(event, context):
         result.sort(key=lambda x: x.get('date', ''), reverse=True)
 
         if truncated:
-            print(f'ADVERTENCIA: se alcanzó el tope de {MAX_PROCESSES} procesos; métricas parciales.')
+            print('ADVERTENCIA: tope de procesos alcanzado (absoluto {} / fallback {}); '
+                  'métricas parciales. Correr backfill_send_summary elimina el camino caro.'
+                  .format(MAX_PROCESSES, MAX_FALLBACK_QUERIES))
 
         return {
             'status': True, 'statusCode': 200,

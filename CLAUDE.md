@@ -26,6 +26,40 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Series de 30 días + adiós "datos parciales" (ago 2026, Bloque A)
+- **Serie temporal del cliente:** nueva lambda **`Api_V1_Reports_Series`** (POST
+  `/Report/Series`, identidad del Authorizer): serie DIARIA CONTINUA de los últimos N días
+  (default 30, máx. 90) con enviados/entregados/abiertos/clics/rebotes/quejas, leída BARATA
+  del rollup `{tenant}_sendSummary` (BatchGetItem por proceso; sin escanear sendStatus).
+  Excluye muestras; un proceso sin fila de rollup aporta `registersToSend` como enviados y
+  cuenta en `withoutRollup` (correr `scripts/backfill_send_summary.py` lo elimina).
+- **Serie global del admin:** `Api_V1_Admin_Dashboard` devuelve ahora `data.series`
+  (helper `_series_global`, best-effort): mismos buckets diarios sobre TODOS los clientes
+  (scan de `process` por fecha + BatchGet del rollup por tenant, tope 2000 procesos).
+- **Frontend:** componente **`AreaChart`** en `portal/charts.tsx` (SVG propio, sin
+  dependencias; leyenda interactiva mostrar/ocultar serie, guía vertical + tooltip por día,
+  ejes con ticks, estado vacío, theme-aware; paleta `useSeriesColors` coherente con la
+  categórica validada). "Actividad de los últimos 30 días" en **Estadísticas** del portal
+  (`statsService.series`, best-effort: sin la ruta desplegada no se muestra) y en el
+  **Panel de control** admin (`DashboardSection`, de `data.series`).
+- **Adiós "datos parciales":** en los 4 lectores rollup-first (`Reports_Statistics`,
+  `Admin_Dashboard`, `Billing_Summary`, `Portal_Bootstrap`) el tope de procesos se partió
+  en dos: **absoluto generoso** (`MAX_PROCESSES` 5000, lecturas O(1) del rollup) y **bajo
+  solo para el camino CARO** (`MAX_FALLBACK_QUERIES` 150–200: procesos SIN rollup que
+  exigen query completa de `sendStatus`). Un proceso con rollup ya no consume el
+  presupuesto → con el rollup poblado el aviso "(parcial)" desaparece; sin presupuesto de
+  fallback, el proceso sin rollup se OMITE (truncated=true) pero los demás se agregan.
+- **Cobertura:** `test_report_series.py` (8: 403 sin identidad, serie continua con ceros,
+  bucketing por día + totales, exclusión de muestras, aislamiento de tenant, aproximación
+  sin rollup, rango 90 días, clamp de days), `test_admin_dashboard.py` (+2: serie global
+  con muestra excluida; rollup se agrega con fallback agotado), `test_listados_stats.py`
+  (+1: rollup no consume fallback en Statistics).
+- ⚠️ `[J]` (despliegue): lambda `Api_V1_Reports_Series` (el CD la crea) + ruta
+  `/Report/Series` **ya en routes.json** (authorizer + CORS + mapping template con
+  `customerId`/`customer`/`nit`); IAM `dynamodb:Scan process` + `BatchGetItem *_sendSummary`;
+  en `Api_V1_Admin_Dashboard`, IAM `BatchGetItem *_sendSummary` (para la serie global).
+  Para que el "(parcial)" desaparezca del histórico: correr `backfill_send_summary.py`.
+
 ### Centro de mando + caja de soporte admin (ago 2026)
 - **Centro de mando (`CentroMandoSection` + `Api_V1_Admin_Control-center`)**: tablero de
   **operación en vivo**, nueva página de ENTRADA del admin (tab `centro`, default de
@@ -262,7 +296,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Customer/Delete` | `{ customerId }` (**admin**) | 200 `data:{customerId, deletedUsers}` · 400 (falta id / es tu propia empresa) · 403 · 404. Borra `customer` + sus `user`/`userData` (best-effort); **no** purga el histórico (campañas/envíos/saldo). Audita `customer.delete` |
 | `User/SetRole` | `{ userId, role (admin\|client) }` (**admin**) | 200 ok · 400 · 404 · 409 (no degradar al último admin) |
 | `Billing/Summary` | `{ month?, customerId? }` (**admin**) | 200 `data:{customers:[{company, totalSent, subtotal, tax, total, byChannel[]}], totals, truncated}` |
-| `Admin/Dashboard` | `{ month? }` (**admin**) | 200 `data:{kpis, funnel[], byChannel[], health:[{company, sent, bounceRate, complaintRate, level}], truncated}` (panel global + reputación) |
+| `Admin/Dashboard` | `{ month? }` (**admin**) | 200 `data:{kpis, funnel[], byChannel[], health:[{company, sent, bounceRate, complaintRate, level}], series:[{date, enviados, entregados, abiertos, ...}], truncated}` (panel global + reputación + serie diaria de 30 días de toda la plataforma) |
 | `Admin/Jobs` | `{ month?, state? }` (**admin**) | 200 `data:{jobs:[{campaignName, company, channelLabel, processState, campaignState, sent, registersToSend, progress, blocked{}}], counts, truncated}` (solo lectura) |
 | `Config/Get` | `{}` (**admin**) | 200 `data:{settings:[{key, label, group, type, default, value, isOverridden, consumers[]}]}` |
 | `Config/Set` | `{ key, value }` (**admin**) | 200 ok · 400 key/valor inválido. Crea `platformConfig` si no existe |
@@ -272,6 +306,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Admin/User-support` | `{ userId, action: resend-activation\|force-reset\|revoke-sessions }` (**admin**) | 200 ok · 400 · 404 · 409 (activación con cuenta ya activa). Acciones de soporte auditadas (`support.*`): reenvía activación (enlace nuevo 24 h), envía OTP de reseteo (hasheado, compatible con Validate-otp), o desactiva TODAS las sesiones del usuario (revocación por `sid`) |
 | `Admin/Templates` | `{}` (**admin**) | 200 `data:{templates:[{name, customerPrefix, createdAt}], count, truncated}` — listado GLOBAL de plantillas SES (`ListTemplates` paginado) |
 | `Admin/Domains` | `{}` (**admin**) | 200 `data:{domains:[{domainId, customerId, company, kind, domain, status, createdAt}], count}` — dominios/correos remitentes de TODOS los clientes (pendientes primero) |
+| `Report/Series` | `{ days? }` (tenant del token; default 30, máx. 90) | 200 `data:{from, to, days:[{date, enviados, entregados, abiertos, clics, rebotes, quejas}], totals, withoutRollup}` · 403 sin identidad. Serie DIARIA continua desde el rollup `{tenant}_sendSummary` (excluye muestras; sin rollup aproxima por `registersToSend`). La consume el gráfico "Actividad de los últimos 30 días" de Estadísticas |
 | `Balance/Get` | `{ limit? }` (tenant del token) | 200 `data:{customerId, balance, currency, transactions:[{txId, type, amount, balanceAfter, status, reference, bank, detail, rejectReason, createdAt}], count}` (saldo + movimientos; lee por GSI `customerId-createdAt-index` con fallback a Scan) |
 | `Balance/Topup-manual-request` | `{ amount (COP>0), proofS3Path, bank?, reference?, note? }` (tenant del token) | 201 `data:{txId, status:'pending'}` · 400 · 403. Crea la solicitud manual `pending` (no toca el saldo); el comprobante ya se subió a S3 (get-urlS3, documentType=document) |
 | `Balance/Topup-manual` | `{ customerId, amount (COP>0), note? }` (**admin**) | 200 `data:{balance, txId}` · 400 · 403. **Ajuste directo** (crédito) del admin — tipo `adjustment` (correcciones/cortesías); distinto de la solicitud del cliente |

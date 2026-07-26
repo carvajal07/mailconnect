@@ -179,9 +179,17 @@ El front está terminado y el backend probado; solo falta la consola AWS
        colas SQS accesibles) y últimas 10 de auditoría. Auto-refresco 60 s. ⚠️ `[J]`: ruta
        `/Admin/Control-center` (ya en routes.json) + IAM (sqs:GetQueueUrl/GetQueueAttributes,
        ses:GetSendQuota/GetAccountSendingEnabled, dynamodb:DescribeTable + Scans).
-2. [ ] `[C]` **Series temporales** (30 días) en cliente y admin vía la preagregación
-       `sendSummary` (pre-agregación, ver `CLAUDE.md`): sparklines + área de
-       envíos/entregas/aperturas. De paso elimina los avisos de "datos parciales".
+2. [x] `[C]` ✅ **Series temporales (30 días) (ago 2026)**: gráfico de ÁREA multi-serie
+       (enviados/entregados/abiertos, SVG propio con leyenda interactiva y tooltip por
+       día — `AreaChart` en `charts.tsx`) en **Estadísticas** del portal
+       (`Api_V1_Reports_Series`, POST `/Report/Series`, del rollup `sendSummary` del
+       tenant) y en el **Panel de control** admin (`Admin/Dashboard` devuelve `series`
+       global). **Adiós "datos parciales"**: en los 4 lectores rollup-first
+       (Statistics, Dashboard, Billing, Bootstrap) el tope BAJO ahora aplica SOLO al
+       camino caro (procesos sin rollup, `MAX_FALLBACK_QUERIES`); con el rollup poblado
+       (backfill) el aviso desaparece. ⚠️ `[J]`: lambda `Api_V1_Reports_Series` (el CD
+       la crea) + ruta `/Report/Series` (ya en routes.json) + IAM `Scan process`,
+       `BatchGetItem *_sendSummary`.
 3. [ ] `[C]` **"Salud de mi base"** (portal): crecimiento de válidos, rebotados
        acumulados, desuscritos, heatmap día×hora de aperturas (alimenta la hora óptima
        del Copiloto).

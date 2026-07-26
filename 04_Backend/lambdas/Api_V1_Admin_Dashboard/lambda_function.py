@@ -21,7 +21,7 @@ import json
 import boto3
 from decimal import Decimal
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
@@ -38,7 +38,12 @@ def tenant_key(nit):
     return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 table_process = dynamodb.Table('process')
 
-MAX_PROCESSES = 500  # tope global de procesos agregados por llamada
+# Topes de procesos por llamada. La lectura del rollup ({tenant}_sendSummary) es O(1)
+# (GetItem) → tope absoluto generoso; el tope BAJO aplica solo al camino CARO (proceso
+# sin rollup → query completa de sus estados). Con el rollup poblado, el aviso de
+# "datos parciales" desaparece en la práctica.
+MAX_PROCESSES = 5000         # absoluto (lecturas O(1) del rollup)
+MAX_FALLBACK_QUERIES = 200   # camino caro (procesos sin rollup)
 
 # Prioridad del estado "actual" de un mensaje (mayor gana). Igual que Statistics.
 STATE_PRIORITY = {1: 1, 9: 2, 8: 3, 3: 4, 2: 5, 6: 6, 10: 7, 7: 8, 4: 9, 5: 10}
@@ -231,20 +236,87 @@ _SUMMARY_MAP = {'sent': 'enviados', 'delivered': 'entregados', 'opened': 'abiert
                 'clicked': 'clics', 'bounces': 'rebotes', 'complaints': 'quejas'}
 
 
-def _counts_for_process(tenant, process_id):
+def _counts_for_process(tenant, process_id, allow_fallback=True):
     """Contadores del proceso: RESUMEN pre-agregado (O(1)) por defecto; si el proceso no
     tiene resumen aún, agregación por Query de sus estados (acotada a ESE proceso).
-    tenant=tenant_key(NIT): las tablas del cliente son {tenant}_sendSummary / _sendStatus."""
+    tenant=tenant_key(NIT): las tablas del cliente son {tenant}_sendSummary / _sendStatus.
+    Devuelve (counts, from_rollup); counts=None si no hay rollup y el fallback está agotado."""
     try:
         item = dynamodb.Table(f'{tenant}_sendSummary').get_item(
             Key={'processId': process_id}).get('Item')
     except Exception:
         item = None
     if item:
-        return {dk: _to_int(item.get(sk, 0)) for dk, sk in _SUMMARY_MAP.items()}
+        return {dk: _to_int(item.get(sk, 0)) for dk, sk in _SUMMARY_MAP.items()}, True
+    if not allow_fallback:
+        return None, False
     acc = {'sent': 0, 'delivered': 0, 'opened': 0, 'clicked': 0, 'bounces': 0, 'complaints': 0}
     _accumulate(_states_of_process(dynamodb.Table(f'{tenant}_sendStatus'), process_id), acc)
-    return acc
+    return acc, False
+
+
+# ── Serie temporal global (últimos N días) ───────────────────────────────────
+SERIES_DAYS = 30                 # ventana del gráfico de actividad del panel
+MAX_SERIES_PROCESSES = 2000      # tope defensivo (cada proceso = 1 clave de BatchGet)
+_SERIES_MILESTONES = ('enviados', 'entregados', 'abiertos', 'clics', 'rebotes', 'quejas')
+
+
+def _series_global(customers, days=SERIES_DAYS):
+    """Serie DIARIA global (TODOS los clientes) de los últimos `days` días, leída del
+    rollup {tenant}_sendSummary (BatchGetItem por proceso; sin escanear sendStatus).
+    Las métricas se atribuyen al DÍA del proceso (fecha de envío). Excluye muestras.
+    Un proceso sin fila de resumen aporta registersToSend como enviados (aproximación).
+    Best-effort: la llama el handler dentro de un try — ante error, serie vacía."""
+    today = datetime.now(timezone.utc).date()
+    date_from = today - timedelta(days=days - 1)
+    cutoff = date_from.strftime('%Y-%m-%d')
+
+    # Mapa nombre de empresa -> tenant (NIT saneado) para procesos viejos sin companyTin.
+    tenant_by_company = {str(c.get('company', '')): tenant_key(c.get('companyTin', ''))
+                         for c in customers}
+
+    procs = _scan_all(table_process, FilterExpression=Attr('date').gte(cutoff))
+    procs = [p for p in procs if not _is_sample_process(p)]
+    procs.sort(key=lambda p: str(p.get('date', '')), reverse=True)
+    procs = procs[:MAX_SERIES_PROCESSES]
+
+    series = {}
+    for i in range(days):
+        d = (date_from + timedelta(days=i)).strftime('%Y-%m-%d')
+        series[d] = {'date': d, **{m: 0 for m in _SERIES_MILESTONES}}
+
+    by_tenant = defaultdict(list)
+    for p in procs:
+        tenant = tenant_key(p.get('companyTin', '')) or \
+            tenant_by_company.get(str(p.get('customerName', '')), '')
+        if tenant:
+            by_tenant[tenant].append(p)
+
+    for tenant, plist in by_tenant.items():
+        table_name = '{}_sendSummary'.format(tenant)
+        pids = [str(p.get('processId', '')) for p in plist if p.get('processId')]
+        summaries = {}
+        for i in range(0, len(pids), 100):
+            chunk = [{'processId': pid} for pid in pids[i:i + 100]]
+            try:
+                resp = dynamodb.batch_get_item(RequestItems={table_name: {'Keys': chunk}})
+                for it in resp.get('Responses', {}).get(table_name, []):
+                    summaries[str(it.get('processId'))] = it
+            except Exception as e:
+                print('series batch {}: {}'.format(table_name, e))
+                break  # tabla ausente → sus procesos caen a la aproximación
+        for p in plist:
+            day = str(p.get('date', ''))[:10]
+            if day not in series:
+                continue
+            summ = summaries.get(str(p.get('processId', '')))
+            if summ:
+                for m in _SERIES_MILESTONES:
+                    series[day][m] += _to_int(summ.get(m, 0))
+            else:
+                series[day]['enviados'] += _to_int(p.get('registersToSend', 0))
+
+    return [series[k] for k in sorted(series.keys())]
 
 
 def _health_level(sent, bounces, complaints):
@@ -275,7 +347,8 @@ def lambda_handler(event, context):
         active_campaigns = 0
         pending_campaigns = 0
         health = []
-        budget = MAX_PROCESSES
+        scanned = 0
+        fallback_budget = MAX_FALLBACK_QUERIES
         truncated = False
 
         for cust in customers:
@@ -310,14 +383,20 @@ def lambda_handler(event, context):
                 mapped = CHANNEL_MAP.get(channel_name)
                 camp_acc = {'sent': 0, 'delivered': 0, 'opened': 0, 'clicked': 0, 'bounces': 0, 'complaints': 0}
                 for proc in procs_by_campaign.get(c.get('campaignId'), []):
-                    if budget <= 0:
+                    if scanned >= MAX_PROCESSES:
                         truncated = True
                         break
                     pid = proc.get('processId')
                     if not pid:
                         continue
-                    budget -= 1
-                    counts = _counts_for_process(tenant, pid)
+                    scanned += 1
+                    counts, from_rollup = _counts_for_process(
+                        tenant, pid, allow_fallback=fallback_budget > 0)
+                    if counts is None:   # sin rollup y sin presupuesto de fallback
+                        truncated = True
+                        continue
+                    if not from_rollup:
+                        fallback_budget -= 1
                     for k in camp_acc:
                         camp_acc[k] += counts[k]
 
@@ -376,6 +455,13 @@ def lambda_handler(event, context):
             for k, v in sorted(by_channel.items(), key=lambda kv: kv[1]['sent'], reverse=True)
         ]
 
+        # Actividad de los últimos 30 días (best-effort: no tumba el panel si falla).
+        try:
+            series = _series_global(customers)
+        except Exception as e:
+            print('Serie del panel: {}'.format(e))
+            series = []
+
         return {
             'status': True, 'statusCode': 200,
             'description': 'Panel de control global' + (' (parcial)' if truncated else ''),
@@ -386,6 +472,7 @@ def lambda_handler(event, context):
                 'funnel': funnel,
                 'byChannel': by_channel_list,
                 'health': health,
+                'series': series,
                 'truncated': truncated,
             }
         }

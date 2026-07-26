@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Paper,
@@ -28,7 +28,7 @@ import SendIcon from '@mui/icons-material/Send';
 import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { StatTile, Donut, Funnel, useStatusColors } from './charts';
+import { StatTile, Donut, Funnel, AreaChart, useStatusColors, useSeriesColors } from './charts';
 import {
   ESTADO_LABEL as estadoLabel,
   rate,
@@ -36,11 +36,13 @@ import {
   type Estado,
 } from './campaignData';
 import { usePortalData } from '../../context/PortalDataContext';
+import { statsService, type SeriesDay } from '../../services/statsService';
 
 const estadoColor: Record<Estado, 'warning' | 'info' | 'success'> = { pendiente: 'warning', creada: 'info', enviada: 'success' };
 
 export const EstadisticasSection = () => {
   const status = useStatusColors();
+  const seriesColors = useSeriesColors();
   const [detail, setDetail] = useState<CampaignStat | null>(null);
   // Datos precargados al entrar al portal (contexto compartido).
   const { stats, refreshStats } = usePortalData();
@@ -48,6 +50,20 @@ export const EstadisticasSection = () => {
   const loading = stats.loading;
   const error = stats.error;
   const loadStats = refreshStats;
+
+  // Serie diaria de los últimos 30 días (Report/Series, rollup barato). Best-effort:
+  // si la lambda/ruta no está desplegada, simplemente no se muestra el gráfico.
+  const [seriesDays, setSeriesDays] = useState<SeriesDay[] | null>(null);
+  const [seriesLoading, setSeriesLoading] = useState(false);
+  const loadSeries = () => {
+    setSeriesLoading(true);
+    statsService
+      .series(30)
+      .then((res) => setSeriesDays(res.data?.days ?? null))
+      .catch(() => setSeriesDays(null))
+      .finally(() => setSeriesLoading(false));
+  };
+  useEffect(loadSeries, []);
 
   const kpis = useMemo(() => {
     const by = (e: Estado) => campaigns.filter((c) => c.estado === e).length;
@@ -89,7 +105,10 @@ export const EstadisticasSection = () => {
         <Button
           variant="outlined"
           startIcon={loading ? <CircularProgress size={16} /> : <RefreshIcon />}
-          onClick={loadStats}
+          onClick={() => {
+            loadStats();
+            loadSeries();
+          }}
           disabled={loading}
         >
           Actualizar
@@ -117,6 +136,23 @@ export const EstadisticasSection = () => {
         <StatTile label="Total envíos" value={kpis.totalEnvios} icon={<MarkEmailReadIcon />} />
         <StatTile label="Apertura prom." value={kpis.aperturaProm} suffix="%" icon={<VisibilityIcon />} sublabel="de entregados" />
       </Box>
+
+      {/* Actividad diaria (últimos 30 días, del rollup de envíos) */}
+      {seriesDays && seriesDays.length > 0 && (
+        <Paper variant="outlined" sx={{ p: 2.5, mb: 3, opacity: seriesLoading ? 0.6 : 1 }}>
+          <Typography variant="subtitle1" fontWeight={700} mb={1}>
+            Actividad de los últimos 30 días
+          </Typography>
+          <AreaChart
+            data={seriesDays}
+            series={[
+              { key: 'enviados', label: 'Enviados', color: seriesColors.enviados },
+              { key: 'entregados', label: 'Entregados', color: seriesColors.entregados },
+              { key: 'abiertos', label: 'Abiertos', color: seriesColors.abiertos },
+            ]}
+          />
+        </Paper>
+      )}
 
       {/* Gráficos */}
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2, mb: 3 }}>

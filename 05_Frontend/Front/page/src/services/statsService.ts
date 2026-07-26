@@ -15,6 +15,7 @@ import type { CampaignStat } from '../components/portal/campaignData';
 
 export const STATS_ENDPOINTS = {
   STATISTICS: '/Report/Statistics',
+  SERIES: '/Report/Series',
 };
 
 export interface StatsResult {
@@ -22,7 +23,29 @@ export interface StatsResult {
   truncated?: boolean;
 }
 
+/** Un día de la serie de actividad (Report/Series — rollup sendSummary). */
+export interface SeriesDay {
+  date: string; // YYYY-MM-DD
+  enviados: number;
+  entregados: number;
+  abiertos: number;
+  clics: number;
+  rebotes: number;
+  quejas: number;
+}
+
+export interface SeriesResult {
+  from: string;
+  to: string;
+  days: SeriesDay[];
+  totals: Omit<SeriesDay, 'date'>;
+  withoutRollup?: number;
+}
+
 export const statsService = {
   statistics: (customerId: string, customer: string): Promise<ApiResponse<StatsResult>> =>
     apiPost(STATS_ENDPOINTS.STATISTICS, { customerId, customer }),
+  /** Serie diaria de los últimos N días (default 30) del tenant del token. */
+  series: (days = 30): Promise<ApiResponse<SeriesResult>> =>
+    apiPost(STATS_ENDPOINTS.SERIES, { days }),
 };

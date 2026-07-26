@@ -64,6 +64,7 @@
     { "path": "/Domain/List",              "lambda": "Api_V1_Domain_List" },
     { "path": "/Domain/Delete",            "lambda": "Api_V1_Domain_Delete" },
     { "path": "/Report/Statistics",        "lambda": "Api_V1_Reports_Statistics" },
+    { "path": "/Report/Series",            "lambda": "Api_V1_Reports_Series" },
     { "path": "/Report/State-report",      "lambda": "Api_V1_Reports_state-report" },
     { "path": "/Cost/Estimate",            "lambda": "Api_V1_Cost_Estimate" },
     { "path": "/Balance/Get",              "lambda": "Api_V1_Balance_Get" },

@@ -114,3 +114,44 @@ def test_filtro_por_mes(dash):
     assert data['kpis']['totalSent'] == 20
     assert data['kpis']['atRisk'] == 0
     assert [h['company'] for h in data['health']] == ['Acme']
+
+
+def test_serie_de_actividad_30_dias(dash):
+    # El panel trae la serie DIARIA global (últimos 30 días) leída del rollup
+    # {tenant}_sendSummary; los procesos sin fecha o de muestra no aparecen.
+    from datetime import datetime, timedelta, timezone
+    _pk('111_sendSummary', 'processId')
+    ddb = boto3.resource('dynamodb', region_name='us-east-1')
+    day = (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d')
+    ddb.Table('process').put_item(Item={
+        'processId': 'P1', 'customerName': 'Acme', 'campaignId': 'CA1',
+        'date': day + 'T10:00:00.000Z'})
+    ddb.Table('111_sendSummary').put_item(Item={
+        'processId': 'P1', 'enviados': 20, 'entregados': 18, 'abiertos': 2,
+        'clics': 0, 'rebotes': 0, 'quejas': 0})
+    # Proceso de MUESTRA reciente: no debe sumar a la serie.
+    ddb.Table('process').put_item(Item={
+        'processId': 'PS', 'customerName': 'Acme', 'campaignId': 'CA1',
+        'date': day + 'T11:00:00.000Z', 'isSamples': True})
+
+    data = dash.lambda_handler(_admin(), None)['data']
+    serie = data['series']
+    assert len(serie) == 30
+    dia = next(d for d in serie if d['date'] == day)
+    assert dia['enviados'] == 20 and dia['entregados'] == 18 and dia['abiertos'] == 2
+    # P2 (Bad) no tiene fecha → fuera de la serie; el resto de días queda en cero.
+    assert sum(d['enviados'] for d in serie) == 20
+
+
+def test_rollup_se_agrega_aunque_fallback_agotado(dash, monkeypatch):
+    # "Adiós datos parciales": el tope BAJO aplica SOLO al camino caro (sin rollup).
+    # Acme (con resumen) se agrega con presupuesto de fallback en cero; Bad (sin
+    # rollup) queda fuera y el panel avisa parcial.
+    monkeypatch.setattr(dash, 'MAX_FALLBACK_QUERIES', 0)
+    _pk('111_sendSummary', 'processId')
+    boto3.resource('dynamodb', region_name='us-east-1').Table('111_sendSummary').put_item(
+        Item={'processId': 'P1', 'enviados': 20, 'entregados': 20, 'abiertos': 2,
+              'clics': 0, 'rebotes': 0, 'quejas': 0})
+    data = dash.lambda_handler(_admin(), None)['data']
+    assert data['kpis']['totalSent'] == 20
+    assert data['truncated'] is True
