@@ -47,8 +47,9 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   upsert, remove, enabled string→bool; `resolve_configuration_set` general vs dedicado vs
   deshabilitado; `build_ctx`/`prepare_message` llevan el config set).
 - ⚠️ `[J]` (despliegue): tabla `sendingConfig` (la crea `Set` on-demand); lambdas
-  `Api_V1_SendingConfig_{List,Set}` (crear vacías) + rutas `/SendingConfig/{List,Set}`
-  (authorizer + CORS, **admin-only**, mapping template de `role`/`authToken`); env
+  `Api_V1_SendingConfig_{List,Set}` (el CD las crea si no existen); rutas
+  `/SendingConfig/{List,Set}` **ya declaradas en `infra/api/routes.json`** (admin-only →
+  `deploy-api.yml` las crea con authorizer + CORS + mapping template de `role`/`authToken`); env
   `SECRET_KEY` en ambas (2ª barrera); IAM `dynamodb:GetItem/PutItem/DeleteItem/Scan/
   CreateTable/DescribeTable` sobre `sendingConfig` + `PutItem adminAudit`; **`dynamodb:GetItem
   sendingConfig`** en `Prepare-batch`; env `SES_CONFIGURATION_SET` en Prepare-batch/Send-EM/

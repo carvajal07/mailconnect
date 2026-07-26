@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { ReactElement } from 'react';
 import {
   Box,
@@ -14,6 +14,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Chip,
   CircularProgress,
   Alert,
@@ -81,6 +82,8 @@ export const AuditoriaSection = () => {
   const [data, setData] = useState<AuditData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,11 +92,18 @@ export const AuditoriaSection = () => {
     setLoading(false);
     if (isOk(res) && res.data) setData(res.data);
     else setError(res.description || 'No se pudo cargar la auditoría.');
+    setPage(0); // vuelve a la primera página al recargar/filtrar
   }, [month, action, actor]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  const entries = data?.entries ?? [];
+  const pageEntries = useMemo(
+    () => entries.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
+    [entries, page, rowsPerPage],
+  );
 
   return (
     <Box>
@@ -160,7 +170,7 @@ export const AuditoriaSection = () => {
             {!loading && data && (data.entries?.length ?? 0) === 0 && (
               <TableRow><TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.secondary' }}>No hay eventos registrados para el filtro.</TableCell></TableRow>
             )}
-            {(data?.entries ?? []).map((e) => {
+            {pageEntries.map((e) => {
               const meta = ACTION_META[e.action];
               return (
                 <TableRow key={e.auditId} hover>
@@ -179,6 +189,17 @@ export const AuditoriaSection = () => {
             })}
           </TableBody>
         </Table>
+        <TablePagination
+          component="div"
+          count={entries.length}
+          page={page}
+          onPageChange={(_, p) => setPage(p)}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={(e) => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}
+          rowsPerPageOptions={[10, 25, 50, 100]}
+          labelRowsPerPage="Filas por página"
+          labelDisplayedRows={({ from, to, count }) => `${from}–${to} de ${count}`}
+        />
       </TableContainer>
     </Box>
   );

@@ -14,6 +14,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Chip,
   CircularProgress,
   Alert,
@@ -86,6 +87,9 @@ export const AdminCampanasSection = () => {
     load();
   }, [load]);
 
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
@@ -97,6 +101,14 @@ export const AdminCampanasSection = () => {
       return true;
     });
   }, [rows, month, state, customerId, channel, search]);
+
+  // Al cambiar los filtros o el conjunto, vuelve a la primera página.
+  useEffect(() => { setPage(0); }, [month, state, customerId, channel, search, rows]);
+
+  const pageRows = useMemo(
+    () => visible.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
+    [visible, page, rowsPerPage],
+  );
 
   return (
     <Box>
@@ -171,7 +183,7 @@ export const AdminCampanasSection = () => {
             {!loading && visible.length === 0 && (
               <TableRow><TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>No hay campañas para el filtro seleccionado.</TableCell></TableRow>
             )}
-            {visible.map((c) => (
+            {pageRows.map((c) => (
               <TableRow key={c.campaignId} hover>
                 <TableCell><Typography fontWeight={600}>{c.company || '—'}</Typography></TableCell>
                 <TableCell>{c.campaignName || '—'}</TableCell>
@@ -183,6 +195,19 @@ export const AdminCampanasSection = () => {
             ))}
           </TableBody>
         </Table>
+        {visible.length > 10 && (
+          <TablePagination
+            component="div"
+            count={visible.length}
+            page={page}
+            onPageChange={(_, p) => setPage(p)}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={(e) => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}
+            rowsPerPageOptions={[10, 25, 50, 100]}
+            labelRowsPerPage="Filas por página"
+            labelDisplayedRows={({ from, to, count }) => `${from}–${to} de ${count}`}
+          />
+        )}
       </TableContainer>
 
       {!loading && rows.length > 0 && (
