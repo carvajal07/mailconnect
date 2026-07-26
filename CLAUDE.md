@@ -26,6 +26,73 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Notificaciones al owner + centro de preferencias (ago 2026, Bloque H)
+- **Notificaciones al owner (por correo, opt-in):** el cliente controla `customer.notify`
+  (`{reputation, digest, lowBalance, lowBalanceThreshold}`, FAIL-OPEN: reputación+saldo bajo ON,
+  resumen OFF, umbral 20.000 COP) desde **Mi cuenta** (`NotificationsCard`, solo owner) vía
+  **`Api_V1_Notifications_Prefs`** (`POST /Notifications/Prefs`, get/set; set owner-only).
+  Tres disparadores:
+  - **Saldo bajo (instantáneo):** `Prepare-batch`, tras el débito del envío real, si el saldo
+    quedó bajo el umbral → correo al owner (`notify_low_balance_if_needed`, best-effort,
+    deduplicado por día vía tabla **`notificationLog`** PK `notifyKey`=customerId#kind#día, TTL).
+  - **Reputación en riesgo + resumen diario (programado):** **`Api_V1_Notifications_Scan`**
+    (cron EventBridge, `trigger-map.json` `cron(0 13 * * ? *)`): recorre clientes, lee la
+    reputación de 7 días del rollup `{tenant}_sendSummary` (rebote/queja vs umbrales SES) y, si
+    aplica, avisa; y si hubo actividad HOY y `digest` está ON, envía el resumen del día. Mismo
+    dedup por (cliente, tipo, día). Owners = usuarios `tenantRole=owner` activos (fallback a
+    cualquier activo).
+  - ⚠️ **Campaña terminada** NO se implementó como aviso instantáneo: el pipeline distribuido
+    NUNCA marca el proceso `Terminada` (no hay escritor de ese estado), así que no hay señal de
+    completado confiable a la cual engancharse. El resumen DIARIO cubre "qué se envió"; el aviso
+    por-campaña queda pendiente (exige un hook de completado en los workers).
+- **Centro de preferencias del suscriptor (`Api_V1_Email_Preferences`, `GET/POST /Email/
+  Preferences`, público/proxy):** página firmada (MISMO token HMAC del unsubscribe) donde el
+  destinatario elige **frecuencia** (todas/menos/ninguna) y **temas** (promociones/novedades/
+  transaccional), no solo la baja total. Guarda en `{tenant}_preferences` (PK email). Elegir
+  "ninguna" o desmarcar TODO → escribe en `{tenant}_unsubscribe` (que Prepare-batch YA filtra);
+  cualquier otra opción re-suscribe (borra de unsubscribe). La granularidad por TEMA se guarda
+  como consentimiento; su APLICACIÓN (filtrar por tema) queda para cuando las campañas se
+  etiqueten. `Send-EM` expone la variable **`{{preferencesUrl}}`** y el pie del builder HTML
+  suma "Administrar preferencias · Cancelar suscripción".
+- **Cobertura:** `test_notifications.py` (10: prefs get/set + owner-gate, scan reputación+resumen
+  con dedup + preferencia apagada, saldo bajo notifica-una-vez/suficiente/desactivado),
+  `test_preferences.py` (6: token inválido, GET, POST guarda, ninguna/sin-temas → baja, re-suscribe).
+- ⚠️ `[J]`: lambdas `Api_V1_Notifications_{Prefs,Scan}` + `Api_V1_Email_Preferences` (el CD las
+  crea) + rutas `/Notifications/Prefs` (authorizer) y `/Email/Preferences` (pública proxy) **ya
+  en routes.json**; regla EventBridge del Scan (trigger-map.json); env `SENDER_EMAIL`/
+  `NOTIFY_DASHBOARD_URL`/`PREFERENCES_URL`; IAM: Scan `Scan customer/process/user` + `BatchGetItem
+  *_sendSummary` + `Get/PutItem notificationLog` + `ses:SendEmail`; Prefs `GetItem/UpdateItem
+  customer`; Preferences `*_preferences`/`*_unsubscribe` (Get/Put/Delete/Create); Prepare-batch
+  suma `Scan user` + `Get/PutItem notificationLog` + `ses:SendEmail` (ya tenía SES). Tabla
+  `notify` en `customer` y `notificationLog` on-demand.
+
+### 2FA (TOTP) para usuarios (ago 2026, Bloque I)
+- **Segundo factor por TOTP** (RFC 6238, compatible con Google Authenticator/Authy/1Password),
+  con stdlib (hmac/struct/base64, sin layer — igual que el JWT de los Authorizers).
+- **Gestión (`Api_V1_Security_Totp`, `POST /Security/Totp`, tras el Authorizer):** `status`,
+  `enroll` (genera secreto PENDIENTE + `otpauthUri` para el QR), `activate {code}` (verifica el
+  1er código → activa + devuelve **10 códigos de respaldo** de un solo uso, hasheados en BD),
+  `disable {code}` (exige un TOTP o código de respaldo válido). Datos en la tabla `user`
+  (`totpEnabled`, `totpSecret`, `totpBackupCodes[]` sha256, `totpPendingSecret`).
+- **Login en dos pasos:** `Login`, tras la contraseña correcta, si `totpEnabled` NO emite token;
+  devuelve `data.twofaRequired=true` + `data.challenge` (JWT corto de 5 min, claim `twofa`). El
+  ingreso se completa en **`Api_V1_Security_Verify-2fa`** (`POST /Security/Verify-2fa`, pública/
+  pre-sesión): valida el desafío + el código (TOTP o respaldo, que se CONSUME), crea la sesión y
+  emite el JWT real (idéntico a Login). Anti-fuerza-bruta: `twofaFails` en `user` → **429** a los
+  5 fallos (hay que re-loguear); un ingreso correcto resetea el contador.
+- **Front:** `TwoFactorCard` en Mi cuenta (QR con la lib `qrcode`, activación, códigos de
+  respaldo mostrados UNA vez, desactivación); `LoginPage` gana la pantalla de código cuando
+  `twofaRequired`; `authService.verify2fa` + `totpService`. La sesión sigue guardándose por
+  pestaña (sessionStorage) igual que antes.
+- **Cobertura:** `test_totp.py` (10: status/enroll/activate con código real/disable/403; login
+  sin 2FA da token vs con 2FA pide desafío; verify con TOTP crea sesión, con código de respaldo
+  que se consume, código malo + tope de intentos 429, desafío inválido 401).
+- ⚠️ `[J]`: lambdas `Api_V1_Security_{Totp,Verify-2fa}` (el CD las crea) + rutas `/Security/Totp`
+  (authorizer + mapping template con `userId`) y `/Security/Verify-2fa` (pública, sin authorizer)
+  **ya en routes.json**; env `SECRET_KEY` en ambas (Verify-2fa firma el token, mismo layer PyJWT
+  que Login); IAM: Totp `GetItem/UpdateItem user`; Verify-2fa `GetItem/UpdateItem user`, `GetItem
+  customer/userData`, `PutItem session/adminAudit`. Campos `totp*`/`twofaFails` en `user` on-demand.
+
 ### Protección de reputación, límites y costos (ago 2026, Bloque E)
 - **Rate limiting del chatbot público (`Api_V1_Assistant_Ask`)**: el endpoint es público y
   cada pregunta invoca un modelo de PAGO → limitador de ventana fija en DynamoDB (tabla
@@ -308,6 +375,11 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `change-password` | `{ user (email), password (nueva), otp? }` + header `Authorization: Bearer` (alternativo) | 200 ok · 401 sin auth/OTP · 400 débil · 404 no existe |
 | `forgot-password` | `{ user (email), ip? }` | 200 siempre (genérico, no revela si el correo existe; envía OTP por correo) |
 | `logout` | `{ user (email) }` | 200 (idempotente) |
+| `login` (2FA) | igual que `login` | Si el usuario tiene 2FA: 200 `data:{twofaRequired:true, challenge}` (sin `token`). El front completa con `Verify-2fa` |
+| `Verify-2fa` | `{ challenge, code }` **público** | 200 `data:{token, ...}` (idéntico a login OK) · 401 código/desafío inválido o vencido · 429 demasiados intentos. `code` = TOTP o código de respaldo (se consume) |
+| `Security/Totp` | `{ action: status\|enroll\|activate\|disable, code? }` (tras Authorizer) | `enroll`→`{secret, otpauthUri}` · `activate`→`{enabled, backupCodes[10]}` · `disable` (exige código) · `status`→`{enabled, pending}`. Gestión del 2FA TOTP del usuario |
+| `Notifications/Prefs` | `{ action: get\|set, prefs? }` (tenant del token; set owner-only) | 200 `data:{notify:{reputation, digest, lowBalance, lowBalanceThreshold}}`. Preferencias de aviso al owner (saldo bajo, reputación, resumen diario) |
+| `Email/Preferences` | **GET/POST público (proxy)** `?t=<token HMAC>` | 200 página HTML del **centro de preferencias** (frecuencia + temas). POST guarda en `{tenant}_preferences`; "ninguna"/sin-temas → da de baja (`{tenant}_unsubscribe`), otra opción re-suscribe |
 | `Campaign/List` | `{ customerId }` | 200 `data:{campaigns[], count}` (orden desc por fecha; incluye `campaignState` y `messageTemplateId` de SMS/WSP) |
 | `Campaign/Update` | `{ campaignId, campaignName?, channelName?, attachmentType?, dataPath?, template?, messageTemplateId?, from? }` | 200 ok · 409 no-Pendiente · 403 otro cliente · 404 no existe. Solo edita campañas en estado `Pendiente`; toma el cliente del context del Authorizer. `messageTemplateId` = referencia a la plantilla SMS/WSP (contenido en vivo al enviar) |
 | `Campaign/Delete` | `{ campaignId }` | 200 ok · 400 falta id · 403 otro cliente · 404 no existe. Borra el registro de `campaign` (+ sus `document` best-effort); no borra el CSV ni el historial de procesos. Audita `campaign.delete` |

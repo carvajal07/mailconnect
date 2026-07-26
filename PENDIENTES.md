@@ -172,10 +172,28 @@ El front está terminado y el backend probado; solo falta la consola AWS
        higiene" (escudo) en Bases de datos con diálogo del reporte. ⚠️ `[J]`: IAM
        `GetItem/UpdateItem databaseFile` + `s3:GetObject` buckets de cliente; layer
        dnspython OPCIONAL para MX real.
-5. [ ] `[C]` **Centro de preferencias** del suscriptor (no solo desuscripción total).
-6. [ ] `[C]` **Reporte por destinatario** buscable ("¿qué le llegó a X?").
-7. [ ] `[C]` **2FA (TOTP)** para admins y owners (reutiliza la infraestructura OTP).
-8. [ ] `[C]` **Notificaciones al cliente**: campaña terminada, saldo bajo, rebote alto.
+5. [x] `[C]` ✅ **Centro de preferencias (ago 2026, Bloque H)**: `Api_V1_Email_Preferences`
+       (`GET/POST /Email/Preferences`, público/proxy, ya en routes.json) — página firmada
+       (mismo token del unsubscribe) con **frecuencia** + **temas**; "ninguna"/sin-temas →
+       baja total (`{tenant}_unsubscribe`), otra opción re-suscribe. `Send-EM` expone
+       `{{preferencesUrl}}` y el pie del builder suma "Administrar preferencias". La
+       aplicación por-tema (filtrar el envío según el tema) queda para cuando las campañas
+       se etiqueten.
+6. [x] `[C]` ✅ **Reporte por destinatario (ago 2026, Bloque C)**: `Api_V1_Admin_Recipient-lookup`
+       + tab Soporte → "Buscar destinatario".
+7. [x] `[C]` ✅ **2FA (TOTP) (ago 2026, Bloque I)**: `Api_V1_Security_{Totp,Verify-2fa}` +
+       `TwoFactorCard` en Mi cuenta (QR, códigos de respaldo) + pantalla de código en el
+       login. TOTP stdlib (RFC 6238); Login devuelve un desafío corto si el usuario tiene
+       2FA; Verify-2fa lo canjea por el token (429 anti-fuerza-bruta). ⚠️ `[J]`: env
+       `SECRET_KEY` en ambas; IAM sobre `user`/`session`/`customer`/`userData`/`adminAudit`.
+8. [~] **Notificaciones al cliente**: ✅ `[C]` (ago 2026, Bloque H) **saldo bajo**
+       (instantáneo en Prepare-batch tras el débito) y **rebote alto + resumen diario**
+       (`Api_V1_Notifications_Scan`, cron, del rollup `sendSummary`), con preferencias por
+       cliente (`customer.notify`, `Api_V1_Notifications_Prefs` + tarjeta en Mi cuenta,
+       owner-only) y dedup por día (`notificationLog`). ⚠️ Pendiente: **"campaña terminada"**
+       instantánea — el pipeline no marca el proceso `Terminada` (no hay escritor de ese
+       estado), así que no hay señal de completado; exige un hook en los workers (el resumen
+       diario cubre "qué se envió" mientras tanto).
 9. [ ] `[P]` **Automatizaciones** (bienvenida/fechas) sobre el motor de la Cascada.
 10. [ ] `[P]` Decisiones abiertas: proveedor SMS definitivo, tarifas reales calibradas,
         reembolso de fallidos, facturación fiscal DIAN (ver la sección Prepago en `CLAUDE.md`).

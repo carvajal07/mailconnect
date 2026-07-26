@@ -75,6 +75,8 @@
     { "path": "/Cascade/Dispatch",         "lambda": "Api_V1_Cascade_Dispatch" },
     { "path": "/Cascade/List",             "lambda": "Api_V1_Cascade_List" },
     { "path": "/Assistant/Copilot",        "lambda": "Api_V1_Assistant_Copilot" },
+    { "path": "/Notifications/Prefs",      "lambda": "Api_V1_Notifications_Prefs" },
+    { "path": "/Security/Totp",            "lambda": "Api_V1_Security_Totp" },
 
     { "path": "/Email/Send-batch-template",         "lambda": "Api_V1_Email_Prepare-batch-template", "proxy": true },
     { "path": "/Email/Send-batch-template-samples", "lambda": "Api_V1_Email_Prepare-batch-template", "proxy": true },
@@ -87,9 +89,11 @@
     { "path": "/Security/Validate-otp",      "lambda": "Api_V1_Security_Validate-otp",      "auth": false },
     { "path": "/Security/Recovery-password", "lambda": "Api_V1_Security_Recovery-password", "auth": false },
     { "path": "/Security/Refresh-token",     "lambda": "Api_V1_Security_Refresh-token" },
+    { "path": "/Security/Verify-2fa",        "lambda": "Api_V1_Security_Verify-2fa",        "auth": false },
     { "path": "/Security/Acount-activation", "lambda": "Api_V1_Security_Acount-activation", "method": "GET", "auth": false, "proxy": true, "cors": false },
 
     { "path": "/Email/Unsubscribe",        "lambda": "Api_V1_Email_Unsubscribe", "method": "ANY", "auth": false, "proxy": true, "cors": false },
+    { "path": "/Email/Preferences",        "lambda": "Api_V1_Email_Preferences", "method": "ANY", "auth": false, "proxy": true, "cors": false },
     { "path": "/Wallet/Wompi-webhook",     "lambda": "Api_V1_Wallet_Wompi-webhook", "auth": false, "proxy": true, "cors": false },
     { "path": "/Assistant/Ask",            "lambda": "Api_V1_Assistant_Ask", "auth": false, "proxy": true }
   ]

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Box,
   Paper,
@@ -9,11 +9,16 @@ import {
   Divider,
   Avatar,
   CircularProgress,
+  Switch,
+  FormControlLabel,
 } from '@mui/material';
 import LockResetIcon from '@mui/icons-material/LockReset';
-import { getUser, authService } from '../../services/authService';
+import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
+import { getUser, authService, getTenantRole } from '../../services/authService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { TwoFactorCard } from './TwoFactorCard';
+import { notificationsService, type NotifyPrefs } from '../../services/notificationsService';
 
 /** Reglas de contraseña alineadas con el backend (change-password). */
 const validatePassword = (pwd: string): string | undefined => {
@@ -119,10 +124,88 @@ export const MiCuentaSection = () => {
             </Box>
           </Stack>
         </Paper>
+
+        {/* Segundo factor (2FA) */}
+        <TwoFactorCard />
+
+        {/* Notificaciones (solo el owner las administra) */}
+        {getTenantRole(user) === 'owner' && <NotificationsCard />}
       </Stack>
 
       {FeedbackSnackbar}
     </Box>
+  );
+};
+
+/** Preferencias de notificación del cliente (Bloque H) — solo el owner. */
+const NotificationsCard = () => {
+  const { notify, FeedbackSnackbar } = useFeedback();
+  const [prefs, setPrefs] = useState<NotifyPrefs | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    notificationsService.get()
+      .then((res) => { if (isOk(res) && res.data?.notify) setPrefs(res.data.notify); })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async (next: NotifyPrefs) => {
+    setPrefs(next);
+    setSaving(true);
+    const res = await notificationsService.set(next);
+    setSaving(false);
+    if (isOk(res) && res.data?.notify) setPrefs(res.data.notify);
+    else notify(res.description || 'No se pudieron guardar las preferencias.', 'error');
+  };
+
+  const toggle = (key: 'reputation' | 'digest' | 'lowBalance') => () => {
+    if (!prefs) return;
+    save({ ...prefs, [key]: !prefs[key] });
+  };
+
+  return (
+    <Paper variant="outlined" sx={{ p: 3 }}>
+      <Stack direction="row" spacing={1} alignItems="center" mb={1}>
+        <NotificationsActiveIcon color="primary" />
+        <Typography variant="h6">Notificaciones por correo</Typography>
+        {saving && <CircularProgress size={16} />}
+      </Stack>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Te avisamos por correo de lo importante sin que tengas que entrar al portal.
+      </Typography>
+      {loading || !prefs ? (
+        <CircularProgress size={22} />
+      ) : (
+        <Stack spacing={1}>
+          <FormControlLabel
+            control={<Switch checked={prefs.lowBalance} onChange={toggle('lowBalance')} color="success" />}
+            label="Avisarme cuando mi saldo esté bajo"
+          />
+          {prefs.lowBalance && (
+            <TextField
+              type="number"
+              size="small"
+              label="Umbral de saldo bajo (COP)"
+              value={prefs.lowBalanceThreshold}
+              onChange={(e) => setPrefs({ ...prefs, lowBalanceThreshold: Math.max(parseInt(e.target.value, 10) || 0, 0) })}
+              onBlur={() => save(prefs)}
+              sx={{ maxWidth: 260, ml: 4 }}
+              inputProps={{ min: 0 }}
+            />
+          )}
+          <FormControlLabel
+            control={<Switch checked={prefs.reputation} onChange={toggle('reputation')} color="success" />}
+            label="Alertarme si mi reputación de envío (rebotes/quejas) está en riesgo"
+          />
+          <FormControlLabel
+            control={<Switch checked={prefs.digest} onChange={toggle('digest')} color="success" />}
+            label="Enviarme un resumen diario de mi actividad"
+          />
+        </Stack>
+      )}
+      {FeedbackSnackbar}
+    </Paper>
   );
 };
 

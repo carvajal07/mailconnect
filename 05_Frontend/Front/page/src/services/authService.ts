@@ -39,6 +39,12 @@ export interface LoginData {
   tenantRole?: string;
   /** Banderas de funciones del cliente ({clave: bool}); ausente/true = habilitada. */
   featureFlags?: Record<string, boolean>;
+  /** 2FA: si el usuario tiene segundo factor, el login devuelve twofaRequired=true y un
+   *  `challenge` (token corto) en vez del `token`; se completa con verify2fa(). */
+  twofaRequired?: boolean;
+  challenge?: string;
+  /** Códigos de respaldo que le quedan al usuario tras un ingreso con 2FA. */
+  backupCodesRemaining?: number;
 }
 
 export interface RegisterPayload {
@@ -143,6 +149,10 @@ export const authService = {
     if (MOCK_ENABLED) return Promise.resolve(mockLogin(user, password));
     return post<LoginData>(AUTH_ENDPOINTS.LOGIN, { user, password });
   },
+
+  /** Segundo paso del login con 2FA: canjea el desafío + el código por el token real. */
+  verify2fa: (challenge: string, code: string): Promise<ApiResponse<LoginData>> =>
+    post<LoginData>(AUTH_ENDPOINTS.VERIFY_2FA, { challenge, code }),
 
   register: (payload: RegisterPayload) => {
     // En modo demo, el registro "funciona" para poder seguir el flujo.

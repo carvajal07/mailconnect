@@ -16,6 +16,7 @@ import {
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { AuthLayout } from '../../components/AuthLayout';
 import { authService, saveSession, consumeLogoutReason } from '../../services/authService';
+import type { LoginData } from '../../services/authService';
 import { MOCK_ENABLED, DEMO_CREDENTIALS } from '../../services/mockAuth';
 import {
   authCardSx,
@@ -51,6 +52,9 @@ export const LoginPage = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [sessionNotice, setSessionNotice] = useState('');
+  // 2FA: si el login lo requiere, se guarda el desafío y se pide el código de 6 dígitos.
+  const [twofaChallenge, setTwofaChallenge] = useState<string | null>(null);
+  const [twofaCode, setTwofaCode] = useState('');
 
   // Aviso cuando la sesión se cerró sola (token vencido o inactividad).
   useEffect(() => {
@@ -135,6 +139,62 @@ export const LoginPage = () => {
     }));
   };
 
+  // Guarda la sesión y entra al portal (o /admin para el personal interno).
+  const finishLogin = (data: LoginData) => {
+    saveSession(data.token, {
+      userId: data.userId,
+      name: data.name,
+      customer: data.customer,
+      customerId: data.customerId,
+      nit: data.companyTin,
+      realSendEnabled: data.realSendEnabled,
+      role: data.role,
+      tenantRole: data.tenantRole,
+      featureFlags: data.featureFlags,
+      email: formData.email,
+    });
+    navigate(data.role === 'admin' ? '/admin' : '/panel');
+  };
+
+  // Segundo paso del login con 2FA: canjea el desafío + el código por el token real.
+  const handleVerify2fa = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!twofaChallenge) return;
+    const code = twofaCode.trim();
+    if (!code) {
+      setSubmitError('Ingresa el código de tu app de autenticación.');
+      return;
+    }
+    setSubmitError('');
+    setIsSubmitting(true);
+    try {
+      const res = await authService.verify2fa(twofaChallenge, code);
+      if (res.status && res.statusCode === 200 && res.data?.token) {
+        finishLogin(res.data);
+        return;
+      }
+      if (res.statusCode === 429 || res.statusCode === 401) {
+        // Desafío vencido / demasiados intentos → volver a pedir la contraseña.
+        if (res.statusCode === 429) {
+          setTwofaChallenge(null);
+        }
+        setSubmitError(res.description || 'Código incorrecto.');
+      } else {
+        setSubmitError(res.description || 'No se pudo verificar el código.');
+      }
+    } catch {
+      setSubmitError('Ocurrió un error inesperado. Intenta nuevamente.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const cancelTwofa = () => {
+    setTwofaChallenge(null);
+    setTwofaCode('');
+    setSubmitError('');
+  };
+
   // Manejar el envío del formulario
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -153,21 +213,14 @@ export const LoginPage = () => {
       const res = await authService.login(formData.email, formData.password);
 
       if (res.status && res.statusCode === 200 && res.data) {
-        // Guardar sesión (token + datos del usuario) y entrar al portal del cliente
-        saveSession(res.data.token, {
-          userId: res.data.userId,
-          name: res.data.name,
-          customer: res.data.customer,
-          customerId: res.data.customerId,
-          nit: res.data.companyTin,
-          realSendEnabled: res.data.realSendEnabled,
-          role: res.data.role,
-          tenantRole: res.data.tenantRole,
-          featureFlags: res.data.featureFlags,
-          email: formData.email,
-        });
-        // Los admin (personal interno) van al panel /admin; los clientes al portal /panel.
-        navigate(res.data.role === 'admin' ? '/admin' : '/panel');
+        // 2FA: si el usuario tiene segundo factor, el login NO trae token; pide el código.
+        if (res.data.twofaRequired && res.data.challenge) {
+          setTwofaChallenge(res.data.challenge);
+          setTwofaCode('');
+          setIsSubmitting(false);
+          return;
+        }
+        finishLogin(res.data);
         return;
       }
 
@@ -232,6 +285,41 @@ export const LoginPage = () => {
             </Alert>
           )}
 
+          {/* Segundo factor (2FA): pantalla de código, tras la contraseña correcta */}
+          {twofaChallenge ? (
+            <form onSubmit={handleVerify2fa} noValidate>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Ingresa el código de 6 dígitos de tu app de autenticación (o un código de
+                respaldo).
+              </Typography>
+              <TextField
+                fullWidth
+                autoFocus
+                label="Código de verificación"
+                value={twofaCode}
+                onChange={(e) => { setTwofaCode(e.target.value); setSubmitError(''); }}
+                disabled={isSubmitting}
+                margin="normal"
+                placeholder="123456"
+                inputProps={{ inputMode: 'text', autoComplete: 'one-time-code', maxLength: 9 }}
+              />
+              <Button
+                type="submit"
+                fullWidth
+                variant="contained"
+                size="large"
+                disabled={isSubmitting}
+                sx={{ ...authSubmitSx, mt: 2 }}
+              >
+                {isSubmitting ? 'Verificando...' : 'Verificar e ingresar'}
+              </Button>
+              <Box sx={{ textAlign: 'center', mt: 2 }}>
+                <Link component="button" type="button" variant="body2" onClick={cancelTwofa} sx={authLinkSx}>
+                  Volver a iniciar sesión
+                </Link>
+              </Box>
+            </form>
+          ) : (
           <form onSubmit={handleSubmit} noValidate>
             {/* Campo de Email */}
             <TextField
@@ -309,6 +397,7 @@ export const LoginPage = () => {
               {isSubmitting ? 'Iniciando sesión...' : 'Iniciar Sesión'}
             </Button>
           </form>
+          )}
 
           {/* Divider */}
           <Divider sx={{ my: 3 }} />

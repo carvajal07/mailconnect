@@ -339,11 +339,13 @@ export function generateHtml(blocks: Block[], settings: EmailSettings = DEFAULT_
     : '';
 
   // Pie de desuscripción: SIEMPRE presente (requisito de SES/anti-spam y buenas
-  // prácticas). {{unsubscribeUrl}} lo llena el motor de envío por destinatario
-  // con un enlace firmado; no es editable ni removible desde el builder.
+  // prácticas). {{unsubscribeUrl}} y {{preferencesUrl}} los llena el motor de envío por
+  // destinatario con enlaces firmados; no son editables ni removibles desde el builder.
   const unsubscribeFooter = `            <tr><td align="center" class="mc-pad" style="padding:18px 24px 24px;border-top:1px solid #e8edf3;">
               <p style="margin:0;font-family:${st.fontFamily};font-size:12px;line-height:18px;color:#8a97ab;">
                 Recibes este correo porque estás suscrito a nuestras comunicaciones.<br />
+                <a href="{{preferencesUrl}}" target="_blank" style="color:#8a97ab;text-decoration:underline;">Administrar preferencias</a>
+                &nbsp;&middot;&nbsp;
                 <a href="{{unsubscribeUrl}}" target="_blank" style="color:#8a97ab;text-decoration:underline;">Cancelar suscripci&oacute;n</a>
               </p>
             </td></tr>`;
