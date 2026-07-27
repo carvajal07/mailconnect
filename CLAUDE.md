@@ -42,14 +42,16 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
 - **Auditoría con color:** `ACTION_META` cubre ahora las ~35 acciones que emiten las lambdas
   (antes 12 → el resto salía en chip gris sin icono) + `FAMILY_META` (fallback por prefijo
   `security./support./balance./…`) para que una acción NUEVA salga con color/icono coherente.
-  El chip pasa de `outlined` a **relleno** (en outlined el icono heredaba el gris del borde).
+  El chip sigue **outlined** (claro) pero fuerza `& .MuiChip-icon { color: inherit }`: MUI le
+  pone al icono su gris secundario y por eso se veían todos iguales.
 - **Verify-2fa sin PyJWT:** `Api_V1_Security_Verify-2fa` firma/valida el JWT con **stdlib**
   (`_jwt_encode`/`_jwt_decode`, HS256 con hmac+base64) en vez de `import jwt`. El CD crea las
   funciones nuevas en python3.13 y el layer de PyJWT está compilado para otro runtime → el
   import fallaba. Ahora **no necesita layer** ni runtime fijado (mismo enfoque que los gates
   admin y `Admin_Impersonate`).
-- **Salud de despliegue:** secciones **contraídas** por defecto y carga **no bloqueante**
-  (barra delgada + "Verificando recursos en AWS…") — la página se ve completa de inmediato.
+- **Salud de despliegue:** secciones **contraídas** por defecto y carga **no bloqueante**:
+  barra delgada + **esqueleto con los títulos** de las 4 secciones (`SECTION_SKELETON`) desde
+  el primer render, así la página se ve completa mientras la verificación habla con AWS.
 - **Plantillas de correo (admin):** el tab dejó de ser la herramienta legacy que solo mostraba
   lo creado/consultado en la sesión y pedía `userId`/`customerId` a mano. Ahora es el
   **inventario GLOBAL de SES** (`Admin/Templates`): filtro por **cliente** (prefijo del nombre
@@ -58,6 +60,13 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   código) y eliminar de SES. Se quitó el alta manual: el nombre lo genera el builder del
   portal y una plantilla creada a dedo no sería seleccionable en las campañas (para diseñar
   está "Plantillas prediseñadas").
+  ⚠️ **Ver/borrar van por la ruta ADMIN**, no por las de cliente: `Api_V1_Admin_Templates`
+  acepta ahora `action: get|delete {name}` (mismo gate admin + 2ª barrera). Las rutas de
+  cliente (`/Template/Get-template`, `/Template/Delete-template`) exigen que el nombre
+  empiece por el prefijo del tenant del token, así que el admin recibía **403 "La plantilla
+  no pertenece a tu cuenta"** con las de otras empresas; se resolvió por la lambda admin en
+  vez de abrir un bypass por rol en una ruta de cliente. `[J]`: IAM **`ses:GetTemplate`** +
+  **`ses:DeleteTemplate`** en `Api_V1_Admin_Templates` (antes solo `ses:ListTemplates`).
 - **Paginación en Trabajos** (`JobsSection`) y **filtro por cliente** en Soporte → Plantillas SES.
 
 ### Impersonación auditada "ver como cliente" (ago 2026, Bloque D)

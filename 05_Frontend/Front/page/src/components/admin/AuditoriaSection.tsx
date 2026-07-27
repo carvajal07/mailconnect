@@ -284,10 +284,17 @@ export const AuditoriaSection = () => {
                     {e.customer && <Typography variant="caption" color="text.secondary">{e.customer}</Typography>}
                   </TableCell>
                   <TableCell>
-                    {/* Chip RELLENO (no outlined): en outlined el icono hereda el gris del
-                        borde y todas las acciones se veían iguales/negras. */}
-                    <Chip size="small" color={meta.color} icon={meta.icon} label={actionLabel(e.action)}
-                      sx={{ fontWeight: 600 }} />
+                    {/* Chip OUTLINED (claro, no bloques de color sólido) forzando que el
+                        ICONO tome el color del chip: por defecto MUI le pone el gris
+                        secundario y todas las acciones se veían iguales. */}
+                    <Chip
+                      size="small"
+                      color={meta.color}
+                      variant="outlined"
+                      icon={meta.icon}
+                      label={actionLabel(e.action)}
+                      sx={{ fontWeight: 600, '& .MuiChip-icon': { color: 'inherit' } }}
+                    />
                   </TableCell>
                   <TableCell><Typography variant="body2" sx={{ wordBreak: 'break-all' }}>{e.target || '—'}</Typography></TableCell>
                   <TableCell><Typography variant="body2" color="text.secondary">{e.detail || '—'}</Typography></TableCell>

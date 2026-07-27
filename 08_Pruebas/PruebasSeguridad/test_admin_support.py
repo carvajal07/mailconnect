@@ -219,6 +219,39 @@ def test_templates_gate(catalogo):
     assert templ.lambda_handler({'requestContext': {'authorizer': {'role': 'admin'}}}, None)['statusCode'] == 403
 
 
+def test_templates_get_contenido_de_otro_cliente(catalogo):
+    # El admin puede VER el contenido de la plantilla de CUALQUIER cliente. Por la ruta de
+    # cliente (/Template/Get-template) esto daba 403 ("no pertenece a tu cuenta"), porque
+    # exige que el nombre empiece por el prefijo del tenant del token.
+    templ, _ = catalogo
+    resp = templ.lambda_handler(_admin({'action': 'get', 'name': 'beta_1_promo'}), None)
+    assert resp['statusCode'] == 200
+    tpl = resp['data']['template']
+    assert tpl['name'] == 'beta_1_promo' and tpl['html'] == '<p>x</p>'
+
+
+def test_templates_get_inexistente_404_y_sin_nombre_400(catalogo):
+    templ, _ = catalogo
+    assert templ.lambda_handler(_admin({'action': 'get', 'name': 'no_existe'}), None)['statusCode'] == 404
+    assert templ.lambda_handler(_admin({'action': 'get'}), None)['statusCode'] == 400
+
+
+def test_templates_delete(catalogo):
+    templ, _ = catalogo
+    assert templ.lambda_handler(_admin({'action': 'delete', 'name': 'alfa_2_news'}), None)['statusCode'] == 200
+    # Ya no aparece en el listado.
+    nombres = [t['name'] for t in templ.lambda_handler(_admin(), None)['data']['templates']]
+    assert nombres == ['beta_1_promo']
+
+
+def test_templates_get_requiere_admin(catalogo):
+    templ, _ = catalogo
+    resp = templ.lambda_handler(
+        {'action': 'get', 'name': 'beta_1_promo',
+         'requestContext': {'authorizer': {'role': 'client'}}}, None)
+    assert resp['statusCode'] == 403
+
+
 def test_domains_global_con_empresa(catalogo):
     _, dom = catalogo
     resp = dom.lambda_handler(_admin(), None)
