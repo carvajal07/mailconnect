@@ -14,10 +14,15 @@ código; a los MAX_2FA_ATTEMPTS fallos se responde 429 y el desafío deja de ace
 que volver a iniciar sesión). Un ingreso correcto resetea el contador y CONSUME el código de
 respaldo si se usó uno.
 
+JWT con STDLIB (hmac/base64), sin PyJWT: esta lambda la crea el CD en el runtime actual
+(python3.13) y el layer de PyJWT está compilado para otro runtime, así que importarlo
+fallaría. Firmar/validar HS256 a mano son ~15 líneas y elimina la dependencia del layer
+(mismo enfoque que los Authorizers admin y Api_V1_Admin_Impersonate).
+
 Env: SECRET_KEY (misma del JWT), TOTP_ISSUER opcional.
 [J]: ruta pública /Security/Verify-2fa (no-proxy, sin authorizer, CORS); IAM
 `dynamodb:GetItem/UpdateItem user`, `GetItem customer`, `GetItem userData`, `PutItem session`,
-`PutItem adminAudit`.
+`PutItem adminAudit`. NO necesita el layer de PyJWT.
 '''
 import os
 import time
@@ -28,7 +33,6 @@ import base64
 import hmac
 import hashlib
 
-import jwt
 import boto3
 from datetime import datetime
 
@@ -105,15 +109,53 @@ def _client_info(event):
     return ip, device
 
 
+def _b64url(data):
+    return base64.urlsafe_b64encode(data).rstrip(b'=').decode()
+
+
+def _b64url_decode(seg):
+    return base64.urlsafe_b64decode(seg + '=' * (-len(seg) % 4))
+
+
+def _jwt_encode(claims):
+    """Firma HS256 con stdlib (sin PyJWT): header.payload.firma en base64url."""
+    header = _b64url(json.dumps({'alg': 'HS256', 'typ': 'JWT'}, separators=(',', ':')).encode())
+    payload = _b64url(json.dumps(claims, separators=(',', ':')).encode())
+    sig = hmac.new(SECRET_KEY.encode(), (header + '.' + payload).encode(), hashlib.sha256).digest()
+    return header + '.' + payload + '.' + _b64url(sig)
+
+
+class _Expired(Exception):
+    """El token venció (equivalente a jwt.ExpiredSignatureError)."""
+
+
+def _jwt_decode(token):
+    """Valida firma HS256 + exp y devuelve los claims. Lanza _Expired si venció y
+    ValueError si la firma/estructura no son válidas."""
+    header_b64, payload_b64, sig_b64 = str(token).split('.')
+    expected = hmac.new(SECRET_KEY.encode(),
+                        (header_b64 + '.' + payload_b64).encode(), hashlib.sha256).digest()
+    if not hmac.compare_digest(_b64url_decode(sig_b64), expected):
+        raise ValueError('firma inválida')
+    if json.loads(_b64url_decode(header_b64)).get('alg') != 'HS256':
+        raise ValueError('algoritmo no soportado')
+    claims = json.loads(_b64url_decode(payload_b64))
+    if not isinstance(claims, dict):
+        raise ValueError('claims inválidos')
+    exp = claims.get('exp')
+    if exp is not None and time.time() >= float(exp):
+        raise _Expired()
+    return claims
+
+
 def generate_jwt(username, customer_id='', customer='', user_id='', role='client',
                  nit='', tenant_role='owner', session_id=''):
     now_ts = int(time.time())
-    payload = {'user': username, 'customerId': customer_id, 'customer': customer,
-               'nit': str(nit or ''), 'userId': user_id, 'role': role,
-               'tenantRole': tenant_role or 'owner', 'sid': str(session_id or ''),
-               'iat': now_ts, 'exp': now_ts + JWT_TTL_SECONDS}
-    token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
-    return token.decode('utf-8') if isinstance(token, bytes) else token
+    return _jwt_encode({
+        'user': username, 'customerId': customer_id, 'customer': customer,
+        'nit': str(nit or ''), 'userId': user_id, 'role': role,
+        'tenantRole': tenant_role or 'owner', 'sid': str(session_id or ''),
+        'iat': now_ts, 'exp': now_ts + JWT_TTL_SECONDS})
 
 
 def _select_client(customer_id):
@@ -146,8 +188,8 @@ def lambda_handler(event, context):
 
     # 1) Validar el desafío firmado por Login (corto, claim twofa=True).
     try:
-        claims = jwt.decode(challenge, SECRET_KEY, algorithms=['HS256'])
-    except jwt.ExpiredSignatureError:
+        claims = _jwt_decode(challenge)
+    except _Expired:
         return _fail(401, 'El tiempo para ingresar el código expiró. Inicia sesión de nuevo.')
     except Exception:
         return _fail(401, 'Desafío inválido. Inicia sesión de nuevo.')

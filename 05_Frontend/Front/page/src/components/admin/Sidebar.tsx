@@ -47,7 +47,7 @@ export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
     { id: 'facturacion', label: 'Facturación', icon: <ReceiptLongIcon /> },
     { id: 'trabajos', label: 'Trabajos', icon: <WorkHistoryIcon /> },
     { id: 'campanas', label: 'Campañas', icon: <CampaignIcon /> },
-    { id: 'plantillas', label: 'Plantillas', icon: <DescriptionIcon /> },
+    { id: 'plantillas', label: 'Plantillas de correo', icon: <DescriptionIcon /> },
     { id: 'plantillas-pre', label: 'Plantillas prediseñadas', icon: <ViewQuiltIcon /> },
     { id: 'configuracion', label: 'Configuración', icon: <SettingsIcon /> },
     { id: 'auditoria', label: 'Auditoría', icon: <HistoryIcon /> },

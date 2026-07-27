@@ -35,6 +35,24 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import ChatIcon from '@mui/icons-material/Chat';
 import ScienceIcon from '@mui/icons-material/Science';
 import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead';
+import TuneIcon from '@mui/icons-material/Tune';
+import SpeedIcon from '@mui/icons-material/Speed';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
+import DnsIcon from '@mui/icons-material/Dns';
+import PersonAddIcon from '@mui/icons-material/PersonAdd';
+import PersonRemoveIcon from '@mui/icons-material/PersonRemove';
+import LockIcon from '@mui/icons-material/Lock';
+import LockResetIcon from '@mui/icons-material/LockReset';
+import LogoutIcon from '@mui/icons-material/Logout';
+import ShieldIcon from '@mui/icons-material/Shield';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import SupportAgentIcon from '@mui/icons-material/SupportAgent';
+import ApartmentIcon from '@mui/icons-material/Apartment';
+import PendingActionsIcon from '@mui/icons-material/PendingActions';
+import ThumbUpIcon from '@mui/icons-material/ThumbUp';
+import ThumbDownIcon from '@mui/icons-material/ThumbDown';
+import ReplayIcon from '@mui/icons-material/Replay';
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import { auditService } from '../../services/auditService';
 import type { AuditData } from '../../services/auditService';
 import { isOk } from '../../services/apiClient';
@@ -42,24 +60,75 @@ import { formatDateTime } from '../../utils/datetime';
 
 type ChipColor = 'primary' | 'success' | 'warning' | 'info' | 'default' | 'error' | 'secondary';
 
-// Metadatos por tipo de acción (etiqueta + color + icono).
+// Metadatos por tipo de acción (etiqueta + color + icono). Debe cubrir TODAS las acciones
+// que emiten las lambdas (`_audit(...)`): una acción sin entrada cae al chip gris sin icono.
 const ACTION_META: Record<string, { label: string; color: ChipColor; icon: ReactElement }> = {
-  // Administración
+  // ── Administración de clientes ──
   'customer.realSend': { label: 'Envíos por cliente', color: 'warning', icon: <SendIcon fontSize="small" /> },
-  'user.role': { label: 'Cambio de rol', color: 'primary', icon: <AdminPanelSettingsIcon fontSize="small" /> },
+  'customer.features': { label: 'Funciones del cliente', color: 'primary', icon: <TuneIcon fontSize="small" /> },
+  'customer.limits': { label: 'Cuotas de envío', color: 'warning', icon: <SpeedIcon fontSize="small" /> },
+  'customer.delete': { label: 'Cliente eliminado', color: 'error', icon: <DeleteForeverIcon fontSize="small" /> },
+  'sendingConfig.set': { label: 'IP dedicada', color: 'primary', icon: <DnsIcon fontSize="small" /> },
+  'sendingConfig.remove': { label: 'IP dedicada quitada', color: 'warning', icon: <DnsIcon fontSize="small" /> },
   'pricing.update': { label: 'Tarifas', color: 'success', icon: <PaidIcon fontSize="small" /> },
   'config.set': { label: 'Configuración', color: 'info', icon: <SettingsIcon fontSize="small" /> },
-  // Seguridad
+  // ── Usuarios y roles ──
+  'user.role': { label: 'Cambio de rol', color: 'primary', icon: <AdminPanelSettingsIcon fontSize="small" /> },
+  'user.tenantRole': { label: 'Cambio de sub-rol', color: 'primary', icon: <AdminPanelSettingsIcon fontSize="small" /> },
+  'user.create': { label: 'Usuario creado', color: 'success', icon: <PersonAddIcon fontSize="small" /> },
+  'user.delete': { label: 'Usuario eliminado', color: 'error', icon: <PersonRemoveIcon fontSize="small" /> },
+  // ── Seguridad ──
   'security.login': { label: 'Ingreso', color: 'secondary', icon: <LoginIcon fontSize="small" /> },
   'security.token': { label: 'Token', color: 'secondary', icon: <VpnKeyIcon fontSize="small" /> },
-  // Contenido
+  'security.lockout': { label: 'Cuenta bloqueada', color: 'error', icon: <LockIcon fontSize="small" /> },
+  'security.2fa.challenge': { label: '2FA solicitado', color: 'secondary', icon: <ShieldIcon fontSize="small" /> },
+  'security.2fa.success': { label: '2FA correcto', color: 'success', icon: <ShieldIcon fontSize="small" /> },
+  'security.2fa.fail': { label: '2FA incorrecto', color: 'warning', icon: <ShieldIcon fontSize="small" /> },
+  'security.2fa.lockout': { label: '2FA bloqueado', color: 'error', icon: <LockIcon fontSize="small" /> },
+  // ── Soporte ──
+  'support.impersonate': { label: 'Vista como cliente', color: 'warning', icon: <VisibilityIcon fontSize="small" /> },
+  'support.resendActivation': { label: 'Reenvío de activación', color: 'info', icon: <MarkEmailReadIcon fontSize="small" /> },
+  'support.forceReset': { label: 'Reseteo de contraseña', color: 'warning', icon: <LockResetIcon fontSize="small" /> },
+  'support.revokeSessions': { label: 'Sesiones cerradas', color: 'error', icon: <LogoutIcon fontSize="small" /> },
+  // ── Contenido ──
   'campaign.create': { label: 'Campaña creada', color: 'info', icon: <CampaignIcon fontSize="small" /> },
+  'campaign.delete': { label: 'Campaña eliminada', color: 'error', icon: <DeleteForeverIcon fontSize="small" /> },
+  'campaign.request-approval': { label: 'Aprobación solicitada', color: 'info', icon: <PendingActionsIcon fontSize="small" /> },
+  'campaign.approve': { label: 'Campaña aprobada', color: 'success', icon: <ThumbUpIcon fontSize="small" /> },
+  'campaign.reject': { label: 'Campaña rechazada', color: 'error', icon: <ThumbDownIcon fontSize="small" /> },
   'template.create': { label: 'Plantilla correo', color: 'info', icon: <DescriptionIcon fontSize="small" /> },
   'messageTemplate.create': { label: 'Plantilla mensaje', color: 'info', icon: <ChatIcon fontSize="small" /> },
   'messageTemplate.update': { label: 'Plantilla editada', color: 'info', icon: <ChatIcon fontSize="small" /> },
-  // Envíos
+  // ── Envíos ──
   'send.samples': { label: 'Muestras', color: 'warning', icon: <ScienceIcon fontSize="small" /> },
   'send.real': { label: 'Envío real', color: 'success', icon: <MarkEmailReadIcon fontSize="small" /> },
+  'job.requeue': { label: 'Reencolado', color: 'warning', icon: <ReplayIcon fontSize="small" /> },
+  // ── Dinero ──
+  'balance.adjustment': { label: 'Ajuste de saldo', color: 'primary', icon: <PaidIcon fontSize="small" /> },
+  'balance.topup.approve': { label: 'Recarga aprobada', color: 'success', icon: <AccountBalanceWalletIcon fontSize="small" /> },
+  'balance.topup.reject': { label: 'Recarga rechazada', color: 'error', icon: <AccountBalanceWalletIcon fontSize="small" /> },
+};
+
+// Familia de la acción (por prefijo) para las que NO estén en el catálogo: así una acción
+// nueva del backend sigue saliendo con color/icono coherente en vez de un chip gris.
+const FAMILY_META: Array<[string, { color: ChipColor; icon: ReactElement }]> = [
+  ['security.', { color: 'secondary', icon: <ShieldIcon fontSize="small" /> }],
+  ['support.', { color: 'warning', icon: <SupportAgentIcon fontSize="small" /> }],
+  ['balance.', { color: 'primary', icon: <AccountBalanceWalletIcon fontSize="small" /> }],
+  ['campaign.', { color: 'info', icon: <CampaignIcon fontSize="small" /> }],
+  ['customer.', { color: 'primary', icon: <ApartmentIcon fontSize="small" /> }],
+  ['user.', { color: 'primary', icon: <AdminPanelSettingsIcon fontSize="small" /> }],
+  ['send.', { color: 'success', icon: <SendIcon fontSize="small" /> }],
+  ['template.', { color: 'info', icon: <DescriptionIcon fontSize="small" /> }],
+  ['messageTemplate.', { color: 'info', icon: <ChatIcon fontSize="small" /> }],
+];
+
+/** Color + icono de una acción: catálogo exacto → familia por prefijo → genérico. */
+const actionMeta = (a: string): { color: ChipColor; icon: ReactElement } => {
+  const exact = ACTION_META[a];
+  if (exact) return { color: exact.color, icon: exact.icon };
+  const fam = FAMILY_META.find(([p]) => a.startsWith(p));
+  return fam ? fam[1] : { color: 'default', icon: <HistoryIcon fontSize="small" /> };
 };
 
 const actionLabel = (a: string) => ACTION_META[a]?.label ?? a;
@@ -206,7 +275,7 @@ export const AuditoriaSection = () => {
               <TableRow><TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.secondary' }}>No hay eventos registrados para el filtro.</TableCell></TableRow>
             )}
             {pageEntries.map((e) => {
-              const meta = ACTION_META[e.action];
+              const meta = actionMeta(e.action);
               return (
                 <TableRow key={e.auditId} hover>
                   <TableCell sx={{ whiteSpace: 'nowrap' }}><Typography variant="caption">{fmtDate(e.date)}</Typography></TableCell>
@@ -215,7 +284,10 @@ export const AuditoriaSection = () => {
                     {e.customer && <Typography variant="caption" color="text.secondary">{e.customer}</Typography>}
                   </TableCell>
                   <TableCell>
-                    <Chip size="small" color={meta?.color ?? 'default'} variant="outlined" icon={meta?.icon} label={actionLabel(e.action)} />
+                    {/* Chip RELLENO (no outlined): en outlined el icono hereda el gris del
+                        borde y todas las acciones se veían iguales/negras. */}
+                    <Chip size="small" color={meta.color} icon={meta.icon} label={actionLabel(e.action)}
+                      sx={{ fontWeight: 600 }} />
                   </TableCell>
                   <TableCell><Typography variant="body2" sx={{ wordBreak: 'break-all' }}>{e.target || '—'}</Typography></TableCell>
                   <TableCell><Typography variant="body2" color="text.secondary">{e.detail || '—'}</Typography></TableCell>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
   Paper,
@@ -13,6 +13,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Chip,
   CircularProgress,
   Alert,
@@ -75,6 +76,8 @@ export const JobsSection = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [requeuing, setRequeuing] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,11 +86,18 @@ export const JobsSection = () => {
     setLoading(false);
     if (isOk(res) && res.data) setData(res.data);
     else setError(res.description || 'No se pudieron cargar los trabajos.');
+    setPage(0); // vuelve a la primera página al recargar/filtrar
   }, [month, state]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  const jobs = data?.jobs ?? [];
+  const pageJobs = useMemo(
+    () => jobs.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
+    [jobs, page, rowsPerPage],
+  );
 
   // Un trabajo es "reintentable" si es un envío troceado (parts>0), no terminó y le faltan
   // envíos. El backend reencola SOLO las partes pendientes (idempotente: no reduplica).
@@ -180,7 +190,7 @@ export const JobsSection = () => {
             {!loading && data && (data.jobs?.length ?? 0) === 0 && (
               <TableRow><TableCell colSpan={8} align="center" sx={{ py: 4, color: 'text.secondary' }}>No hay trabajos en el periodo/estado seleccionado.</TableCell></TableRow>
             )}
-            {(data?.jobs ?? []).map((j) => {
+            {pageJobs.map((j) => {
               const b = j.blocked ?? { blacklist: 0, unsubscribe: 0, invalid: 0 };
               const blockedTotal = (b.blacklist || 0) + (b.unsubscribe || 0) + (b.invalid || 0);
               return (
@@ -227,6 +237,17 @@ export const JobsSection = () => {
             })}
           </TableBody>
         </Table>
+        <TablePagination
+          component="div"
+          count={jobs.length}
+          page={page}
+          onPageChange={(_, p) => setPage(p)}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={(e) => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}
+          rowsPerPageOptions={[10, 25, 50, 100]}
+          labelRowsPerPage="Filas por página"
+          labelDisplayedRows={({ from, to, count }) => `${from}–${to} de ${count}`}
+        />
       </TableContainer>
       {FeedbackSnackbar}
       {ConfirmDialog}

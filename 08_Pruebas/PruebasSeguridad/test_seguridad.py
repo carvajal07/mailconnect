@@ -198,6 +198,24 @@ def test_registro_exitoso_crea_usuario_inactivo(ctx):
     assert items[0]['active'] is False
 
 
+def test_registro_cliente_nuevo_sin_funciones_avanzadas(ctx):
+    """Un cliente NUEVO arranca con las funciones avanzadas APAGADAS (opt-in): canales
+    Voz/WhatsApp, plantillas WhatsApp, editores PDF de lienzo y las cargas especiales de
+    bases. El resto sigue FAIL-OPEN (clave ausente = habilitada)."""
+    email = ctx.unique_email('flags')
+    tin = 55501234
+    assert ctx.register(email, tin=tin)['statusCode'] == 201
+    customers = [c for c in ctx.tables['customer'].scan()['Items']
+                 if str(c.get('companyTin')) == str(tin)]
+    assert customers, 'no se creó la empresa'
+    flags = customers[0].get('featureFlags') or {}
+    for key in ('func:canal_voz', 'func:canal_whatsapp', 'tab:whatsapp', 'tab:estudio',
+                'tab:disenador', 'func:csv_multiregistro', 'func:json_import'):
+        assert flags.get(key) is False, 'la función {} debería venir apagada'.format(key)
+    # Lo NO listado no se toca (queda habilitado por la convención fail-open).
+    assert 'tab:html' not in flags and 'tab:campanas' not in flags
+
+
 def test_registro_email_duplicado_409(ctx):
     email = ctx.unique_email('dup')
     ctx.register(email)
