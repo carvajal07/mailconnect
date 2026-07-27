@@ -210,7 +210,9 @@ El front está terminado y el backend probado; solo falta la consola AWS
        servicios** (cuota SES con barra de uso + envío habilitado, tablas DynamoDB núcleo,
        colas SQS accesibles) y últimas 10 de auditoría. Auto-refresco 60 s. ⚠️ `[J]`: ruta
        `/Admin/Control-center` (ya en routes.json) + IAM (sqs:GetQueueUrl/GetQueueAttributes,
-       ses:GetSendQuota/GetAccountSendingEnabled, dynamodb:DescribeTable + Scans).
+       ses:GetSendQuota/GetAccountSendingEnabled, dynamodb:DescribeTable + Scans **incluida
+       la tabla `customer`**, que el "saldo total plataforma" usa para descartar los saldos
+       de clientes ya eliminados; sin ese permiso la sección de dinero sale en error).
 2. [x] `[C]` ✅ **Series temporales (30 días) (ago 2026)**: gráfico de ÁREA multi-serie
        (enviados/entregados/abiertos, SVG propio con leyenda interactiva y tooltip por
        día — `AreaChart` en `charts.tsx`) en **Estadísticas** del portal

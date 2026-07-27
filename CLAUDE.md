@@ -42,8 +42,13 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
 - **Auditoría con color:** `ACTION_META` cubre ahora las ~35 acciones que emiten las lambdas
   (antes 12 → el resto salía en chip gris sin icono) + `FAMILY_META` (fallback por prefijo
   `security./support./balance./…`) para que una acción NUEVA salga con color/icono coherente.
-  El chip sigue **outlined** (claro) pero fuerza `& .MuiChip-icon { color: inherit }`: MUI le
-  pone al icono su gris secundario y por eso se veían todos iguales.
+  ⚠️ **NO se usa el `color` de MUI** en el chip: en el tema OSCURO de la marca `primary.main`
+  es navy (`#0a1628`) y `secondary.main` azul oscuro (`#2a3d5f`) → los chips quedaban
+  ilegibles (texto oscuro sobre fondo oscuro). En su lugar hay una paleta propia
+  `ChipTone`/`TONE_COLORS` (blue·cyan·green·amber·red·purple·gray) **con un valor por modo**
+  (claro/oscuro), y el chip sigue **outlined** aplicando ese color al **texto**, al **borde**
+  y al **icono** (`& .MuiChip-icon`; por defecto MUI le pone su gris secundario y todas las
+  acciones se veían iguales). El modo se lee con `useTheme().palette.mode`.
 - **Verify-2fa sin PyJWT:** `Api_V1_Security_Verify-2fa` firma/valida el JWT con **stdlib**
   (`_jwt_encode`/`_jwt_decode`, HS256 con hmac+base64) en vez de `import jwt`. El CD crea las
   funciones nuevas en python3.13 y el layer de PyJWT está compilado para otro runtime → el
@@ -300,15 +305,25 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   revocación real por el claim `sid`).
 - **Export de auditoría**: `Admin/Audit` acepta `dateFrom`/`dateTo` (YYYY-MM-DD) y la
   sección tiene botón **"Exportar CSV"** (BOM UTF-8, `;`, exporta lo filtrado).
-- **Cobertura:** `test_control_center.py` (7: gate, atascados, DLQ crítica, dinero del día,
-  reputación con tendencia, salud, auditoría), `test_admin_support.py` (13: lookup por
+- **Fix "Saldo total plataforma" inflado (ago 2026):** el centro de mando sumaba TODA la tabla
+  `customerBalance`, pero **`Customer/Delete` borra la empresa y sus usuarios y NO purga el
+  saldo** → quedan filas **huérfanas** que el tab **Saldos** (`Admin/Balances`, que recorre
+  `customer`) no cuenta y el centro de mando sí → los dos tableros mostraban cifras distintas.
+  Ahora `_section_money` cruza contra los `customerId` que EXISTEN en `customer` y suma solo
+  esos; lo huérfano se reporta **aparte** (`orphanBalance`/`orphanCount`) y la UI lo muestra
+  como nota bajo el número ("+ $X de N cliente(s) eliminado(s), sin contar") en vez de
+  ocultarlo. ⚠️ `[J]`: `Api_V1_Admin_Control-center` necesita **`dynamodb:Scan` sobre
+  `customer`** (antes no lo leía; sin el permiso la sección de dinero cae a `error`).
+- **Cobertura:** `test_control_center.py` (8: gate, atascados, DLQ crítica, dinero del día,
+  saldo de plataforma excluye clientes eliminados, reputación con tendencia, salud,
+  auditoría), `test_admin_support.py` (13: lookup por
   correo/celular normalizado + listas, las 3 acciones de soporte + auditoría + gates,
   plantillas y dominios globales), `test_admin_audit.py` (+1 rango de fechas).
 - ⚠️ `[J]` (despliegue): 5 lambdas nuevas (`Api_V1_Admin_{Control-center,Recipient-lookup,
   User-support,Templates,Domains}` — el CD las crea) + rutas ya en `routes.json` (admin) +
   env `SECRET_KEY` en las 5 (2ª barrera; User-support además `SENDER_EMAIL`/
   `ACTIVATION_URL`/`OTP_EXPIRATION_MIN`). IAM: Control-center (Scans de process/
-  scheduledSend/walletTransaction/customerBalance/adminAudit, `BatchGetItem *_sendSummary`,
+  scheduledSend/walletTransaction/customerBalance/**customer**/adminAudit, `BatchGetItem *_sendSummary`,
   `sqs:GetQueueUrl/GetQueueAttributes`, `ses:GetSendQuota/GetAccountSendingEnabled`,
   `dynamodb:DescribeTable`); Recipient-lookup (`GetItem customer`, `Scan *_sendStatus`,
   `BatchGetItem process`, `GetItem *_blackList/*_unsubscribe`); User-support (`GetItem user`,

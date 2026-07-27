@@ -211,7 +211,13 @@ export const CentroMandoSection = () => {
                            sub={`${data.money.todayTopupsCount} recarga(s)`} />
                 <BigNumber label="Solicitudes pendientes" value={String(data.money.pendingTopups.count)}
                            sub={data.money.pendingTopups.count ? formatCOP(data.money.pendingTopups.amount) + ' · revisar en Saldos' : '—'} />
-                <BigNumber label="Saldo total plataforma" value={formatCOP(data.money.platformBalance)} />
+                <BigNumber
+                  label="Saldo total plataforma"
+                  value={formatCOP(data.money.platformBalance)}
+                  sub={data.money.orphanBalance
+                    ? `+ ${formatCOP(data.money.orphanBalance)} de ${data.money.orphanCount} cliente(s) eliminado(s), sin contar`
+                    : undefined}
+                />
               </Stack>
             </CardBox>
 
