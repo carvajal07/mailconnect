@@ -24,6 +24,8 @@ export const AUTH_ENDPOINTS = {
   CREATE_OTP: '/Security/Create-otp',
   VALIDATE_OTP: '/Security/Validate-otp',
   REFRESH_TOKEN: '/Security/Refresh-token',
+  VERIFY_2FA: '/Security/Verify-2fa',
+  TOTP: '/Security/Totp',
 };
 
 // NOTA: los módulos del panel usan la capa de servicios (services/*.ts), que solo

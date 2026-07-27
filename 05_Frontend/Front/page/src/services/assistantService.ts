@@ -10,9 +10,10 @@ export const ASSISTANT_ENDPOINT = '/Assistant/Ask';
 export interface AssistantResult {
   ok: boolean;
   answer?: string;
-  /** 'model' = el modelo falló; 'network' = no se pudo contactar (o no desplegado). */
+  /** 'model' = el modelo falló; 'network' = no se pudo contactar (o no desplegado);
+   *  'rate' = límite de uso alcanzado (429; el mensaje del backend explica la espera). */
   error?: string;
-  reason?: 'model' | 'network';
+  reason?: 'model' | 'network' | 'rate';
 }
 
 export async function askAssistant(question: string): Promise<AssistantResult> {
@@ -24,6 +25,9 @@ export async function askAssistant(question: string): Promise<AssistantResult> {
     });
     const data = await res.json().catch(() => ({} as { answer?: string; error?: string }));
     if (res.ok && data.answer) return { ok: true, answer: data.answer };
+    if (res.status === 429) {
+      return { ok: false, error: data.error || 'Espera un momento e intenta de nuevo.', reason: 'rate' };
+    }
     return { ok: false, error: data.error || 'No se pudo obtener respuesta.', reason: 'model' };
   } catch {
     // CORS/404/red: el asistente no está disponible (p. ej. lambda no desplegada).

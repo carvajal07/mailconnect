@@ -29,7 +29,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { dashboardService } from '../../services/dashboardService';
 import type { DashboardData, HealthLevel } from '../../services/dashboardService';
 import { isOk } from '../../services/apiClient';
-import { StatTile, Funnel, useStatusColors } from '../portal/charts';
+import { StatTile, Funnel, AreaChart, useStatusColors, useSeriesColors } from '../portal/charts';
 
 const num = (n: number) => new Intl.NumberFormat('es-CO').format(n || 0);
 const pct = (n: number) => `${((n || 0) * 100).toFixed(2)}%`;
@@ -73,6 +73,7 @@ const ChannelBars = ({ data }: { data: DashboardData['byChannel'] }) => {
  */
 export const DashboardSection = () => {
   const status = useStatusColors();
+  const seriesColors = useSeriesColors();
   const [month, setMonth] = useState('');
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -117,7 +118,7 @@ export const DashboardSection = () => {
       )}
       {data?.truncated && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          Datos parciales: se alcanzó el tope de procesos agregados. Acota por mes para un cálculo completo.
+          Datos parciales: hay procesos históricos sin resumen pre-agregado (correr el backfill del rollup lo corrige) o se superó el tope absoluto. Acota por mes para un cálculo completo.
         </Alert>
       )}
 
@@ -133,6 +134,23 @@ export const DashboardSection = () => {
             <StatTile label="Tasa de entrega" value={pct(k.deliveryRate)} sublabel={`${num(k.delivered)} entregados`} icon={<MarkEmailReadIcon />} />
             <StatTile label="Clientes en riesgo" value={k.atRisk} color={k.atRisk > 0 ? status.pendiente : undefined} sublabel="rebote/queja alto" icon={<WarningAmberIcon />} />
           </Box>
+
+          {/* Actividad de los últimos 30 días (todos los clientes, rollup sendSummary) */}
+          {data.series && data.series.length > 0 && (
+            <Paper variant="outlined" sx={{ p: 2.5, mb: 2 }}>
+              <Typography variant="subtitle1" fontWeight={700} gutterBottom>
+                Actividad de los últimos 30 días (toda la plataforma)
+              </Typography>
+              <AreaChart
+                data={data.series}
+                series={[
+                  { key: 'enviados', label: 'Enviados', color: seriesColors.enviados },
+                  { key: 'entregados', label: 'Entregados', color: seriesColors.entregados },
+                  { key: 'abiertos', label: 'Abiertos', color: seriesColors.abiertos },
+                ]}
+              />
+            </Paper>
+          )}
 
           {/* Embudo + por canal */}
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2, mb: 2 }}>

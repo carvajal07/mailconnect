@@ -53,7 +53,11 @@ def tenant_key(nit):
     return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 
 CURRENCY = 'COP'
-MAX_PROCESSES = 500   # tope global de procesos agregados por llamada (evita barridos enormes)
+# Topes de procesos por llamada. La lectura del rollup ({tenant}_sendSummary) es O(1)
+# (GetItem) → tope absoluto generoso; el tope BAJO aplica solo al camino CARO (proceso
+# sin rollup → paginar sus estados). Con el rollup poblado, el "(parcial)" desaparece.
+MAX_PROCESSES = 5000         # absoluto (lecturas O(1) del rollup)
+MAX_FALLBACK_QUERIES = 200   # camino caro (procesos sin rollup)
 
 # Lee SIEMPRE (por defecto) el resumen pre-agregado ({customer}_sendSummary) para el conteo
 # de enviados (O(1)); si un proceso no tiene resumen, cae al conteo por Query de ESE proceso.
@@ -278,25 +282,27 @@ def _campaign_unit(rate, channel_name, recipients, document_format=None, deliver
     return unit
 
 
-def _count_sent(tenant, process_id):
+def _count_sent(tenant, process_id, allow_fallback=True):
     """Nº de mensajes efectivamente enviados (messageId distinto) en un proceso.
     tenant=tenant_key(NIT): las tablas del cliente son {tenant}_sendSummary / _sendStatus.
 
-    Con SEND_SUMMARY_READ usa el resumen pre-agregado (GetItem O(1)); si no existe,
-    cae a paginar {tenant}_sendStatus (comportamiento legacy).
-    """
+    Devuelve (enviados, from_rollup). Usa el resumen pre-agregado (GetItem O(1)); si no
+    existe, cae a paginar {tenant}_sendStatus (camino CARO — solo si allow_fallback;
+    agotado el presupuesto devuelve (None, False))."""
     # 1) Resumen pre-agregado (O(1)) — por defecto.
     try:
         summ = dynamodb.Table('{}_sendSummary'.format(tenant)).get_item(
             Key={'processId': process_id}).get('Item')
         if summ and 'enviados' in summ:
-            return int(_num(summ['enviados']))
+            return int(_num(summ['enviados'])), True
     except ClientError as e:
         if e.response['Error']['Code'] != 'ResourceNotFoundException':
             raise
     except Exception:
         pass
     # 2) Fallback: conteo por Query de los estados de ESE proceso.
+    if not allow_fallback:
+        return None, False
 
     seen = set()
     status_table = dynamodb.Table('{}_sendStatus'.format(tenant))
@@ -315,9 +321,9 @@ def _count_sent(tenant, process_id):
             kwargs['ExclusiveStartKey'] = last
     except ClientError as e:
         if e.response['Error']['Code'] == 'ResourceNotFoundException':
-            return 0
+            return 0, False
         raise
-    return len(seen)
+    return len(seen), False
 
 
 def _bill_customer(cust, camps_by_customer, procs_by_campaign, rate_cache, budget):
@@ -359,7 +365,13 @@ def _bill_customer(cust, camps_by_customer, procs_by_campaign, rate_cache, budge
             if not pid:
                 continue
             budget[0] -= 1
-            sent += _count_sent(tenant, pid)
+            n, from_rollup = _count_sent(tenant, pid, allow_fallback=budget[1] > 0)
+            if n is None:   # sin rollup y sin presupuesto de fallback
+                truncated = True
+                continue
+            if not from_rollup:
+                budget[1] -= 1
+            sent += n
 
         if sent <= 0:
             continue
@@ -440,7 +452,8 @@ def lambda_handler(event, context):
             procs_by_campaign[p.get('campaignId')].append(p)
 
         rate_cache = {}
-        budget = [MAX_PROCESSES]
+        # [restante absoluto, restante del camino caro (procesos sin rollup)]
+        budget = [MAX_PROCESSES, MAX_FALLBACK_QUERIES]
         truncated = False
         skipped = 0   # clientes no computados por agotarse el tope (no "sin actividad")
         rows = []

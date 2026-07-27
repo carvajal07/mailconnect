@@ -39,6 +39,12 @@ export interface LoginData {
   tenantRole?: string;
   /** Banderas de funciones del cliente ({clave: bool}); ausente/true = habilitada. */
   featureFlags?: Record<string, boolean>;
+  /** 2FA: si el usuario tiene segundo factor, el login devuelve twofaRequired=true y un
+   *  `challenge` (token corto) en vez del `token`; se completa con verify2fa(). */
+  twofaRequired?: boolean;
+  challenge?: string;
+  /** Códigos de respaldo que le quedan al usuario tras un ingreso con 2FA. */
+  backupCodesRemaining?: number;
 }
 
 export interface RegisterPayload {
@@ -72,10 +78,24 @@ export interface SessionUser {
    *  El portal oculta/deshabilita tabs y funciones que el admin haya apagado. */
   featureFlags?: Record<string, boolean>;
   email: string;
+  /** IMPERSONACIÓN de soporte ("ver como cliente"): correo del admin que impersona.
+   *  Si está presente, la sesión es de SOLO LECTURA (banner + apiClient bloquea escrituras). */
+  impersonatedBy?: string;
+  /** Sesión de solo lectura (impersonación de soporte). */
+  readonly?: boolean;
 }
 
 /** ¿La sesión corresponde a un administrador? */
 export const isAdmin = (user: SessionUser | null): boolean => (user?.role ?? 'client') === 'admin';
+
+/** ¿La sesión es una impersonación de soporte ("ver como cliente", solo lectura)? */
+export const isImpersonating = (user: SessionUser | null): boolean => !!user?.impersonatedBy;
+
+/** ¿La sesión actual es de SOLO LECTURA? (impersonación de soporte). */
+export function isReadOnlySession(): boolean {
+  const u = getUser();
+  return !!(u?.readonly || u?.impersonatedBy);
+}
 
 /** Tipos de sub-rol dentro de la empresa (RBAC del portal). */
 export type TenantRole = 'owner' | 'approver' | 'operator';
@@ -143,6 +163,10 @@ export const authService = {
     if (MOCK_ENABLED) return Promise.resolve(mockLogin(user, password));
     return post<LoginData>(AUTH_ENDPOINTS.LOGIN, { user, password });
   },
+
+  /** Segundo paso del login con 2FA: canjea el desafío + el código por el token real. */
+  verify2fa: (challenge: string, code: string): Promise<ApiResponse<LoginData>> =>
+    post<LoginData>(AUTH_ENDPOINTS.VERIFY_2FA, { challenge, code }),
 
   register: (payload: RegisterPayload) => {
     // En modo demo, el registro "funciona" para poder seguir el flujo.
@@ -239,6 +263,46 @@ export function clearSession(): void {
 
 export function isAuthenticated(): boolean {
   return !!getToken();
+}
+
+/* ------------------------- Impersonación de soporte ------------------------- */
+/*
+ * "Ver como cliente": el admin entra al portal del tenant en SOLO LECTURA. Se guarda
+ * la sesión del admin aparte (mc_admin_token/_user) para restaurarla al salir, sin
+ * obligar a re-loguear. La sesión de impersonación reemplaza mc_token/_user en ESTA
+ * pestaña (el token del backend ya viene marcado readonly + impersonatedBy).
+ */
+const ADMIN_STASH_TOKEN = 'mc_admin_token';
+const ADMIN_STASH_USER = 'mc_admin_user';
+
+export function enterImpersonation(token: string, user: SessionUser): void {
+  const curToken = getToken();
+  const curUser = sessionStorage.getItem(USER_KEY);
+  if (curToken && curUser) {
+    sessionStorage.setItem(ADMIN_STASH_TOKEN, curToken);
+    sessionStorage.setItem(ADMIN_STASH_USER, curUser);
+  }
+  clearPortalCache();  // no mezclar los datos del admin con los del tenant impersonado
+  saveSession(token, user);
+}
+
+/** Restaura la sesión del admin (si la había). Devuelve true si volvió a /admin. */
+export function exitImpersonation(): boolean {
+  const t = sessionStorage.getItem(ADMIN_STASH_TOKEN);
+  const u = sessionStorage.getItem(ADMIN_STASH_USER);
+  sessionStorage.removeItem(ADMIN_STASH_TOKEN);
+  sessionStorage.removeItem(ADMIN_STASH_USER);
+  if (t && u) {
+    try {
+      clearPortalCache();  // descartar la caché del tenant impersonado
+      saveSession(t, JSON.parse(u) as SessionUser);
+      return true;
+    } catch {
+      /* stash corrupto → cae a limpiar sesión */
+    }
+  }
+  clearSession();
+  return false;
 }
 
 /* ------------- Compartir la sesión entre pestañas + logout global ------------- */

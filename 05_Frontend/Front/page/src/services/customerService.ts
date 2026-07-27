@@ -29,7 +29,15 @@ export interface CustomerSummary {
   realSendEnabled: boolean;
   /** Banderas de funciones del cliente ({clave: bool}); ausente/true = habilitada. */
   featureFlags?: Record<string, boolean>;
+  /** Cuotas de envío ({maxPerCampaign, maxPerDay}); ausente/0 = sin tope. */
+  sendingLimits?: SendingLimits;
   date?: string;
+}
+
+/** Cuotas de envío del cliente (0 o ausente = sin tope). */
+export interface SendingLimits {
+  maxPerCampaign?: number;
+  maxPerDay?: number;
 }
 
 export type UserRole = 'admin' | 'client';
@@ -76,6 +84,16 @@ export const customerService = {
     features: Record<string, boolean>,
   ): Promise<ApiResponse<{ customerId?: string; featureFlags?: Record<string, boolean> }>> =>
     apiPost(CUSTOMER_ENDPOINTS.UPDATE, { customerId, features }),
+
+  /**
+   * Fija las CUOTAS de envío del cliente (admin): destinatarios máx. por campaña y
+   * por día (0 = sin tope). Prepare-batch las aplica en el envío real (429 al exceder).
+   */
+  setLimits: (
+    customerId: string,
+    limits: SendingLimits,
+  ): Promise<ApiResponse<{ customerId?: string; sendingLimits?: SendingLimits }>> =>
+    apiPost(CUSTOMER_ENDPOINTS.UPDATE, { customerId, limits }),
 
   /** Ficha de un cliente: sus datos + los usuarios de la empresa (admin). */
   detail: (customerId: string): Promise<ApiResponse<CustomerDetail>> =>

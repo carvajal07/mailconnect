@@ -239,3 +239,27 @@ def test_statistics_aislamiento(mods):
     resp = mods['statistics'].lambda_handler(_auth_event({'customerId': 'CU1', 'customer': 'empresa'}, 'CU2', 'otra', '901'), None)
     ids = [c['id'] for c in resp['data']['campaigns']]
     assert 'C1' not in ids
+
+
+def test_statistics_rollup_no_consume_fallback(mods, monkeypatch):
+    # "Adiós datos parciales": el tope BAJO (MAX_FALLBACK_QUERIES) aplica SOLO a los
+    # procesos SIN rollup. Sin rollup y sin presupuesto → parcial; con la fila de
+    # resumen pre-agregado el mismo proceso se agrega aunque el presupuesto sea cero.
+    stats = mods['statistics']
+    monkeypatch.setattr(stats, 'MAX_FALLBACK_QUERIES', 0)
+
+    resp = stats.lambda_handler(_auth_event({}), None)
+    c1 = next(c for c in resp['data']['campaigns'] if c['id'] == 'C1')
+    assert c1['enviados'] == 0 and resp['data']['truncated'] is True
+
+    boto3.client('dynamodb', region_name='us-east-1').create_table(
+        TableName=f'{TENANT}_sendSummary',
+        KeySchema=[{'AttributeName': 'processId', 'KeyType': 'HASH'}],
+        AttributeDefinitions=[{'AttributeName': 'processId', 'AttributeType': 'S'}],
+        BillingMode='PAY_PER_REQUEST')
+    boto3.resource('dynamodb', region_name='us-east-1').Table(f'{TENANT}_sendSummary').put_item(
+        Item={'processId': 'P1', 'enviados': 3, 'entregados': 1, 'abiertos': 1,
+              'clics': 0, 'rebotes': 1, 'quejas': 0})
+    resp = stats.lambda_handler(_auth_event({}), None)
+    c1 = next(c for c in resp['data']['campaigns'] if c['id'] == 'C1')
+    assert c1['enviados'] == 3 and resp['data']['truncated'] is False

@@ -14,14 +14,23 @@ Acciones:
        -> IA: reescribe/mejora el texto (menos spam / más formal / más corto, etc.).
 
 El análisis y el checklist NO usan IA (deterministas, sin costo, probados). Solo 'draft' y
-'rewrite' llaman a Bedrock. Env: BEDROCK_MODEL_ID, BEDROCK_REGION, ASSISTANT_MAX_TOKENS.
+'rewrite' llaman a Bedrock — y SOLO esas dos acciones pasan por un limitador de uso por
+TENANT (misma tabla `assistantRateLimit` del asistente público; ventanas fijas por
+customerId: COPILOT_RATE_PER_MINUTE default 10 / COPILOT_RATE_PER_DAY default 200; falla
+abierto y crea la tabla on-demand). 'analyze' es determinista → sin límite.
+Env: BEDROCK_MODEL_ID, BEDROCK_REGION, ASSISTANT_MAX_TOKENS, COPILOT_RATE_*.
+[J]: IAM `dynamodb:UpdateItem/CreateTable/DescribeTable/UpdateTimeToLive` sobre
+`assistantRateLimit`.
 '''
 import os
 import re
 import json
+import time
 import unicodedata
+from datetime import datetime, timezone
 
 import boto3
+from botocore.exceptions import ClientError
 
 MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'anthropic.claude-3-5-haiku-20241022-v1:0')
 REGION = os.environ.get('BEDROCK_REGION', 'us-east-1')
@@ -35,6 +44,79 @@ def _bedrock():
     if _client is None:
         _client = boto3.client('bedrock-runtime', region_name=REGION)
     return _client
+
+
+# ── Límite de uso por TENANT para las acciones que invocan Bedrock (costo) ────
+# Mismo patrón (y misma tabla) que el limitador del asistente público Assistant_Ask.
+RATE_TABLE = os.environ.get('ASSISTANT_RATE_TABLE', 'assistantRateLimit')
+RATE_PER_MINUTE = int(os.environ.get('COPILOT_RATE_PER_MINUTE', '10'))
+RATE_PER_DAY = int(os.environ.get('COPILOT_RATE_PER_DAY', '200'))
+RATE_MESSAGE = ('Has generado mucho contenido seguido. Espera un momento e intenta de nuevo.')
+
+_ddb = None
+
+
+def _dynamodb():
+    global _ddb
+    if _ddb is None:
+        _ddb = boto3.resource('dynamodb', region_name=REGION)
+    return _ddb
+
+
+def _ensure_rate_table():
+    client = boto3.client('dynamodb', region_name=REGION)
+    try:
+        client.create_table(
+            TableName=RATE_TABLE,
+            KeySchema=[{'AttributeName': 'rlKey', 'KeyType': 'HASH'}],
+            AttributeDefinitions=[{'AttributeName': 'rlKey', 'AttributeType': 'S'}],
+            BillingMode='PAY_PER_REQUEST')
+        client.get_waiter('table_exists').wait(
+            TableName=RATE_TABLE, WaiterConfig={'Delay': 1, 'MaxAttempts': 15})
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ResourceInUseException':
+            raise
+    try:
+        client.update_time_to_live(
+            TableName=RATE_TABLE,
+            TimeToLiveSpecification={'Enabled': True, 'AttributeName': 'expiresAt'})
+    except Exception:
+        pass
+
+
+def _bump(key, ttl_seconds):
+    resp = _dynamodb().Table(RATE_TABLE).update_item(
+        Key={'rlKey': key},
+        UpdateExpression='ADD #c :one SET expiresAt = if_not_exists(expiresAt, :exp)',
+        ExpressionAttributeNames={'#c': 'count'},
+        ExpressionAttributeValues={':one': 1, ':exp': int(time.time()) + ttl_seconds},
+        ReturnValues='UPDATED_NEW')
+    return int(resp['Attributes']['count'])
+
+
+def _rate_limited(event):
+    """True si el TENANT excedió su ventana (minuto/día). Falla abierto."""
+    auth = ((event or {}).get('requestContext') or {}).get('authorizer') or {}
+    tenant = str(auth.get('customerId') or auth.get('customer') or 'unknown')
+    now = datetime.now(timezone.utc)
+    try:
+        if _bump('cop#{}#{}'.format(tenant, now.strftime('%Y-%m-%dT%H:%M')), 180) > RATE_PER_MINUTE:
+            return True
+        if _bump('copday#{}#{}'.format(tenant, now.strftime('%Y-%m-%d')), 172800) > RATE_PER_DAY:
+            return True
+        return False
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            try:
+                _ensure_rate_table()
+            except Exception as ce:
+                print('rate table: {}'.format(ce))
+            return False
+        print('rate limiter: {}'.format(e))
+        return False
+    except Exception as e:
+        print('rate limiter: {}'.format(e))
+        return False
 
 
 # ============================ Analizador DETERMINISTA (probado) ============================
@@ -317,6 +399,8 @@ def lambda_handler(event, context):
         return _resp(200, do_analyze(payload), 'Análisis de la campaña')
 
     if action in ('draft', 'rewrite'):
+        if _rate_limited(event):   # solo las acciones que invocan Bedrock (costo)
+            return _resp(429, {}, RATE_MESSAGE)
         try:
             data, err = do_draft(payload) if action == 'draft' else do_rewrite(payload)
             if err:

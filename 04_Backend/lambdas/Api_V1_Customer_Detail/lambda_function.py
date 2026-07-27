@@ -143,11 +143,14 @@ def lambda_handler(event, context):
         c = table_customer.get_item(Key={'customerId': customer_id}).get('Item')
         if not c:
             return {'status': False, 'statusCode': 404, 'description': 'El cliente no existe.', 'data': {}}
+        limits = c.get('sendingLimits') or {}
         customer = {
             'customerId': c.get('customerId'),
             'company': c.get('company', ''),
             'companyTin': c.get('companyTin', ''),
             'realSendEnabled': bool(c.get('realSendEnabled', True)),
+            'sendingLimits': ({k: int(v or 0) for k, v in limits.items()}
+                              if isinstance(limits, dict) else {}),
             'date': c.get('date', ''),
         }
 

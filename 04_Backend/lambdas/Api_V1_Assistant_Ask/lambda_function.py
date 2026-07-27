@@ -22,15 +22,30 @@ Env:
                         el acceso a modelos de la cuenta.
   BEDROCK_REGION        (default 'us-east-1')
   ASSISTANT_MAX_TOKENS  (default 500)
+  ASSISTANT_RATE_PER_MINUTE / _PER_DAY / _GLOBAL_PER_DAY  (límites de uso, ver abajo)
+
+LÍMITE DE USO (anti-abuso/costo): al ser un endpoint PÚBLICO que invoca un modelo de pago,
+cada petición pasa por un limitador de ventana fija en DynamoDB (tabla `assistantRateLimit`,
+PK `rlKey`, TTL `expiresAt`): por IP se permiten ASSISTANT_RATE_PER_MINUTE (default 6) por
+minuto y ASSISTANT_RATE_PER_DAY (default 60) por día; además hay un tope GLOBAL diario
+ASSISTANT_RATE_GLOBAL_PER_DAY (default 2000) que acota el costo total de Bedrock aunque el
+atacante rote IPs. Al exceder → 429 con mensaje amable (el widget lo muestra). El limitador
+FALLA ABIERTO (si DynamoDB no responde, el asistente contesta) y crea la tabla on-demand.
 
 Requisitos de despliegue [J]: habilitar acceso al modelo en Bedrock; permiso IAM
-`bedrock:InvokeModel` (y el ARN del inference profile si aplica); ruta pública /Assistant/Ask
-(proxy, sin authorizer) con CORS. Recomendado: throttling en API Gateway / WAF (endpoint
-público → posible abuso/costo).
+`bedrock:InvokeModel` (y el ARN del inference profile si aplica) + `dynamodb:UpdateItem/
+CreateTable/DescribeTable/UpdateTimeToLive` sobre `assistantRateLimit`; ruta pública
+/Assistant/Ask (proxy, sin authorizer) con CORS. El throttling de API Gateway / WAF sigue
+siendo recomendable como capa adicional (este limitador corta el costo de Bedrock, no las
+invocaciones de la lambda).
 '''
 import os
 import json
+import time
+from datetime import datetime, timezone
+
 import boto3
+from botocore.exceptions import ClientError
 
 MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'anthropic.claude-3-5-haiku-20241022-v1:0')
 REGION = os.environ.get('BEDROCK_REGION', 'us-east-1')
@@ -46,6 +61,103 @@ def _bedrock():
     if _client is None:
         _client = boto3.client('bedrock-runtime', region_name=REGION)
     return _client
+
+
+# ── Límite de uso (endpoint público que invoca un modelo de PAGO) ─────────────
+RATE_TABLE = os.environ.get('ASSISTANT_RATE_TABLE', 'assistantRateLimit')
+RATE_PER_MINUTE = int(os.environ.get('ASSISTANT_RATE_PER_MINUTE', '6'))
+RATE_PER_DAY = int(os.environ.get('ASSISTANT_RATE_PER_DAY', '60'))
+RATE_GLOBAL_PER_DAY = int(os.environ.get('ASSISTANT_RATE_GLOBAL_PER_DAY', '2000'))
+
+RATE_MESSAGE = ('Has hecho muchas consultas seguidas. Espera un momento e intenta de '
+                'nuevo, o escríbenos por WhatsApp y te atendemos al instante.')
+
+_ddb = None
+
+
+def _dynamodb():
+    global _ddb
+    if _ddb is None:
+        _ddb = boto3.resource('dynamodb', region_name=REGION)
+    return _ddb
+
+
+def _source_ip(event):
+    """IP del cliente: requestContext.identity.sourceIp (proxy) o X-Forwarded-For."""
+    try:
+        ip = (((event or {}).get('requestContext') or {}).get('identity') or {}).get('sourceIp')
+        if ip:
+            return str(ip)
+        for k, v in ((event or {}).get('headers') or {}).items():
+            if str(k).lower() == 'x-forwarded-for' and v:
+                return str(v).split(',')[0].strip()
+    except Exception:
+        pass
+    return ''
+
+
+def _ensure_rate_table():
+    """Crea la tabla del limitador on-demand (primer uso) + TTL. Best-effort."""
+    client = boto3.client('dynamodb', region_name=REGION)
+    try:
+        client.create_table(
+            TableName=RATE_TABLE,
+            KeySchema=[{'AttributeName': 'rlKey', 'KeyType': 'HASH'}],
+            AttributeDefinitions=[{'AttributeName': 'rlKey', 'AttributeType': 'S'}],
+            BillingMode='PAY_PER_REQUEST')
+        client.get_waiter('table_exists').wait(
+            TableName=RATE_TABLE, WaiterConfig={'Delay': 1, 'MaxAttempts': 15})
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ResourceInUseException':
+            raise
+    try:
+        client.update_time_to_live(
+            TableName=RATE_TABLE,
+            TimeToLiveSpecification={'Enabled': True, 'AttributeName': 'expiresAt'})
+    except Exception:
+        pass  # TTL es limpieza, no correctitud (las llaves cambian por ventana)
+
+
+def _bump(key, ttl_seconds):
+    """Incrementa el contador de la ventana `key` (atómico) y devuelve el total."""
+    resp = _dynamodb().Table(RATE_TABLE).update_item(
+        Key={'rlKey': key},
+        UpdateExpression='ADD #c :one SET expiresAt = if_not_exists(expiresAt, :exp)',
+        ExpressionAttributeNames={'#c': 'count'},
+        ExpressionAttributeValues={':one': 1, ':exp': int(time.time()) + ttl_seconds},
+        ReturnValues='UPDATED_NEW')
+    return int(resp['Attributes']['count'])
+
+
+def _rate_limited(event):
+    """True si la petición excede alguna ventana (por IP minuto/día o global diaria).
+    FALLA ABIERTO: cualquier error del limitador deja pasar la petición."""
+    now = datetime.now(timezone.utc)
+    ip = _source_ip(event) or 'unknown'
+    minute = now.strftime('%Y-%m-%dT%H:%M')
+    day = now.strftime('%Y-%m-%d')
+    try:
+        if _bump('ip#{}#{}'.format(ip, minute), 180) > RATE_PER_MINUTE:
+            return True
+        if _bump('ipday#{}#{}'.format(ip, day), 172800) > RATE_PER_DAY:
+            return True
+        if _bump('global#{}'.format(day), 172800) > RATE_GLOBAL_PER_DAY:
+            print('ADVERTENCIA: tope GLOBAL diario del asistente alcanzado ({}).'.format(
+                RATE_GLOBAL_PER_DAY))
+            return True
+        return False
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            try:
+                _ensure_rate_table()
+            except Exception as ce:
+                print('rate table: {}'.format(ce))
+            return False  # primer uso: se deja pasar
+        print('rate limiter: {}'.format(e))
+        return False
+    except Exception as e:
+        print('rate limiter: {}'.format(e))
+        return False
 
 
 CORS_HEADERS = {
@@ -178,6 +290,10 @@ def lambda_handler(event, context):
         return _response(400, {'error': 'Escribe una pregunta.'})
     if len(question) > MAX_QUESTION_CHARS:
         question = question[:MAX_QUESTION_CHARS]
+
+    # Limitador ANTES de invocar el modelo (el costo está en Bedrock, no en la lambda).
+    if _rate_limited(event):
+        return _response(429, {'error': RATE_MESSAGE})
 
     try:
         resp = _bedrock().converse(

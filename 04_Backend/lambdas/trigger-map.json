@@ -8,5 +8,6 @@
   "Api_V1_Template_Combination-EAP-PDF": { "sqs": "Template_Combination-EAP-PDF", "batchSize": 1 },
   "Api_V1_Sms_Send-batch": { "sqs": "Sms_Send-batch", "batchSize": 1 },
   "Api_V1_Wsp_Send-batch": { "sqs": "Wsp_Send-batch", "batchSize": 1 },
-  "Api_V1_Voice_Send-batch": { "sqs": "Voice_Send-batch", "batchSize": 1 }
+  "Api_V1_Voice_Send-batch": { "sqs": "Voice_Send-batch", "batchSize": 1 },
+  "Api_V1_Notifications_Scan": { "schedule": "cron(0 13 * * ? *)" }
 }

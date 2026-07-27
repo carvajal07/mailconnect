@@ -53,6 +53,17 @@ export interface HealthRow {
   reason: string;
 }
 
+/** Un día de la serie de actividad global (últimos 30 días, rollup sendSummary). */
+export interface DashboardSeriesDay {
+  date: string; // YYYY-MM-DD
+  enviados: number;
+  entregados: number;
+  abiertos: number;
+  clics: number;
+  rebotes: number;
+  quejas: number;
+}
+
 export interface DashboardData {
   month: string;
   generatedAt: string;
@@ -60,6 +71,7 @@ export interface DashboardData {
   funnel: FunnelStepData[];
   byChannel: ChannelVolume[];
   health: HealthRow[];
+  series?: DashboardSeriesDay[];
   truncated?: boolean;
 }
 

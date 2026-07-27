@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Box, Paper, Stack, Typography, Tooltip, ButtonBase, useTheme } from '@mui/material';
 import { alpha } from '@mui/material/styles';
-import type { ReactNode } from 'react';
+import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 
 /**
  * Gráficos ligeros en SVG (sin dependencias) para los tableros de Estadísticas y Panel.
@@ -269,6 +269,233 @@ export const Donut = ({ data, size = 190, thickness = 26 }: { data: DonutDatum[]
         </Typography>
       </Stack>
     </Stack>
+  );
+};
+
+/* ------------------------------ Area chart ------------------------------ */
+/** Punto mínimo de la serie: un día + las métricas que declaren las series. */
+export interface SeriesPoint {
+  date: string; // YYYY-MM-DD
+}
+
+export interface AreaSeriesDef {
+  key: string;
+  label: string;
+  color: string;
+}
+
+/** Paleta de la serie temporal (enviados/entregados/abiertos), coherente con la
+ *  categórica validada de useStatusColors (mismos tonos por modo claro/oscuro). */
+export function useSeriesColors() {
+  const dark = useTheme().palette.mode === 'dark';
+  return dark
+    ? { enviados: '#2d8ecb', entregados: '#2ba862', abiertos: '#c07e1c' }
+    : { enviados: '#0075be', entregados: '#159467', abiertos: '#c9760f' };
+}
+
+const fmtDayShort = (iso: string) => {
+  // '2026-07-26' -> '26 jul'
+  const [, m, d] = iso.split('-');
+  const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  return `${Number(d)} ${months[Number(m) - 1] ?? ''}`;
+};
+
+/** Gráfico de ÁREA multi-serie (SVG propio, sin dependencias) para la actividad diaria.
+ *  Leyenda interactiva (mostrar/ocultar serie), guía vertical + tooltip por día al pasar
+ *  el mouse, ejes con ticks legibles y estado vacío explícito. Theme-aware. */
+const pointValue = (p: SeriesPoint, key: string): number =>
+  Number((p as unknown as Record<string, unknown>)[key]) || 0;
+
+export const AreaChart = ({
+  data,
+  series,
+  height = 220,
+}: {
+  data: SeriesPoint[];
+  series: AreaSeriesDef[];
+  height?: number;
+}) => {
+  const theme = useTheme();
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(600);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const measure = () => setWidth(Math.max(el.clientWidth, 280));
+    measure();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, []);
+
+  const toggle = (key: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const visible = series.filter((s) => !hidden.has(s.key));
+  const pad = { top: 12, right: 12, bottom: 26, left: 46 };
+  const iw = Math.max(width - pad.left - pad.right, 10);
+  const ih = Math.max(height - pad.top - pad.bottom, 10);
+  const n = data.length;
+  const maxVal = Math.max(1, ...data.flatMap((p) => visible.map((s) => pointValue(p, s.key))));
+  const hasActivity = data.some((p) => series.some((s) => pointValue(p, s.key) > 0));
+
+  const x = (i: number) => pad.left + (n > 1 ? (i / (n - 1)) * iw : iw / 2);
+  const y = (v: number) => pad.top + ih - (v / maxVal) * ih;
+
+  // Ticks del eje Y (4 divisiones "bonitas") y del eje X (~6 fechas).
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(maxVal * f));
+  const xEvery = Math.max(1, Math.ceil(n / 6));
+
+  const linePath = (key: string) =>
+    data.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(pointValue(p, key)).toFixed(1)}`).join(' ');
+  const areaPath = (key: string) =>
+    `${linePath(key)} L${x(n - 1).toFixed(1)},${(pad.top + ih).toFixed(1)} L${x(0).toFixed(1)},${(pad.top + ih).toFixed(1)} Z`;
+
+  const onMove = (e: ReactMouseEvent<SVGSVGElement>) => {
+    if (!n) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const i = n > 1 ? Math.round(((px - pad.left) / iw) * (n - 1)) : 0;
+    setHoverIdx(Math.min(Math.max(i, 0), n - 1));
+  };
+
+  const hover = hoverIdx !== null ? data[hoverIdx] : null;
+
+  return (
+    <Box ref={wrapRef} sx={{ position: 'relative', width: '100%' }}>
+      {/* Leyenda interactiva (cuadritos como en el donut). */}
+      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
+        {series.map((s) => {
+          const off = hidden.has(s.key);
+          return (
+            <ButtonBase
+              key={s.key}
+              onClick={() => toggle(s.key)}
+              aria-pressed={!off}
+              sx={{
+                px: 1,
+                py: 0.4,
+                borderRadius: 1.5,
+                border: '1px solid',
+                borderColor: off ? 'divider' : alpha(s.color, 0.5),
+                bgcolor: off ? 'transparent' : alpha(s.color, 0.06),
+                opacity: off ? 0.55 : 1,
+                transition: 'all .15s ease',
+              }}
+            >
+              <Box sx={{ width: 10, height: 10, borderRadius: '3px', mr: 0.75, bgcolor: off ? 'transparent' : s.color, border: `2px solid ${s.color}` }} />
+              <Typography variant="caption" sx={{ textDecoration: off ? 'line-through' : 'none' }}>
+                {s.label}
+              </Typography>
+            </ButtonBase>
+          );
+        })}
+      </Stack>
+
+      <svg
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Actividad diaria"
+        onMouseMove={onMove}
+        onMouseLeave={() => setHoverIdx(null)}
+        style={{ display: 'block' }}
+      >
+        {/* Rejilla + eje Y */}
+        {yTicks.map((t, i) => (
+          <g key={i}>
+            <line x1={pad.left} x2={pad.left + iw} y1={y(t)} y2={y(t)} stroke={theme.palette.divider} strokeDasharray={i === 0 ? undefined : '3 3'} />
+            <text x={pad.left - 8} y={y(t) + 4} textAnchor="end" fontSize="10" fill={theme.palette.text.secondary}>
+              {t.toLocaleString('es-CO')}
+            </text>
+          </g>
+        ))}
+        {/* Eje X (fechas espaciadas) */}
+        {data.map((p, i) =>
+          i % xEvery === 0 ? (
+            <text key={p.date} x={x(i)} y={pad.top + ih + 16} textAnchor="middle" fontSize="10" fill={theme.palette.text.secondary}>
+              {fmtDayShort(String(p.date))}
+            </text>
+          ) : null,
+        )}
+        {/* Áreas + líneas (orden: la primera serie queda al fondo) */}
+        {visible.map((s) => (
+          <g key={s.key} style={{ opacity: mounted ? 1 : 0, transition: 'opacity .5s ease' }}>
+            <path d={areaPath(s.key)} fill={alpha(s.color, 0.14)} stroke="none" />
+            <path d={linePath(s.key)} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" />
+          </g>
+        ))}
+        {/* Guía vertical + puntos del día bajo el mouse */}
+        {hover && (
+          <g>
+            <line x1={x(hoverIdx!)} x2={x(hoverIdx!)} y1={pad.top} y2={pad.top + ih} stroke={theme.palette.text.secondary} strokeDasharray="3 3" />
+            {visible.map((s) => (
+              <circle key={s.key} cx={x(hoverIdx!)} cy={y(pointValue(hover, s.key))} r={3.5} fill={s.color} stroke={theme.palette.background.paper} strokeWidth={1.5} />
+            ))}
+          </g>
+        )}
+      </svg>
+
+      {/* Tooltip del día (HTML sobrepuesto, no se sale del contenedor) */}
+      {hover && (
+        <Paper
+          elevation={4}
+          sx={{
+            position: 'absolute',
+            top: 34,
+            left: Math.min(Math.max(x(hoverIdx!) - 70, 0), Math.max(width - 150, 0)),
+            px: 1.25,
+            py: 0.75,
+            pointerEvents: 'none',
+            minWidth: 140,
+          }}
+        >
+          <Typography variant="caption" fontWeight={700}>
+            {fmtDayShort(String(hover.date))}
+          </Typography>
+          {visible.map((s) => (
+            <Stack key={s.key} direction="row" alignItems="center" spacing={0.75}>
+              <Box sx={{ width: 8, height: 8, borderRadius: '2px', bgcolor: s.color }} />
+              <Typography variant="caption" sx={{ flex: 1 }}>
+                {s.label}
+              </Typography>
+              <Typography variant="caption" fontWeight={700} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                {pointValue(hover, s.key).toLocaleString('es-CO')}
+              </Typography>
+            </Stack>
+          ))}
+        </Paper>
+      )}
+
+      {!hasActivity && (
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none' }}
+        >
+          Sin actividad en el período.
+        </Typography>
+      )}
+    </Box>
   );
 };
 

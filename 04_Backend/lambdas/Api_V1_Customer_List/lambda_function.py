@@ -101,6 +101,10 @@ def _clean(item):
     # Banderas de funciones por cliente ({key: bool}); ausente = todo habilitado.
     flags = item.get('featureFlags') or {}
     out['featureFlags'] = {str(k): bool(v) for k, v in flags.items()} if isinstance(flags, dict) else {}
+    # Cuotas de envío ({maxPerCampaign, maxPerDay}); ausente/0 = sin tope.
+    lim = item.get('sendingLimits') or {}
+    out['sendingLimits'] = ({k: int(v or 0) for k, v in lim.items()}
+                            if isinstance(lim, dict) else {})
     return out
 
 
@@ -115,7 +119,7 @@ def lambda_handler(event, context):
     try:
         items = []
         scan_kwargs = {
-            'ProjectionExpression': 'customerId, company, companyTin, realSendEnabled, featureFlags, #d',
+            'ProjectionExpression': 'customerId, company, companyTin, realSendEnabled, featureFlags, sendingLimits, #d',
             'ExpressionAttributeNames': {'#d': 'date'},
         }
         while True:

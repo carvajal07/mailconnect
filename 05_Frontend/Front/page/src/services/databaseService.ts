@@ -17,6 +17,7 @@ export const DATABASE_ENDPOINTS = {
   REGISTER_FILE: '/Database/Register-file',
   LIST: '/Database/List',
   DELETE: '/Database/Delete',
+  VERIFY: '/Database/Verify',
 };
 
 export interface RegisterFilePayload {
@@ -63,10 +64,40 @@ export interface DatabaseFile {
   status: string;
 }
 
+/** Reporte de HIGIENE de una base (Database/Verify). */
+export interface HygieneReport {
+  databaseFileId: string;
+  fileName: string;
+  channel: string;
+  contactType: 'correo' | 'celular';
+  total: number;
+  analyzed: number;
+  truncated: boolean;
+  counts: {
+    valid: number;
+    invalidSyntax: number;
+    duplicates: number;
+    disposable: number;
+    roleAccounts: number;
+    unresolvableDomains: number;
+  };
+  domains?: { unique: number; checked: number; skipped: number; unresolved: string[] };
+  samples: Record<string, string[]>;
+  hygieneScore: number;
+  level: 'ok' | 'warning' | 'critical';
+}
+
 export const databaseService = {
   /** Guarda la metadata de una base ya subida a S3. */
   registerFile: (payload: RegisterFilePayload): Promise<ApiResponse<{ databaseFileId?: string }>> =>
     apiPost(DATABASE_ENDPOINTS.REGISTER_FILE, payload),
+
+  /**
+   * Verifica la HIGIENE de una base antes del envío real: sintaxis, duplicados,
+   * dominios desechables/no resolubles y cuentas de rol (correo), o E.164 (celular).
+   */
+  verify: (databaseFileId: string): Promise<ApiResponse<HygieneReport>> =>
+    apiPost(DATABASE_ENDPOINTS.VERIFY, { databaseFileId }),
 
   /** Lista las bases de datos del cliente. Envía customerId Y customer (el backend
    *  cae a buscar por nombre de empresa si el customerId no coincide). */

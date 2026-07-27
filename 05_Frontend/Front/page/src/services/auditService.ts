@@ -33,11 +33,20 @@ export interface AuditData {
 }
 
 export const auditService = {
-  /** Lista la bitácora. month='YYYY-MM', action y actor opcionales. */
-  list: (month?: string, action?: string, actor?: string): Promise<ApiResponse<AuditData>> =>
+  /** Lista la bitácora. month='YYYY-MM'; dateFrom/dateTo='YYYY-MM-DD' (rango inclusivo,
+   *  para el export); action y actor opcionales. */
+  list: (
+    month?: string,
+    action?: string,
+    actor?: string,
+    dateFrom?: string,
+    dateTo?: string,
+  ): Promise<ApiResponse<AuditData>> =>
     apiPost(AUDIT_ENDPOINTS.LIST, {
       ...(month ? { month } : {}),
       ...(action ? { action } : {}),
       ...(actor ? { actor } : {}),
+      ...(dateFrom ? { dateFrom } : {}),
+      ...(dateTo ? { dateTo } : {}),
     }),
 };

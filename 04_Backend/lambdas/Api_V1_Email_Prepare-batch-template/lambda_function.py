@@ -13,6 +13,7 @@ from datetime import datetime
 
 import boto3
 import pandas as pd
+from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
 
 #pylint: disable=C0301
@@ -166,7 +167,10 @@ ses = boto3.client('ses', region_name=REGION)
 table_process = dynamodb.Table('process')
 table_campaign = dynamodb.Table('campaign')
 table_customer = dynamodb.Table('customer')
+table_user = dynamodb.Table('user')
 table_database = dynamodb.Table('databaseFile')
+# Remitente de los avisos al owner (saldo bajo). Mismo default que las demás lambdas.
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'comunicaciones@mailconnect.com.co')
 # Plantillas de mensaje SMS/WSP (canales no-SES). El envío resuelve el contenido EN VIVO
 # desde esta tabla (por campaign.messageTemplateId) para reflejar ediciones posteriores a la
 # creación de la campaña; el texto guardado en campaign.template queda solo como respaldo.
@@ -372,6 +376,13 @@ class RealSendNotApproved(Exception):
     flujo), NO se bloquea (compatibilidad con el envío directo previo)."""
 
 
+class SendingLimitExceeded(Exception):
+    """El envío real excede una CUOTA del cliente (customer.sendingLimits: tope de
+    destinatarios por campaña y/o tope diario). Protege la reputación SES compartida y
+    el gasto: un cliente no puede despachar más de lo que el admin le autorizó. El
+    handler responde 429. Cuota ausente o 0 = sin tope (fail-open)."""
+
+
 def _wallet_ledger(st, tx_type, amount, balance_after, detail):
     """Escribe SIEMPRE un movimiento en walletTransaction (ledger auditable). Best-effort:
     el saldo ya se movió atómicamente; si el ledger falla se loguea, no se revierte.
@@ -394,6 +405,128 @@ def _wallet_ledger(st, tx_type, amount, balance_after, detail):
         })
     except Exception as e:
         print('No se pudo registrar walletTransaction: {}'.format(e))
+
+
+# ── Aviso de SALDO BAJO al owner (Bloque H) ──────────────────────────────────
+# Env del enlace del portal en el correo (mismo default que la lambda de barrido).
+NOTIFY_DASHBOARD_URL = os.environ.get('NOTIFY_DASHBOARD_URL', 'https://mailconnect.com.co/panel')
+NOTIFY_LOG_TABLE = os.environ.get('NOTIFY_LOG_TABLE', 'notificationLog')
+_notify_log = dynamodb.Table(NOTIFY_LOG_TABLE)
+
+
+def _customer_notify_prefs(customer_id):
+    """(lowBalance:bool, threshold:int) de customer.notify. FAIL-OPEN: sin config, el
+    aviso de saldo bajo está ON con umbral 20.000 COP."""
+    try:
+        item = table_customer.get_item(
+            Key={'customerId': customer_id}, ProjectionExpression='notify').get('Item') or {}
+        raw = item.get('notify') or {}
+        if not isinstance(raw, dict):
+            raw = {}
+        low = raw.get('lowBalance')
+        on = True if low is None else (str(low).strip().lower() in ('true', '1', 'yes', 'si', 'sí')
+                                       if isinstance(low, str) else bool(low))
+        try:
+            thr = int(raw.get('lowBalanceThreshold', 20000) or 20000)
+        except (TypeError, ValueError):
+            thr = 20000
+        return on, thr
+    except Exception as e:
+        print('No se pudieron leer las preferencias de notificación ({})'.format(e))
+        return True, 20000
+
+
+def _owner_emails(customer_id):
+    """Correos de los owners del tenant (fallback a cualquier usuario activo)."""
+    try:
+        users = []
+        kwargs = {'FilterExpression': Attr('customerId').eq(customer_id),
+                  'ProjectionExpression': 'email, tenantRole, active'}
+        while True:
+            resp = table_user.scan(**kwargs)
+            users.extend(resp.get('Items', []))
+            last = resp.get('LastEvaluatedKey')
+            if not last:
+                break
+            kwargs['ExclusiveStartKey'] = last
+        owners = [str(u.get('email')).strip() for u in users
+                  if u.get('active', True) and u.get('email')
+                  and str(u.get('tenantRole', 'owner') or 'owner').lower() == 'owner']
+        if owners:
+            return list(dict.fromkeys(owners))
+        any_active = [str(u.get('email')).strip() for u in users
+                      if u.get('active', True) and u.get('email')]
+        return list(dict.fromkeys(any_active))
+    except Exception as e:
+        print('No se pudieron resolver los owners ({})'.format(e))
+        return []
+
+
+def _claim_notification(customer_id, kind, day):
+    """PutItem condicional en notificationLog: True la 1ª vez por (cliente, tipo, día)."""
+    key = '{}#{}#{}'.format(customer_id, kind, day)
+    try:
+        _notify_log.put_item(
+            Item={'notifyKey': key, 'customerId': customer_id, 'kind': kind, 'day': day,
+                  'createdAt': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+                  'expiresAt': int(time.time()) + 45 * 86400},
+            ConditionExpression='attribute_not_exists(notifyKey)')
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return False
+        # Tabla ausente (rollout) → no dedup pero tampoco romper: se permite el aviso.
+        print('notificationLog no disponible ({}); no se deduplica'.format(e))
+        return True
+    except Exception as e:
+        print('claim notification: {}'.format(e))
+        return True
+
+
+def notify_low_balance_if_needed(st, new_balance):
+    """Envía al owner un aviso de SALDO BAJO si el saldo quedó por debajo del umbral del
+    cliente. Best-effort (nunca rompe el envío) y deduplicado por día (notificationLog)."""
+    try:
+        new_balance = int(new_balance)
+    except (TypeError, ValueError):
+        return
+    try:
+        on, threshold = _customer_notify_prefs(st.customer_id)
+        if not on or new_balance >= threshold:
+            return
+        day = time.strftime('%Y-%m-%d', time.gmtime())
+        if not _claim_notification(st.customer_id, 'lowBalance', day):
+            return
+        emails = _owner_emails(st.customer_id)
+        if not emails:
+            return
+        saldo = '{:,}'.format(new_balance).replace(',', '.')
+        umbral = '{:,}'.format(threshold).replace(',', '.')
+        subject = '💰 Saldo bajo en tu cuenta MailConnect'
+        html = (
+            '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#16233f">'
+            '<h2 style="color:#0075be;margin:0 0 8px">Tu saldo está bajo</h2>'
+            '<p style="color:#5b6b86;font-size:14px">Tras tu último envío, el saldo de '
+            '<b>{company}</b> quedó en <b>${saldo} COP</b>, por debajo de tu umbral de aviso '
+            '(${umbral} COP). Recarga para que tus próximas campañas no se detengan por saldo '
+            'insuficiente.</p>'
+            '<p style="margin:20px 0"><a href="{url}" style="background:#0075be;color:#fff;'
+            'text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:bold">'
+            'Recargar saldo</a></p>'
+            '<p style="color:#9aa7bd;font-size:12px;margin-top:24px">Puedes ajustar el umbral '
+            'o desactivar este aviso en el portal (Mi cuenta).</p></div>'
+        ).format(company=st.customer_name or '', saldo=saldo, umbral=umbral, url=NOTIFY_DASHBOARD_URL)
+        text = ('Saldo bajo: ${} COP (umbral ${}). Recarga en {}'.format(
+            saldo, umbral, NOTIFY_DASHBOARD_URL))
+        ses.send_email(
+            Source=str(SENDER_EMAIL),
+            Destination={'ToAddresses': emails},
+            Message={'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+                     'Body': {'Html': {'Data': html, 'Charset': 'UTF-8'},
+                              'Text': {'Data': text, 'Charset': 'UTF-8'}}})
+        print('Aviso de saldo bajo enviado a {}'.format(emails))
+    except Exception as e:
+        print('No se pudo enviar el aviso de saldo bajo ({})'.format(e))
 
 
 def reserve_balance(st, cost, campaign_name):
@@ -689,6 +822,65 @@ def is_real_send_enabled(customer_id_value:str)->bool:
     except Exception as e:
         print("No se pudo verificar realSendEnabled ({}); se asume habilitado".format(e))
     return True
+
+
+def get_sending_limits(customer_id_value:str)->dict:
+    """Cuotas de envío del cliente (customer.sendingLimits): maxPerCampaign (destinatarios
+    por envío real) y maxPerDay (destinatarios despachados por día). 0/ausente = sin tope.
+    Fail-open ante cualquier error de lectura (no bloquear envíos por un GetItem caído)."""
+    try:
+        item = table_customer.get_item(
+            Key={'customerId': customer_id_value},
+            ProjectionExpression='sendingLimits').get('Item') or {}
+        lim = item.get('sendingLimits') or {}
+        return {'maxPerCampaign': int(lim.get('maxPerCampaign', 0) or 0),
+                'maxPerDay': int(lim.get('maxPerDay', 0) or 0)}
+    except Exception as e:
+        print('No se pudieron leer los límites de envío ({}); sin tope'.format(e))
+        return {'maxPerCampaign': 0, 'maxPerDay': 0}
+
+
+def sent_today_count(customer_name_value:str)->int:
+    """Destinatarios ya DESPACHADOS HOY por el cliente: suma de registersToSend de sus
+    procesos reales (sin muestras) con fecha de hoy (UTC). Alimenta el tope diario."""
+    today = time.strftime('%Y-%m-%d', time.gmtime())
+    total = 0
+    kwargs = {'FilterExpression': (Attr('customerName').eq(customer_name_value)
+                                   & Attr('date').begins_with(today))}
+    while True:
+        resp = table_process.scan(**kwargs)
+        for p in resp.get('Items', []):
+            if p.get('isSamples') or str(p.get('processState', '')) == 'Muestras':
+                continue
+            try:
+                total += int(p.get('registersToSend', 0))
+            except (TypeError, ValueError):
+                pass
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            return total
+        kwargs['ExclusiveStartKey'] = last
+
+
+def check_sending_limits(st:'ProcessState', recipients_count:int)->None:
+    """Gate de CUOTAS del envío real: lanza SendingLimitExceeded (handler → 429) si el
+    envío excede el tope por campaña o el tope diario del cliente. Sin límites
+    configurados no hace NINGUNA lectura extra (el scan diario solo corre con tope)."""
+    limits = get_sending_limits(st.customer_id)
+    max_campaign = limits['maxPerCampaign']
+    if max_campaign and recipients_count > max_campaign:
+        raise SendingLimitExceeded(
+            'El envío ({} destinatarios) excede el tope por campaña de tu cuenta '
+            '({}). Divide la base o pide al administrador ampliar el límite.'.format(
+                recipients_count, max_campaign))
+    max_day = limits['maxPerDay']
+    if max_day:
+        used = sent_today_count(st.customer_name)
+        if used + recipients_count > max_day:
+            raise SendingLimitExceeded(
+                'El envío excede el tope DIARIO de tu cuenta ({} de {} destinatarios ya '
+                'despachados hoy). Intenta mañana o pide ampliar el límite.'.format(
+                    used, max_day))
 
 
 def get_customer_nit(customer_id_value:str):
@@ -1535,6 +1727,9 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
     debited = 0
     try:
         recipients_count = count_base_rows(temp_file, delimiter, allow_duplicates)
+        # Gate de CUOTAS (tope por campaña / tope diario) ANTES de cobrar: si excede,
+        # se libera el lock y el handler responde 429 (sin tocar el saldo).
+        check_sending_limits(st, recipients_count)
         cost = _campaign_cost(st.customer_id, channel_name, recipients_count, document_format, delivery_mode)
         if cost > 0:
             new_balance = reserve_balance(st, cost, data["campaignName"])
@@ -1542,9 +1737,13 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
                 debited = cost
                 print("Saldo reservado: ${} por {} destinatarios (saldo: ${})".format(
                     cost, recipients_count, new_balance))
-    except InsufficientBalance:
-        # Saldo insuficiente: se libera el lock (campaña vuelve a ser enviable) y se
-        # propaga → el handler responde 402. NO se marca la campaña en Error.
+                # Aviso de SALDO BAJO al owner (best-effort, deduplicado por día): si tras
+                # este cobro el saldo quedó bajo el umbral del cliente, se le notifica para
+                # que recargue antes de que los envíos empiecen a fallar por saldo.
+                notify_low_balance_if_needed(st, new_balance)
+    except (InsufficientBalance, SendingLimitExceeded):
+        # Saldo insuficiente o cuota excedida: se libera el lock (campaña vuelve a ser
+        # enviable) y se propaga → el handler responde 402/429. NO se marca en Error.
         release_real_send_lock(st, previous_state)
         raise
     except Exception:
@@ -1804,6 +2003,15 @@ def lambda_handler(event, context):
         # accidente una campaña homónima de otro cliente. Fail-open de rollout: sin customerId
         # en el context (rutas aún sin el mapping template) se busca solo por nombre (legado).
         auth_ctx = (event.get('requestContext') or {}).get('authorizer') or {} if isinstance(event, dict) else {}
+        # IMPERSONACIÓN de soporte (readonly): una sesión "ver como cliente" NUNCA envía
+        # (ni muestras ni real). Se rechaza aquí, antes de tocar la campaña/saldo. El front
+        # ya oculta el botón, pero esto es la defensa REAL (no es puenteable desde el cliente).
+        if str(auth_ctx.get('readonly', '')).lower() in ('true', '1'):
+            print('Sesión de solo lectura (impersonación); se bloquea el envío.')
+            return {'statusCode': 403, 'headers': CORS_HEADERS,
+                    'body': json.dumps({'status': False, 'status_code': 403,
+                        'description': 'Estás en una vista de soporte (solo lectura); '
+                                       'no se puede enviar desde aquí.'})}
         auth_customer_id = str(auth_ctx.get('customerId') or '').strip() or None
         response_campaign = select_campaign(campaign_name, auth_customer_id)
         print(response_campaign)
@@ -2029,6 +2237,14 @@ def lambda_handler(event, context):
         description = str(e)
         status = False
         status_code = 402
+        print(description)
+    except SendingLimitExceeded as e:
+        # Cuota de envío del cliente excedida (tope por campaña / diario): 429, sin
+        # marcar Error. El lock ya se liberó, la campaña sigue enviable (con menos base
+        # o al día siguiente, o cuando el admin amplíe el límite).
+        description = str(e)
+        status = False
+        status_code = 429
         print(description)
     except Exception as e:
         # WORKER SQS (cola de partes): la invocación debe FALLAR (propagar) si algo sale mal, para

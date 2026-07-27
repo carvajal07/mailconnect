@@ -1,13 +1,16 @@
 '''
 Lambda ADMIN para actualizar el estado de un cliente (habilitar/deshabilitar los
-envíos reales).
+envíos reales, banderas de funciones y CUOTAS de envío).
 
 Ruta: POST /Customer/Update  (integración no-proxy, envelope estándar)
-Request:  { customerId, realSendEnabled (bool) }
+Request:  { customerId, realSendEnabled? (bool), features? ({clave:bool}),
+            limits? ({maxPerCampaign?, maxPerDay?}) }
 Respuesta: 200 ok · 400 datos inválidos · 404 cliente no existe
 
 Cuando realSendEnabled = false, la lambda Prepare-batch bloquea el envío REAL de las
-campañas de ese cliente (las muestras siguen permitidas).
+campañas de ese cliente (las muestras siguen permitidas). `limits` guarda las CUOTAS
+de envío (customer.sendingLimits: destinatarios máx. por campaña y por día; 0 = sin
+tope) que Prepare-batch aplica en el envío real (429 al exceder).
 
 ⚠️ Endpoint administrativo: debe quedar restringido a un rol administrador en el
 despliegue (Authorizer de admin). Pendiente [J]/seguridad: role-based access.
@@ -154,6 +157,24 @@ def _sanitize_features(raw):
     return out
 
 
+_LIMIT_KEYS = ('maxPerCampaign', 'maxPerDay')
+
+
+def _sanitize_limits(raw):
+    """Normaliza las cuotas {maxPerCampaign, maxPerDay} a enteros >= 0 (0 = sin tope).
+    Devuelve None si no se enviaron; {} si se enviaron pero ninguna clave es válida."""
+    if not isinstance(raw, dict):
+        return None
+    out = {}
+    for k in _LIMIT_KEYS:
+        if k in raw:
+            try:
+                out[k] = max(int(raw[k] or 0), 0)
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
 def lambda_handler(event, context):
     if not _is_admin(event):
         return {'status': False, 'statusCode': 403, 'description': 'Acceso restringido a administradores.'}
@@ -161,12 +182,14 @@ def lambda_handler(event, context):
     customer_id = payload.get('customerId')
     raw_flag = payload.get('realSendEnabled')
     features = _sanitize_features(payload.get('features'))
+    limits = _sanitize_limits(payload.get('limits'))
 
-    if not customer_id or (raw_flag is None and not features):
+    if not customer_id or (raw_flag is None and not features and not limits):
         return {
             'status': False,
             'statusCode': 400,
-            'description': 'Indica customerId y realSendEnabled (true/false) o features ({clave: bool}).'
+            'description': 'Indica customerId y realSendEnabled (true/false), features '
+                           '({clave: bool}) o limits ({maxPerCampaign, maxPerDay}).'
         }
 
     try:
@@ -192,6 +215,13 @@ def lambda_handler(event, context):
             merged_flags.update(features)
             set_parts.append('featureFlags = :ff')
             values[':ff'] = merged_flags
+
+        merged_limits = {k: int(v or 0) for k, v in (old.get('sendingLimits') or {}).items()
+                         if k in _LIMIT_KEYS}
+        if limits:
+            merged_limits.update(limits)
+            set_parts.append('sendingLimits = :sl')
+            values[':sl'] = merged_limits
 
         try:
             table_customer.update_item(
@@ -219,6 +249,11 @@ def lambda_handler(event, context):
             _audit(event, 'customer.features', company,
                    'Funciones del cliente {}: {}'.format(company, resumen))
             parts.append('funciones actualizadas ({})'.format(len(features)))
+        if limits:
+            resumen = ', '.join('{}={}'.format(k, v if v else 'sin tope') for k, v in limits.items())
+            _audit(event, 'customer.limits', company,
+                   'Cuotas de envío del cliente {}: {}'.format(company, resumen))
+            parts.append('cuotas de envío actualizadas')
 
         return {
             'status': True,
@@ -229,6 +264,7 @@ def lambda_handler(event, context):
                 'realSendEnabled': real_send_enabled if real_send_enabled is not None
                                     else bool(old.get('realSendEnabled', True)),
                 'featureFlags': merged_flags,
+                'sendingLimits': merged_limits,
             }
         }
     except Exception as e:

@@ -62,7 +62,11 @@ CONTEXT_TEMPLATE = (
     '      "customerId": "$context.authorizer.customerId",\n'
     '      "customer": "$context.authorizer.customer",\n'
     '      "nit": "$context.authorizer.nit",\n'
-    '      "tenantRole": "$context.authorizer.tenantRole"\n'
+    '      "tenantRole": "$context.authorizer.tenantRole",\n'
+    # Impersonación (soporte "ver como cliente"): impersonatedBy + readonly. Sin ellos,
+    # las lambdas de escritura no pueden distinguir una sesión de soporte de una real.
+    '      "impersonatedBy": "$context.authorizer.impersonatedBy",\n'
+    '      "readonly": "$context.authorizer.readonly"\n'
     '    }\n'
     '  }\n'
     '}'

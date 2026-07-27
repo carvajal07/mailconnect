@@ -192,7 +192,7 @@ export const FacturacionSection = () => {
       )}
       {data?.truncated && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          Resumen parcial: se alcanzó el tope de procesos agregados. Acota por mes o por cliente para un cálculo completo.
+          Resumen parcial: hay procesos históricos sin resumen pre-agregado (correr el backfill del rollup lo corrige) o se superó el tope absoluto. Acota por mes o por cliente para un cálculo completo.
         </Alert>
       )}
 

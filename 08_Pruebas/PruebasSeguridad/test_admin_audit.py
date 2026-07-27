@@ -108,6 +108,21 @@ def test_config_set_registra_evento(env):
     assert e['action'] == 'config.set' and e['target'] == 'OTP_EXPIRATION_MIN'
 
 
+def test_audit_filtra_por_rango_de_fechas(env):
+    # dateFrom/dateTo (YYYY-MM-DD, inclusivo) — el rango del EXPORT de la UI.
+    audit = _load('Api_V1_Admin_Audit')
+    t = boto3.resource('dynamodb', region_name='us-east-1').Table('adminAudit')
+    t.put_item(Item={'auditId': 'a1', 'action': 'x', 'actor': 'ana', 'date': '2026-07-10 08:00:00'})
+    t.put_item(Item={'auditId': 'a2', 'action': 'x', 'actor': 'ana', 'date': '2026-07-15 08:00:00'})
+    t.put_item(Item={'auditId': 'a3', 'action': 'x', 'actor': 'ana', 'date': '2026-07-20 08:00:00'})
+    resp = audit.lambda_handler(_admin({'dateFrom': '2026-07-12', 'dateTo': '2026-07-18'}), None)
+    assert resp['statusCode'] == 200
+    assert [e['auditId'] for e in resp['data']['entries']] == ['a2']
+    # Solo dateFrom (abierto por arriba): a2 y a3.
+    resp = audit.lambda_handler(_admin({'dateFrom': '2026-07-12'}), None)
+    assert {e['auditId'] for e in resp['data']['entries']} == {'a2', 'a3'}
+
+
 def test_audit_filtra_por_accion(env):
     _pk('customer', 'customerId')
     boto3.resource('dynamodb', region_name='us-east-1').Table('customer').put_item(

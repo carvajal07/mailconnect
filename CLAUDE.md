@@ -26,6 +26,252 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Impersonación auditada "ver como cliente" (ago 2026, Bloque D)
+- **`Api_V1_Admin_Impersonate` (`POST /Admin/Impersonate`, admin + 2ª barrera):** emite un
+  token de SESIÓN del tenant (customerId/customer/nit del cliente) para que el admin vea el
+  portal como ese cliente, pero de **bajo privilegio y solo lectura**: `role=client` (no abre
+  /admin), `tenantRole=operator` (los gates RBAC de sub-rol ya bloquean aprobar/rechazar/
+  programar/ENVÍO REAL → la impersonación no gasta saldo ni dispara campañas), `readonly=true`
+  + `impersonatedBy=<admin>`, `exp` corto (`IMPERSONATION_TTL_MIN` 30 min) y `sid` de una
+  **sesión REAL** (revocable, marcada `impersonation:true`). Token firmado con stdlib HS256
+  (sin PyJWT). Audita `support.impersonate`.
+- **Enforcement en 3 capas:** (1) `Authorizer`/`Authorizer2` reenvían `readonly`/`impersonatedBy`
+  en el context (+ mapping template `sync_api.py`); (2) **Prepare-batch** rechaza (403) toda
+  sesión `readonly` ANTES de tocar campaña/saldo (ni muestras ni real — barrera server-side no
+  puenteable); (3) el **apiClient** bloquea los endpoints de escritura (denylist `READONLY_
+  BLOCKED`) en una sesión readonly, y el resto de mutaciones peligrosas (aprobar/programar/
+  enviar) las corta el `tenantRole=operator`.
+- **Front:** botón **"Ver como cliente"** en la ficha de Clientes (`ClientesSection`) →
+  `impersonateService.start` → `enterImpersonation` (guarda la sesión del admin en
+  `mc_admin_token`/`_user` y entra al portal). El portal muestra un **chip de advertencia**
+  "Viendo como {empresa} · solo lectura" + botón **"Salir de la vista"** (`exitImpersonation`
+  restaura la sesión del admin y vuelve a /admin, sin re-login). `isImpersonating`/
+  `isReadOnlySession` en `authService`; la caché del portal se limpia al entrar/salir para no
+  mezclar tenants.
+- **Cobertura:** `test_impersonation.py` (6: gate admin, 400 sin id, 404 cliente, token
+  readonly+operator+impersonatedBy + sesión + auditoría, Authorizer reenvía readonly,
+  Prepare-batch rechaza readonly), `test_mapping_template.py` (+`impersonatedBy`/`readonly`).
+- ⚠️ `[J]`: lambda `Api_V1_Admin_Impersonate` (el CD la crea) + ruta admin `/Admin/Impersonate`
+  **ya en routes.json** + env `SECRET_KEY` (firma el token + 2ª barrera); IAM `GetItem customer`,
+  `PutItem session`, `PutItem adminAudit`. Redesplegar los **Authorizers** + el **mapping
+  template** (`deploy-api.yml`) para que reenvíen `readonly`/`impersonatedBy`.
+
+### Panel de salud de despliegue (ago 2026, Bloque K)
+- **`Api_V1_Admin_Deployment-health` (`POST /Admin/Deployment-health`, admin + 2ª barrera):**
+  verifica CONTRA AWS si los recursos que el repo declara `[J]` existen de verdad — ataca la
+  deriva "construido pero no desplegado". Secciones (cada chequeo **best-effort**: sin el
+  permiso IAM → `unknown`, no penaliza): **tablas** núcleo (DescribeTable → ACTIVE/missing;
+  las on-demand `assistantRateLimit`/`notificationLog` no penalizan si faltan), **colas** del
+  pipeline + sus DLQ (GetQueueUrl), **lambdas críticas** (GetFunctionConfiguration → existe +
+  las admin/JWT llevan `SECRET_KEY` + las de pipeline tienen su event source mapping ENABLED),
+  y el **total de funciones** desplegadas (ListFunctions). Devuelve `sections[]` + `summary`
+  (ok/warning/error/unknown). Estados por ítem: ok · missing · inactive · unwired · no-secret ·
+  unknown.
+- **Front:** sección admin **"Salud de despliegue"** (`DespliegueSection`, tab `despliegue`):
+  chips de resumen + acordeones por sección (abiertos si no están OK) con tabla recurso/estado/
+  detalle; aviso de que "sin verificar" = falta el permiso IAM de lectura, no que el recurso
+  falte. `deploymentHealthService`.
+- ⚠️ **No exhaustivo:** cubre el conjunto CRÍTICO (seguridad, admin, pipeline y features
+  recientes) embebido en `CRITICAL_LAMBDAS`/`CORE_TABLES`/`PIPELINE_QUEUES` — al agregar una
+  lambda/tabla/cola crítica nueva hay que sumarla al manifiesto de la lambda.
+- **Cobertura:** `test_deployment_health.py` (5: gate admin, tabla faltante→missing, on-demand
+  ausente no penaliza, colas existentes/faltantes, el resumen suma todos los ítems).
+- ⚠️ `[J]`: ruta admin `/Admin/Deployment-health` **ya en routes.json** + env `SECRET_KEY`
+  (2ª barrera). IAM solo-lectura (best-effort): `dynamodb:DescribeTable`, `sqs:GetQueueUrl`,
+  **`lambda:GetFunctionConfiguration/ListFunctions/ListEventSourceMappings`** (el rol de
+  convención no las incluye → agregar por `role-map.json` o inline; sin ellas, la sección de
+  lambdas sale `unknown` pero tablas/colas siguen).
+
+### Notificaciones al owner + centro de preferencias (ago 2026, Bloque H)
+- **Notificaciones al owner (por correo, opt-in):** el cliente controla `customer.notify`
+  (`{reputation, digest, lowBalance, lowBalanceThreshold}`, FAIL-OPEN: reputación+saldo bajo ON,
+  resumen OFF, umbral 20.000 COP) desde **Mi cuenta** (`NotificationsCard`, solo owner) vía
+  **`Api_V1_Notifications_Prefs`** (`POST /Notifications/Prefs`, get/set; set owner-only).
+  Tres disparadores:
+  - **Saldo bajo (instantáneo):** `Prepare-batch`, tras el débito del envío real, si el saldo
+    quedó bajo el umbral → correo al owner (`notify_low_balance_if_needed`, best-effort,
+    deduplicado por día vía tabla **`notificationLog`** PK `notifyKey`=customerId#kind#día, TTL).
+  - **Reputación en riesgo + resumen diario (programado):** **`Api_V1_Notifications_Scan`**
+    (cron EventBridge, `trigger-map.json` `cron(0 13 * * ? *)`): recorre clientes, lee la
+    reputación de 7 días del rollup `{tenant}_sendSummary` (rebote/queja vs umbrales SES) y, si
+    aplica, avisa; y si hubo actividad HOY y `digest` está ON, envía el resumen del día. Mismo
+    dedup por (cliente, tipo, día). Owners = usuarios `tenantRole=owner` activos (fallback a
+    cualquier activo).
+  - ⚠️ **Campaña terminada** NO se implementó como aviso instantáneo: el pipeline distribuido
+    NUNCA marca el proceso `Terminada` (no hay escritor de ese estado), así que no hay señal de
+    completado confiable a la cual engancharse. El resumen DIARIO cubre "qué se envió"; el aviso
+    por-campaña queda pendiente (exige un hook de completado en los workers).
+- **Centro de preferencias del suscriptor (`Api_V1_Email_Preferences`, `GET/POST /Email/
+  Preferences`, público/proxy):** página firmada (MISMO token HMAC del unsubscribe) donde el
+  destinatario elige **frecuencia** (todas/menos/ninguna) y **temas** (promociones/novedades/
+  transaccional), no solo la baja total. Guarda en `{tenant}_preferences` (PK email). Elegir
+  "ninguna" o desmarcar TODO → escribe en `{tenant}_unsubscribe` (que Prepare-batch YA filtra);
+  cualquier otra opción re-suscribe (borra de unsubscribe). La granularidad por TEMA se guarda
+  como consentimiento; su APLICACIÓN (filtrar por tema) queda para cuando las campañas se
+  etiqueten. `Send-EM` expone la variable **`{{preferencesUrl}}`** y el pie del builder HTML
+  suma "Administrar preferencias · Cancelar suscripción".
+- **Cobertura:** `test_notifications.py` (10: prefs get/set + owner-gate, scan reputación+resumen
+  con dedup + preferencia apagada, saldo bajo notifica-una-vez/suficiente/desactivado),
+  `test_preferences.py` (6: token inválido, GET, POST guarda, ninguna/sin-temas → baja, re-suscribe).
+- ⚠️ `[J]`: lambdas `Api_V1_Notifications_{Prefs,Scan}` + `Api_V1_Email_Preferences` (el CD las
+  crea) + rutas `/Notifications/Prefs` (authorizer) y `/Email/Preferences` (pública proxy) **ya
+  en routes.json**; regla EventBridge del Scan (trigger-map.json); env `SENDER_EMAIL`/
+  `NOTIFY_DASHBOARD_URL`/`PREFERENCES_URL`; IAM: Scan `Scan customer/process/user` + `BatchGetItem
+  *_sendSummary` + `Get/PutItem notificationLog` + `ses:SendEmail`; Prefs `GetItem/UpdateItem
+  customer`; Preferences `*_preferences`/`*_unsubscribe` (Get/Put/Delete/Create); Prepare-batch
+  suma `Scan user` + `Get/PutItem notificationLog` + `ses:SendEmail` (ya tenía SES). Tabla
+  `notify` en `customer` y `notificationLog` on-demand.
+
+### 2FA (TOTP) para usuarios (ago 2026, Bloque I)
+- **Segundo factor por TOTP** (RFC 6238, compatible con Google Authenticator/Authy/1Password),
+  con stdlib (hmac/struct/base64, sin layer — igual que el JWT de los Authorizers).
+- **Gestión (`Api_V1_Security_Totp`, `POST /Security/Totp`, tras el Authorizer):** `status`,
+  `enroll` (genera secreto PENDIENTE + `otpauthUri` para el QR), `activate {code}` (verifica el
+  1er código → activa + devuelve **10 códigos de respaldo** de un solo uso, hasheados en BD),
+  `disable {code}` (exige un TOTP o código de respaldo válido). Datos en la tabla `user`
+  (`totpEnabled`, `totpSecret`, `totpBackupCodes[]` sha256, `totpPendingSecret`).
+- **Login en dos pasos:** `Login`, tras la contraseña correcta, si `totpEnabled` NO emite token;
+  devuelve `data.twofaRequired=true` + `data.challenge` (JWT corto de 5 min, claim `twofa`). El
+  ingreso se completa en **`Api_V1_Security_Verify-2fa`** (`POST /Security/Verify-2fa`, pública/
+  pre-sesión): valida el desafío + el código (TOTP o respaldo, que se CONSUME), crea la sesión y
+  emite el JWT real (idéntico a Login). Anti-fuerza-bruta: `twofaFails` en `user` → **429** a los
+  5 fallos (hay que re-loguear); un ingreso correcto resetea el contador.
+- **Front:** `TwoFactorCard` en Mi cuenta (QR con la lib `qrcode`, activación, códigos de
+  respaldo mostrados UNA vez, desactivación); `LoginPage` gana la pantalla de código cuando
+  `twofaRequired`; `authService.verify2fa` + `totpService`. La sesión sigue guardándose por
+  pestaña (sessionStorage) igual que antes.
+- **Cobertura:** `test_totp.py` (10: status/enroll/activate con código real/disable/403; login
+  sin 2FA da token vs con 2FA pide desafío; verify con TOTP crea sesión, con código de respaldo
+  que se consume, código malo + tope de intentos 429, desafío inválido 401).
+- ⚠️ `[J]`: lambdas `Api_V1_Security_{Totp,Verify-2fa}` (el CD las crea) + rutas `/Security/Totp`
+  (authorizer + mapping template con `userId`) y `/Security/Verify-2fa` (pública, sin authorizer)
+  **ya en routes.json**; env `SECRET_KEY` en ambas (Verify-2fa firma el token, mismo layer PyJWT
+  que Login); IAM: Totp `GetItem/UpdateItem user`; Verify-2fa `GetItem/UpdateItem user`, `GetItem
+  customer/userData`, `PutItem session/adminAudit`. Campos `totp*`/`twofaFails` en `user` on-demand.
+
+### Protección de reputación, límites y costos (ago 2026, Bloque E)
+- **Rate limiting del chatbot público (`Api_V1_Assistant_Ask`)**: el endpoint es público y
+  cada pregunta invoca un modelo de PAGO → limitador de ventana fija en DynamoDB (tabla
+  **`assistantRateLimit`**, PK `rlKey`, TTL `expiresAt`; la crea la lambda on-demand):
+  por IP `ASSISTANT_RATE_PER_MINUTE` (default 6) y `ASSISTANT_RATE_PER_DAY` (default 60),
+  más un tope **GLOBAL** diario `ASSISTANT_RATE_GLOBAL_PER_DAY` (default 2000) que acota
+  el costo total de Bedrock aunque el atacante rote IPs. Exceso → **429** con mensaje
+  amable (el widget `LandingFloating` lo muestra; `assistantService` gana `reason:'rate'`).
+  FALLA ABIERTO (error de DynamoDB → responde) y el chequeo va ANTES de invocar Bedrock.
+  **`Assistant_Copilot`**: mismo patrón/tabla pero por TENANT y SOLO en `draft`/`rewrite`
+  (`COPILOT_RATE_PER_MINUTE` 10 / `_PER_DAY` 200); `analyze` (determinista) no se limita.
+- **Cuotas de envío por cliente (`customer.sendingLimits`)**: el admin fija **tope de
+  destinatarios por campaña** y **tope diario** desde la ficha de Clientes ("Cuotas de
+  envío"; 0/vacío = sin tope). `Customer/Update` acepta `limits` (merge por clave,
+  auditado `customer.limits`); `Customer/List`/`Detail` los devuelven. **Gate en
+  Prepare-batch** (`check_sending_limits`, envío real): corre tras el lock y ANTES de
+  cobrar; si excede → `SendingLimitExceeded` → libera el lock y responde **429** (sin
+  tocar saldo, sin marcar Error). El tope diario suma `registersToSend` de los procesos
+  REALES de hoy (scan de `process` por customerName+fecha, muestras excluidas) — solo
+  corre si hay tope configurado. Fail-open si falla la lectura de límites. ⚠️ Pendiente:
+  tasa máxima (msgs/hora) — exige pacing en los workers.
+- **Higiene de listas (`Api_V1_Database_Verify`, POST `/Database/Verify`)**: verificación
+  PREVIA de una base registrada. Correo: sintaxis, duplicados, dominios **desechables**
+  (lista embebida + env `HYGIENE_DISPOSABLE_EXTRA`), cuentas de **rol** (info@, noreply@…
+  advertencia, no bajan score) y **dominio resoluble** (MX real con dnspython si el layer
+  está; si no `socket.getaddrinfo`; cache por dominio, tope `HYGIENE_MAX_DOMAINS` 200 —
+  lo saltado no penaliza). Celular: E.164 (+57) + duplicados. Devuelve counts + ejemplos
+  (20 c/u) + `hygieneScore` (0-100; penalizan sintaxis/dup/desechable/no-resoluble) +
+  `level` ok≥95/warning≥85/critical, y PERSISTE el resumen en `databaseFile.hygiene`.
+  Front: botón escudo "Verificar higiene" en **Bases de datos** + diálogo del reporte
+  (`databaseService.verify`). Tope `HYGIENE_MAX_ROWS` 20000 (más allá: truncated).
+- **Cobertura:** `test_assistant_ratelimit.py` (6: 429 por minuto sin invocar el modelo,
+  IPs independientes, tope global, fail-open + tabla on-demand, Copilot por tenant,
+  analyze sin límite), `test_sending_limits.py` (6: topes campaña/diario con muestras y
+  otros clientes excluidos, fail-open, Update merge + auditoría + List, negativos→0),
+  `test_database_verify.py` (6: reporte completo, base limpia, celular, 403/404/400,
+  tope de dominios no penaliza). `test_assistant.py` apaga el limitador (se prueba aparte).
+- ⚠️ `[J]` (despliegue): lambda `Api_V1_Database_Verify` (el CD la crea) + ruta
+  `/Database/Verify` **ya en routes.json**; IAM: Ask/Copilot `dynamodb:UpdateItem/
+  CreateTable/DescribeTable/UpdateTimeToLive` sobre `assistantRateLimit`; Database_Verify
+  `dynamodb:GetItem/UpdateItem databaseFile` + `s3:GetObject` (buckets de cliente), layer
+  dnspython OPCIONAL (sin él, el chequeo MX cae a resolución de dominio); Prepare-batch
+  ya tenía GetItem `customer` y Scan `process`. Envs `ASSISTANT_RATE_*`/`COPILOT_RATE_*`/
+  `HYGIENE_*` opcionales (defaults arriba). El WAF/throttling de API Gateway sigue
+  recomendado como capa extra (PENDIENTES Bloque 1.2).
+
+### Series de 30 días + adiós "datos parciales" (ago 2026, Bloque A)
+- **Serie temporal del cliente:** nueva lambda **`Api_V1_Reports_Series`** (POST
+  `/Report/Series`, identidad del Authorizer): serie DIARIA CONTINUA de los últimos N días
+  (default 30, máx. 90) con enviados/entregados/abiertos/clics/rebotes/quejas, leída BARATA
+  del rollup `{tenant}_sendSummary` (BatchGetItem por proceso; sin escanear sendStatus).
+  Excluye muestras; un proceso sin fila de rollup aporta `registersToSend` como enviados y
+  cuenta en `withoutRollup` (correr `scripts/backfill_send_summary.py` lo elimina).
+- **Serie global del admin:** `Api_V1_Admin_Dashboard` devuelve ahora `data.series`
+  (helper `_series_global`, best-effort): mismos buckets diarios sobre TODOS los clientes
+  (scan de `process` por fecha + BatchGet del rollup por tenant, tope 2000 procesos).
+- **Frontend:** componente **`AreaChart`** en `portal/charts.tsx` (SVG propio, sin
+  dependencias; leyenda interactiva mostrar/ocultar serie, guía vertical + tooltip por día,
+  ejes con ticks, estado vacío, theme-aware; paleta `useSeriesColors` coherente con la
+  categórica validada). "Actividad de los últimos 30 días" en **Estadísticas** del portal
+  (`statsService.series`, best-effort: sin la ruta desplegada no se muestra) y en el
+  **Panel de control** admin (`DashboardSection`, de `data.series`).
+- **Adiós "datos parciales":** en los 4 lectores rollup-first (`Reports_Statistics`,
+  `Admin_Dashboard`, `Billing_Summary`, `Portal_Bootstrap`) el tope de procesos se partió
+  en dos: **absoluto generoso** (`MAX_PROCESSES` 5000, lecturas O(1) del rollup) y **bajo
+  solo para el camino CARO** (`MAX_FALLBACK_QUERIES` 150–200: procesos SIN rollup que
+  exigen query completa de `sendStatus`). Un proceso con rollup ya no consume el
+  presupuesto → con el rollup poblado el aviso "(parcial)" desaparece; sin presupuesto de
+  fallback, el proceso sin rollup se OMITE (truncated=true) pero los demás se agregan.
+- **Cobertura:** `test_report_series.py` (8: 403 sin identidad, serie continua con ceros,
+  bucketing por día + totales, exclusión de muestras, aislamiento de tenant, aproximación
+  sin rollup, rango 90 días, clamp de days), `test_admin_dashboard.py` (+2: serie global
+  con muestra excluida; rollup se agrega con fallback agotado), `test_listados_stats.py`
+  (+1: rollup no consume fallback en Statistics).
+- ⚠️ `[J]` (despliegue): lambda `Api_V1_Reports_Series` (el CD la crea) + ruta
+  `/Report/Series` **ya en routes.json** (authorizer + CORS + mapping template con
+  `customerId`/`customer`/`nit`); IAM `dynamodb:Scan process` + `BatchGetItem *_sendSummary`;
+  en `Api_V1_Admin_Dashboard`, IAM `BatchGetItem *_sendSummary` (para la serie global).
+  Para que el "(parcial)" desaparezca del histórico: correr `backfill_send_summary.py`.
+
+### Centro de mando + caja de soporte admin (ago 2026)
+- **Centro de mando (`CentroMandoSection` + `Api_V1_Admin_Control-center`)**: tablero de
+  **operación en vivo**, nueva página de ENTRADA del admin (tab `centro`, default de
+  `/admin`; el "Panel de control" histórico sigue como tab aparte). Secciones (cada una
+  **best-effort** e independiente): resumen de chips por área; **salud de servicios**
+  (cuota SES 24h con barra de uso + envío habilitado/deshabilitado, tablas DynamoDB núcleo
+  ACTIVE, colas SQS accesibles); **pipeline** (procesos atascados en `Enviando/Procesando`
+  >2 h, schedules `failed`, tabla de colas con profundidad + edad del mensaje más viejo +
+  **DLQs** — DLQ con mensajes = crítico); **dinero del día** (débitos/recargas de hoy,
+  solicitudes pendientes, saldo agregado de la plataforma); **reputación en riesgo** (top 5
+  por rebote/queja de los últimos 7 días CON tendencia vs los 7 anteriores, leyendo el
+  rollup `{tenant}_sendSummary` por processId — barato, sin escanear sendStatus); y últimas
+  10 entradas de auditoría. **Auto-refresco cada 60 s** (switch). Umbrales: rebote 5/10%,
+  queja 0.1/0.5% (los de SES), cuota SES 80%, backlog 1000 msgs / 30 min.
+- **Soporte (`SoporteSection`, tab `soporte`)**, 3 pestañas: **Buscar destinatario**
+  (`Api_V1_Admin_Recipient-lookup`: cliente + correo/celular → línea de tiempo de TODOS
+  sus envíos con estado y detalle + banderas de lista negra/desuscrito; celular se
+  normaliza a E.164); **Dominios remitentes** (`Api_V1_Admin_Domains`: los `senderDomain`
+  de todos los clientes con empresa y estado, pendientes primero); **Plantillas SES**
+  (`Api_V1_Admin_Templates`: listado GLOBAL con filtro/paginación — cierra el aviso de
+  "solo lo creado en la sesión").
+- **Acciones de soporte en la ficha del cliente** (`ClientesSection` +
+  `Api_V1_Admin_User-support`, auditadas `support.*`): **reenviar activación** (solo
+  cuentas inactivas; enlace nuevo de 24 h), **forzar reseteo** (OTP hasheado compatible
+  con el flujo "¿olvidaste tu contraseña?") y **cerrar sesiones** (desactiva `session`;
+  revocación real por el claim `sid`).
+- **Export de auditoría**: `Admin/Audit` acepta `dateFrom`/`dateTo` (YYYY-MM-DD) y la
+  sección tiene botón **"Exportar CSV"** (BOM UTF-8, `;`, exporta lo filtrado).
+- **Cobertura:** `test_control_center.py` (7: gate, atascados, DLQ crítica, dinero del día,
+  reputación con tendencia, salud, auditoría), `test_admin_support.py` (13: lookup por
+  correo/celular normalizado + listas, las 3 acciones de soporte + auditoría + gates,
+  plantillas y dominios globales), `test_admin_audit.py` (+1 rango de fechas).
+- ⚠️ `[J]` (despliegue): 5 lambdas nuevas (`Api_V1_Admin_{Control-center,Recipient-lookup,
+  User-support,Templates,Domains}` — el CD las crea) + rutas ya en `routes.json` (admin) +
+  env `SECRET_KEY` en las 5 (2ª barrera; User-support además `SENDER_EMAIL`/
+  `ACTIVATION_URL`/`OTP_EXPIRATION_MIN`). IAM: Control-center (Scans de process/
+  scheduledSend/walletTransaction/customerBalance/adminAudit, `BatchGetItem *_sendSummary`,
+  `sqs:GetQueueUrl/GetQueueAttributes`, `ses:GetSendQuota/GetAccountSendingEnabled`,
+  `dynamodb:DescribeTable`); Recipient-lookup (`GetItem customer`, `Scan *_sendStatus`,
+  `BatchGetItem process`, `GetItem *_blackList/*_unsubscribe`); User-support (`GetItem user`,
+  `PutItem userActivation/oneTimePassword/adminAudit`, `Scan/UpdateItem session`,
+  `ses:SendEmail`); Templates (`ses:ListTemplates`); Domains (`Scan senderDomain/customer`).
+
 ### IP de envío dedicada por cliente (ago 2026)
 - **Qué:** el admin asigna un **configuration set de SES** por cliente desde `/admin`
   **"IP de envío"** (`IpEnvioSection`): tabla de todos los clientes (Pool general vs IP
@@ -185,6 +431,11 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `change-password` | `{ user (email), password (nueva), otp? }` + header `Authorization: Bearer` (alternativo) | 200 ok · 401 sin auth/OTP · 400 débil · 404 no existe |
 | `forgot-password` | `{ user (email), ip? }` | 200 siempre (genérico, no revela si el correo existe; envía OTP por correo) |
 | `logout` | `{ user (email) }` | 200 (idempotente) |
+| `login` (2FA) | igual que `login` | Si el usuario tiene 2FA: 200 `data:{twofaRequired:true, challenge}` (sin `token`). El front completa con `Verify-2fa` |
+| `Verify-2fa` | `{ challenge, code }` **público** | 200 `data:{token, ...}` (idéntico a login OK) · 401 código/desafío inválido o vencido · 429 demasiados intentos. `code` = TOTP o código de respaldo (se consume) |
+| `Security/Totp` | `{ action: status\|enroll\|activate\|disable, code? }` (tras Authorizer) | `enroll`→`{secret, otpauthUri}` · `activate`→`{enabled, backupCodes[10]}` · `disable` (exige código) · `status`→`{enabled, pending}`. Gestión del 2FA TOTP del usuario |
+| `Notifications/Prefs` | `{ action: get\|set, prefs? }` (tenant del token; set owner-only) | 200 `data:{notify:{reputation, digest, lowBalance, lowBalanceThreshold}}`. Preferencias de aviso al owner (saldo bajo, reputación, resumen diario) |
+| `Email/Preferences` | **GET/POST público (proxy)** `?t=<token HMAC>` | 200 página HTML del **centro de preferencias** (frecuencia + temas). POST guarda en `{tenant}_preferences`; "ninguna"/sin-temas → da de baja (`{tenant}_unsubscribe`), otra opción re-suscribe |
 | `Campaign/List` | `{ customerId }` | 200 `data:{campaigns[], count}` (orden desc por fecha; incluye `campaignState` y `messageTemplateId` de SMS/WSP) |
 | `Campaign/Update` | `{ campaignId, campaignName?, channelName?, attachmentType?, dataPath?, template?, messageTemplateId?, from? }` | 200 ok · 409 no-Pendiente · 403 otro cliente · 404 no existe. Solo edita campañas en estado `Pendiente`; toma el cliente del context del Authorizer. `messageTemplateId` = referencia a la plantilla SMS/WSP (contenido en vivo al enviar) |
 | `Campaign/Delete` | `{ campaignId }` | 200 ok · 400 falta id · 403 otro cliente · 404 no existe. Borra el registro de `campaign` (+ sus `document` best-effort); no borra el CSV ni el historial de procesos. Audita `campaign.delete` |
@@ -200,8 +451,9 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Database/Register-file` | `{ customerId, customer, fileName, s3Path, totalRecords?, channel?, columns?, previewRows?, duplicates?, allowDuplicates?, ... }` | 201 `data:{databaseFileId}`. `columns` = encabezados del CSV (campos usables como `{{variables}}`). `previewRows` = primeras filas (máx. 5) para la vista previa persistente. `allowDuplicates` = si el envío real NO filtra contactos repetidos |
 | `Database/List` | `{ customerId }` | 200 `data:{files[], count}` (incluye `columns`, `previewRows`, `validEmails`, `invalidEmails`) |
 | `Database/Delete` | `{ databaseFileId }` | 200 ok · 403 otro cliente · 404 no existe. Borra el registro (no el CSV en S3) |
+| `Database/Verify` | `{ databaseFileId }` (tenant del token) | 200 `data:{counts{valid,invalidSyntax,duplicates,disposable,roleAccounts,unresolvableDomains}, samples, domains, hygieneScore, level, truncated}` · 403 · 404 · 502 S3. **Higiene de listas**: verificación previa de la base (correo: sintaxis/duplicados/desechables/rol/dominio resoluble · celular: E.164/duplicados). Persiste el resumen en `databaseFile.hygiene` |
 | `Customer/List` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, realSendEnabled}], count}` |
-| `Customer/Update` | `{ customerId, realSendEnabled? (bool), features? ({clave:bool}) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales y/o **banderas de funciones** por cliente (merge por clave). Devuelve `data:{realSendEnabled, featureFlags}`. Audita `customer.realSend` / `customer.features` |
+| `Customer/Update` | `{ customerId, realSendEnabled? (bool), features? ({clave:bool}), limits? ({maxPerCampaign, maxPerDay}) }` (**admin**) | 200 ok · 404 no existe · 400 datos. Togglea el bloqueo de envíos reales, **banderas de funciones** y/o **cuotas de envío** por cliente (merge por clave; 0 = sin tope). Devuelve `data:{realSendEnabled, featureFlags, sendingLimits}`. Audita `customer.realSend` / `customer.features` / `customer.limits` |
 | `SendingConfig/List` | `{}` (**admin**) | 200 `data:{configs:[{customerId, configurationSet, poolName, ips[], enabled, notes, updatedAt}], count}`. IP de envío dedicada por cliente (tabla `sendingConfig`) |
 | `SendingConfig/Set` | `{ customerId, configurationSet, poolName?, ips?[], enabled?=true, notes? }` o `{ customerId, remove:true }` (**admin**) | 200 ok · 400 datos. Upsert de la IP dedicada (config set SES) o baja (`remove` → pool general). Crea la tabla on-demand. Audita `sendingConfig.set/remove` |
 | `MessageTemplate/Create` | `{ channel:SMS\|WSP\|DOCX\|PDF, name, body?/hsmName?+language?+params?/s3Path?+params?/html? }` | 201 `data:{messageTemplateId}` · 400 datos. SMS necesita `body`, WSP `hsmName`, DOCX `s3Path`, **PDF `html`** (el HTML del editor) |
@@ -219,11 +471,19 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Customer/Delete` | `{ customerId }` (**admin**) | 200 `data:{customerId, deletedUsers}` · 400 (falta id / es tu propia empresa) · 403 · 404. Borra `customer` + sus `user`/`userData` (best-effort); **no** purga el histórico (campañas/envíos/saldo). Audita `customer.delete` |
 | `User/SetRole` | `{ userId, role (admin\|client) }` (**admin**) | 200 ok · 400 · 404 · 409 (no degradar al último admin) |
 | `Billing/Summary` | `{ month?, customerId? }` (**admin**) | 200 `data:{customers:[{company, totalSent, subtotal, tax, total, byChannel[]}], totals, truncated}` |
-| `Admin/Dashboard` | `{ month? }` (**admin**) | 200 `data:{kpis, funnel[], byChannel[], health:[{company, sent, bounceRate, complaintRate, level}], truncated}` (panel global + reputación) |
+| `Admin/Dashboard` | `{ month? }` (**admin**) | 200 `data:{kpis, funnel[], byChannel[], health:[{company, sent, bounceRate, complaintRate, level}], series:[{date, enviados, entregados, abiertos, ...}], truncated}` (panel global + reputación + serie diaria de 30 días de toda la plataforma) |
 | `Admin/Jobs` | `{ month?, state? }` (**admin**) | 200 `data:{jobs:[{campaignName, company, channelLabel, processState, campaignState, sent, registersToSend, progress, blocked{}}], counts, truncated}` (solo lectura) |
 | `Config/Get` | `{}` (**admin**) | 200 `data:{settings:[{key, label, group, type, default, value, isOverridden, consumers[]}]}` |
 | `Config/Set` | `{ key, value }` (**admin**) | 200 ok · 400 key/valor inválido. Crea `platformConfig` si no existe |
-| `Admin/Audit` | `{ month?, action?, actor? }` (**admin**) | 200 `data:{entries:[{date, actor, action, target, detail}], count, actions[], truncated}` (bitácora, solo lectura) |
+| `Admin/Audit` | `{ month?, action?, actor?, dateFrom?, dateTo? }` (**admin**) | 200 `data:{entries:[{date, actor, action, target, detail}], count, actions[], truncated}` (bitácora, solo lectura; `dateFrom/dateTo` YYYY-MM-DD inclusivo = rango del export CSV de la UI) |
+| `Admin/Control-center` | `{}` (**admin**) | 200 `data:{pipeline:{stuckProcesses[], stuckCount, failedSchedules[], queues:[{queue, depth, oldestSeconds, dlqDepth, level}]}, money:{todayDebits, todayTopups, pendingTopups, platformBalance}, reputation:{top:[{company, sent, bounceRate, complaintRate, level, trend}]}, health:{services:[{service, status, detail, metric?}]}, audit[], generatedAt}` — **Centro de mando** (operación en vivo; cada sección best-effort) |
+| `Admin/Deployment-health` | `{}` (**admin**) | 200 `data:{sections:[{key, title, level, ok, total, items:[{name, status, detail}]}], summary:{ok, warning, error, unknown}, generatedAt}` — **Salud de despliegue**: verifica contra AWS que lambdas/tablas/colas/`SECRET_KEY`/triggers críticos existan (deriva "construido pero no desplegado"; best-effort → `unknown` sin el permiso IAM) |
+| `Admin/Impersonate` | `{ customerId }` (**admin**) | 200 `data:{token, customer, customerId, companyTin, expiresInMinutes, impersonatedBy}` · 400 · 404. **"Ver como cliente"**: emite un token de sesión del tenant en SOLO LECTURA (`role=client`, `tenantRole=operator`, `readonly=true`, `impersonatedBy`, exp 30 min, sesión revocable). Audita `support.impersonate` |
+| `Admin/Recipient-lookup` | `{ customerId, contact }` (**admin**) | 200 `data:{company, timeline:[{date, campaignName, channel, state, stateLabel, detail}], count, truncated, lists:{blacklisted, unsubscribed}}` · 404 cliente. "¿Qué le llegó a X?" — línea de tiempo por contacto (correo o celular, normaliza E.164) |
+| `Admin/User-support` | `{ userId, action: resend-activation\|force-reset\|revoke-sessions }` (**admin**) | 200 ok · 400 · 404 · 409 (activación con cuenta ya activa). Acciones de soporte auditadas (`support.*`): reenvía activación (enlace nuevo 24 h), envía OTP de reseteo (hasheado, compatible con Validate-otp), o desactiva TODAS las sesiones del usuario (revocación por `sid`) |
+| `Admin/Templates` | `{}` (**admin**) | 200 `data:{templates:[{name, customerPrefix, createdAt}], count, truncated}` — listado GLOBAL de plantillas SES (`ListTemplates` paginado) |
+| `Admin/Domains` | `{}` (**admin**) | 200 `data:{domains:[{domainId, customerId, company, kind, domain, status, createdAt}], count}` — dominios/correos remitentes de TODOS los clientes (pendientes primero) |
+| `Report/Series` | `{ days? }` (tenant del token; default 30, máx. 90) | 200 `data:{from, to, days:[{date, enviados, entregados, abiertos, clics, rebotes, quejas}], totals, withoutRollup}` · 403 sin identidad. Serie DIARIA continua desde el rollup `{tenant}_sendSummary` (excluye muestras; sin rollup aproxima por `registersToSend`). La consume el gráfico "Actividad de los últimos 30 días" de Estadísticas |
 | `Balance/Get` | `{ limit? }` (tenant del token) | 200 `data:{customerId, balance, currency, transactions:[{txId, type, amount, balanceAfter, status, reference, bank, detail, rejectReason, createdAt}], count}` (saldo + movimientos; lee por GSI `customerId-createdAt-index` con fallback a Scan) |
 | `Balance/Topup-manual-request` | `{ amount (COP>0), proofS3Path, bank?, reference?, note? }` (tenant del token) | 201 `data:{txId, status:'pending'}` · 400 · 403. Crea la solicitud manual `pending` (no toca el saldo); el comprobante ya se subió a S3 (get-urlS3, documentType=document) |
 | `Balance/Topup-manual` | `{ customerId, amount (COP>0), note? }` (**admin**) | 200 `data:{balance, txId}` · 400 · 403. **Ajuste directo** (crédito) del admin — tipo `adjustment` (correcciones/cortesías); distinto de la solicitud del cliente |
@@ -233,7 +493,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Admin/Balances` | `{}` (**admin**) | 200 `data:{customers:[{customerId, company, companyTin, balance, updatedAt}], totals:{balance}, recentTransactions[], count}` (saldo de todos, menor primero + ledger global) |
 | `Balance/Topup-init` | `{ amount (COP≥20000) }` (tenant del token) | 200 `data:{reference, amountInCents, currency, publicKey, signatureIntegrity, redirectUrl?}` · 400. Firma de integridad Wompi; crea el intento `pending` en el ledger |
 | `Wallet/Wompi-webhook` | **público/proxy sin authorizer** (evento Wompi firmado) | 200 ack. Verifica la firma del evento y acredita **idempotente** por `reference` (pending→approved, `TransactWriteItems`); nunca acredita desde el redirect del navegador |
-| `Assistant/Ask` | **público/proxy sin authorizer** `{ question }` | 200 `{answer}` · 400 vacía · 502 modelo no disponible. Asistente de IA (AWS Bedrock Converse, modelo Claude) con prompt de sistema aterrizado en MailConnect; responde en español, solo sobre la plataforma. Lo usan los botones flotantes de la landing |
+| `Assistant/Ask` | **público/proxy sin authorizer** `{ question }` | 200 `{answer}` · 400 vacía · **429 límite de uso** (por IP 6/min · 60/día + tope global 2000/día, tabla `assistantRateLimit`) · 502 modelo no disponible. Asistente de IA (AWS Bedrock Converse, modelo Claude) con prompt de sistema aterrizado en MailConnect; responde en español, solo sobre la plataforma. Lo usan los botones flotantes de la landing |
 | `Cascade/Dispatch` | `{ name, dataPath, waitMinutes?, successCriterion?, steps:[{channel(EM\|SMS\|WSP\|VOZ), content}] }` | 201 `data:{cascadeRunId, contacts, debited}` · 400 · 402 saldo · 403. Lanza la **cascada omnicanal** (Opción A): crea el run + un contacto por fila, filtra consentimiento del canal 0, encola el paso 0 y debita su costo. |
 | `Cascade/List` | `{}` (tenant del token) | 200 `data:{runs:[{cascadeRunId, name, steps, status, counts{total,confirmed,exhausted,inFlight,budget}, createdAt}], count}` |
 | `Cascade/Advance` | (EventBridge cron; sin body) | Tick del motor: por cada contacto vencido lee el estado en `sendStatus`, y confirma/escala/agota/frena por saldo (`decide_next`). Escala encolando el siguiente canal + debitando |
@@ -378,6 +638,25 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
   añade al rol ACTUAL de la función, sin esperar a que el rol se recree) — así
   `Api_V1_Assistant_Ask` y `Api_V1_Assistant_Copilot` (las dos únicas que usan Bedrock) reciben
   el permiso en el próximo push aunque su rol ya exista.
+- **Bloqueante DISTINTO (no es IAM): medio de pago de AWS Marketplace (ago 2026).** Con el IAM
+  ya correcto, Bedrock puede seguir rechazando la invocación con `AccessDeniedException:
+  INVALID_PAYMENT_INSTRUMENT — A valid payment instrument must be provided... Your AWS
+  Marketplace subscription for this model cannot be completed`. Los modelos Anthropic en
+  Bedrock se activan como una suscripción de **AWS Marketplace** (el "Model access" de la
+  consola de Bedrock la crea por debajo) y esa suscripción exige que la **cuenta de AWS**
+  (no la lambda, no el IAM) tenga un **método de pago válido** en Billing. No es un `[J]` de
+  código/IAM — lo resuelve quien administra la cuenta de AWS (facturación), no algo
+  desplegable desde este repo:
+  1. **Billing and Cost Management → Payment preferences**: agregar/verificar una tarjeta
+     válida (si la cuenta es de una organización con facturación consolidada, el método de
+     pago vive en la cuenta **pagadora**, no necesariamente en la cuenta donde corren las
+     lambdas).
+  2. **Amazon Bedrock → Model access**: confirmar que el acceso al modelo (Claude Haiku/
+     Sonnet/Opus) siga en estado "Access granted" (si quedó en error, reintentar la
+     solicitud tras arreglar el pago).
+  3. Esperar los ~2 minutos que indica el propio mensaje de error antes de reintentar.
+  Arregla esto UNA vez a nivel de cuenta y desbloquea **ambas** lambdas de Bedrock a la vez
+  (no hay nada que tocar por lambda).
 
 ### Rol del Asistente IA (ago 2026)
 > Es un endpoint **público, sin sesión** (cualquiera en internet le escribe) y **sin tools**:

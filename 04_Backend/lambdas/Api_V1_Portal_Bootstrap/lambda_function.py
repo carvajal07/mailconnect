@@ -54,7 +54,10 @@ def tenant_key(nit):
     return re.sub(r'[^a-z0-9]', '', str(nit or '').lower())
 
 # --- Estadísticas: MISMA lógica que Api_V1_Reports_Statistics (mantener en sync) ---
-MAX_PROCESSES = 300
+# El tope BAJO aplica solo al camino CARO (proceso sin rollup → query de sus estados);
+# las lecturas del resumen pre-agregado son O(1) y llevan el tope absoluto generoso.
+MAX_PROCESSES = 5000
+MAX_FALLBACK_QUERIES = 150
 STATE_PRIORITY = {1: 1, 9: 2, 8: 3, 3: 4, 2: 5, 6: 6, 10: 7, 7: 8, 4: 9, 5: 10}
 ESTADO_BUCKET = {
     'Pendiente': 'creada', 'Error': 'creada', 'Muestras': 'pendiente',
@@ -213,6 +216,8 @@ def _load_stats(customer_id, customer, tenant):
     status_table = dynamodb.Table('{}_sendStatus'.format(tenant))
     summary_table = dynamodb.Table('{}_sendSummary'.format(tenant))
 
+    fallback_used = [0]   # mutable: presupuesto del camino caro compartido entre campañas
+
     def _counts_for(process_id):
         # 1) Resumen pre-agregado (O(1)) por defecto.
         try:
@@ -221,7 +226,10 @@ def _load_stats(customer_id, customer, tenant):
             item = None
         if item:
             return {k: _to_int(item.get(k, 0)) for k in _SUMMARY_FIELDS}
-        # 2) Fallback: agregación por scan de los estados de ESE proceso.
+        # 2) Fallback: agregación por query de los estados de ESE proceso (caro, acotado).
+        if fallback_used[0] >= MAX_FALLBACK_QUERIES:
+            return None
+        fallback_used[0] += 1
         return _counts_from_states(_current_state_per_message(_query_process(status_table, process_id)))
 
     result = []
@@ -238,6 +246,8 @@ def _load_stats(customer_id, customer, tenant):
                 continue
             scanned += 1
             counts = _counts_for(process_id)
+            if counts is None:   # sin rollup y sin presupuesto de fallback
+                continue
             for k in totals:
                 totals[k] += counts[k]
         result.append({

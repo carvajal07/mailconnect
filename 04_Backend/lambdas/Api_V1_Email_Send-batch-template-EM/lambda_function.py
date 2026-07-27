@@ -24,6 +24,9 @@ QUANTITY_BATCH = 50
 # {{unsubscribeUrl}}; aquí se llena por destinatario. Enviar el dato SIEMPRE es
 # seguro: si la plantilla no usa la variable, SES ignora el campo extra.
 UNSUBSCRIBE_URL = os.environ.get('UNSUBSCRIBE_URL', 'https://api.mailconnect.com.co/V1/Email/Unsubscribe')
+# Centro de PREFERENCIAS (Bloque H): mismo token firmado que el unsubscribe. La variable
+# {{preferencesUrl}} la puede usar el pie de la plantilla ("administrar preferencias").
+PREFERENCES_URL = os.environ.get('PREFERENCES_URL', 'https://api.mailconnect.com.co/V1/Email/Preferences')
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
 
 
@@ -41,6 +44,14 @@ def build_unsubscribe_url(customer, email, tenant=''):
     payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode().rstrip('=')
     signature = hmac.new(SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()[:32]
     return f"{UNSUBSCRIBE_URL}?t={payload_b64}.{signature}"
+
+
+def build_preferences_url(customer, email, tenant=''):
+    """Token firmado (mismo esquema del unsubscribe) que abre el CENTRO DE PREFERENCIAS."""
+    payload = json.dumps({'c': customer, 'e': email, 'n': tenant}, separators=(',', ':'))
+    payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode().rstrip('=')
+    signature = hmac.new(SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{PREFERENCES_URL}?t={payload_b64}.{signature}"
 
 global customer_name
 global tenant
@@ -268,6 +279,9 @@ def send_bulk(data:list, headers:list, start:int, end:int, default_tags:dict)->N
         json_dict = dict(zip(headers,register))
         # Enlace de desuscripción por destinatario (variable {{unsubscribeUrl}}).
         json_dict['unsubscribeUrl'] = build_unsubscribe_url(customer_name, email, tenant)
+        # Enlace al centro de preferencias (variable {{preferencesUrl}}); si la plantilla
+        # no lo usa, SES ignora el campo extra sin error.
+        json_dict['preferencesUrl'] = build_preferences_url(customer_name, email, tenant)
         json_string = json.dumps(json_dict)
         destinations.append({
             "Destination":{"ToAddresses": [email]},

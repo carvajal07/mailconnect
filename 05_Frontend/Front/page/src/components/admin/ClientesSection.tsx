@@ -29,18 +29,25 @@ import {
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import SearchIcon from '@mui/icons-material/Search';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import PersonIcon from '@mui/icons-material/Person';
+import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead';
+import LockResetIcon from '@mui/icons-material/LockReset';
+import LogoutIcon from '@mui/icons-material/Logout';
+import { supportService, type UserSupportAction } from '../../services/supportService';
 import { customerService } from '../../services/customerService';
 import type { CustomerSummary, CustomerDetail, CustomerUser, UserRole, TenantRole } from '../../services/customerService';
 import { isOk } from '../../services/apiClient';
 import { formatDateTime } from '../../utils/datetime';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
-import { getUser } from '../../services/authService';
+import { getUser, enterImpersonation } from '../../services/authService';
+import { impersonateService } from '../../services/impersonateService';
+import { useNavigate } from 'react-router-dom';
 import { usePortalData } from '../../context/PortalDataContext';
 
 /**
@@ -64,8 +71,71 @@ export const ClientesSection = () => {
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [savingSend, setSavingSend] = useState(false);
+  // Cuotas de envío (texto del form; '' o 0 = sin tope).
+  const [limitCampaign, setLimitCampaign] = useState('');
+  const [limitDay, setLimitDay] = useState('');
+  const [savingLimits, setSavingLimits] = useState(false);
   const [roleBusy, setRoleBusy] = useState<string | null>(null);
+  const [supportBusy, setSupportBusy] = useState<string | null>(null);
+
+  /** Acciones de SOPORTE sobre un usuario (backend /Admin/User-support, auditadas). */
+  const supportAction = async (u: CustomerUser, action: UserSupportAction) => {
+    const texts: Record<UserSupportAction, { title: string; message: string }> = {
+      'resend-activation': {
+        title: 'Reenviar activación',
+        message: `¿Reenviar el correo de activación a ${u.email}? Se genera un enlace nuevo (24 h).`,
+      },
+      'force-reset': {
+        title: 'Restablecer contraseña',
+        message: `¿Enviar a ${u.email} un código para restablecer su contraseña? El usuario define la clave nueva con "¿Olvidaste tu contraseña?".`,
+      },
+      'revoke-sessions': {
+        title: 'Cerrar sesiones',
+        message: `¿Cerrar TODAS las sesiones de ${u.email}? Sus tokens quedan revocados (deberá iniciar sesión de nuevo).`,
+      },
+    };
+    const ok = await confirm({ ...texts[action], confirmText: 'Confirmar' });
+    if (!ok) return;
+    setSupportBusy(u.userId);
+    const res = await supportService.userAction(u.userId, action);
+    setSupportBusy(null);
+    if (isOk(res)) notify(res.description || 'Acción realizada.', 'success');
+    else notify(res.description || 'No se pudo realizar la acción.', 'error');
+  };
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [impersonatingId, setImpersonatingId] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  /** "Ver como cliente": entra al portal del tenant en SOLO LECTURA (auditado). */
+  const impersonate = async (c: CustomerSummary) => {
+    const ok = await confirm({
+      title: `Ver como ${c.company}`,
+      message: `Entrarás al portal de "${c.company}" en modo SOLO LECTURA para dar soporte. `
+        + 'La acción queda auditada y podrás volver a administración cuando quieras.',
+      confirmText: 'Entrar (solo lectura)',
+    });
+    if (!ok) return;
+    setImpersonatingId(c.customerId);
+    const res = await impersonateService.start(c.customerId);
+    setImpersonatingId(null);
+    if (isOk(res) && res.data?.token) {
+      enterImpersonation(res.data.token, {
+        userId: getUser()?.userId ?? '',
+        name: `Soporte · ${res.data.customer}`,
+        customer: res.data.customer,
+        customerId: res.data.customerId,
+        nit: res.data.companyTin,
+        role: 'client',
+        tenantRole: 'operator',
+        readonly: true,
+        impersonatedBy: res.data.impersonatedBy,
+        email: getUser()?.email ?? '',
+      });
+      navigate('/panel');
+    } else {
+      notify(res.description || 'No se pudo iniciar la vista como cliente.', 'error');
+    }
+  };
 
   const load = refreshCustomers;
 
@@ -97,8 +167,11 @@ export const ClientesSection = () => {
     setDetailLoading(true);
     const res = await customerService.detail(c.customerId);
     setDetailLoading(false);
-    if (isOk(res) && res.data) setDetail(res.data);
-    else notify(res.description || 'No se pudo cargar la ficha.', 'error');
+    if (isOk(res) && res.data) {
+      setDetail(res.data);
+      setLimitCampaign(String(res.data.customer.sendingLimits?.maxPerCampaign || ''));
+      setLimitDay(String(res.data.customer.sendingLimits?.maxPerDay || ''));
+    } else notify(res.description || 'No se pudo cargar la ficha.', 'error');
   };
 
   const closeFicha = () => {
@@ -119,6 +192,26 @@ export const ClientesSection = () => {
       notify(`Envíos reales ${next ? 'habilitados' : 'deshabilitados'}.`, next ? 'success' : 'warning');
     } else {
       notify(res.description || 'No se pudo actualizar.', 'error');
+    }
+  };
+
+  /** Guarda las cuotas de envío (tope por campaña / diario; 0 = sin tope). */
+  const saveLimits = async () => {
+    if (!detail) return;
+    const maxPerCampaign = Math.max(parseInt(limitCampaign, 10) || 0, 0);
+    const maxPerDay = Math.max(parseInt(limitDay, 10) || 0, 0);
+    setSavingLimits(true);
+    const res = await customerService.setLimits(detail.customer.customerId, { maxPerCampaign, maxPerDay });
+    setSavingLimits(false);
+    if (isOk(res)) {
+      setDetail({
+        ...detail,
+        customer: { ...detail.customer, sendingLimits: { maxPerCampaign, maxPerDay } },
+      });
+      refreshCustomers();
+      notify('Cuotas de envío guardadas.', 'success');
+    } else {
+      notify(res.description || 'No se pudieron guardar las cuotas.', 'error');
     }
   };
 
@@ -297,6 +390,37 @@ export const ClientesSection = () => {
                 </Stack>
               </Paper>
 
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                <Typography fontWeight={700}>Cuotas de envío</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Tope de destinatarios del envío real (0 o vacío = sin tope). Protege la
+                  reputación compartida y el gasto: al excederlas el envío se bloquea (429).
+                </Typography>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 1.5 }} alignItems="center">
+                  <TextField
+                    label="Máx. por campaña"
+                    size="small"
+                    type="number"
+                    value={limitCampaign}
+                    onChange={(e) => setLimitCampaign(e.target.value)}
+                    inputProps={{ min: 0 }}
+                    sx={{ width: { xs: '100%', sm: 180 } }}
+                  />
+                  <TextField
+                    label="Máx. por día"
+                    size="small"
+                    type="number"
+                    value={limitDay}
+                    onChange={(e) => setLimitDay(e.target.value)}
+                    inputProps={{ min: 0 }}
+                    sx={{ width: { xs: '100%', sm: 180 } }}
+                  />
+                  <Button variant="outlined" size="small" onClick={saveLimits} disabled={savingLimits}>
+                    {savingLimits ? <CircularProgress size={18} /> : 'Guardar cuotas'}
+                  </Button>
+                </Stack>
+              </Paper>
+
               <Box>
                 <Typography variant="subtitle1" fontWeight={700} gutterBottom>Usuarios de la empresa</Typography>
                 <Divider sx={{ mb: 1 }} />
@@ -346,12 +470,40 @@ export const ClientesSection = () => {
                             <Chip size="small" variant="outlined" color={u.active ? 'success' : 'warning'}
                               label={u.active ? 'Activo' : 'Inactivo'} />
                           </TableCell>
-                          <TableCell align="right">
+                          <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
                             <Tooltip title={u.role === 'admin' ? 'Quitar administrador' : 'Promover a administrador'}>
                               <span>
                                 <IconButton size="small" color={u.role === 'admin' ? 'error' : 'primary'}
                                   onClick={() => changeRole(u)} disabled={roleBusy === u.userId}>
                                   {roleBusy === u.userId ? <CircularProgress size={16} /> : (u.role === 'admin' ? <PersonIcon fontSize="small" /> : <AdminPanelSettingsIcon fontSize="small" />)}
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                            {/* Acciones de SOPORTE (auditadas): activación / reseteo / sesiones. */}
+                            {!u.active && (
+                              <Tooltip title="Reenviar correo de activación">
+                                <span>
+                                  <IconButton size="small" onClick={() => supportAction(u, 'resend-activation')}
+                                    disabled={supportBusy === u.userId}>
+                                    <MarkEmailReadIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            )}
+                            <Tooltip title="Enviar código para restablecer la contraseña">
+                              <span>
+                                <IconButton size="small" onClick={() => supportAction(u, 'force-reset')}
+                                  disabled={supportBusy === u.userId}>
+                                  <LockResetIcon fontSize="small" />
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                            <Tooltip title="Cerrar todas sus sesiones (revoca los tokens vivos)">
+                              <span>
+                                <IconButton size="small" color="warning"
+                                  onClick={() => supportAction(u, 'revoke-sessions')}
+                                  disabled={supportBusy === u.userId}>
+                                  <LogoutIcon fontSize="small" />
                                 </IconButton>
                               </span>
                             </Tooltip>
@@ -365,7 +517,14 @@ export const ClientesSection = () => {
             </Stack>
           )}
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ justifyContent: 'space-between' }}>
+          <Button
+            startIcon={impersonatingId ? <CircularProgress size={16} /> : <VisibilityIcon />}
+            onClick={() => detail && impersonate(detail.customer)}
+            disabled={!detail || !!impersonatingId}
+          >
+            Ver como cliente
+          </Button>
           <Button onClick={closeFicha}>Cerrar</Button>
         </DialogActions>
       </Dialog>

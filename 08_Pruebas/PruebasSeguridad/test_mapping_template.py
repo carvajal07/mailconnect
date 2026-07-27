@@ -15,7 +15,8 @@ SYNC_API = REPO_ROOT / 'scripts' / 'sync_api.py'
 
 # Claims que las lambdas leen de event.requestContext.authorizer.* (aislamiento multi-tenant,
 # gating admin por role, y RBAC de sub-rol por tenantRole).
-REQUIRED_CLAIMS = ('role', 'user', 'userId', 'customerId', 'customer', 'nit', 'tenantRole')
+REQUIRED_CLAIMS = ('role', 'user', 'userId', 'customerId', 'customer', 'nit', 'tenantRole',
+                   'impersonatedBy', 'readonly')
 
 
 def test_context_template_reenvia_todos_los_claims():

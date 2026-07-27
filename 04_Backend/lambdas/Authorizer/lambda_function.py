@@ -121,5 +121,10 @@ def lambda_handler(event, context):
         'tenantRole': str(decoded.get('tenantRole', 'owner') or 'owner'),
         # Id de la sesión (revocación): útil para cerrar ESTA sesión en particular.
         'sid': str(sid),
+        # IMPERSONACIÓN (soporte "ver como cliente"): si el token la lleva, se reenvían
+        # `impersonatedBy` (admin que impersona) y `readonly` (bloquea mutaciones). Vacíos
+        # en un token normal. Las lambdas de escritura sensibles rechazan readonly=true.
+        'impersonatedBy': str(decoded.get('impersonatedBy', '') or ''),
+        'readonly': 'true' if decoded.get('readonly') else '',
     }
     return _build_policy(user, 'Allow', resource, context=ctx)

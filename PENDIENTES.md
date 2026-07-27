@@ -66,9 +66,15 @@ bloque son los pasos `[J]` de despliegue.
 
 1. [x] `[J]` ✅ **`Api_V1_Security_Register`** desplegado (ago 2026): rechaza (409) el
        registro bajo un NIT ya existente. Cerrado.
-2. [ ] `[J]` **Rate limiting/WAF** en los endpoints públicos: `/Assistant/Ask` (costo
-       Bedrock ilimitado + jailbreak), `/Security/Register` y `/Security/Create-otp`
-       (email bombing vía SES). Usage plan + regla rate-based + alarma de gasto Bedrock.
+2. [~] **Rate limiting endpoints públicos**: ✅ `[C]` (ago 2026, Bloque E) `/Assistant/Ask`
+       tiene ahora limitador PROPIO en DynamoDB (por IP: 6/min y 60/día; tope GLOBAL
+       2000/día que acota el costo Bedrock aunque roten IPs; 429 con mensaje del widget;
+       fail-open + tabla `assistantRateLimit` on-demand con TTL) y `/Assistant/Copilot`
+       limita draft/rewrite por TENANT (10/min, 200/día). Envs `ASSISTANT_RATE_*` /
+       `COPILOT_RATE_*`. ⚠️ Sigue pendiente `[J]`: WAF/usage plan de API Gateway (capa de
+       infraestructura: corta las invocaciones, no solo Bedrock) y el rate-limit de
+       `/Security/Register` + `/Security/Create-otp` (email bombing vía SES) + alarma
+       de gasto de Bedrock.
 3. [ ] `[C]` **`realSendEnabled` fail-closed**: hoy `Prepare-batch`/`Login` asumen `True`
        si falta el campo o falla la lectura. Un control de bloqueo debe denegar ante error.
 4. [ ] `[C]` **Blacklist Add/Delete**: eliminar el fallback al body (`nit`/`customerId`)
@@ -157,11 +163,37 @@ El front está terminado y el backend probado; solo falta la consola AWS
 1. [ ] `[P]/[C]` **Segmentación de audiencias** (filtros sobre columnas de la base).
 2. [ ] `[P]/[C]` **Pruebas A/B** de asunto/plantilla con ganador por apertura.
 3. [ ] `[P]/[C]` **API pública + webhooks** para clientes (transaccional).
-4. [ ] `[C]` **Higiene de listas**: verificación previa (sintaxis+MX) antes del envío real.
-5. [ ] `[C]` **Centro de preferencias** del suscriptor (no solo desuscripción total).
-6. [ ] `[C]` **Reporte por destinatario** buscable ("¿qué le llegó a X?").
-7. [ ] `[C]` **2FA (TOTP)** para admins y owners (reutiliza la infraestructura OTP).
-8. [ ] `[C]` **Notificaciones al cliente**: campaña terminada, saldo bajo, rebote alto.
+4. [x] `[C]` ✅ **Higiene de listas (ago 2026, Bloque E)**: `Api_V1_Database_Verify`
+       (POST `/Database/Verify`, ya en routes.json) — verificación previa de la base:
+       sintaxis, duplicados, dominios DESECHABLES (lista embebida), cuentas de ROL
+       (advertencia) y dominio RESOLUBLE en DNS (MX real si el layer trae dnspython;
+       si no, getaddrinfo); celulares: E.164 + duplicados. Reporte con score/nivel +
+       ejemplos, resumen persistido en `databaseFile.hygiene`. Botón "Verificar
+       higiene" (escudo) en Bases de datos con diálogo del reporte. ⚠️ `[J]`: IAM
+       `GetItem/UpdateItem databaseFile` + `s3:GetObject` buckets de cliente; layer
+       dnspython OPCIONAL para MX real.
+5. [x] `[C]` ✅ **Centro de preferencias (ago 2026, Bloque H)**: `Api_V1_Email_Preferences`
+       (`GET/POST /Email/Preferences`, público/proxy, ya en routes.json) — página firmada
+       (mismo token del unsubscribe) con **frecuencia** + **temas**; "ninguna"/sin-temas →
+       baja total (`{tenant}_unsubscribe`), otra opción re-suscribe. `Send-EM` expone
+       `{{preferencesUrl}}` y el pie del builder suma "Administrar preferencias". La
+       aplicación por-tema (filtrar el envío según el tema) queda para cuando las campañas
+       se etiqueten.
+6. [x] `[C]` ✅ **Reporte por destinatario (ago 2026, Bloque C)**: `Api_V1_Admin_Recipient-lookup`
+       + tab Soporte → "Buscar destinatario".
+7. [x] `[C]` ✅ **2FA (TOTP) (ago 2026, Bloque I)**: `Api_V1_Security_{Totp,Verify-2fa}` +
+       `TwoFactorCard` en Mi cuenta (QR, códigos de respaldo) + pantalla de código en el
+       login. TOTP stdlib (RFC 6238); Login devuelve un desafío corto si el usuario tiene
+       2FA; Verify-2fa lo canjea por el token (429 anti-fuerza-bruta). ⚠️ `[J]`: env
+       `SECRET_KEY` en ambas; IAM sobre `user`/`session`/`customer`/`userData`/`adminAudit`.
+8. [~] **Notificaciones al cliente**: ✅ `[C]` (ago 2026, Bloque H) **saldo bajo**
+       (instantáneo en Prepare-batch tras el débito) y **rebote alto + resumen diario**
+       (`Api_V1_Notifications_Scan`, cron, del rollup `sendSummary`), con preferencias por
+       cliente (`customer.notify`, `Api_V1_Notifications_Prefs` + tarjeta en Mi cuenta,
+       owner-only) y dedup por día (`notificationLog`). ⚠️ Pendiente: **"campaña terminada"**
+       instantánea — el pipeline no marca el proceso `Terminada` (no hay escritor de ese
+       estado), así que no hay señal de completado; exige un hook en los workers (el resumen
+       diario cubre "qué se envió" mientras tanto).
 9. [ ] `[P]` **Automatizaciones** (bienvenida/fechas) sobre el motor de la Cascada.
 10. [ ] `[P]` Decisiones abiertas: proveedor SMS definitivo, tarifas reales calibradas,
         reembolso de fallidos, facturación fiscal DIAN (ver la sección Prepago en `CLAUDE.md`).
@@ -170,13 +202,26 @@ El front está terminado y el backend probado; solo falta la consola AWS
 
 ## BLOQUE 5 — Tableros
 
-1. [ ] `[C]` **"Centro de mando" (admin)**: semáforo de operación (procesos atascados
-       >2 h, schedules `failed`, DLQs con mensajes), dinero del día (débitos/recargas +
-       solicitudes pendientes), top clientes en riesgo de reputación con tendencia,
-       últimas entradas de auditoría. Todo sale de tablas existentes + 1 llamada SQS.
-2. [ ] `[C]` **Series temporales** (30 días) en cliente y admin vía la preagregación
-       `sendSummary` (pre-agregación, ver `CLAUDE.md`): sparklines + área de
-       envíos/entregas/aperturas. De paso elimina los avisos de "datos parciales".
+1. [x] `[C]` ✅ **"Centro de mando" (admin) (ago 2026)**: tab nuevo (página de ENTRADA del
+       admin, `CentroMandoSection` + `Api_V1_Admin_Control-center`): semáforo del pipeline
+       (procesos atascados >2 h, schedules `failed`, profundidad de colas y DLQs), dinero
+       del día (débitos/recargas + solicitudes pendientes + saldo plataforma), top 5 en
+       riesgo de reputación CON tendencia (7d vs 7d, del rollup `sendSummary`), **salud de
+       servicios** (cuota SES con barra de uso + envío habilitado, tablas DynamoDB núcleo,
+       colas SQS accesibles) y últimas 10 de auditoría. Auto-refresco 60 s. ⚠️ `[J]`: ruta
+       `/Admin/Control-center` (ya en routes.json) + IAM (sqs:GetQueueUrl/GetQueueAttributes,
+       ses:GetSendQuota/GetAccountSendingEnabled, dynamodb:DescribeTable + Scans).
+2. [x] `[C]` ✅ **Series temporales (30 días) (ago 2026)**: gráfico de ÁREA multi-serie
+       (enviados/entregados/abiertos, SVG propio con leyenda interactiva y tooltip por
+       día — `AreaChart` en `charts.tsx`) en **Estadísticas** del portal
+       (`Api_V1_Reports_Series`, POST `/Report/Series`, del rollup `sendSummary` del
+       tenant) y en el **Panel de control** admin (`Admin/Dashboard` devuelve `series`
+       global). **Adiós "datos parciales"**: en los 4 lectores rollup-first
+       (Statistics, Dashboard, Billing, Bootstrap) el tope BAJO ahora aplica SOLO al
+       camino caro (procesos sin rollup, `MAX_FALLBACK_QUERIES`); con el rollup poblado
+       (backfill) el aviso desaparece. ⚠️ `[J]`: lambda `Api_V1_Reports_Series` (el CD
+       la crea) + ruta `/Report/Series` (ya en routes.json) + IAM `Scan process`,
+       `BatchGetItem *_sendSummary`.
 3. [ ] `[C]` **"Salud de mi base"** (portal): crecimiento de válidos, rebotados
        acumulados, desuscritos, heatmap día×hora de aperturas (alimenta la hora óptima
        del Copiloto).
@@ -185,22 +230,53 @@ El front está terminado y el backend probado; solo falta la consola AWS
 
 ## BLOQUE 6 — Panel admin (funciones faltantes)
 
-1. [ ] `[C]` **Listado global de plantillas SES** (`ListTemplates`; hoy la tabla solo
-       muestra lo creado en la sesión).
-2. [ ] `[C]` **"Ver como cliente"** (impersonación auditada) para soporte.
-3. [ ] `[C]` **Acciones de soporte en la ficha**: reenviar activación, forzar reseteo,
-       **cerrar sesiones del usuario** (la revocación por `sid` ya lo permite:
-       basta desactivar sus sesiones).
-4. [ ] `[C]/[J]` **Colas/DLQ**: profundidad real de SQS + ver/redrive de DLQs desde la UI.
-5. [ ] `[C]` **Límites por cliente**: tope diario/por campaña y tasa máxima (hoy solo
-       existe el interruptor `realSendEnabled`).
-6. [ ] `[C]` **Dominios remitentes globales** (los `senderDomain` de todos los clientes
-       con su estado).
+1. [x] `[C]` ✅ **Listado global de plantillas SES (ago 2026)**: `Api_V1_Admin_Templates`
+       (`ListTemplates` paginado, prefijo de cliente derivado del nombre) + tab
+       Soporte → "Plantillas SES" con filtro y paginación.
+2. [x] `[C]` ✅ **"Ver como cliente" (impersonación auditada) (ago 2026, Bloque D)**:
+       `Api_V1_Admin_Impersonate` (`/Admin/Impersonate`, admin, ya en routes.json) emite un
+       token de sesión del tenant en SOLO LECTURA (`role=client`, `tenantRole=operator`,
+       `readonly=true`, `impersonatedBy`, exp 30 min, sesión revocable), auditado
+       `support.impersonate`. Enforcement en 3 capas: Authorizers reenvían `readonly`/
+       `impersonatedBy` (+ mapping template); Prepare-batch rechaza `readonly` (403, ni
+       muestras ni real); apiClient bloquea los endpoints de escritura + operator RBAC corta
+       aprobar/programar/enviar. Front: botón "Ver como cliente" en la ficha + chip de aviso
+       "solo lectura" + "Salir de la vista" (restaura la sesión del admin sin re-login). ⚠️
+       `[J]`: env `SECRET_KEY` + IAM `GetItem customer`/`PutItem session`/`PutItem adminAudit`;
+       redesplegar Authorizers + mapping template para que reenvíen los claims nuevos.
+3. [x] `[C]` ✅ **Acciones de soporte en la ficha (ago 2026)**: `Api_V1_Admin_User-support`
+       (reenviar activación — solo inactivos, enlace nuevo 24 h; forzar reseteo — OTP
+       hasheado compatible con Validate-otp; **cerrar sesiones** — desactiva `session`,
+       revocación efectiva por `sid`). Auditadas (`support.*`); botones por usuario en
+       la ficha de Clientes. También **"¿qué le llegó a X?"**: `Api_V1_Admin_Recipient-lookup`
+       + tab Soporte → "Buscar destinatario" (línea de tiempo por contacto con estado por
+       envío + banderas de lista negra/desuscrito).
+4. [ ] `[C]/[J]` **Colas/DLQ**: ver/redrive de DLQs desde la UI (la PROFUNDIDAD ya se ve
+       en el Centro de mando; falta operar).
+5. [~] **Límites por cliente**: ✅ `[C]` (ago 2026, Bloque E) **tope por campaña y tope
+       diario** de destinatarios (customer.sendingLimits; 0 = sin tope): gate en
+       Prepare-batch ANTES de cobrar (429 `SendingLimitExceeded`, libera el lock, no
+       toca saldo; el diario suma los `registersToSend` reales de HOY sin muestras),
+       administrado desde la ficha de Clientes ("Cuotas de envío", `Customer/Update
+       {limits}` con merge + auditoría `customer.limits`). ⚠️ Pendiente: **tasa máxima**
+       (mensajes/hora) — exige pacing en los workers SQS, otra iteración.
+6. [x] `[C]` ✅ **Dominios remitentes globales (ago 2026)**: `Api_V1_Admin_Domains` (scan
+       `senderDomain` + nombre de empresa) + tab Soporte → "Dominios remitentes"
+       (pendientes primero).
 7. [ ] `[C]` **Paginación/búsqueda server-side** en las tablas admin (adiós al patrón
        `truncated`; se apoya en el Bloque 5.2).
-8. [ ] `[C]` **Export de auditoría** (CSV/rango de fechas).
-9. [ ] `[C]` **Panel de salud de despliegue**: verificación de qué rutas/lambdas/tablas
-       del checklist `[J]` existen realmente en AWS.
+8. [x] `[C]` ✅ **Export de auditoría (ago 2026)**: filtros `dateFrom`/`dateTo` en
+       `Admin/Audit` + botón "Exportar CSV" en la sección (exporta lo filtrado).
+9. [x] `[C]` ✅ **Panel de salud de despliegue (ago 2026, Bloque K)**:
+       `Api_V1_Admin_Deployment-health` (`/Admin/Deployment-health`, admin, ya en
+       routes.json) verifica CONTRA AWS que las tablas núcleo (DescribeTable→ACTIVE), las
+       colas del pipeline + DLQ (GetQueueUrl) y las lambdas críticas (existen + `SECRET_KEY`
+       en las admin/JWT + event source mapping en las de pipeline) existan de verdad; cada
+       chequeo best-effort (sin permiso IAM → `unknown`). Sección admin "Salud de despliegue"
+       (`DespliegueSection`) con resumen + acordeones. ⚠️ `[J]`: env `SECRET_KEY` + IAM
+       `dynamodb:DescribeTable`/`sqs:GetQueueUrl`/`lambda:GetFunctionConfiguration/
+       ListFunctions/ListEventSourceMappings` (estas de lambda por role-map/inline; sin ellas
+       la sección de lambdas sale `unknown`). NO exhaustivo: cubre el conjunto crítico embebido.
 
 ---
 

@@ -23,6 +23,9 @@ import HistoryIcon from '@mui/icons-material/History';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import TuneIcon from '@mui/icons-material/Tune';
 import DnsIcon from '@mui/icons-material/Dns';
+import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
+import SupportAgentIcon from '@mui/icons-material/SupportAgent';
+import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 
 interface SidebarProps {
   activeSection: string;
@@ -33,7 +36,9 @@ const DRAWER_WIDTH = 240;
 
 export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
   const menuItems = [
+    { id: 'centro', label: 'Centro de mando', icon: <MonitorHeartIcon /> },
     { id: 'dashboard', label: 'Panel de control', icon: <DashboardIcon /> },
+    { id: 'soporte', label: 'Soporte', icon: <SupportAgentIcon /> },
     { id: 'clientes', label: 'Clientes', icon: <PeopleIcon /> },
     { id: 'funciones', label: 'Funciones por cliente', icon: <TuneIcon /> },
     { id: 'ipenvio', label: 'IP de envío', icon: <DnsIcon /> },
@@ -46,6 +51,7 @@ export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
     { id: 'plantillas-pre', label: 'Plantillas prediseñadas', icon: <ViewQuiltIcon /> },
     { id: 'configuracion', label: 'Configuración', icon: <SettingsIcon /> },
     { id: 'auditoria', label: 'Auditoría', icon: <HistoryIcon /> },
+    { id: 'despliegue', label: 'Salud de despliegue', icon: <HealthAndSafetyIcon /> },
   ];
 
   return (

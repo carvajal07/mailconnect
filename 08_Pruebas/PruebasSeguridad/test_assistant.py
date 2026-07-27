@@ -39,7 +39,11 @@ class FakeBedrock:
 
 @pytest.fixture
 def mod():
-    return _load()
+    m = _load()
+    # El LIMITADOR de uso se prueba aparte (test_assistant_ratelimit.py, con moto);
+    # aquí se apaga para que estas pruebas no toquen DynamoDB.
+    m._rate_limited = lambda event: False
+    return m
 
 
 def _event(question, method='POST'):

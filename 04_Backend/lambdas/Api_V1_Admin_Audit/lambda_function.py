@@ -141,6 +141,10 @@ def lambda_handler(event, context):
     month = str(payload.get('month', '') or '').strip()
     action = str(payload.get('action', '') or '').strip()
     actor = str(payload.get('actor', '') or '').strip().lower()
+    # Rango de fechas para el EXPORT (YYYY-MM-DD, inclusivo). El campo date es
+    # 'YYYY-MM-DD HH:MM:SS' → la comparación de strings ordena correctamente.
+    date_from = str(payload.get('dateFrom', '') or '').strip()
+    date_to = str(payload.get('dateTo', '') or '').strip()
 
     try:
         items = _scan_all()
@@ -150,6 +154,10 @@ def lambda_handler(event, context):
 
         if month:
             items = [i for i in items if str(i.get('date', '')).startswith(month)]
+        if date_from:
+            items = [i for i in items if str(i.get('date', ''))[:10] >= date_from]
+        if date_to:
+            items = [i for i in items if str(i.get('date', ''))[:10] <= date_to]
         if action:
             items = [i for i in items if str(i.get('action', '')) == action]
         if actor:

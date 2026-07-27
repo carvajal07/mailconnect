@@ -199,6 +199,21 @@ def generate_jwt(username, customer_id="", customer="", user_id="", role="client
         token = token.decode('utf-8')
     return token
 
+# Vigencia del DESAFÍO de 2FA (segundos): tras validar la contraseña, si el usuario tiene
+# segundo factor, Login NO emite el token; devuelve este desafío firmado y de vida corta,
+# que Api_V1_Security_Verify-2fa consume junto con el código TOTP/respaldo para emitir el JWT.
+TWOFA_CHALLENGE_TTL_SECONDS = 5 * 60
+
+
+def generate_2fa_challenge(user_id):
+    """JWT corto (claim twofa=True) que autoriza SOLO a Verify-2fa a completar el ingreso."""
+    now_ts = int(time.time())
+    token = jwt.encode({'twofa': True, 'userId': user_id,
+                        'iat': now_ts, 'exp': now_ts + TWOFA_CHALLENGE_TTL_SECONDS},
+                       SECRET_KEY, algorithm='HS256')
+    return token.decode('utf-8') if isinstance(token, bytes) else token
+
+
 def _client_info(event):
     """Extrae IP y user-agent del evento (soporta proxy y no-proxy).
 
@@ -277,7 +292,7 @@ def _find_user_by_email(email):
     """Busca el usuario por email con Query O(1) al GSI `USER_EMAIL_GSI` (PK 'email').
     Escalable por defecto; si el GSI no existe, propaga el error (no cae a Scan)."""
     proj = ('userId, userHash, userSalt, active, customerId, userDataId, #r, tenantRole, '
-            'failedLoginAttempts, lockUntil, lockStage')
+            'failedLoginAttempts, lockUntil, lockStage, totpEnabled')
     names = {'#r': 'role'}  # 'role' es palabra reservada → alias
     resp = table_user.query(
         IndexName=USER_EMAIL_GSI,
@@ -301,6 +316,8 @@ def lambda_handler(event, context):
     feature_flags = {}
     role = "client"
     tenantRole = "owner"
+    twofa_required = False
+    challenge = ""
     try:
         # Obtener datos del evento (email normalizado a minúsculas, como en Register)
         user = str(event['user']).strip().lower()
@@ -379,41 +396,55 @@ def lambda_handler(event, context):
                                 )
                             except Exception as _e:
                                 print('No se pudo re-hashear (se continúa): {}'.format(_e))
-                        customerId = item_user['customerId']
-                        # Rol del usuario (default 'client' si el usuario es antiguo/no lo tiene).
-                        role = item_user.get('role', 'client') or 'client'
-                        # Sub-rol de empresa (default 'owner' para cuentas antiguas).
-                        tenantRole = item_user.get('tenantRole', 'owner') or 'owner'
-                        customer, companyTin, realSendEnabled, feature_flags = select_client(customerId)
-                        userDataId = item_user['userDataId']
-                        name = select_name(userDataId)
-                        # La sesión se registra ANTES de emitir el token y es OBLIGATORIA:
-                        # el token lleva su sessionId (claim `sid`) y el Authorizer deniega
-                        # tokens cuya sesión no está activa (revocación server-side). Sin
-                        # registro de sesión NO se emite token (sería irrevocable).
-                        try:
-                            ipAddress, device = _client_info(event)
-                            session_id = str(uuid.uuid4())
-                            create_Session(userId, ipAddress, device, 1, session_id)
-                        except Exception as session_error:
-                            print("No se pudo registrar la sesion: {}".format(session_error))
-                            status = False
-                            statusCode = 500
-                            description = 'No se pudo iniciar la sesión. Intenta de nuevo.'
-                            token = ""
-                        else:
-                            # Token con los claims del tenant + rol + sesión (sid).
-                            # companyTin (NIT) va como claim `nit`: llave de los recursos por cliente.
-                            token = generate_jwt(user, customerId, customer, userId, role,
-                                                 companyTin, tenantRole, session_id)
+                        # SEGUNDO FACTOR (2FA): si el usuario lo tiene activo, la contraseña
+                        # correcta NO basta. Se devuelve un DESAFÍO firmado y de vida corta;
+                        # el ingreso se completa en Verify-2fa con el código TOTP/respaldo.
+                        # No se crea sesión ni token aquí (evita un token válido sin 2FA).
+                        if item_user.get('totpEnabled'):
+                            twofa_required = True
+                            challenge = generate_2fa_challenge(userId)
                             status = True
                             statusCode = 200
-                            description = "Usuario correcto"
+                            description = 'Ingresa el código de tu app de autenticación.'
                             ip_audit, _ = _client_info(event)
-                            _audit('security.login', user,
-                                   'Ingreso exitoso (IP {})'.format(ip_audit), customer)
-                            _audit('security.token', user,
-                                   'Token emitido en el login (IP {})'.format(ip_audit), customer, userId)
+                            _audit('security.2fa.challenge', user,
+                                   'Contraseña correcta; se solicita 2FA (IP {})'.format(ip_audit))
+                        else:
+                            customerId = item_user['customerId']
+                            # Rol del usuario (default 'client' si es antiguo/no lo tiene).
+                            role = item_user.get('role', 'client') or 'client'
+                            # Sub-rol de empresa (default 'owner' para cuentas antiguas).
+                            tenantRole = item_user.get('tenantRole', 'owner') or 'owner'
+                            customer, companyTin, realSendEnabled, feature_flags = select_client(customerId)
+                            userDataId = item_user['userDataId']
+                            name = select_name(userDataId)
+                            # La sesión se registra ANTES de emitir el token y es OBLIGATORIA:
+                            # el token lleva su sessionId (claim `sid`) y el Authorizer deniega
+                            # tokens cuya sesión no está activa (revocación server-side). Sin
+                            # registro de sesión NO se emite token (sería irrevocable).
+                            try:
+                                ipAddress, device = _client_info(event)
+                                session_id = str(uuid.uuid4())
+                                create_Session(userId, ipAddress, device, 1, session_id)
+                            except Exception as session_error:
+                                print("No se pudo registrar la sesion: {}".format(session_error))
+                                status = False
+                                statusCode = 500
+                                description = 'No se pudo iniciar la sesión. Intenta de nuevo.'
+                                token = ""
+                            else:
+                                # Token con los claims del tenant + rol + sesión (sid).
+                                # companyTin (NIT) va como claim `nit`: llave de recursos por cliente.
+                                token = generate_jwt(user, customerId, customer, userId, role,
+                                                     companyTin, tenantRole, session_id)
+                                status = True
+                                statusCode = 200
+                                description = "Usuario correcto"
+                                ip_audit, _ = _client_info(event)
+                                _audit('security.login', user,
+                                       'Ingreso exitoso (IP {})'.format(ip_audit), customer)
+                                _audit('security.token', user,
+                                       'Token emitido en el login (IP {})'.format(ip_audit), customer, userId)
                     else:
                         # Contraseña incorrecta: cuenta el fallo y aplica el bloqueo
                         # progresivo (best-effort: si la escritura falla, igual se niega).
@@ -470,7 +501,11 @@ def lambda_handler(event, context):
                 'realSendEnabled': realSendEnabled,
                 'role': role,
                 'tenantRole': tenantRole,
-                'featureFlags': feature_flags
+                'featureFlags': feature_flags,
+                # 2FA: si el usuario tiene segundo factor, twofaRequired=True y el token va
+                # vacío; el front usa `challenge` para completar el ingreso en Verify-2fa.
+                'twofaRequired': twofa_required,
+                'challenge': challenge
             }
         }
 

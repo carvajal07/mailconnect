@@ -13,6 +13,8 @@ import {
 } from '@mui/material';
 import { Sidebar } from '../../components/admin/Sidebar';
 import { DashboardSection } from '../../components/admin/DashboardSection';
+import { CentroMandoSection } from '../../components/admin/CentroMandoSection';
+import { SoporteSection } from '../../components/admin/SoporteSection';
 import { ClientesSection } from '../../components/admin/ClientesSection';
 import { FuncionesClienteSection } from '../../components/admin/FuncionesClienteSection';
 import { IpEnvioSection } from '../../components/admin/IpEnvioSection';
@@ -22,6 +24,7 @@ import { FacturacionSection } from '../../components/admin/FacturacionSection';
 import { JobsSection } from '../../components/admin/JobsSection';
 import { ConfiguracionSection } from '../../components/admin/ConfiguracionSection';
 import { AuditoriaSection } from '../../components/admin/AuditoriaSection';
+import { DespliegueSection } from '../../components/admin/DespliegueSection';
 import { PlantillasSection } from '../../components/admin/PlantillasSection';
 import { AdminCampanasSection } from '../../components/admin/AdminCampanasSection';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
@@ -35,7 +38,8 @@ import { PortalDataProvider } from '../../context/PortalDataContext';
 const DRAWER_WIDTH = 240;
 
 export const AdminPage = () => {
-  const [activeSection, setActiveSection] = useState('dashboard');
+  // El Centro de mando (operación en vivo) es la página de entrada del admin.
+  const [activeSection, setActiveSection] = useState('centro');
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
   const user = getUser();
@@ -61,6 +65,10 @@ export const AdminPage = () => {
 
   const renderSection = () => {
     switch (activeSection) {
+      case 'centro':
+        return <CentroMandoSection />;
+      case 'soporte':
+        return <SoporteSection />;
       case 'dashboard':
         return <DashboardSection />;
       case 'clientes':
@@ -85,6 +93,8 @@ export const AdminPage = () => {
         return <ConfiguracionSection />;
       case 'auditoria':
         return <AuditoriaSection />;
+      case 'despliegue':
+        return <DespliegueSection />;
       case 'campanas':
         return <AdminCampanasSection />;
       default:
