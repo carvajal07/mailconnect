@@ -2,6 +2,7 @@ import os
 import re
 import boto3
 import uuid
+import time
 from datetime import datetime
 
 # Inicializar el cliente SES
@@ -10,6 +11,7 @@ ses_client = boto3.client('ses', region_name=os.environ.get('SES_REGION', 'us-ea
 dynamodb = boto3.resource('dynamodb')
 
 table_templateAudit = dynamodb.Table('templateAudit')
+_audit_table = dynamodb.Table('adminAudit')
 
 
 def _ses_safe(s):
@@ -34,6 +36,24 @@ def _owns_template(event, template_name):
     if customer:
         return str(template_name).startswith('{}_'.format(_ses_safe(customer)))
     return False  # sin context del token: denegar
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 
 def lambda_handler(event, context):
@@ -87,6 +107,9 @@ def lambda_handler(event, context):
                 'date': formattedDate
             }
         )
+        # Además de `templateAudit` (bitácora propia de plantillas), va a `adminAudit`
+        # para que la vista única de Auditoría lo muestre junto a `template.create`.
+        _audit(event, 'template.delete', templateName, 'Plantilla SES eliminada')
     except Exception as e:
         print(e)
         status = False

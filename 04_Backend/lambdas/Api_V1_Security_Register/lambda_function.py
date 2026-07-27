@@ -5,6 +5,7 @@ import uuid
 import boto3
 import hashlib
 import hmac
+import time
 from datetime import datetime, timedelta
 
 # Configurar el cliente de DynamoDB
@@ -164,6 +165,7 @@ ACTIVATION_URL = os.environ.get(
 
 # Ajustes de plataforma (tabla platformConfig, editable desde /admin) con fallback a env.
 _cfg_table = dynamodb.Table('platformConfig')
+_audit_table = dynamodb.Table('adminAudit')
 
 
 def _platform_cfg(key):
@@ -268,6 +270,30 @@ def send_activation_email(email, name, activation_key):
             }
         }
     )
+
+
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 
 def lambda_handler(event, context):
@@ -435,6 +461,13 @@ def lambda_handler(event, context):
                             'used': False
                         }
                     )
+
+                    # Alta de una EMPRESA nueva en la plataforma (un NIT = un solo
+                    # auto-registro, el que registra queda owner): queda en la bitácora
+                    # con el NIT, que es la llave de todos sus recursos.
+                    _audit(event, 'security.register', email,
+                           'Empresa "{}" (NIT {}) registrada; el usuario queda owner'.format(
+                               company, companyTin))
 
                     # Enviar correo de activación (no rompe el registro si falla)
                     try:

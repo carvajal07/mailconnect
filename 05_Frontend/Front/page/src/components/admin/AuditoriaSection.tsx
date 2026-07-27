@@ -54,6 +54,11 @@ import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ReplayIcon from '@mui/icons-material/Replay';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
+import StorageIcon from '@mui/icons-material/Storage';
+import BlockIcon from '@mui/icons-material/Block';
+import ScheduleIcon from '@mui/icons-material/Schedule';
+import AltRouteIcon from '@mui/icons-material/AltRoute';
+import NotificationsIcon from '@mui/icons-material/Notifications';
 import { auditService } from '../../services/auditService';
 import type { AuditData } from '../../services/auditService';
 import { isOk } from '../../services/apiClient';
@@ -102,6 +107,13 @@ const ACTION_META: Record<string, { label: string; tone: ChipTone; icon: ReactEl
   'security.2fa.success': { label: '2FA correcto', tone: 'green', icon: <ShieldIcon fontSize="small" /> },
   'security.2fa.fail': { label: '2FA incorrecto', tone: 'amber', icon: <ShieldIcon fontSize="small" /> },
   'security.2fa.lockout': { label: '2FA bloqueado', tone: 'red', icon: <LockIcon fontSize="small" /> },
+  'security.2fa.enable': { label: '2FA activado', tone: 'green', icon: <ShieldIcon fontSize="small" /> },
+  'security.2fa.disable': { label: '2FA desactivado', tone: 'red', icon: <ShieldIcon fontSize="small" /> },
+  'security.password': { label: 'Contraseña cambiada', tone: 'amber', icon: <LockResetIcon fontSize="small" /> },
+  'security.recovery': { label: 'Recuperación solicitada', tone: 'amber', icon: <LockResetIcon fontSize="small" /> },
+  'security.register': { label: 'Empresa registrada', tone: 'green', icon: <ApartmentIcon fontSize="small" /> },
+  'security.activation': { label: 'Cuenta activada', tone: 'green', icon: <MarkEmailReadIcon fontSize="small" /> },
+  'security.logout': { label: 'Cierre de sesión', tone: 'purple', icon: <LogoutIcon fontSize="small" /> },
   // ── Soporte ──
   'support.impersonate': { label: 'Vista como cliente', tone: 'amber', icon: <VisibilityIcon fontSize="small" /> },
   'support.resendActivation': { label: 'Reenvío de activación', tone: 'cyan', icon: <MarkEmailReadIcon fontSize="small" /> },
@@ -113,17 +125,38 @@ const ACTION_META: Record<string, { label: string; tone: ChipTone; icon: ReactEl
   'campaign.request-approval': { label: 'Aprobación solicitada', tone: 'cyan', icon: <PendingActionsIcon fontSize="small" /> },
   'campaign.approve': { label: 'Campaña aprobada', tone: 'green', icon: <ThumbUpIcon fontSize="small" /> },
   'campaign.reject': { label: 'Campaña rechazada', tone: 'red', icon: <ThumbDownIcon fontSize="small" /> },
+  'campaign.update': { label: 'Campaña editada', tone: 'cyan', icon: <CampaignIcon fontSize="small" /> },
   'template.create': { label: 'Plantilla correo', tone: 'cyan', icon: <DescriptionIcon fontSize="small" /> },
+  'template.delete': { label: 'Plantilla eliminada', tone: 'red', icon: <DescriptionIcon fontSize="small" /> },
+  'template.admin-delete': { label: 'Plantilla eliminada (admin)', tone: 'red', icon: <DescriptionIcon fontSize="small" /> },
   'messageTemplate.create': { label: 'Plantilla mensaje', tone: 'cyan', icon: <ChatIcon fontSize="small" /> },
   'messageTemplate.update': { label: 'Plantilla editada', tone: 'cyan', icon: <ChatIcon fontSize="small" /> },
+  'messageTemplate.delete': { label: 'Plantilla mensaje eliminada', tone: 'red', icon: <ChatIcon fontSize="small" /> },
+  // ── Bases de datos (datos personales) ──
+  'database.register': { label: 'Base cargada', tone: 'cyan', icon: <StorageIcon fontSize="small" /> },
+  'database.delete': { label: 'Base eliminada', tone: 'red', icon: <StorageIcon fontSize="small" /> },
+  // ── Identidades de envío ──
+  'domain.add': { label: 'Dominio agregado', tone: 'blue', icon: <DnsIcon fontSize="small" /> },
+  'domain.delete': { label: 'Dominio eliminado', tone: 'red', icon: <DnsIcon fontSize="small" /> },
+  // ── Cumplimiento (lista negra) ──
+  'blacklist.add': { label: 'Lista negra: alta', tone: 'amber', icon: <BlockIcon fontSize="small" /> },
+  'blacklist.delete': { label: 'Lista negra: baja', tone: 'red', icon: <BlockIcon fontSize="small" /> },
   // ── Envíos ──
   'send.samples': { label: 'Muestras', tone: 'amber', icon: <ScienceIcon fontSize="small" /> },
   'send.real': { label: 'Envío real', tone: 'green', icon: <MarkEmailReadIcon fontSize="small" /> },
   'job.requeue': { label: 'Reencolado', tone: 'amber', icon: <ReplayIcon fontSize="small" /> },
+  'schedule.create': { label: 'Envío programado', tone: 'blue', icon: <ScheduleIcon fontSize="small" /> },
+  'schedule.cancel': { label: 'Programación cancelada', tone: 'amber', icon: <ScheduleIcon fontSize="small" /> },
+  'cascade.dispatch': { label: 'Cascada lanzada', tone: 'purple', icon: <AltRouteIcon fontSize="small" /> },
   // ── Dinero ──
   'balance.adjustment': { label: 'Ajuste de saldo', tone: 'blue', icon: <PaidIcon fontSize="small" /> },
   'balance.topup.approve': { label: 'Recarga aprobada', tone: 'green', icon: <AccountBalanceWalletIcon fontSize="small" /> },
   'balance.topup.reject': { label: 'Recarga rechazada', tone: 'red', icon: <AccountBalanceWalletIcon fontSize="small" /> },
+  'balance.topup.request': { label: 'Recarga solicitada', tone: 'amber', icon: <AccountBalanceWalletIcon fontSize="small" /> },
+  'balance.topup.init': { label: 'Recarga iniciada (Wompi)', tone: 'cyan', icon: <AccountBalanceWalletIcon fontSize="small" /> },
+  'balance.topup.wompi': { label: 'Recarga acreditada (Wompi)', tone: 'green', icon: <AccountBalanceWalletIcon fontSize="small" /> },
+  // ── Preferencias de la cuenta ──
+  'notifications.prefs': { label: 'Avisos del owner', tone: 'blue', icon: <NotificationsIcon fontSize="small" /> },
 };
 
 // Familia de la acción (por prefijo) para las que NO estén en el catálogo: así una acción
@@ -136,8 +169,14 @@ const FAMILY_META: Array<[string, { tone: ChipTone; icon: ReactElement }]> = [
   ['customer.', { tone: 'blue', icon: <ApartmentIcon fontSize="small" /> }],
   ['user.', { tone: 'blue', icon: <AdminPanelSettingsIcon fontSize="small" /> }],
   ['send.', { tone: 'green', icon: <SendIcon fontSize="small" /> }],
+  ['schedule.', { tone: 'blue', icon: <ScheduleIcon fontSize="small" /> }],
+  ['cascade.', { tone: 'purple', icon: <AltRouteIcon fontSize="small" /> }],
   ['template.', { tone: 'cyan', icon: <DescriptionIcon fontSize="small" /> }],
   ['messageTemplate.', { tone: 'cyan', icon: <ChatIcon fontSize="small" /> }],
+  ['database.', { tone: 'cyan', icon: <StorageIcon fontSize="small" /> }],
+  ['domain.', { tone: 'blue', icon: <DnsIcon fontSize="small" /> }],
+  ['blacklist.', { tone: 'amber', icon: <BlockIcon fontSize="small" /> }],
+  ['notifications.', { tone: 'blue', icon: <NotificationsIcon fontSize="small" /> }],
 ];
 
 /** Color + icono de una acción: catálogo exacto → familia por prefijo → genérico. */

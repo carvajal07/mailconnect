@@ -13,12 +13,15 @@ Verifica que la base pertenezca al cliente del token (Authorizer) antes de borra
 import os
 import re
 import json
+import time
+import uuid
 import boto3
 
 dynamodb = boto3.resource('dynamodb')
 s3 = boto3.client('s3')
 table_database = dynamodb.Table('databaseFile')
 table_customer = dynamodb.Table('customer')
+_audit_table = dynamodb.Table('adminAudit')
 
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 
@@ -95,6 +98,29 @@ def _resolve_tenant(event, payload):
     return a.get('customerId'), a.get('customer')
 
 
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
 
 def lambda_handler(event, context):
     payload = _get_payload(event)
@@ -124,6 +150,11 @@ def lambda_handler(event, context):
         # Borra primero el CSV en S3 (best-effort) y luego el registro.
         _delete_s3_object(current)
         table_database.delete_item(Key={'databaseFileId': database_file_id})
+        # Borrado de datos personales (la base es el CSV de contactos): queda registrado
+        # quién la eliminó, que es lo que pide una revisión de habeas data.
+        _audit(event, 'database.delete', current.get('fileName') or database_file_id,
+               '{} registro(s); ruta {}'.format(
+                   current.get('totalRecords') or '—', current.get('s3Path') or '—'))
         return {'status': True, 'statusCode': 200, 'description': 'Base de datos eliminada correctamente.'}
     except Exception as e:
         print('Error eliminando la base: {}'.format(e))

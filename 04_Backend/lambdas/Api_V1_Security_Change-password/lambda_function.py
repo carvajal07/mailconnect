@@ -17,6 +17,7 @@ dynamodb = boto3.resource('dynamodb')
 table_user = dynamodb.Table('user')
 table_otp = dynamodb.Table('oneTimePassword')
 table_session = dynamodb.Table('session')
+_audit_table = dynamodb.Table('adminAudit')
 
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
 
@@ -194,6 +195,30 @@ def _authorized_by_otp(user_id, otp):
         kwargs['ExclusiveStartKey'] = last
 
 
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
+
 def lambda_handler(event, context):
     status = True
     statusCode = 200
@@ -238,6 +263,11 @@ def lambda_handler(event, context):
 
         # Contraseña cambiada → revocar los tokens vivos (todas las sesiones).
         _revoke_sessions(user['userId'])
+        # Se registra CÓMO se autorizó (OTP de recuperación vs sesión), que es lo que
+        # distingue un cambio normal de una toma de cuenta por el flujo de reseteo.
+        _audit(event, 'security.password', email,
+               'Contraseña cambiada ({}) + sesiones revocadas'.format(
+                   'con OTP de recuperación' if otp else 'con sesión activa'))
     except Exception as e:
         print("Error en change-password: {}".format(e))
         status = False

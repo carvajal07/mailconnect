@@ -90,6 +90,18 @@ bloque son los pasos `[J]` de despliegue.
        registros concurrentes del mismo correo pueden duplicarse (usar GSI +
        `ConditionExpression`).
 10. [ ] `[C]` **CAPTCHA** en registro y forgot-password (complementa el punto 2).
+11. [x] `[C]` ✅ **Cobertura de la bitácora (ago 2026)**: revisión lambda por lambda de qué
+        MUTA estado y qué dejaba rastro → de **28 a 51** lambdas escribiendo en `adminAudit`.
+        Se cerraron los huecos de **seguridad de la cuenta** (2FA activado/desactivado,
+        cambio de contraseña —registrando si fue por OTP o por sesión—, recuperación,
+        registro, activación, logout), **identidades de envío** (domain.add/delete),
+        **cumplimiento** (blacklist.add/**delete**), **dinero** (webhook Wompi, topup init
+        y solicitud), **envío programado/cascada** y **borrado de contenido y datos**
+        (campaign.update, plantillas, bases). Dos guards en `test_audit_coverage.py`: el
+        inventario `SIN_AUDITORIA` (workers/crons/eventos de proveedor, con su motivo) y un
+        parametrizado que verifica que cada acción sigue emitiéndose tras un refactor.
+        ⚠️ `[J]`: `dynamodb:PutItem adminAudit` en el rol de esas 23 lambdas (sin el
+        permiso no rompen —es best-effort— pero no registran).
 
 ---
 
@@ -197,6 +209,15 @@ El front está terminado y el backend probado; solo falta la consola AWS
 9. [ ] `[P]` **Automatizaciones** (bienvenida/fechas) sobre el motor de la Cascada.
 10. [ ] `[P]` Decisiones abiertas: proveedor SMS definitivo, tarifas reales calibradas,
         reembolso de fallidos, facturación fiscal DIAN (ver la sección Prepago en `CLAUDE.md`).
+11. [x] `[C]` ✅ **Peso REAL del adjunto en el estimador (ago 2026)**:
+        `Api_V1_Cost_Attachment-weight` (`/Cost/Attachment-weight`, ya en routes.json) —
+        el `attachmentSizeMB` dejó de declararse a ojo. **EAU**: `head_object` = peso
+        exacto, sin margen. **EAP-PDF**: toma hasta 10 filas REALES de la base, renderiza
+        un PDF por fila **invocando** las lambdas de render que ya tienen el motor (no se
+        vendoriza una 3ª copia) y promedia + **20%** de margen. **EAP-DOCX**: plantilla +
+        margen. Botón "Medir peso real" en `CostEstimate`. ⚠️ `[J]`: IAM `GetItem campaign`
+        + `Scan document`, `s3:GetObject/HeadObject` y **`lambda:InvokeFunction`** sobre
+        `Api_V1_Template_Render-{engine,pdf}`. NO necesita el layer de reportlab.
 
 ---
 
@@ -253,8 +274,14 @@ El front está terminado y el backend probado; solo falta la consola AWS
        la ficha de Clientes. También **"¿qué le llegó a X?"**: `Api_V1_Admin_Recipient-lookup`
        + tab Soporte → "Buscar destinatario" (línea de tiempo por contacto con estado por
        envío + banderas de lista negra/desuscrito).
-4. [ ] `[C]/[J]` **Colas/DLQ**: ver/redrive de DLQs desde la UI (la PROFUNDIDAD ya se ve
-       en el Centro de mando; falta operar).
+4. [~] `[C]/[J]` **Colas/DLQ**: ver/**redrive** de DLQs desde la UI. Lo que YA hay: la
+       **profundidad** real de cada cola + la de su DLQ + la edad del mensaje más viejo se
+       leen de SQS en el **Centro de mando** (`_section_queues`, DLQ con mensajes =
+       crítico), y `Api_V1_Admin_Requeue` (botón en Trabajos) re-encola las **partes
+       pendientes** de un proceso atascado. Lo que FALTA: inspeccionar los mensajes de una
+       DLQ y devolverlos a su cola de origen — `Admin_Requeue` opera al nivel de
+       `processedParts`, no sobre la DLQ, así que un "mensaje veneno" que agotó los 5
+       reintentos hoy solo se puede operar desde la consola de AWS.
 5. [~] **Límites por cliente**: ✅ `[C]` (ago 2026, Bloque E) **tope por campaña y tope
        diario** de destinatarios (customer.sendingLimits; 0 = sin tope): gate en
        Prepare-batch ANTES de cobrar (429 `SendingLimitExceeded`, libera el lock, no
@@ -266,7 +293,11 @@ El front está terminado y el backend probado; solo falta la consola AWS
        `senderDomain` + nombre de empresa) + tab Soporte → "Dominios remitentes"
        (pendientes primero).
 7. [ ] `[C]` **Paginación/búsqueda server-side** en las tablas admin (adiós al patrón
-       `truncated`; se apoya en el Bloque 5.2).
+       `truncated`; se apoya en el Bloque 5.2). ⚠️ La paginación que tienen hoy Auditoría,
+       Trabajos, Campañas, Saldos y Plantillas es de **CLIENTE** (`TablePagination` sobre
+       el arreglo ya descargado): mejora la lectura, pero la lambda sigue trayendo todo
+       con su tope y su aviso de parcial. Falta el cursor real (`LastEvaluatedKey`) y el
+       filtro en el backend.
 8. [x] `[C]` ✅ **Export de auditoría (ago 2026)**: filtros `dateFrom`/`dateTo` en
        `Admin/Audit` + botón "Exportar CSV" en la sección (exporta lo filtrado).
 9. [x] `[C]` ✅ **Panel de salud de despliegue (ago 2026, Bloque K)**:

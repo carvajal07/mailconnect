@@ -684,3 +684,45 @@ Tablas afectadas (prefijo `{nombreEmpresa}_` → `{tenant_key(nit)}_`):
   sobre `*_sendStatus`/`_sendDetail`/… ya existía (mismo patrón, solo cambia el prefijo).
 - [x] `[J]` Requisito: **todos los clientes deben tener `companyTin`** (Prepare-batch ahora
   falla `require_tenant` si falta, para no colisionar tenants). Verificar la tabla `customer`.
+
+---
+
+## 12. Auditoría ampliada + peso real del adjunto (ago 2026)
+
+### 12a. Bitácora: `dynamodb:PutItem adminAudit` en 23 lambdas más
+
+La revisión de cobertura de auditoría (ver `CLAUDE.md` → "Auditoría: cierre de los huecos
+de registro") llevó de **28 a 51** las lambdas que escriben en `adminAudit`. Las 23 nuevas
+necesitan el permiso en su rol:
+
+`Api_V1_Security_{Totp,Change-password,Register,Recovery-password,Logout,Acount-activation}` ·
+`Api_V1_Domain_{Add,Delete}` · `Api_V1_Blacklist_{Add,Delete}` ·
+`Api_V1_Wallet_Wompi-webhook` · `Api_V1_Balance_{Topup-init,Topup-manual-request}` ·
+`Api_V1_Schedule_{Create,Cancel}` · `Api_V1_Cascade_Dispatch` · `Api_V1_Campaign_Update` ·
+`Api_V1_MessageTemplate_Delete` · `Api_V1_Template_Delete-template` ·
+`Api_V1_Admin_Templates` · `Api_V1_Database_{Register-file,Delete}` ·
+`Api_V1_Notifications_Prefs`
+
+- [ ] `[J]` **IAM `dynamodb:PutItem` sobre `adminAudit`** en esas 23 lambdas. La mayoría ya
+  tiene un rol `Lambda_DynFull*` (DynamoDB full) → **no hay que hacer nada**; verificar solo
+  las que tengan un rol restringido.
+- [ ] `[J]` **`Api_V1_Admin_Templates` ahora usa DynamoDB** (antes solo SES): su rol debe
+  incluir DynamoDB. Si el CD le asignó `Lambda_SES`, pasa a necesitar `Lambda_DynFull_SES`.
+- ℹ️ La escritura es **best-effort**: sin el permiso la operación del cliente NO falla, pero
+  el evento no queda registrado (se ve en los logs como "No se pudo registrar auditoría").
+
+### 12b. `Api_V1_Cost_Attachment-weight` (peso real del adjunto)
+
+Lambda NUEVA (el CD la crea) + ruta `/Cost/Attachment-weight` **ya en `routes.json`**
+(authorizer + CORS + mapping template con `customerId`/`customer`/`nit`).
+
+- [ ] `[J]` **Rol**: el CD lo auto-detecta como `Lambda_DynFull_S3_Invoke` (usa
+  `boto3.resource('dynamodb')` + `boto3.client('s3')` + `boto3.client('lambda')`).
+- [ ] `[J]` **IAM**: `dynamodb:GetItem` sobre `campaign` + `Scan` sobre `document`;
+  `s3:GetObject`/`s3:HeadObject` sobre los buckets de cliente; y **`lambda:InvokeFunction`**
+  sobre `Api_V1_Template_Render-engine` y `Api_V1_Template_Render-pdf`.
+- ℹ️ **NO necesita el layer de reportlab/xhtml2pdf**: no renderiza, delega en esas dos
+  lambdas (que ya lo tienen). Si a alguna le falta el layer, la medición de EAP-PDF
+  responde 502 con el aviso — no devuelve un peso inventado.
+- [ ] `[J]` (opcional) Envs `ATTACHMENT_WEIGHT_MARGIN` (default `0.20` = +20%),
+  `ATTACHMENT_WEIGHT_SAMPLES` / `_MAX_SAMPLES` (default `10`).

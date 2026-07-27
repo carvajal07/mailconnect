@@ -26,11 +26,13 @@ import base64
 import hmac
 import hashlib
 import secrets
+import uuid
 
 import boto3
 
 dynamodb = boto3.resource('dynamodb')
 table_user = dynamodb.Table('user')
+_audit_table = dynamodb.Table('adminAudit')
 
 ISSUER = os.environ.get('TOTP_ISSUER', 'MailConnect')
 TOTP_STEP = 30
@@ -107,6 +109,30 @@ def _resp(status_code, description, data=None):
             'description': description, 'data': data or {}}
 
 
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
+
 def lambda_handler(event, context):
     payload = _get_payload(event)
     user_id = _auth(event).get('userId')
@@ -153,6 +179,8 @@ def lambda_handler(event, context):
                 ExpressionAttributeValues={
                     ':t': True, ':s': pending, ':b': hashes,
                     ':d': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())})
+            _audit(event, 'security.2fa.enable', email or user_id,
+                   'Segundo factor activado (TOTP) + 10 códigos de respaldo emitidos')
             return _resp(200, 'Segundo factor activado. Guarda tus códigos de respaldo.',
                          {'enabled': True, 'backupCodes': plains})
 
@@ -173,6 +201,10 @@ def lambda_handler(event, context):
                 Key={'userId': user_id},
                 UpdateExpression='SET totpEnabled = :f REMOVE totpSecret, totpBackupCodes, totpPendingSecret, totpEnrolledAt',
                 ExpressionAttributeValues={':f': False})
+            # Desactivar el 2FA es justo lo que hace un atacante con la sesión tomada:
+            # queda en la bitácora aunque lo haga el propio dueño de la cuenta.
+            _audit(event, 'security.2fa.disable', email or user_id,
+                   'Segundo factor desactivado')
             return _resp(200, 'Segundo factor desactivado.', {'enabled': False})
 
         return _resp(400, 'Acción inválida (usa status, enroll, activate o disable).')

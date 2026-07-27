@@ -18,12 +18,15 @@ El aviso de saldo bajo lo dispara Prepare-batch; reputación/resumen la lambda d
 tenantRole). IAM: `dynamodb:GetItem/UpdateItem customer`.
 '''
 import json
+import time
+import uuid
 import boto3
 from decimal import Decimal
 from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource('dynamodb')
 table_customer = dynamodb.Table('customer')
+_audit_table = dynamodb.Table('adminAudit')
 
 _DEFAULTS = {'reputation': True, 'digest': False, 'lowBalance': True,
              'lowBalanceThreshold': 20000}
@@ -64,6 +67,30 @@ def _merge_defaults(raw):
         except (TypeError, ValueError):
             pass
     return out
+
+
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 
 def lambda_handler(event, context):
@@ -115,6 +142,10 @@ def lambda_handler(event, context):
                 return {'status': False, 'statusCode': 404,
                         'description': 'El cliente no existe.', 'data': {}}
             raise
+        # Apagar los avisos de reputación o de saldo bajo deja a la cuenta a ciegas ante
+        # un problema de entregabilidad o un agotamiento de saldo: queda quién lo cambió.
+        _audit(event, 'notifications.prefs', customer_id,
+               'Avisos: ' + ', '.join('{}={}'.format(k, merged.get(k)) for k in sorted(merged)))
         return {'status': True, 'statusCode': 200,
                 'description': 'Preferencias de notificación guardadas',
                 'data': {'notify': merged}}

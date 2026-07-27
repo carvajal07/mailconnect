@@ -9,10 +9,13 @@ Verifica que la plantilla pertenezca al cliente del token (Authorizer) antes de 
 '''
 import json
 import os
+import time
+import uuid
 import boto3
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('messageTemplate')
+_audit_table = dynamodb.Table('adminAudit')
 
 
 def _get_payload(event):
@@ -46,6 +49,29 @@ def _resolve_tenant(event, payload):
     return a.get('customerId'), a.get('customer')
 
 
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
 
 def lambda_handler(event, context):
     payload = _get_payload(event)
@@ -67,6 +93,11 @@ def lambda_handler(event, context):
             return {'status': False, 'statusCode': 403, 'description': 'La plantilla pertenece a otro cliente.'}
 
         table.delete_item(Key={'messageTemplateId': message_template_id})
+        # Simetría con messageTemplate.create (que ya se auditaba). Importa más aún desde
+        # que SMS/WSP resuelven la plantilla EN VIVO: borrarla cambia lo que se envía.
+        _audit(event, 'messageTemplate.delete',
+               current.get('name') or message_template_id,
+               'Plantilla {} eliminada'.format(current.get('channel') or '—'))
         return {'status': True, 'statusCode': 200, 'description': 'Plantilla eliminada correctamente'}
     except Exception as e:
         print('Error eliminando la plantilla de mensaje: {}'.format(e))

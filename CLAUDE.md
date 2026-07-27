@@ -26,6 +26,85 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Peso REAL del adjunto en el estimador de costo (ago 2026)
+- **Problema:** `/Cost/Estimate` recibía `attachmentSizeMB` **declarado a mano** por el
+  usuario. Para **EAU** el peso es un dato que YA existe (el archivo está en S3) y para
+  **EAP** el adjunto ni siquiera existe todavía — se GENERA por destinatario al enviar —,
+  así que el recargo por MB se calculaba sobre un número inventado.
+- **`Api_V1_Cost_Attachment-weight` (`POST /Cost/Attachment-weight`, tenant del token):**
+  mide el peso real de una campaña (`{campaignId, samples?}`) según el tipo de adjunto:
+  - **EAU** → `head_object` sobre el documento: es el archivo EXACTO que se adjunta a
+    todos → `exact:true`, `samples:1` y **sin margen** (no hay variabilidad que cubrir).
+  - **EAP-PDF** → toma hasta `samples` filas **REALES** de la base de la campaña
+    (`dataPath`, leídas con `Range` — no baja el CSV completo), renderiza **un PDF por
+    fila** y promedia + margen `ATTACHMENT_WEIGHT_MARGIN` (**20%**). Necesario porque el
+    peso depende de los datos de cada destinatario (una tabla de 3 movimientos vs 300).
+  - **EAP-DOCX** → aproxima con la plantilla + margen (el combinado cambia el texto, no
+    los recursos incrustados), marcado `exact:false` con su nota.
+- **No vendoriza el motor PDF (3ª copia):** delega el render **invocando** las lambdas que
+  ya lo tienen — `Api_V1_Template_Render-engine` (Estudio `sketch` / Diseñador
+  `templateJson`) o `Api_V1_Template_Render-pdf` (HTML del editor básico), detectando el
+  formato con `_parse_template_content` (mismo criterio del combinador). Reenvía el
+  `requestContext.authorizer` del llamante y pide `store:false` (PDF en base64, sin dejar
+  basura en S3). Las celdas con JSON embebido se **parsean** igual que en el combinador —
+  si llegaran como texto, la tabla no se renderiza y el peso medido saldría muy por debajo.
+- **Front:** `CostEstimate` acepta `campaignId` y muestra el botón **"Medir peso real"**
+  (solo EAU/EAP); el resultado llena el campo "Peso adjunto" (que sigue siendo editable) y
+  un `Alert` explica cómo se calculó (promedio, rango de las muestras y margen).
+  `MuestrasSection` le pasa la campaña seleccionada.
+- **Cobertura:** `test_attachment_weight.py` (11: gates 403/400/404, canal sin adjunto,
+  EAU exacto sin margen, EAP-DOCX con margen, EAP-PDF promediando 3 registros REALES con
+  sus datos en el payload, tope de `samples`, HTML→Render-pdf vs sketch→Render-engine,
+  502 si ningún render sale, celdas JSON parseadas).
+- ⚠️ `[J]`: lambda `Api_V1_Cost_Attachment-weight` (el CD la crea; rol auto-detectado
+  `Lambda_DynFull_S3_Invoke`) + ruta `/Cost/Attachment-weight` **ya en routes.json**
+  (authorizer + CORS + mapping template con `customerId`/`customer`/`nit`); IAM
+  `dynamodb:GetItem campaign` + `Scan document`, `s3:GetObject/HeadObject` (bucket del
+  cliente) y **`lambda:InvokeFunction`** sobre las dos lambdas de render. **NO** necesita
+  el layer de reportlab. Envs opcionales `ATTACHMENT_WEIGHT_{MARGIN,SAMPLES,MAX_SAMPLES}`.
+
+### Auditoría: cierre de los huecos de registro (ago 2026)
+> Revisión lambda por lambda de qué MUTA estado y qué dejaba rastro. Se pasó de **28 a 51**
+> lambdas que escriben en `adminAudit`. Criterio: se audita toda acción con consecuencia
+> **de seguridad, legal, de dinero o destructiva**; NO se auditan los workers del pipeline
+> (un evento por destinatario inundaría la bitácora), los eventos de proveedor ni los crons.
+- **Seguridad de la cuenta:** `security.2fa.enable`/`.disable` (Totp — desactivar el 2FA es
+  justo lo que hace quien tomó una sesión ajena), `security.password` (Change-password,
+  registra si se autorizó por **OTP de recuperación** o por sesión — eso distingue un cambio
+  normal de una toma de cuenta), `security.recovery` (Recovery-password; solo el caso REAL:
+  los intentos contra correos inexistentes NO se registran, para no romper el anti-enumeración),
+  `security.register`, `security.activation`, `security.logout` (cierra el par con
+  `security.login`, que ya existía).
+- **Identidades de envío:** `domain.add` / `domain.delete` (borrar una identidad verificada
+  deja a la empresa sin poder enviar desde ella).
+- **Cumplimiento (Ley 1581):** `blacklist.add` / **`blacklist.delete`** — sacar a alguien de
+  la lista negra vuelve a habilitar el envío a un contacto que rebotó o se quejó.
+- **Dinero:** `balance.topup.wompi` (el webhook: única entrada de dinero SIN intervención
+  humana; actor `wompi`, no el 'cliente' genérico), `balance.topup.init`,
+  `balance.topup.request` (la aprobación ya se auditaba, así que aparecía una recarga
+  aprobada **sin origen**).
+- **Envío real / programación:** `schedule.create` (la DECISIÓN humana; el disparo
+  `Schedule_Fire` es automático y no se audita), `schedule.cancel`, `cascade.dispatch`
+  (dispara envíos reales y DEBITA, igual que `send.real`).
+- **Contenido y datos:** `campaign.update` (crear/borrar/aprobar/rechazar ya se auditaban;
+  editar —que puede cambiar base, plantilla o remitente antes del envío— no),
+  `messageTemplate.delete`, `template.delete`, `template.admin-delete` (borrado
+  CROSS-TENANT desde el panel admin), `database.register` / `database.delete` (entrada y
+  salida de datos personales), `notifications.prefs`.
+- **UI:** el catálogo `ACTION_META` de `AuditoriaSection` suma las ~23 acciones nuevas con
+  su tono/icono, y `FAMILY_META` gana los prefijos `schedule./cascade./database./domain./
+  blacklist./notifications.`.
+- **Cobertura:** `test_audit_coverage.py` (38). Además del caso funcional por familia,
+  incluye dos **guards de inventario**: (1) `SIN_AUDITORIA` lista las lambdas que mutan y
+  **deliberadamente** no auditan (workers, ReceptionStatus, crons, acciones del suscriptor)
+  con su motivo — si alguna empieza a auditar, la prueba lo hace visible; (2) un
+  parametrizado que verifica que cada acción sensible **sigue emitiendo** su evento tras un
+  refactor. Y `test_sin_tabla_adminaudit_la_operacion_sigue` fija que `_audit` es
+  best-effort: sin la tabla, la operación del cliente NO falla.
+- ⚠️ `[J]`: las 23 lambdas necesitan **`dynamodb:PutItem` sobre `adminAudit`** en su rol.
+  Sin el permiso NO rompen (escritura best-effort), pero no se registra nada.
+  `Api_V1_Admin_Templates` además pasa a usar DynamoDB (antes solo SES).
+
 ### Ajustes de producto y UI admin (ago 2026)
 - **Funciones avanzadas OFF por defecto en clientes nuevos:** `Api_V1_Security_Register`
   escribe ahora `customer.featureFlags` con `DEFAULT_DISABLED_FEATURES` en **false** al crear
@@ -541,6 +620,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Admin/User-support` | `{ userId, action: resend-activation\|force-reset\|revoke-sessions }` (**admin**) | 200 ok · 400 · 404 · 409 (activación con cuenta ya activa). Acciones de soporte auditadas (`support.*`): reenvía activación (enlace nuevo 24 h), envía OTP de reseteo (hasheado, compatible con Validate-otp), o desactiva TODAS las sesiones del usuario (revocación por `sid`) |
 | `Admin/Templates` | `{}` (**admin**) | 200 `data:{templates:[{name, customerPrefix, createdAt}], count, truncated}` — listado GLOBAL de plantillas SES (`ListTemplates` paginado) |
 | `Admin/Domains` | `{}` (**admin**) | 200 `data:{domains:[{domainId, customerId, company, kind, domain, status, createdAt}], count}` — dominios/correos remitentes de TODOS los clientes (pendientes primero) |
+| `Cost/Attachment-weight` | `{ campaignId, samples? }` (tenant del token) | 200 `data:{mode, format, exact, samples, avgBytes, minBytes, maxBytes, marginPct, sizeMB, note}` · 400 (sin id / canal sin adjunto) · 403 · 404 · 502. **Peso REAL del adjunto**: EAU = tamaño exacto en S3 (sin margen); EAP-PDF = promedio de N PDFs generados con registros REALES de la base + 20% de margen; EAP-DOCX = plantilla + margen. Alimenta el `attachmentSizeMB` del estimador |
 | `Report/Series` | `{ days? }` (tenant del token; default 30, máx. 90) | 200 `data:{from, to, days:[{date, enviados, entregados, abiertos, clics, rebotes, quejas}], totals, withoutRollup}` · 403 sin identidad. Serie DIARIA continua desde el rollup `{tenant}_sendSummary` (excluye muestras; sin rollup aproxima por `registersToSend`). La consume el gráfico "Actividad de los últimos 30 días" de Estadísticas |
 | `Balance/Get` | `{ limit? }` (tenant del token) | 200 `data:{customerId, balance, currency, transactions:[{txId, type, amount, balanceAfter, status, reference, bank, detail, rejectReason, createdAt}], count}` (saldo + movimientos; lee por GSI `customerId-createdAt-index` con fallback a Scan) |
 | `Balance/Topup-manual-request` | `{ amount (COP>0), proofS3Path, bank?, reference?, note? }` (tenant del token) | 201 `data:{txId, status:'pending'}` · 400 · 403. Crea la solicitud manual `pending` (no toca el saldo); el comprobante ya se subió a S3 (get-urlS3, documentType=document) |
@@ -1277,6 +1357,8 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   - `config.set` → `Config_Set` (key + valor).
   Filtros por mes, acción y actor (substring); orden reciente primero; tope con aviso. El
   lector devuelve vacío si la tabla no existe (no es error).
+  ⚠️ Esta lista es la ORIGINAL (4 acciones). El inventario vigente está en "Auditoría:
+  cierre de los huecos de registro (ago 2026)" (arriba): 51 lambdas y ~50 acciones.
 
 ### Cobro PREPAGO / monedero (jul 2026)
 - **Modelo:** saldo por cliente en **COP** en la tabla `customerBalance` (PK `customerId`).

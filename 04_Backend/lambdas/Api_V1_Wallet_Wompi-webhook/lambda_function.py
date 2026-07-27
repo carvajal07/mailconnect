@@ -23,6 +23,7 @@ import json
 import time
 import hmac
 import hashlib
+import uuid
 import boto3
 from decimal import Decimal
 from botocore.exceptions import ClientError
@@ -32,6 +33,7 @@ dynamodb = boto3.resource('dynamodb', region_name=REGION)
 ddb_client = boto3.client('dynamodb', region_name=REGION)
 table_wallet = dynamodb.Table('walletTransaction')
 table_balance = dynamodb.Table('customerBalance')
+_audit_table = dynamodb.Table('adminAudit')
 
 CURRENCY = os.environ.get('WOMPI_CURRENCY', 'COP')
 WOMPI_EVENTS_SECRET = os.environ.get('WOMPI_EVENTS_SECRET', '')
@@ -179,6 +181,35 @@ def _credit_approved(reference, wompi_id, amount_cents):
     return 'credited'
 
 
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación.
+
+    Ruta PÚBLICA sin sesión: el actor es la PASARELA, no una persona. Se deja
+    explícito ('wompi') en vez del 'cliente' genérico de las demás lambdas, para
+    que en la bitácora se distinga un crédito automático de uno hecho a mano.
+    """
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'wompi'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
+
 def lambda_handler(event, context):
     event_json = _parse_event(event)
 
@@ -199,6 +230,14 @@ def lambda_handler(event, context):
     try:
         if status == 'APPROVED':
             result = _credit_approved(reference, wompi_id, amount_cents)
+            # Única entrada de dinero SIN intervención humana: sin este registro, un
+            # crédito automático no aparece en ningún lado salvo el ledger. Solo se
+            # audita el crédito EFECTIVO ('credited'), no las re-entregas del evento.
+            if result == 'credited':
+                _audit(event, 'balance.topup.wompi', reference,
+                       'Recarga Wompi acreditada por la pasarela (${:,} COP, txn {})'.format(
+                           int(amount_cents / 100) if amount_cents else 0, wompi_id or '—'
+                       ).replace(',', '.'))
         else:
             # DECLINED / VOIDED / ERROR: no se acredita; se marca el intento.
             _mark_status(reference, status.lower() or 'unknown')

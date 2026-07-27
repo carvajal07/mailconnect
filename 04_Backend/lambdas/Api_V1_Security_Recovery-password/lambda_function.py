@@ -66,6 +66,7 @@ def _invalidate_active_otps(user_id):
 
 # Ajustes de plataforma (tabla platformConfig, editable desde /admin) con fallback a env.
 _cfg_table = dynamodb.Table('platformConfig')
+_audit_table = dynamodb.Table('adminAudit')
 
 
 def _platform_cfg(key):
@@ -186,6 +187,30 @@ def _create_and_send_otp(user_id, email, ip, expiration_min):
     return otp_id
 
 
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
+
 def lambda_handler(event, context):
     """Recuperación de contraseña: crea un OTP y lo envía al correo del usuario.
 
@@ -226,6 +251,12 @@ def lambda_handler(event, context):
         try:
             otp_id = _create_and_send_otp(user_id, email, ip, expiration_min)
             print("OTP de recuperación generado: {}".format(otp_id))
+            # Se audita solo el caso REAL (usuario existente y activo). Los intentos
+            # contra correos que no existen no se registran: la respuesta es genérica
+            # justamente para no confirmar quién está registrado.
+            _audit(event, 'security.recovery', email,
+                   'OTP de recuperación enviado (vence en {} min){}'.format(
+                       expiration_min, ' · IP {}'.format(ip) if ip else ''))
         except Exception as mail_error:
             # No filtramos el fallo de correo al cliente; queda en logs.
             print("No se pudo enviar el OTP de recuperación: {}".format(mail_error))

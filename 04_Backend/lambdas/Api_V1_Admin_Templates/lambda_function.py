@@ -24,11 +24,15 @@ cliente), la operación admin se hace en esta lambda, que ya valida la FIRMA del
 `ses:ListTemplates` + **`ses:GetTemplate`** + **`ses:DeleteTemplate`**.
 '''
 import json
+import time
+import uuid
 import boto3
 from botocore.exceptions import ClientError
 
 REGION = 'us-east-1'
 ses = boto3.client('ses', region_name=REGION)
+dynamodb = boto3.resource('dynamodb', region_name=REGION)
+_audit_table = dynamodb.Table('adminAudit')
 
 MAX_PAGES = 30  # ListTemplates devuelve hasta 100 por página → tope 3000 plantillas
 
@@ -118,6 +122,30 @@ def _template_content(name):
             'text': tpl.get('TextPart', '') or ''}
 
 
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
+
 def lambda_handler(event, context):
     if not _is_admin(event):
         return {'status': False, 'statusCode': 403,
@@ -138,6 +166,10 @@ def lambda_handler(event, context):
                         'description': 'Contenido de la plantilla',
                         'data': {'template': _template_content(name)}}
             ses.delete_template(TemplateName=name)
+            # Borrado CROSS-TENANT: un admin puede eliminar la plantilla de cualquier
+            # empresa, así que la bitácora es la única trazabilidad de quién lo hizo.
+            _audit(event, 'template.admin-delete', name,
+                   'Plantilla SES eliminada por un administrador')
             return {'status': True, 'statusCode': 200,
                     'description': 'Plantilla eliminada de SES', 'data': {'name': name}}
         except ClientError as e:

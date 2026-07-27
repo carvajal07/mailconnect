@@ -18,6 +18,7 @@ import csv
 import json
 import uuid
 import io
+import time
 from decimal import Decimal
 from datetime import datetime, timedelta
 
@@ -33,6 +34,7 @@ table_contact = dynamodb.Table('cascadeContact')
 table_balance = dynamodb.Table('customerBalance')
 table_wallet = dynamodb.Table('walletTransaction')
 table_rates = dynamodb.Table('pricingRate')
+_audit_table = dynamodb.Table('adminAudit')
 
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 ALLOWED_CHANNELS = ('EM', 'SMS', 'WSP', 'VOZ')
@@ -209,6 +211,30 @@ def _read_base(nit, data_path):
     return reader[1:]  # sin encabezado
 
 
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
+
 def lambda_handler(event, context):
     payload = _get_payload(event)
     customer_id, customer, nit = _tenant(event)
@@ -292,6 +318,12 @@ def lambda_handler(event, context):
         table_contact.put_item(Item=item)
         enqueue_send({'cascadeRunId': run_id, 'customerId': customer_id, 'customer': customer, 'nit': str(nit)},
                      item, ch0, content0)
+
+    # La cascada dispara envíos REALES y DEBITA saldo, igual que Prepare-batch (que ya
+    # audita send.real). Sin esto, el gasto de una cascada no tenía autor en la bitácora.
+    _audit(event, 'cascade.dispatch', name or run_id,
+           '{} contacto(s), {} paso(s); primer canal {} debitado por ${:,} COP'.format(
+               len(eligible), len(steps), ch0, int(cost0)).replace(',', '.'))
 
     return {'status': True, 'statusCode': 201, 'description': 'Cascada lanzada',
             'data': {'cascadeRunId': run_id, 'contacts': len(eligible), 'debited': cost0}}

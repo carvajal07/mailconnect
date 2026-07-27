@@ -22,6 +22,7 @@ REGION = 'us-east-1'
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 ddb_client = boto3.client('dynamodb', region_name=REGION)
 table_customer = dynamodb.Table('customer')
+_audit_table = dynamodb.Table('adminAudit')
 
 
 def _get_payload(event):
@@ -106,6 +107,30 @@ def _safe_table_customer(customer):
     return c if _SAFE_CUSTOMER_RE.match(c) else None
 
 
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
+
 def lambda_handler(event, context):
     payload = _get_payload(event)
     auth = _tenant_from_authorizer(event)
@@ -137,6 +162,8 @@ def lambda_handler(event, context):
                 'date': now,
             }
         )
+        _audit(event, 'blacklist.add', contact,
+               'Contacto agregado a mano a la lista negra' + (': {}'.format(reason) if reason else ''))
         return {'status': True, 'statusCode': 201, 'description': 'Contacto agregado a la lista negra.',
                 'data': {'email': contact}}
     except Exception as e:

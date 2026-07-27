@@ -28,6 +28,7 @@ import hashlib
 import boto3
 
 table_wallet = boto3.resource('dynamodb').Table('walletTransaction')
+_audit_table = boto3.resource('dynamodb').Table('adminAudit')
 
 CURRENCY = os.environ.get('WOMPI_CURRENCY', 'COP')
 MIN_TOPUP = int(os.environ.get('MIN_TOPUP', '20000'))      # mínimo de recarga en COP
@@ -65,6 +66,24 @@ def _integrity_signature(reference, amount_in_cents, currency):
     <reference><amount_in_cents><currency><integrity_secret> en hex."""
     raw = '{}{}{}{}'.format(reference, amount_in_cents, currency, WOMPI_INTEGRITY_SECRET)
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 
 def lambda_handler(event, context):
@@ -114,6 +133,9 @@ def lambda_handler(event, context):
         print('No se pudo crear el intento de recarga: {}'.format(e))
         return {'status': False, 'statusCode': 500,
                 'description': 'No se pudo iniciar la recarga. Intenta de nuevo.', 'data': {}}
+
+    _audit(event, 'balance.topup.init', reference,
+           'Recarga Wompi iniciada por ${:,} COP'.format(amount).replace(',', '.'))
 
     return {'status': True, 'statusCode': 200,
             'description': 'Recarga iniciada',
