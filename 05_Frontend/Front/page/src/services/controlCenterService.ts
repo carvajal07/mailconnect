@@ -72,7 +72,11 @@ export interface ControlCenterData {
     todayTopups: number;
     todayTopupsCount: number;
     pendingTopups: { count: number; amount: number };
+    /** Saldo sumado de los clientes EXISTENTES (coincide con el tab Saldos). */
     platformBalance: number;
+    /** Saldo que quedó en customerBalance de clientes ya eliminados (informativo). */
+    orphanBalance?: number;
+    orphanCount?: number;
     error?: string;
   };
   reputation: { top: ReputationRow[]; truncated?: boolean; error?: string };

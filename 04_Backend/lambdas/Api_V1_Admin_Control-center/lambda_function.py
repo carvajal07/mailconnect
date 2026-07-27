@@ -15,7 +15,10 @@ Respuesta 200 data:
     todayDebits, todayDebitsCount,    # débitos de envío de HOY (COP)
     todayTopups, todayTopupsCount,    # recargas ACREDITADAS hoy (manual aprobada/wompi/ajuste)
     pendingTopups: {count, amount},   # solicitudes manuales sin revisar (bandeja)
-    platformBalance,                  # suma del saldo de todos los clientes
+    platformBalance,                  # saldo sumado de los clientes EXISTENTES (igual que
+                                      # el tab Saldos); las filas de customerBalance sin
+                                      # cliente (borrado) NO se cuentan aquí
+    orphanBalance, orphanCount,       # saldo de clientes ya eliminados (informativo)
   }
   reputation: [{company, tenant, sent, bounceRate, complaintRate, level, trend(up|down|flat),
                 prevBounceRate}],     # top 5 en riesgo, últimos 7 días vs los 7 anteriores
@@ -300,7 +303,26 @@ def _section_money(now):
         out['error'] = 'walletTransaction: {}'.format(e)
     try:
         balances, _ = _scan_all(dynamodb.Table('customerBalance'), cap_pages=4)
-        out['platformBalance'] = sum(_n(b.get('balance', 0)) or 0 for b in balances)
+        # Solo el saldo de clientes que EXISTEN, para que el número coincida con el tab
+        # Saldos (Admin/Balances, que recorre la tabla `customer`). `Customer/Delete` borra
+        # la empresa y sus usuarios pero NO purga el saldo, así que `customerBalance` puede
+        # tener filas HUÉRFANAS: sumarlas inflaba el "saldo total plataforma".
+        customers, _ = _scan_all(dynamodb.Table('customer'), cap_pages=4,
+                                 ProjectionExpression='customerId')
+        known = {c.get('customerId') for c in customers}
+        total = orphan = 0
+        orphan_count = 0
+        for b in balances:
+            amount = _n(b.get('balance', 0)) or 0
+            if b.get('customerId') in known:
+                total += amount
+            else:
+                orphan += amount
+                orphan_count += 1
+        out['platformBalance'] = total
+        # Se reporta aparte (no se oculta): saldo de clientes ya eliminados.
+        out['orphanBalance'] = orphan
+        out['orphanCount'] = orphan_count
     except Exception as e:
         out.setdefault('error', '')
         out['error'] = (out['error'] + ' customerBalance: {}'.format(e)).strip()

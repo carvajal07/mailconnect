@@ -19,6 +19,7 @@ import {
   CircularProgress,
   Alert,
   InputAdornment,
+  useTheme,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
@@ -58,77 +59,93 @@ import type { AuditData } from '../../services/auditService';
 import { isOk } from '../../services/apiClient';
 import { formatDateTime } from '../../utils/datetime';
 
-type ChipColor = 'primary' | 'success' | 'warning' | 'info' | 'default' | 'error' | 'secondary';
+/**
+ * Tono del chip de acción. NO se usa el `color` de MUI a propósito: en el tema OSCURO de
+ * la marca `primary` es navy (#0a1628) y `secondary` azul oscuro (#2a3d5f), así que los
+ * chips quedaban ilegibles sobre el fondo oscuro. Aquí cada tono tiene su valor para
+ * claro y oscuro, y se aplica al TEXTO, al BORDE y al ICONO.
+ */
+type ChipTone = 'blue' | 'cyan' | 'green' | 'amber' | 'red' | 'purple' | 'gray';
+
+const TONE_COLORS: Record<ChipTone, { light: string; dark: string }> = {
+  blue:   { light: '#0075be', dark: '#5ab8ff' },
+  cyan:   { light: '#0e7490', dark: '#22d3ee' },
+  green:  { light: '#15803d', dark: '#34d399' },
+  amber:  { light: '#b45309', dark: '#fbbf24' },
+  red:    { light: '#c62828', dark: '#f87171' },
+  purple: { light: '#7c3aed', dark: '#c084fc' },
+  gray:   { light: '#64748b', dark: '#a3b3cc' },
+};
 
 // Metadatos por tipo de acción (etiqueta + color + icono). Debe cubrir TODAS las acciones
 // que emiten las lambdas (`_audit(...)`): una acción sin entrada cae al chip gris sin icono.
-const ACTION_META: Record<string, { label: string; color: ChipColor; icon: ReactElement }> = {
+const ACTION_META: Record<string, { label: string; tone: ChipTone; icon: ReactElement }> = {
   // ── Administración de clientes ──
-  'customer.realSend': { label: 'Envíos por cliente', color: 'warning', icon: <SendIcon fontSize="small" /> },
-  'customer.features': { label: 'Funciones del cliente', color: 'primary', icon: <TuneIcon fontSize="small" /> },
-  'customer.limits': { label: 'Cuotas de envío', color: 'warning', icon: <SpeedIcon fontSize="small" /> },
-  'customer.delete': { label: 'Cliente eliminado', color: 'error', icon: <DeleteForeverIcon fontSize="small" /> },
-  'sendingConfig.set': { label: 'IP dedicada', color: 'primary', icon: <DnsIcon fontSize="small" /> },
-  'sendingConfig.remove': { label: 'IP dedicada quitada', color: 'warning', icon: <DnsIcon fontSize="small" /> },
-  'pricing.update': { label: 'Tarifas', color: 'success', icon: <PaidIcon fontSize="small" /> },
-  'config.set': { label: 'Configuración', color: 'info', icon: <SettingsIcon fontSize="small" /> },
+  'customer.realSend': { label: 'Envíos por cliente', tone: 'amber', icon: <SendIcon fontSize="small" /> },
+  'customer.features': { label: 'Funciones del cliente', tone: 'blue', icon: <TuneIcon fontSize="small" /> },
+  'customer.limits': { label: 'Cuotas de envío', tone: 'amber', icon: <SpeedIcon fontSize="small" /> },
+  'customer.delete': { label: 'Cliente eliminado', tone: 'red', icon: <DeleteForeverIcon fontSize="small" /> },
+  'sendingConfig.set': { label: 'IP dedicada', tone: 'blue', icon: <DnsIcon fontSize="small" /> },
+  'sendingConfig.remove': { label: 'IP dedicada quitada', tone: 'amber', icon: <DnsIcon fontSize="small" /> },
+  'pricing.update': { label: 'Tarifas', tone: 'green', icon: <PaidIcon fontSize="small" /> },
+  'config.set': { label: 'Configuración', tone: 'cyan', icon: <SettingsIcon fontSize="small" /> },
   // ── Usuarios y roles ──
-  'user.role': { label: 'Cambio de rol', color: 'primary', icon: <AdminPanelSettingsIcon fontSize="small" /> },
-  'user.tenantRole': { label: 'Cambio de sub-rol', color: 'primary', icon: <AdminPanelSettingsIcon fontSize="small" /> },
-  'user.create': { label: 'Usuario creado', color: 'success', icon: <PersonAddIcon fontSize="small" /> },
-  'user.delete': { label: 'Usuario eliminado', color: 'error', icon: <PersonRemoveIcon fontSize="small" /> },
+  'user.role': { label: 'Cambio de rol', tone: 'blue', icon: <AdminPanelSettingsIcon fontSize="small" /> },
+  'user.tenantRole': { label: 'Cambio de sub-rol', tone: 'blue', icon: <AdminPanelSettingsIcon fontSize="small" /> },
+  'user.create': { label: 'Usuario creado', tone: 'green', icon: <PersonAddIcon fontSize="small" /> },
+  'user.delete': { label: 'Usuario eliminado', tone: 'red', icon: <PersonRemoveIcon fontSize="small" /> },
   // ── Seguridad ──
-  'security.login': { label: 'Ingreso', color: 'secondary', icon: <LoginIcon fontSize="small" /> },
-  'security.token': { label: 'Token', color: 'secondary', icon: <VpnKeyIcon fontSize="small" /> },
-  'security.lockout': { label: 'Cuenta bloqueada', color: 'error', icon: <LockIcon fontSize="small" /> },
-  'security.2fa.challenge': { label: '2FA solicitado', color: 'secondary', icon: <ShieldIcon fontSize="small" /> },
-  'security.2fa.success': { label: '2FA correcto', color: 'success', icon: <ShieldIcon fontSize="small" /> },
-  'security.2fa.fail': { label: '2FA incorrecto', color: 'warning', icon: <ShieldIcon fontSize="small" /> },
-  'security.2fa.lockout': { label: '2FA bloqueado', color: 'error', icon: <LockIcon fontSize="small" /> },
+  'security.login': { label: 'Ingreso', tone: 'purple', icon: <LoginIcon fontSize="small" /> },
+  'security.token': { label: 'Token', tone: 'purple', icon: <VpnKeyIcon fontSize="small" /> },
+  'security.lockout': { label: 'Cuenta bloqueada', tone: 'red', icon: <LockIcon fontSize="small" /> },
+  'security.2fa.challenge': { label: '2FA solicitado', tone: 'purple', icon: <ShieldIcon fontSize="small" /> },
+  'security.2fa.success': { label: '2FA correcto', tone: 'green', icon: <ShieldIcon fontSize="small" /> },
+  'security.2fa.fail': { label: '2FA incorrecto', tone: 'amber', icon: <ShieldIcon fontSize="small" /> },
+  'security.2fa.lockout': { label: '2FA bloqueado', tone: 'red', icon: <LockIcon fontSize="small" /> },
   // ── Soporte ──
-  'support.impersonate': { label: 'Vista como cliente', color: 'warning', icon: <VisibilityIcon fontSize="small" /> },
-  'support.resendActivation': { label: 'Reenvío de activación', color: 'info', icon: <MarkEmailReadIcon fontSize="small" /> },
-  'support.forceReset': { label: 'Reseteo de contraseña', color: 'warning', icon: <LockResetIcon fontSize="small" /> },
-  'support.revokeSessions': { label: 'Sesiones cerradas', color: 'error', icon: <LogoutIcon fontSize="small" /> },
+  'support.impersonate': { label: 'Vista como cliente', tone: 'amber', icon: <VisibilityIcon fontSize="small" /> },
+  'support.resendActivation': { label: 'Reenvío de activación', tone: 'cyan', icon: <MarkEmailReadIcon fontSize="small" /> },
+  'support.forceReset': { label: 'Reseteo de contraseña', tone: 'amber', icon: <LockResetIcon fontSize="small" /> },
+  'support.revokeSessions': { label: 'Sesiones cerradas', tone: 'red', icon: <LogoutIcon fontSize="small" /> },
   // ── Contenido ──
-  'campaign.create': { label: 'Campaña creada', color: 'info', icon: <CampaignIcon fontSize="small" /> },
-  'campaign.delete': { label: 'Campaña eliminada', color: 'error', icon: <DeleteForeverIcon fontSize="small" /> },
-  'campaign.request-approval': { label: 'Aprobación solicitada', color: 'info', icon: <PendingActionsIcon fontSize="small" /> },
-  'campaign.approve': { label: 'Campaña aprobada', color: 'success', icon: <ThumbUpIcon fontSize="small" /> },
-  'campaign.reject': { label: 'Campaña rechazada', color: 'error', icon: <ThumbDownIcon fontSize="small" /> },
-  'template.create': { label: 'Plantilla correo', color: 'info', icon: <DescriptionIcon fontSize="small" /> },
-  'messageTemplate.create': { label: 'Plantilla mensaje', color: 'info', icon: <ChatIcon fontSize="small" /> },
-  'messageTemplate.update': { label: 'Plantilla editada', color: 'info', icon: <ChatIcon fontSize="small" /> },
+  'campaign.create': { label: 'Campaña creada', tone: 'cyan', icon: <CampaignIcon fontSize="small" /> },
+  'campaign.delete': { label: 'Campaña eliminada', tone: 'red', icon: <DeleteForeverIcon fontSize="small" /> },
+  'campaign.request-approval': { label: 'Aprobación solicitada', tone: 'cyan', icon: <PendingActionsIcon fontSize="small" /> },
+  'campaign.approve': { label: 'Campaña aprobada', tone: 'green', icon: <ThumbUpIcon fontSize="small" /> },
+  'campaign.reject': { label: 'Campaña rechazada', tone: 'red', icon: <ThumbDownIcon fontSize="small" /> },
+  'template.create': { label: 'Plantilla correo', tone: 'cyan', icon: <DescriptionIcon fontSize="small" /> },
+  'messageTemplate.create': { label: 'Plantilla mensaje', tone: 'cyan', icon: <ChatIcon fontSize="small" /> },
+  'messageTemplate.update': { label: 'Plantilla editada', tone: 'cyan', icon: <ChatIcon fontSize="small" /> },
   // ── Envíos ──
-  'send.samples': { label: 'Muestras', color: 'warning', icon: <ScienceIcon fontSize="small" /> },
-  'send.real': { label: 'Envío real', color: 'success', icon: <MarkEmailReadIcon fontSize="small" /> },
-  'job.requeue': { label: 'Reencolado', color: 'warning', icon: <ReplayIcon fontSize="small" /> },
+  'send.samples': { label: 'Muestras', tone: 'amber', icon: <ScienceIcon fontSize="small" /> },
+  'send.real': { label: 'Envío real', tone: 'green', icon: <MarkEmailReadIcon fontSize="small" /> },
+  'job.requeue': { label: 'Reencolado', tone: 'amber', icon: <ReplayIcon fontSize="small" /> },
   // ── Dinero ──
-  'balance.adjustment': { label: 'Ajuste de saldo', color: 'primary', icon: <PaidIcon fontSize="small" /> },
-  'balance.topup.approve': { label: 'Recarga aprobada', color: 'success', icon: <AccountBalanceWalletIcon fontSize="small" /> },
-  'balance.topup.reject': { label: 'Recarga rechazada', color: 'error', icon: <AccountBalanceWalletIcon fontSize="small" /> },
+  'balance.adjustment': { label: 'Ajuste de saldo', tone: 'blue', icon: <PaidIcon fontSize="small" /> },
+  'balance.topup.approve': { label: 'Recarga aprobada', tone: 'green', icon: <AccountBalanceWalletIcon fontSize="small" /> },
+  'balance.topup.reject': { label: 'Recarga rechazada', tone: 'red', icon: <AccountBalanceWalletIcon fontSize="small" /> },
 };
 
 // Familia de la acción (por prefijo) para las que NO estén en el catálogo: así una acción
 // nueva del backend sigue saliendo con color/icono coherente en vez de un chip gris.
-const FAMILY_META: Array<[string, { color: ChipColor; icon: ReactElement }]> = [
-  ['security.', { color: 'secondary', icon: <ShieldIcon fontSize="small" /> }],
-  ['support.', { color: 'warning', icon: <SupportAgentIcon fontSize="small" /> }],
-  ['balance.', { color: 'primary', icon: <AccountBalanceWalletIcon fontSize="small" /> }],
-  ['campaign.', { color: 'info', icon: <CampaignIcon fontSize="small" /> }],
-  ['customer.', { color: 'primary', icon: <ApartmentIcon fontSize="small" /> }],
-  ['user.', { color: 'primary', icon: <AdminPanelSettingsIcon fontSize="small" /> }],
-  ['send.', { color: 'success', icon: <SendIcon fontSize="small" /> }],
-  ['template.', { color: 'info', icon: <DescriptionIcon fontSize="small" /> }],
-  ['messageTemplate.', { color: 'info', icon: <ChatIcon fontSize="small" /> }],
+const FAMILY_META: Array<[string, { tone: ChipTone; icon: ReactElement }]> = [
+  ['security.', { tone: 'purple', icon: <ShieldIcon fontSize="small" /> }],
+  ['support.', { tone: 'amber', icon: <SupportAgentIcon fontSize="small" /> }],
+  ['balance.', { tone: 'blue', icon: <AccountBalanceWalletIcon fontSize="small" /> }],
+  ['campaign.', { tone: 'cyan', icon: <CampaignIcon fontSize="small" /> }],
+  ['customer.', { tone: 'blue', icon: <ApartmentIcon fontSize="small" /> }],
+  ['user.', { tone: 'blue', icon: <AdminPanelSettingsIcon fontSize="small" /> }],
+  ['send.', { tone: 'green', icon: <SendIcon fontSize="small" /> }],
+  ['template.', { tone: 'cyan', icon: <DescriptionIcon fontSize="small" /> }],
+  ['messageTemplate.', { tone: 'cyan', icon: <ChatIcon fontSize="small" /> }],
 ];
 
 /** Color + icono de una acción: catálogo exacto → familia por prefijo → genérico. */
-const actionMeta = (a: string): { color: ChipColor; icon: ReactElement } => {
+const actionMeta = (a: string): { tone: ChipTone; icon: ReactElement } => {
   const exact = ACTION_META[a];
-  if (exact) return { color: exact.color, icon: exact.icon };
+  if (exact) return { tone: exact.tone, icon: exact.icon };
   const fam = FAMILY_META.find(([p]) => a.startsWith(p));
-  return fam ? fam[1] : { color: 'default', icon: <HistoryIcon fontSize="small" /> };
+  return fam ? fam[1] : { tone: 'gray', icon: <HistoryIcon fontSize="small" /> };
 };
 
 const actionLabel = (a: string) => ACTION_META[a]?.label ?? a;
@@ -146,6 +163,7 @@ const fmtDate = (raw: string) => {
  * hizo qué y cuándo): envíos por cliente, roles, tarifas y configuración.
  */
 export const AuditoriaSection = () => {
+  const isDark = useTheme().palette.mode === 'dark';
   const [month, setMonth] = useState('');
   const [action, setAction] = useState('');
   const [actor, setActor] = useState('');
@@ -276,6 +294,7 @@ export const AuditoriaSection = () => {
             )}
             {pageEntries.map((e) => {
               const meta = actionMeta(e.action);
+              const hue = TONE_COLORS[meta.tone][isDark ? 'dark' : 'light'];
               return (
                 <TableRow key={e.auditId} hover>
                   <TableCell sx={{ whiteSpace: 'nowrap' }}><Typography variant="caption">{fmtDate(e.date)}</Typography></TableCell>
@@ -284,16 +303,20 @@ export const AuditoriaSection = () => {
                     {e.customer && <Typography variant="caption" color="text.secondary">{e.customer}</Typography>}
                   </TableCell>
                   <TableCell>
-                    {/* Chip OUTLINED (claro, no bloques de color sólido) forzando que el
-                        ICONO tome el color del chip: por defecto MUI le pone el gris
-                        secundario y todas las acciones se veían iguales. */}
+                    {/* Chip OUTLINED con el color del TONO aplicado a texto, borde e icono
+                        (no se usa `color` de MUI: en el tema oscuro primary/secondary son
+                        navy y el chip quedaba ilegible). */}
                     <Chip
                       size="small"
-                      color={meta.color}
                       variant="outlined"
                       icon={meta.icon}
                       label={actionLabel(e.action)}
-                      sx={{ fontWeight: 600, '& .MuiChip-icon': { color: 'inherit' } }}
+                      sx={{
+                        fontWeight: 600,
+                        color: hue,
+                        borderColor: hue,
+                        '& .MuiChip-icon': { color: hue },
+                      }}
                     />
                   </TableCell>
                   <TableCell><Typography variant="body2" sx={{ wordBreak: 'break-all' }}>{e.target || '—'}</Typography></TableCell>

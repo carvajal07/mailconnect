@@ -107,8 +107,13 @@ def cc():
         res.Table('walletTransaction').put_item(Item={
             'txId': 't4', 'customerId': 'CU1', 'type': 'debit_send', 'amount': -99999,
             'status': 'approved', 'createdAt': old})  # NO es de hoy
+        res.Table('customer').put_item(Item={'customerId': 'CU1', 'company': 'Beta', 'companyTin': '900'})
+        res.Table('customer').put_item(Item={'customerId': 'CU2', 'company': 'Gamma', 'companyTin': '901'})
         res.Table('customerBalance').put_item(Item={'customerId': 'CU1', 'balance': 300000})
         res.Table('customerBalance').put_item(Item={'customerId': 'CU2', 'balance': 150000})
+        # HUÉRFANO: la empresa se eliminó (Customer/Delete no purga el saldo) → su saldo
+        # NO debe sumar al total de la plataforma (el tab Saldos tampoco lo cuenta).
+        res.Table('customerBalance').put_item(Item={'customerId': 'CU-BORRADO', 'balance': 999000})
 
         # Auditoría reciente.
         res.Table('adminAudit').put_item(Item={
@@ -152,6 +157,14 @@ def test_dinero_del_dia(cc):
     assert money['todayTopups'] == 200000
     assert money['pendingTopups'] == {'count': 1, 'amount': 80000}
     assert money['platformBalance'] == 450000
+
+
+def test_saldo_plataforma_excluye_clientes_eliminados(cc):
+    """El saldo huérfano (cliente borrado) se reporta APARTE, no infla el total."""
+    money = cc.lambda_handler(_admin(), None)['data']['money']
+    assert money['platformBalance'] == 450000    # CU1 + CU2, sin los 999000 del borrado
+    assert money['orphanBalance'] == 999000
+    assert money['orphanCount'] == 1
 
 
 def test_reputacion_top_con_tendencia(cc):
