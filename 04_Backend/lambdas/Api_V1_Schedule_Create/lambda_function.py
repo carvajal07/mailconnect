@@ -28,6 +28,7 @@ from botocore.exceptions import ClientError
 dynamodb = boto3.resource('dynamodb')
 table_schedule = dynamodb.Table('scheduledSend')
 table_campaign = dynamodb.Table('campaign')
+_audit_table = dynamodb.Table('adminAudit')
 scheduler_client = boto3.client('scheduler')
 
 # Estados de campaña en los que YA NO tiene sentido programar (ya salió o terminó).
@@ -124,6 +125,24 @@ def _ensure_table():
             raise
 
 
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
+
 def lambda_handler(event, context):
     auth = _authorizer(event)
     customer_id = auth.get('customerId')
@@ -210,6 +229,13 @@ def lambda_handler(event, context):
                 print('No se pudo revertir la fila {}: {}'.format(schedule_id, del_e))
             return {'status': False, 'statusCode': 500,
                     'description': 'No se pudo agendar el disparo del envío. Intenta de nuevo.'}
+
+        # Programar es la DECISIÓN humana de disparar un envío real (y su cobro) a futuro;
+        # el disparo (Schedule_Fire) es automático y no se audita. Auditar aquí es lo que
+        # deja registro de quién autorizó el envío.
+        _audit(event, 'schedule.create', schedule_id,
+               'Envío real de "{}" programado para {} UTC'.format(
+                   campaign.get('campaignName') or campaign_id, scheduled_at))
 
         return {'status': True, 'statusCode': 201,
                 'description': 'Envío programado.',

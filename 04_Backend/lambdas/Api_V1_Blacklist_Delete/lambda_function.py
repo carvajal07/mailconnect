@@ -11,12 +11,15 @@ Al quitarlo, el contacto vuelve a poder recibir envíos.
 import json
 import os
 import re
+import time
+import uuid
 import boto3
 from botocore.exceptions import ClientError
 
 REGION = 'us-east-1'
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 table_customer = dynamodb.Table('customer')
+_audit_table = dynamodb.Table('adminAudit')
 
 
 def _get_payload(event):
@@ -83,6 +86,30 @@ def _safe_table_customer(customer):
     return c if _SAFE_CUSTOMER_RE.match(c) else None
 
 
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
+
 def lambda_handler(event, context):
     payload = _get_payload(event)
     auth = _tenant_from_authorizer(event)
@@ -105,6 +132,11 @@ def lambda_handler(event, context):
         if not existing:
             return {'status': False, 'statusCode': 404, 'description': 'El contacto no está en la lista negra.'}
         table.delete_item(Key={'email': contact})
+        # CUMPLIMIENTO (Ley 1581): sacar a alguien de la lista negra vuelve a habilitar el
+        # envío a un contacto que rebotó permanentemente o se quejó. Es la acción de esta
+        # familia con consecuencia legal y reputacional, así que SIEMPRE queda registrada.
+        _audit(event, 'blacklist.delete', contact,
+               'Contacto quitado de la lista negra (vuelve a ser contactable)')
         return {'status': True, 'statusCode': 200, 'description': 'Contacto quitado de la lista negra.'}
     except ClientError as e:
         if e.response['Error']['Code'] == 'ResourceNotFoundException':

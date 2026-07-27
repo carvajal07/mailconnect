@@ -20,11 +20,13 @@ Respuesta: 201 { data: { databaseFileId } }
 import uuid
 import os
 import json
+import time
 import boto3
 from datetime import datetime
 
 dynamodb = boto3.resource('dynamodb')
 table_database = dynamodb.Table('databaseFile')
+_audit_table = dynamodb.Table('adminAudit')
 
 
 def _get_payload(event):
@@ -67,6 +69,29 @@ def _resolve_tenant(event, payload):
     a = _tenant_from_authorizer(event) or {}
     return a.get('customerId'), a.get('customer')
 
+
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 
 def lambda_handler(event, context):
@@ -156,6 +181,12 @@ def lambda_handler(event, context):
                 'status': 'activa'
             }
         )
+        # Entrada de datos personales a la plataforma (Ley 1581): quién subió qué base,
+        # cuándo y con cuántos registros. Es el contrapeso de `database.delete`.
+        _audit(event, 'database.register', file_name,
+               '{} registro(s) · canal {} · {}'.format(
+                   _to_int(payload.get('totalRecords')),
+                   payload.get('channel', 'EMAIL'), s3_path))
     except Exception as e:
         print("Error registrando la base: {}".format(e))
         status = False

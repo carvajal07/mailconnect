@@ -20,6 +20,7 @@ import {
 } from '@mui/material';
 import PaidIcon from '@mui/icons-material/Paid';
 import CalculateIcon from '@mui/icons-material/Calculate';
+import ScaleIcon from '@mui/icons-material/Scale';
 import { getUser } from '../../services/authService';
 import {
   costService,
@@ -27,6 +28,7 @@ import {
   type Channel,
   type EmailMode,
   type EstimateResult,
+  type AttachmentWeight,
 } from '../../services/costService';
 import { isOk } from '../../services/apiClient';
 
@@ -43,6 +45,9 @@ interface Props {
   /** Modo de entrega del adjunto (EAU/EAP): ONFILE (adjunto) u ONLINE (enlace). Viene de la
    *  campaña; hoy cobra igual (hook), pero el estimado ya lo envía para reflejarlo a futuro. */
   attachmentDelivery?: 'ONFILE' | 'ONLINE';
+  /** Campaña sobre la que se estima. Habilita "Medir peso real" del adjunto (EAU/EAP):
+   *  sin ella, el peso del adjunto lo tiene que declarar el usuario a ojo. */
+  campaignId?: string;
   /** Saldo disponible del cliente (COP). Si se pasa, se muestra si alcanza para el envío. */
   balance?: number;
   /** Reporta el resultado del estimado (o null al limpiar) para gates externos. */
@@ -53,7 +58,7 @@ const CHANNEL_LABEL: Record<Channel, string> = {
   EMAIL: 'Correo', SMS: 'SMS', WHATSAPP: 'WhatsApp', VOICE: 'Voz',
 };
 
-export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMode = 'EM', recipients: initRecipients, lockChannel = false, attachmentDelivery = 'ONFILE', balance, onResult }: Props) => {
+export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMode = 'EM', recipients: initRecipients, lockChannel = false, attachmentDelivery = 'ONFILE', campaignId, balance, onResult }: Props) => {
   const customerId = getUser()?.customerId ?? '';
 
   const [channel, setChannel] = useState<Channel>(initChannel);
@@ -67,8 +72,31 @@ export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMo
   const [result, setResult] = useState<EstimateResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [weight, setWeight] = useState<AttachmentWeight | null>(null);
+  const [weighing, setWeighing] = useState(false);
 
   const withAttachment = channel === 'EMAIL' && (emailMode === 'EAU' || emailMode === 'EAP');
+
+  /**
+   * Mide el peso REAL del adjunto en vez de que el usuario lo escriba a ojo: para EAU es
+   * el tamaño exacto del archivo en S3; para EAP-PDF el backend genera varios PDFs con
+   * registros REALES de la base y promedia (+ margen). El resultado se vuelca al campo
+   * "Peso adjunto", que sigue siendo editable si el cliente quiere ajustarlo.
+   */
+  const measure = async () => {
+    if (!campaignId) return;
+    setWeighing(true);
+    setError('');
+    const res = await costService.attachmentWeight(campaignId);
+    setWeighing(false);
+    if (isOk(res) && res.data) {
+      setWeight(res.data);
+      setAttachmentSizeMB(String(res.data.sizeMB));
+    } else {
+      setWeight(null);
+      setError(res.description || 'No se pudo medir el peso del adjunto.');
+    }
+  };
 
   const estimate = async () => {
     const n = parseInt(recipients, 10);
@@ -131,7 +159,7 @@ export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMo
         {withAttachment && (
           <TextField
             label="Peso adjunto" value={attachmentSizeMB} size="small" type="number"
-            onChange={(e) => setAttachmentSizeMB(e.target.value)}
+            onChange={(e) => { setAttachmentSizeMB(e.target.value); setWeight(null); }}
             InputProps={{ endAdornment: <InputAdornment position="end">MB</InputAdornment> }}
           />
         )}
@@ -149,13 +177,38 @@ export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMo
         )}
       </Box>
 
-      <Button
-        sx={{ mt: 2 }} variant="contained" size="small"
-        startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <CalculateIcon />}
-        onClick={estimate} disabled={loading}
-      >
-        {loading ? 'Calculando…' : 'Calcular estimado'}
-      </Button>
+      <Stack direction="row" spacing={1} sx={{ mt: 2 }} flexWrap="wrap" useFlexGap>
+        <Button
+          variant="contained" size="small"
+          startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <CalculateIcon />}
+          onClick={estimate} disabled={loading}
+        >
+          {loading ? 'Calculando…' : 'Calcular estimado'}
+        </Button>
+
+        {withAttachment && campaignId && (
+          <Button
+            variant="outlined" size="small"
+            startIcon={weighing ? <CircularProgress size={16} color="inherit" /> : <ScaleIcon />}
+            onClick={measure} disabled={weighing}
+          >
+            {weighing ? 'Midiendo…' : 'Medir peso real'}
+          </Button>
+        )}
+      </Stack>
+
+      {weight && (
+        <Alert severity={weight.exact ? 'success' : 'info'} sx={{ mt: 1.5 }}>
+          <Typography variant="body2" fontWeight={600}>
+            Peso {weight.exact ? 'exacto' : 'estimado'}: {weight.sizeMB} MB
+            {!weight.exact && ` (promedio ${(weight.avgBytes / 1048576).toFixed(2)} MB + ${weight.marginPct}%)`}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" component="div">
+            {weight.note}
+            {weight.samples > 1 && ` · Rango de las muestras: ${(weight.minBytes / 1048576).toFixed(2)}–${(weight.maxBytes / 1048576).toFixed(2)} MB.`}
+          </Typography>
+        </Alert>
+      )}
 
       {error && <Typography variant="body2" color="error" sx={{ mt: 1 }}>{error}</Typography>}
 

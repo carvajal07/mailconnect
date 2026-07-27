@@ -9,6 +9,8 @@ Request:  { domainId }
 Respuesta: 200 ok · 400 falta id · 403 otro cliente · 404 no existe
 '''
 import os
+import time
+import uuid
 import boto3
 from botocore.exceptions import ClientError
 
@@ -16,6 +18,7 @@ REGION = os.environ.get('SES_REGION', 'us-east-1')
 ses = boto3.client('ses', region_name=REGION)
 dynamodb = boto3.resource('dynamodb')
 table_domain = dynamodb.Table('senderDomain')
+_audit_table = dynamodb.Table('adminAudit')
 
 
 def _get_payload(event):
@@ -34,6 +37,24 @@ def _authorizer(event):
     if not isinstance(event, dict):
         return {}
     return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 
 def lambda_handler(event, context):
@@ -69,6 +90,11 @@ def lambda_handler(event, context):
                 print('No se pudo eliminar la identidad SES {}: {}'.format(domain, e))
 
         table_domain.delete_item(Key={'domainId': domain_id})
+        # Borrar una identidad VERIFICADA deja a la empresa sin poder enviar desde ella:
+        # es una acción destructiva de configuración de cuenta y queda en la bitácora.
+        _audit(event, 'domain.delete', domain or domain_id,
+               'Identidad de envío eliminada ({}, estado {})'.format(
+                   current.get('kind') or 'domain', current.get('status') or '—'))
         return {'status': True, 'statusCode': 200, 'description': 'Dominio eliminado.'}
     except ClientError as e:
         print('Error eliminando dominio: {}'.format(e))

@@ -10,6 +10,7 @@ import type { ApiResponse } from './apiClient';
 
 export const COST_ENDPOINTS = {
   ESTIMATE: '/Cost/Estimate',
+  ATTACHMENT_WEIGHT: '/Cost/Attachment-weight',
 };
 
 export type Channel = 'EMAIL' | 'SMS' | 'WHATSAPP' | 'VOICE';
@@ -48,9 +49,32 @@ export interface EstimateResult {
   note: string;
 }
 
+/**
+ * Peso REAL del adjunto de una campaña (POST /Cost/Attachment-weight).
+ * EAU → tamaño exacto del archivo en S3. EAP-PDF → promedio de N PDFs generados con
+ * registros reales de la base + margen de seguridad. EAP-DOCX → plantilla + margen.
+ */
+export interface AttachmentWeight {
+  mode: 'EAU' | 'EAP';
+  format: string;
+  /** true = medida exacta (el archivo existe); false = estimada con margen. */
+  exact: boolean;
+  samples: number;
+  avgBytes: number;
+  minBytes: number;
+  maxBytes: number;
+  marginPct: number;
+  /** Lo que se le pasa al estimador como `attachmentSizeMB`. */
+  sizeMB: number;
+  note: string;
+}
+
 export const costService = {
   estimate: (payload: EstimatePayload): Promise<ApiResponse<EstimateResult>> =>
     apiPost(COST_ENDPOINTS.ESTIMATE, payload),
+
+  attachmentWeight: (campaignId: string, samples?: number): Promise<ApiResponse<AttachmentWeight>> =>
+    apiPost(COST_ENDPOINTS.ATTACHMENT_WEIGHT, { campaignId, samples }),
 };
 
 /** Formatea un valor en pesos colombianos. */

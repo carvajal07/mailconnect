@@ -22,6 +22,7 @@ import boto3
 dynamodb = boto3.resource('dynamodb')
 table_wallet = dynamodb.Table('walletTransaction')
 table_customer = dynamodb.Table('customer')
+_audit_table = dynamodb.Table('adminAudit')
 
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 CURRENCY = 'COP'
@@ -68,6 +69,24 @@ def _customer_nit(customer_id):
     except Exception as e:
         print('No se pudo leer el NIT del cliente: {}'.format(e))
         return None
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 
 def lambda_handler(event, context):
@@ -117,6 +136,11 @@ def lambda_handler(event, context):
         print('No se pudo crear la solicitud de recarga: {}'.format(e))
         return {'status': False, 'statusCode': 500,
                 'description': 'No se pudo registrar la solicitud. Intenta de nuevo.', 'data': {}}
+
+    # Cierra la trazabilidad del flujo manual: la aprobación/rechazo ya se auditaban,
+    # pero la SOLICITUD no, así que en la bitácora aparecía una aprobación sin origen.
+    _audit(event, 'balance.topup.request', tx_id,
+           'Solicitud de recarga por transferencia de ${:,} COP'.format(amount).replace(',', '.'))
 
     return {'status': True, 'statusCode': 201,
             'description': 'Solicitud de recarga registrada. Un administrador la revisará.',

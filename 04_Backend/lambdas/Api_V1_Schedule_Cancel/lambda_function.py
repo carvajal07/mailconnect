@@ -9,11 +9,14 @@ Solo se puede cancelar mientras esté `pending` (aún no disparado). La transici
 pending→canceled es condicional (atómica) para no chocar con el dispatcher que justo lo tome.
 '''
 import os
+import time
+import uuid
 import boto3
 from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource('dynamodb')
 table_schedule = dynamodb.Table('scheduledSend')
+_audit_table = dynamodb.Table('adminAudit')
 scheduler_client = boto3.client('scheduler')
 
 SCHEDULER_GROUP = os.environ.get('SCHEDULER_GROUP', 'default')
@@ -41,6 +44,24 @@ def _authorizer(event):
     if not isinstance(event, dict):
         return {}
     return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 
 def lambda_handler(event, context):
@@ -83,6 +104,11 @@ def lambda_handler(event, context):
             _delete_schedule(name)
         except Exception as e:
             print('No se pudo borrar el schedule {} (best-effort): {}'.format(name, e))
+
+        _audit(event, 'schedule.cancel', schedule_id,
+               'Envío programado de "{}" cancelado (estaba para {} UTC)'.format(
+                   current.get('campaignName') or current.get('campaignId') or '—',
+                   current.get('scheduledAt') or '—'))
 
         return {'status': True, 'statusCode': 200, 'description': 'Envío programado cancelado.'}
     except ClientError as e:

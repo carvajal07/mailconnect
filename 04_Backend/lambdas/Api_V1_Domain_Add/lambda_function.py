@@ -36,6 +36,7 @@ REGION = os.environ.get('SES_REGION', 'us-east-1')
 ses = boto3.client('ses', region_name=REGION)
 dynamodb = boto3.resource('dynamodb')
 table_domain = dynamodb.Table('senderDomain')
+_audit_table = dynamodb.Table('adminAudit')
 
 # Dominio del propio MailConnect: no se puede registrar como "propio" del cliente.
 PLATFORM_DOMAIN = os.environ.get('PLATFORM_DOMAIN', 'mailconnect.com.co')
@@ -194,6 +195,24 @@ def _add_domain(customer_id, customer, domain):
                      'status': 'pending', 'records': records}}
 
 
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
+
 def lambda_handler(event, context):
     payload = _get_payload(event)
     auth = _authorizer(event)
@@ -229,7 +248,10 @@ def lambda_handler(event, context):
             if dom == PLATFORM_DOMAIN or dom.endswith('.' + PLATFORM_DOMAIN):
                 return {'status': False, 'statusCode': 400,
                         'description': 'Ese correo es de MailConnect; usa el remitente por defecto.'}
-            return _add_email(customer_id, customer, email)
+            result = _add_email(customer_id, customer, email)
+            if result.get('status'):
+                _audit(event, 'domain.add', email, 'Correo remitente registrado en SES')
+            return result
 
         # Dominio: quita un esquema o path por si pegan una URL, y un '@' al inicio.
         domain = re.sub(r'^https?://', '', raw).split('/')[0].lstrip('@')
@@ -239,7 +261,10 @@ def lambda_handler(event, context):
         if domain == PLATFORM_DOMAIN or domain.endswith('.' + PLATFORM_DOMAIN):
             return {'status': False, 'statusCode': 400,
                     'description': 'Ese dominio es de MailConnect; usa el remitente por defecto.'}
-        return _add_domain(customer_id, customer, domain)
+        result = _add_domain(customer_id, customer, domain)
+        if result.get('status'):
+            _audit(event, 'domain.add', domain, 'Dominio remitente registrado en SES (TXT + DKIM)')
+        return result
     except ClientError as e:
         print('Error SES/DynamoDB al agregar identidad: {}'.format(e))
         return {'status': False, 'statusCode': 500, 'description': 'No se pudo registrar el remitente.'}

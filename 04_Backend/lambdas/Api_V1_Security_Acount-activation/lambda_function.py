@@ -1,10 +1,13 @@
 import os
+import time
+import uuid
 import boto3
 from datetime import datetime
 
 dynamodb = boto3.resource('dynamodb')
 table_activation = dynamodb.Table('userActivation')
 table_user = dynamodb.Table('user')
+_audit_table = dynamodb.Table('adminAudit')
 
 # URLs de redirección (ajustables por variable de entorno). Apuntan a la RAÍZ del portal
 # con ?activacion=ok|error|expirado: la landing (/) siempre carga y muestra un aviso claro,
@@ -39,6 +42,30 @@ def _get_key(event):
     if pp.get('token'):
         return pp['token']
     return None
+
+
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
 
 
 def lambda_handler(event, context):
@@ -89,6 +116,10 @@ def lambda_handler(event, context):
             UpdateExpression='SET used = :t',
             ExpressionAttributeValues={':t': True}
         )
+
+        # Ruta PÚBLICA (el enlace del correo): no hay sesión, así que el actor queda
+        # como 'cliente' y el target es el userId activado.
+        _audit(event, 'security.activation', item['userId'], 'Cuenta activada por enlace')
 
         return _redirect(SUCCESS_URL)
 

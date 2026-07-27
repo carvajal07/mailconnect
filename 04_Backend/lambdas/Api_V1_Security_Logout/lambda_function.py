@@ -1,9 +1,12 @@
 import json
+import time
+import uuid
 import boto3
 
 dynamodb = boto3.resource('dynamodb')
 table_session = dynamodb.Table('session')
 table_user = dynamodb.Table('user')
+_audit_table = dynamodb.Table('adminAudit')
 
 
 def _get_payload(event):
@@ -35,6 +38,30 @@ def _resolve_user_id(payload):
     return None
 
 
+def _authorizer(event):
+    if not isinstance(event, dict):
+        return {}
+    return (event.get('requestContext') or {}).get('authorizer') or {}
+
+
+def _audit(event, action, target, detail):
+    """Bitácora (adminAudit) best-effort — nunca rompe la operación."""
+    try:
+        auth = _authorizer(event)
+        _audit_table.put_item(Item={
+            'auditId': str(uuid.uuid4()),
+            'action': action,
+            'actor': str(auth.get('user') or auth.get('userId') or 'cliente'),
+            'actorId': str(auth.get('userId') or ''),
+            'customer': str(auth.get('customer') or ''),
+            'target': str(target),
+            'detail': str(detail),
+            'date': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+        })
+    except Exception as e:
+        print('No se pudo registrar auditoría: {}'.format(e))
+
+
 def lambda_handler(event, context):
     """
     Cierra la sesión del usuario marcando como inactivas sus sesiones en la tabla
@@ -64,6 +91,12 @@ def lambda_handler(event, context):
                 ExpressionAttributeValues={':f': False}
             )
             closed += 1
+
+        # Cierra el par con `security.login`: sin esto la bitácora muestra ingresos
+        # sin salidas y no se puede reconstruir la ventana de una sesión.
+        if closed:
+            _audit(event, 'security.logout', str(payload.get('user') or user_id),
+                   '{} sesión(es) cerrada(s)'.format(closed))
 
         return {
             'status': True,
