@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Box, Typography, Stack, Button, Chip, CircularProgress, Alert,
+  Box, Typography, Stack, Button, Chip, Alert, LinearProgress,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Accordion,
   AccordionSummary, AccordionDetails, Tooltip,
 } from '@mui/material';
@@ -75,7 +75,17 @@ export const DespliegueSection = () => {
         </Alert>
       )}
 
-      {loading && !data && <Box sx={{ textAlign: 'center', py: 6 }}><CircularProgress /></Box>}
+      {/* Carga NO bloqueante: la página (título, descripción, secciones ya cargadas) se ve
+          de inmediato y solo una barra delgada indica que la verificación sigue en curso.
+          Los chequeos hablan con AWS (tablas + colas + lambdas) y tardan varios segundos. */}
+      {loading && (
+        <Box sx={{ mb: 2 }}>
+          <LinearProgress />
+          <Typography variant="caption" color="text.secondary">
+            Verificando recursos en AWS…
+          </Typography>
+        </Box>
+      )}
 
       {s && (
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
@@ -86,8 +96,10 @@ export const DespliegueSection = () => {
         </Stack>
       )}
 
+      {/* Secciones CONTRAÍDAS por defecto: el encabezado (nivel + ok/total) ya dice si algo
+          falla, así la página entra completa en pantalla y se despliega solo lo que interesa. */}
       {data?.sections.map((sec) => (
-        <Accordion key={sec.key} defaultExpanded={sec.level !== 'ok'} variant="outlined" sx={{ mb: 1 }}>
+        <Accordion key={sec.key} variant="outlined" sx={{ mb: 1 }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Stack direction="row" spacing={1.5} alignItems="center" sx={{ width: '100%' }}>
               {LEVEL_ICON[sec.level]}

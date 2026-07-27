@@ -26,6 +26,40 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Ajustes de producto y UI admin (ago 2026)
+- **Funciones avanzadas OFF por defecto en clientes nuevos:** `Api_V1_Security_Register`
+  escribe ahora `customer.featureFlags` con `DEFAULT_DISABLED_FEATURES` en **false** al crear
+  la empresa: `func:canal_voz`, `func:canal_whatsapp`, `tab:whatsapp` (plantillas WSP),
+  `tab:estudio` (PDF avanzadas), `tab:disenador` (PDF profesionales),
+  `func:csv_multiregistro`, `func:json_import`. El resto sigue **FAIL-OPEN** (clave ausente =
+  habilitada) → los clientes YA existentes no cambian. El admin las enciende por cliente en
+  "Funciones por cliente". ⚠️ Mantener la lista en sync con `src/config/features.ts`.
+- **Canales con clave propia:** el catálogo suma el grupo **Canales** con
+  `func:canal_{sms,whatsapp,voz}`. `channelEnabled` exige TODAS las claves del canal:
+  SMS = `func:canal_sms` + `tab:sms`; WSP = `func:canal_whatsapp` + `tab:whatsapp`;
+  **VOZ = `func:canal_voz`** (antes Voz no se gateaba). Al conservar la clave del tab, los
+  clientes que ya tenían el canal apagado por el tab NO lo recuperan.
+- **Auditoría con color:** `ACTION_META` cubre ahora las ~35 acciones que emiten las lambdas
+  (antes 12 → el resto salía en chip gris sin icono) + `FAMILY_META` (fallback por prefijo
+  `security./support./balance./…`) para que una acción NUEVA salga con color/icono coherente.
+  El chip pasa de `outlined` a **relleno** (en outlined el icono heredaba el gris del borde).
+- **Verify-2fa sin PyJWT:** `Api_V1_Security_Verify-2fa` firma/valida el JWT con **stdlib**
+  (`_jwt_encode`/`_jwt_decode`, HS256 con hmac+base64) en vez de `import jwt`. El CD crea las
+  funciones nuevas en python3.13 y el layer de PyJWT está compilado para otro runtime → el
+  import fallaba. Ahora **no necesita layer** ni runtime fijado (mismo enfoque que los gates
+  admin y `Admin_Impersonate`).
+- **Salud de despliegue:** secciones **contraídas** por defecto y carga **no bloqueante**
+  (barra delgada + "Verificando recursos en AWS…") — la página se ve completa de inmediato.
+- **Plantillas de correo (admin):** el tab dejó de ser la herramienta legacy que solo mostraba
+  lo creado/consultado en la sesión y pedía `userId`/`customerId` a mano. Ahora es el
+  **inventario GLOBAL de SES** (`Admin/Templates`): filtro por **cliente** (prefijo del nombre
+  `{cliente}_{consecutivo}_{nombre}`, resuelto al nombre de la empresa) y por nombre,
+  paginación, **ver el contenido real** (asunto + HTML renderizado en iframe `sandbox=""` o el
+  código) y eliminar de SES. Se quitó el alta manual: el nombre lo genera el builder del
+  portal y una plantilla creada a dedo no sería seleccionable en las campañas (para diseñar
+  está "Plantillas prediseñadas").
+- **Paginación en Trabajos** (`JobsSection`) y **filtro por cliente** en Soporte → Plantillas SES.
+
 ### Impersonación auditada "ver como cliente" (ago 2026, Bloque D)
 - **`Api_V1_Admin_Impersonate` (`POST /Admin/Impersonate`, admin + 2ª barrera):** emite un
   token de SESIÓN del tenant (customerId/customer/nit del cliente) para que el admin vea el

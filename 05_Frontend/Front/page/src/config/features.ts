@@ -24,6 +24,26 @@ export interface FeatureDef {
 /** Claves de función puntual (no-tab) referenciadas desde el código del portal. */
 export const FEATURE_CSV_MULTIRECORD = 'func:csv_multiregistro';
 export const FEATURE_JSON_IMPORT = 'func:json_import';
+/** Canales de envío (independientes del tab de plantillas del canal). */
+export const FEATURE_CHANNEL_SMS = 'func:canal_sms';
+export const FEATURE_CHANNEL_WHATSAPP = 'func:canal_whatsapp';
+export const FEATURE_CHANNEL_VOICE = 'func:canal_voz';
+
+/**
+ * Funciones que un cliente NUEVO NO trae habilitadas (las escribe `Api_V1_Security_Register`
+ * en `customer.featureFlags` como false al registrar la empresa). El admin las habilita
+ * por cliente desde "Funciones por cliente".
+ * ⚠️ Mantener en sync con DEFAULT_DISABLED_FEATURES del lambda Register.
+ */
+export const DEFAULT_DISABLED_FEATURES: string[] = [
+  FEATURE_CHANNEL_VOICE,
+  FEATURE_CHANNEL_WHATSAPP,
+  'tab:whatsapp',
+  'tab:estudio',
+  'tab:disenador',
+  FEATURE_CSV_MULTIRECORD,
+  FEATURE_JSON_IMPORT,
+];
 
 /**
  * Catálogo que ve el admin. Agrupado para la UI. El orden define el de la lista.
@@ -55,6 +75,14 @@ export const FEATURE_CATALOG: FeatureDef[] = [
     description: 'Plantillas de texto para SMS.' },
   { key: 'tab:whatsapp', group: 'Plantillas', label: 'Plantillas WhatsApp',
     description: 'Plantillas HSM de WhatsApp.' },
+
+  // ── Canales de envío ──
+  { key: FEATURE_CHANNEL_SMS, group: 'Canales', label: 'Canal SMS',
+    description: 'Ofrecer SMS como canal en campañas y cascada.' },
+  { key: FEATURE_CHANNEL_WHATSAPP, group: 'Canales', label: 'Canal WhatsApp',
+    description: 'Ofrecer WhatsApp como canal en campañas y cascada.' },
+  { key: FEATURE_CHANNEL_VOICE, group: 'Canales', label: 'Canal Voz',
+    description: 'Ofrecer llamadas de voz (TTS) en campañas y cascada.' },
 
   // ── Envíos ──
   { key: 'tab:campanas', group: 'Envíos', label: 'Campañas',
@@ -102,14 +130,18 @@ export const tabEnabled = (
 ): boolean => featureEnabled(flags, `tab:${tabId}`);
 
 /**
- * Canal de campaña → clave de función que lo gobierna. Si el admin apaga el tab de
- * plantillas del canal (p. ej. WhatsApp), ese canal no se ofrece al crear campañas ni
- * en la cascada. Los canales de correo (EM/EAU/EAP) y Voz no se gatean (siempre visibles).
+ * Canal de campaña → claves de función que lo gobiernan (TODAS deben estar habilitadas).
+ * Cada canal tiene su clave propia (`func:canal_*`) y, además, los canales con plantillas
+ * propias siguen respetando su tab: apagar "Plantillas WhatsApp" sigue quitando el canal
+ * WhatsApp (comportamiento previo, para no reactivar canales en clientes ya configurados).
+ * Los canales de correo (EM/EAU/EAP) no se gatean: son la base del producto.
  */
-const CHANNEL_FEATURE: Record<string, string> = {
-  SMS: 'tab:sms',
-  WSP: 'tab:whatsapp',
-  WHATSAPP: 'tab:whatsapp',
+const CHANNEL_FEATURES: Record<string, string[]> = {
+  SMS: [FEATURE_CHANNEL_SMS, 'tab:sms'],
+  WSP: [FEATURE_CHANNEL_WHATSAPP, 'tab:whatsapp'],
+  WHATSAPP: [FEATURE_CHANNEL_WHATSAPP, 'tab:whatsapp'],
+  VOZ: [FEATURE_CHANNEL_VOICE],
+  VOICE: [FEATURE_CHANNEL_VOICE],
 };
 
 /** ¿El canal de campaña está habilitado para este cliente? (canal sin clave → sí). */
@@ -117,6 +149,6 @@ export const channelEnabled = (
   flags: Record<string, boolean> | undefined,
   channel: string,
 ): boolean => {
-  const key = CHANNEL_FEATURE[String(channel || '').toUpperCase()];
-  return !key || featureEnabled(flags, key);
+  const keys = CHANNEL_FEATURES[String(channel || '').toUpperCase()];
+  return !keys || keys.every((k) => featureEnabled(flags, k));
 };

@@ -7,6 +7,7 @@ import {
   Chip,
   CircularProgress,
   InputAdornment,
+  MenuItem,
   Paper,
   Stack,
   Tab,
@@ -70,6 +71,8 @@ export const SoporteSection = () => {
   // ── Plantillas SES globales ──
   const [templates, setTemplates] = useState<SesTemplateRow[] | null>(null);
   const [templateFilter, setTemplateFilter] = useState('');
+  /** Filtro por CLIENTE (prefijo del nombre SES: {prefijo}_{consecutivo}_{nombre}). */
+  const [templateCustomer, setTemplateCustomer] = useState('');
   const [tplPage, setTplPage] = useState(0);
   const [tplRows, setTplRows] = useState(25);
 
@@ -111,11 +114,18 @@ export const SoporteSection = () => {
     else notify(res.description || 'No se pudo consultar el contacto.', 'error');
   };
 
+  /** Prefijos de cliente presentes en las plantillas (el nombre SES es {prefijo}_...). */
+  const templatePrefixes = useMemo(() => {
+    const set = new Set((templates ?? []).map((t) => t.customerPrefix).filter(Boolean));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [templates]);
+
   const filteredTemplates = useMemo(() => {
     const q = templateFilter.trim().toLowerCase();
-    const list = templates ?? [];
+    let list = templates ?? [];
+    if (templateCustomer) list = list.filter((t) => t.customerPrefix === templateCustomer);
     return q ? list.filter((t) => t.name.toLowerCase().includes(q)) : list;
-  }, [templates, templateFilter]);
+  }, [templates, templateFilter, templateCustomer]);
 
   return (
     <Box>
@@ -249,13 +259,41 @@ export const SoporteSection = () => {
       {tab === 2 && (
         templates === null ? <CircularProgress size={26} /> : (
           <Box>
-            <TextField
-              size="small"
-              label="Filtrar por nombre"
-              value={templateFilter}
-              onChange={(e) => { setTemplateFilter(e.target.value); setTplPage(0); }}
-              sx={{ mb: 1.5, minWidth: 280 }}
-            />
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mb: 1.5 }} flexWrap="wrap" useFlexGap>
+              {/* Filtro por CLIENTE: las plantillas SES se nombran {prefijo}_{consecutivo}_{nombre},
+                  así que el prefijo identifica al cliente dueño. Se listan los prefijos presentes
+                  y, si coincide con una empresa registrada, se muestra su nombre. */}
+              <TextField
+                select
+                size="small"
+                label="Cliente"
+                value={templateCustomer}
+                onChange={(e) => { setTemplateCustomer(e.target.value); setTplPage(0); }}
+                sx={{ minWidth: 240 }}
+              >
+                <MenuItem value="">Todos los clientes</MenuItem>
+                {templatePrefixes.map((p) => {
+                  const match = customers.find(
+                    (c) => c.company.toLowerCase().replace(/[^a-z0-9]/g, '') === p.toLowerCase().replace(/[^a-z0-9]/g, ''),
+                  );
+                  return (
+                    <MenuItem key={p} value={p}>{match ? `${match.company} (${p})` : p}</MenuItem>
+                  );
+                })}
+              </TextField>
+              <TextField
+                size="small"
+                label="Filtrar por nombre"
+                value={templateFilter}
+                onChange={(e) => { setTemplateFilter(e.target.value); setTplPage(0); }}
+                sx={{ minWidth: 280 }}
+              />
+              <Chip
+                variant="outlined"
+                label={`${filteredTemplates.length} plantilla(s)`}
+                sx={{ alignSelf: 'center' }}
+              />
+            </Stack>
             <TableContainer component={Paper} variant="outlined">
               <Table size="small">
                 <TableHead>

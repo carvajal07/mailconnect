@@ -27,6 +27,21 @@ BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 
 PBKDF2_ITERATIONS = int(os.environ.get('PBKDF2_ITERATIONS', '600000'))
 
+# Funciones que un cliente NUEVO NO trae habilitadas (opt-in): canales avanzados y
+# editores/cargas especiales. El admin las enciende por cliente desde "Funciones por
+# cliente" (Customer/Update {features}). El resto de funciones sigue FAIL-OPEN (clave
+# ausente = habilitada), por eso estas se escriben explícitamente en false.
+# ⚠️ Mantener en sync con el catálogo del front (05_Frontend/.../src/config/features.ts).
+DEFAULT_DISABLED_FEATURES = (
+    'func:canal_voz',          # canal Voz en campañas y cascada
+    'func:canal_whatsapp',     # canal WhatsApp en campañas y cascada
+    'tab:whatsapp',            # tab Plantillas WhatsApp
+    'tab:estudio',             # Plantillas PDF avanzadas (Estudio, lienzo)
+    'tab:disenador',           # Plantillas PDF profesionales (Diseñador)
+    'func:csv_multiregistro',  # asistente de CSV multiregistro
+    'func:json_import',        # importar bases en JSON
+)
+
 
 def _hash_password(password, salt):
     """PBKDF2-HMAC-SHA256 (stdlib, sin dependencias/layer). Formato auto-descriptivo
@@ -356,6 +371,14 @@ def lambda_handler(event, context):
                                 # autorizados de cuentas recién registradas. Prepare-batch
                                 # lo verifica en el envío real.
                                 'realSendEnabled': False,
+                                # Funciones AVANZADAS deshabilitadas por defecto (opt-in):
+                                # canales Voz/WhatsApp, editores PDF de lienzo, plantillas
+                                # WhatsApp y las cargas especiales de bases. El cliente nuevo
+                                # arranca con lo básico y el admin habilita lo demás desde
+                                # "Funciones por cliente". Convención FAIL-OPEN del resto:
+                                # una clave ausente = habilitada, por eso se escriben
+                                # EXPLÍCITAMENTE en false (ver 05_Frontend .../config/features.ts).
+                                'featureFlags': {k: False for k in DEFAULT_DISABLED_FEATURES},
                                 'date': formattedDate
                             }
                         )
