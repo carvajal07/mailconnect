@@ -33,8 +33,6 @@ import SearchIcon from '@mui/icons-material/Search';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { getUser } from '../../services/authService';
-import { templatesService } from '../../services/templatesService';
 import { supportService } from '../../services/supportService';
 import type { SesTemplateRow } from '../../services/supportService';
 import { customerService } from '../../services/customerService';
@@ -64,7 +62,6 @@ import { formatDateTime } from '../../utils/datetime';
 export const PlantillasSection = () => {
   const { notify, FeedbackSnackbar } = useFeedback();
   const { confirm, ConfirmDialog } = useConfirm();
-  const sessionUserId = getUser()?.userId ?? '';
 
   const [templates, setTemplates] = useState<SesTemplateRow[] | null>(null);
   const [customers, setCustomers] = useState<CustomerSummary[]>([]);
@@ -132,16 +129,14 @@ export const PlantillasSection = () => {
 
   const view = async (t: SesTemplateRow) => {
     setLoadingName(t.name);
-    const res = await templatesService.get(sessionUserId, t.name);
+    // Ruta ADMIN (no /Template/Get-template): esa exige que la plantilla sea del tenant
+    // del token, así que el admin recibía "no pertenece a tu cuenta" con las de otros.
+    const res = await supportService.getTemplate(t.name);
     setLoadingName('');
-    if (isOk(res) && res.template) {
+    if (isOk(res) && res.data?.template) {
       setPreview('render');
-      setViewing({
-        name: res.template.TemplateName || t.name,
-        subject: res.template.SubjectPart ?? '',
-        html: res.template.HtmlPart ?? '',
-        text: res.template.TextPart ?? '',
-      });
+      const tpl = res.data.template;
+      setViewing({ name: tpl.name || t.name, subject: tpl.subject, html: tpl.html, text: tpl.text });
     } else {
       notify(res.description || 'No se pudo obtener el contenido de la plantilla.', 'error');
     }
@@ -157,7 +152,7 @@ export const PlantillasSection = () => {
     });
     if (!ok) return;
     setDeleting(t.name);
-    const res = await templatesService.remove(sessionUserId, t.name);
+    const res = await supportService.deleteTemplate(t.name);
     setDeleting('');
     if (isOk(res)) {
       notify('Plantilla eliminada.', 'success');

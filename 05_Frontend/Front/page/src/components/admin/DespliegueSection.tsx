@@ -30,6 +30,16 @@ const LEVEL_ICON: Record<SectionLevel, React.ReactNode> = {
   error: <ErrorIcon color="error" />,
 };
 
+// Secciones que devuelve la lambda, en orden. Se conocen de antemano para pintar el
+// ESQUELETO (títulos + "verificando…") desde el primer render: la verificación habla con
+// AWS y tarda varios segundos, y una pantalla vacía parecía que no cargaba nada.
+const SECTION_SKELETON: Array<{ key: string; title: string }> = [
+  { key: 'tables', title: 'Tablas DynamoDB núcleo' },
+  { key: 'queues', title: 'Colas SQS del pipeline (+ DLQ)' },
+  { key: 'lambdas', title: 'Lambdas críticas (existencia · SECRET_KEY · trigger)' },
+  { key: 'overview', title: 'Funciones desplegadas (total en AWS)' },
+];
+
 /**
  * Sección admin: PANEL DE SALUD DE DESPLIEGUE (Bloque K). Verifica contra AWS si los
  * recursos [J] (lambdas, tablas, colas, SECRET_KEY, triggers) existen de verdad.
@@ -95,6 +105,20 @@ export const DespliegueSection = () => {
           <SummaryChip icon={<HelpOutlineIcon fontSize="small" />} label={`${s.unknown} sin verificar`} color="default" />
         </Stack>
       )}
+
+      {/* Esqueleto: mientras la verificación va, los títulos ya están en pantalla (con un
+          chip "verificando…") en vez de dejar la página vacía. */}
+      {!data && SECTION_SKELETON.map((sec) => (
+        <Accordion key={sec.key} variant="outlined" disabled sx={{ mb: 1 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Stack direction="row" spacing={1.5} alignItems="center" sx={{ width: '100%' }}>
+              <HelpOutlineIcon color="disabled" />
+              <Typography sx={{ fontWeight: 600, flex: 1 }}>{sec.title}</Typography>
+              <Chip size="small" variant="outlined" label={loading ? 'verificando…' : '—'} />
+            </Stack>
+          </AccordionSummary>
+        </Accordion>
+      ))}
 
       {/* Secciones CONTRAÍDAS por defecto: el encabezado (nivel + ok/total) ya dice si algo
           falla, así la página entra completa en pantalla y se despliega solo lo que interesa. */}

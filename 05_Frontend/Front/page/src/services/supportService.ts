@@ -37,6 +37,14 @@ export interface SesTemplateRow {
   createdAt: string;
 }
 
+/** Contenido real de una plantilla SES (Admin/Templates action=get). */
+export interface SesTemplateContent {
+  name: string;
+  subject: string;
+  html: string;
+  text: string;
+}
+
 export interface GlobalDomainRow {
   domainId: string;
   customerId: string;
@@ -63,6 +71,18 @@ export const supportService = {
   /** Listado global de plantillas SES de la cuenta (admin). */
   listTemplates: (): Promise<ApiResponse<{ templates?: SesTemplateRow[]; count?: number; truncated?: boolean }>> =>
     apiPost('/Admin/Templates', {}),
+
+  /**
+   * Contenido REAL de una plantilla SES (asunto + HTML + texto), por la ruta ADMIN.
+   * No se usa /Template/Get-template: esa exige que el nombre empiece por el prefijo del
+   * tenant del token, así que el admin recibía 403 al abrir la plantilla de otro cliente.
+   */
+  getTemplate: (name: string): Promise<ApiResponse<{ template?: SesTemplateContent }>> =>
+    apiPost('/Admin/Templates', { action: 'get', name }),
+
+  /** Elimina una plantilla de SES (admin; misma razón que getTemplate). */
+  deleteTemplate: (name: string): Promise<ApiResponse<{ name?: string }>> =>
+    apiPost('/Admin/Templates', { action: 'delete', name }),
 
   /** Dominios/correos remitentes de TODOS los clientes (admin). */
   listDomains: (): Promise<ApiResponse<{ domains?: GlobalDomainRow[]; count?: number }>> =>

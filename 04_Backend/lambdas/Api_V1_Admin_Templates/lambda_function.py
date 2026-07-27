@@ -1,16 +1,31 @@
 '''
-Lambda ADMIN: listado GLOBAL de plantillas SES (todas, no solo las creadas en la sesión —
-cierra el aviso de PlantillasSection). Convención de nombre: {customer}_{consecutivo}_{nombre}
-→ se deriva el prefijo de cliente para agrupar/buscar.
+Lambda ADMIN: gestión GLOBAL de las plantillas SES de la cuenta (todas, de todos los
+clientes). Convención de nombre: {customer}_{consecutivo}_{nombre} → se deriva el prefijo
+de cliente para agrupar/buscar.
 
-Ruta: POST /Admin/Templates  (no-proxy, envelope estándar, admin-only)
-Request: {}   (el filtrado/búsqueda es del front sobre la lista completa)
-Respuesta 200 data: { templates: [{name, customerPrefix, createdAt}], count, truncated }
+Ruta: POST /Admin/Templates  (no-proxy, envelope estándar, admin-only + 2ª barrera JWT)
+Request: { action?, name? }
+  - action ausente | 'list'  → listado completo (el filtrado/búsqueda lo hace el front).
+  - action 'get'    { name } → contenido REAL de la plantilla (asunto + HTML + texto).
+  - action 'delete' { name } → elimina la plantilla de SES.
+Respuestas 200 data:
+  list   → { templates: [{name, customerPrefix, createdAt}], count, truncated }
+  get    → { template: {name, subject, html, text} }
+  delete → { name }
+404 si la plantilla no existe · 400 sin nombre.
 
-⚠️ [J] despliegue: ruta /Admin/Templates (admin) + env SECRET_KEY; IAM ses:ListTemplates.
+⚠️ Por qué get/delete viven AQUÍ y no en las rutas de cliente (/Template/Get-template,
+/Template/Delete-template): esas exigen que el nombre empiece por el prefijo del tenant
+del token (aislamiento multi-tenant), así que un admin viendo la plantilla de OTRA empresa
+recibía 403. En vez de abrirles un bypass por rol (superficie de escalación en una ruta de
+cliente), la operación admin se hace en esta lambda, que ya valida la FIRMA del JWT.
+
+⚠️ [J] despliegue: ruta /Admin/Templates (admin) + env SECRET_KEY; IAM
+`ses:ListTemplates` + **`ses:GetTemplate`** + **`ses:DeleteTemplate`**.
 '''
 import json
 import boto3
+from botocore.exceptions import ClientError
 
 REGION = 'us-east-1'
 ses = boto3.client('ses', region_name=REGION)
@@ -81,11 +96,63 @@ def _is_admin(event):
     return bool(claims) and str(claims.get('role', '')).lower() == 'admin'
 
 
+def _get_payload(event):
+    if isinstance(event, dict) and isinstance(event.get('body'), dict):
+        return event['body']
+    if isinstance(event, dict) and isinstance(event.get('body'), str):
+        try:
+            parsed = json.loads(event['body'])
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    return event if isinstance(event, dict) else {}
+
+
+def _template_content(name):
+    """Contenido real de la plantilla en SES (asunto + HTML + texto)."""
+    tpl = ses.get_template(TemplateName=name).get('Template', {})
+    return {'name': tpl.get('TemplateName', name),
+            'subject': tpl.get('SubjectPart', '') or '',
+            'html': tpl.get('HtmlPart', '') or '',
+            'text': tpl.get('TextPart', '') or ''}
+
+
 def lambda_handler(event, context):
     if not _is_admin(event):
         return {'status': False, 'statusCode': 403,
                 'description': 'Acceso restringido a administradores.',
                 'data': {'templates': [], 'count': 0}}
+
+    payload = _get_payload(event)
+    action = str(payload.get('action', 'list') or 'list').lower()
+
+    if action in ('get', 'delete'):
+        name = str(payload.get('name', '') or '').strip()
+        if not name:
+            return {'status': False, 'statusCode': 400,
+                    'description': 'Indica el nombre de la plantilla.', 'data': {}}
+        try:
+            if action == 'get':
+                return {'status': True, 'statusCode': 200,
+                        'description': 'Contenido de la plantilla',
+                        'data': {'template': _template_content(name)}}
+            ses.delete_template(TemplateName=name)
+            return {'status': True, 'statusCode': 200,
+                    'description': 'Plantilla eliminada de SES', 'data': {'name': name}}
+        except ClientError as e:
+            code = e.response.get('Error', {}).get('Code', '')
+            if code in ('TemplateDoesNotExist', 'NotFoundException'):
+                return {'status': False, 'statusCode': 404,
+                        'description': 'La plantilla no existe en SES.', 'data': {}}
+            print('Error en Admin/Templates {}: {}'.format(action, e))
+            return {'status': False, 'statusCode': 500,
+                    'description': 'Error no controlado con la plantilla', 'data': {}}
+        except Exception as e:
+            print('Error en Admin/Templates {}: {}'.format(action, e))
+            return {'status': False, 'statusCode': 500,
+                    'description': 'Error no controlado con la plantilla', 'data': {}}
+
     try:
         templates = []
         token = None
