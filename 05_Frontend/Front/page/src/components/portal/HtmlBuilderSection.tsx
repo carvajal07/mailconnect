@@ -237,6 +237,8 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   // ── Variable con valor por defecto ──────────────────────────────────────────
   const [varDialog, setVarDialog] = useState<{ field: string; fallback: string } | null>(null);
 
+  // Menú del botón "Agregar bloque" de la zona final del lienzo.
+  const [appendAnchor, setAppendAnchor] = useState<null | HTMLElement>(null);
   const [draftsAnchor, setDraftsAnchor] = useState<null | HTMLElement>(null);
   const [showHtml, setShowHtml] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -862,10 +864,54 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                   </Fragment>
                 ))}
                 {dragging && dropIndex === blocks.length && <DropLine />}
+
+                {/* ZONA FINAL del lienzo. Sin ella, en cuanto se agrega el primer bloque
+                    los bloques cubren toda la hoja y para soltar AL FINAL hay que apuntar
+                    a la franja de pocos píxeles que queda debajo del último. Esta área
+                    siempre está disponible como destino cómodo (y como botón). */}
+                <Box
+                  onDragOver={(e) => { if (dragSource.current) { e.preventDefault(); e.stopPropagation(); setDropIndex(blocks.length); } }}
+                  onDrop={(e) => { e.preventDefault(); e.stopPropagation(); insertAt(blocks.length); }}
+                  onClick={() => setSelectedId(null)}
+                  sx={{
+                    m: 1.5, py: 3, px: 2, borderRadius: 1.5, textAlign: 'center',
+                    border: '2px dashed',
+                    borderColor: dragging && dropIndex === blocks.length ? 'primary.main' : '#dbe3ec',
+                    bgcolor: dragging && dropIndex === blocks.length ? 'rgba(0,117,190,.08)' : 'transparent',
+                    transition: 'background .15s, border-color .15s',
+                    cursor: 'default',
+                  }}
+                >
+                  <Typography variant="body2" sx={{ color: '#94a3b8', mb: 1 }}>
+                    {dragging ? 'Suelta aquí para agregarlo al final' : 'Arrastra un bloque aquí para agregarlo al final'}
+                  </Typography>
+                  <Button
+                    size="small" variant="outlined" startIcon={<AddIcon />}
+                    onClick={(e) => { e.stopPropagation(); setAppendAnchor(e.currentTarget); }}
+                  >
+                    Agregar bloque
+                  </Button>
+                </Box>
                 </Box>
               )}
             </Box>
           </Box>
+
+          {/* Menú del botón "Agregar bloque" de la zona final: agrega SIEMPRE al final,
+              sin tener que arrastrar ni acertarle a la franja de abajo. */}
+          <Menu anchorEl={appendAnchor} open={Boolean(appendAnchor)} onClose={() => setAppendAnchor(null)}>
+            {PALETTE_GROUPS.map((g) => [
+              <MenuItem key={g.label} disabled sx={{ opacity: 1 }}>
+                <Typography variant="overline" color="text.secondary">{g.label}</Typography>
+              </MenuItem>,
+              ...g.types.map((t) => (
+                <MenuItem key={t} onClick={() => { addBlock(t); setAppendAnchor(null); }} sx={{ pl: 3 }}>
+                  <Box sx={{ mr: 1, display: 'flex', color: 'primary.main' }}>{BLOCK_ICONS[t]}</Box>
+                  {BLOCK_LABELS[t]}
+                </MenuItem>
+              )),
+            ])}
+          </Menu>
 
           {/* Propiedades */}
           <Paper variant="outlined" sx={{ p: 2, width: { md: 300 }, flexShrink: 0, position: { md: 'sticky' }, top: { md: 88 } }}>

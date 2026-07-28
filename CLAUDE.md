@@ -70,6 +70,11 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
     restringe a un correo de un usuario ACTIVO del MISMO tenant; un endpoint que enviara
     HTML arbitrario a direcciones arbitrarias sería un relay de spam con la reputación
     (COMPARTIDA) de la plataforma. Tope diario por tenant y auditoría `template.test-send`.
+- **Zona final del lienzo.** En cuanto se agregaba el primer bloque, los bloques cubrían
+  toda la hoja y para soltar AL FINAL había que apuntarle a la franja de pocos píxeles que
+  quedaba debajo del último. Ahora hay un área punteada permanente al final del lienzo que
+  es destino de arrastre cómodo **y** botón: **"Agregar bloque"** abre el menú de la paleta
+  y lo agrega al final sin arrastrar.
 - **D · Productividad.** **Deshacer/rehacer** (Ctrl+Z / Ctrl+Shift+Z; snapshots con debounce
   para no crear un paso por tecla, y sin secuestrar el atajo mientras se escribe),
   **autoguardado** con diálogo de recuperación al volver, y **biblioteca de diseños en
