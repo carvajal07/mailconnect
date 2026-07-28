@@ -75,8 +75,11 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   **slider de 1 a 4 columnas** (más allá, en móvil cada celda queda inservible y en Outlook
   la tabla se desarma) y, según ese número, una **galería de distribuciones** en miniatura
   (`COLUMN_LAYOUTS`: 50/50 · 33/67 · 67/33 · 25/75 · 75/25 · 33/34/33 · 25/50/25 · … ).
-  Las columnas nacen **VACÍAS** con un **“+”** por celda en el LIENZO que abre el menú de
-  tipos anidables. Los bloques de dentro se **seleccionan y editan en el lienzo**
+  Las columnas nacen **VACÍAS** con un **“+”** por celda en el LIENZO que hace de **botón**
+  (abre el menú de tipos anidables) **y de DESTINO de arrastre**: se puede soltar ahí un
+  bloque de la paleta o mover uno que ya estaba en el lienzo (sale del nivel superior y
+  entra a la columna en una sola actualización). Solo acepta `NESTABLE_TYPES` — meter una
+  tabla ancha (columnas, productos, redes) en una celda estrecha la desarma. Los bloques de dentro se **seleccionan y editan en el lienzo**
   (`findBlockDeep`/`patchBlockDeep`/`removeBlockDeep` recorren el árbol). Al reducir el
   número de columnas, el contenido de las que desaparecen se **mueve a la última**, no se
   borra en silencio. El campo `widths` reemplaza a `ratio`, que se sigue leyendo para las
@@ -86,6 +89,9 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   (redes, productos, HTML crudo). Los combinados (imagen+texto, texto+botón…) eran atajos
   rígidos que el bloque de columnas cubre mejor. ⚠️ Se siguen **renderizando y editando**
   (`LEGACY_TYPES`) para no romper plantillas ya guardadas; solo no se pueden crear nuevos.
+- **Selector de base ARRIBA, no en el panel de propiedades:** al fondo del panel quedaba
+  fuera de vista en cuanto el bloque seleccionado tenía muchas opciones, y es algo que se
+  usa mientras se redacta. Ahora va bajo la barra de acciones, solo en la vista de editor.
 - **Barra de herramientas del bloque por ENCIMA de él** (`top:-16` + `pt` en el contenedor
   del lienzo): antes (`top:6`) tapaba justo el contenido que se acababa de seleccionar.
 - **Zona final del lienzo.** En cuanto se agregaba el primer bloque, los bloques cubrían

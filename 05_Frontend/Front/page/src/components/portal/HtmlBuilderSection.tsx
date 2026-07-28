@@ -275,6 +275,8 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [appendAnchor, setAppendAnchor] = useState<null | HTMLElement>(null);
   // Menú del "+" de una columna vacía: qué bloque meter y en qué columna.
   const [columnAdd, setColumnAdd] = useState<{ blockId: string; colIndex: number; anchor: HTMLElement } | null>(null);
+  // Columna sobre la que se está arrastrando algo (para resaltar su "+").
+  const [columnHover, setColumnHover] = useState<{ blockId: string; colIndex: number } | null>(null);
   const [draftsAnchor, setDraftsAnchor] = useState<null | HTMLElement>(null);
   const [showHtml, setShowHtml] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -328,6 +330,38 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const removeBlock = (id: string) => {
     setBlocks((prev) => removeBlockDeep(prev, id));
     if (selectedId === id) setSelectedId(null);
+  };
+
+  /**
+   * ¿El arrastre actual se puede soltar DENTRO de una columna? Solo los tipos anidables:
+   * meter una tabla ancha (columnas, productos, redes) en una celda estrecha la desarma.
+   */
+  const dragFitsColumn = (): boolean => {
+    const src = dragSource.current;
+    if (!src) return false;
+    const type = src.kind === 'palette' ? src.type : blocks[src.index]?.type;
+    return Boolean(type && NESTABLE_TYPES.includes(type));
+  };
+
+  /** Suelta el arrastre en curso dentro de una columna. */
+  const dropInColumn = (columnsId: string, colIndex: number) => {
+    const src = dragSource.current;
+    endDrag();
+    setColumnHover(null);
+    if (!src) return;
+
+    if (src.kind === 'palette') {
+      addToColumn(columnsId, colIndex, src.type);
+      return;
+    }
+    // Mover un bloque que ya estaba en el lienzo: sale del nivel superior y entra a la
+    // columna, en una sola actualización para no dejar un estado intermedio inconsistente.
+    const moved = blocks[src.index];
+    if (!moved || !NESTABLE_TYPES.includes(moved.type)) return;
+    setBlocks((prev) => patchBlockDeep(removeBlockDeep(prev, moved.id), columnsId, (b) => ({
+      cols: (b.cols || []).map((c, i) => (i === colIndex ? [...c, moved] : c)),
+    })));
+    setSelectedId(moved.id);
   };
 
   /** Agrega un bloque DENTRO de una columna (el "+" del lienzo). */
@@ -397,6 +431,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     dragSource.current = null;
     setDragging(false);
     setDropIndex(null);
+    setColumnHover(null);   // si el arrastre terminó fuera, el "+" no debe quedar resaltado
   };
 
   /** Actualiza el índice de inserción según si el cursor está en la mitad superior/inferior. */
@@ -727,6 +762,15 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         ))}
       </Menu>
 
+      {/* Campos de la base: alimentan el menú "Insertar variable" y permiten insertar en
+          el bloque seleccionado. Va ARRIBA (no al fondo del panel de propiedades, donde
+          quedaba fuera de vista en cuanto el bloque tenía muchas opciones). */}
+      {view === 'editor' && (
+        <Box sx={{ mb: 2 }}>
+          <DatabaseFieldPicker compact onFieldsChange={setDbFields} onInsert={insertVariable} />
+        </Box>
+      )}
+
       {view === 'preview' ? (
         <Box>
           <Stack direction="row" justifyContent="center" mb={1.5}>
@@ -912,6 +956,12 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                         onSelectChild={setSelectedId}
                         onEditChild={(id, patch) => setBlocks((prev) => patchBlockDeep(prev, id, patch))}
                         onAddToColumn={(colIndex, anchor) => setColumnAdd({ blockId: b.id, colIndex, anchor })}
+                        dragging={dragging}
+                        canDropInColumn={dragFitsColumn()}
+                        hoverColumn={columnHover?.blockId === b.id ? columnHover.colIndex : null}
+                        onColumnDragOver={(colIndex) => setColumnHover({ blockId: b.id, colIndex })}
+                        onColumnDragLeave={() => setColumnHover(null)}
+                        onDropInColumn={(colIndex) => dropInColumn(b.id, colIndex)}
                         variables={dbFields.length ? dbFields : VARIABLES}
                         onRequestVariable={() => setVarDialog({ field: (dbFields[0] || VARIABLES[0]), fallback: '' })}
                       />
@@ -1003,11 +1053,6 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                 <BlockEditor block={selected} onChange={updateSelected} onInsertVariable={insertVariable} onUploadImage={uploadImage} variableFields={dbFields} />
               </Box>
             )}
-            {/* Campos desde una base: alimentan el menú "Insertar variable" y permiten
-                insertar directamente en el bloque de texto seleccionado. */}
-            <Box sx={{ mt: 2 }}>
-              <DatabaseFieldPicker compact onFieldsChange={setDbFields} onInsert={insertVariable} />
-            </Box>
           </Paper>
         </Stack>
       )}
@@ -1401,11 +1446,21 @@ interface PreviewProps {
   onEditChild?: (id: string, patch: Partial<Block>) => void;
   /** Abre el menú para agregar un bloque a la columna `i` (el "+" del lienzo). */
   onAddToColumn?: (colIndex: number, anchor: HTMLElement) => void;
+  /** Hay un arrastre en curso en el lienzo. */
+  dragging?: boolean;
+  /** Lo que se arrastra CABE dentro de una columna (tipo anidable). */
+  canDropInColumn?: boolean;
+  /** Índice de la columna bajo el cursor (para resaltarla). */
+  hoverColumn?: number | null;
+  onColumnDragOver?: (colIndex: number) => void;
+  onColumnDragLeave?: () => void;
+  onDropInColumn?: (colIndex: number) => void;
 }
 
 const BlockPreview = ({
   block: b, onEditText, variables = [], onRequestVariable,
   selectedId, onSelectChild, onEditChild, onAddToColumn,
+  dragging, canDropInColumn, hoverColumn, onColumnDragOver, onColumnDragLeave, onDropInColumn,
 }: PreviewProps) => {
   const align = b.align;
   const editable = Boolean(onEditText);
@@ -1485,20 +1540,41 @@ const BlockPreview = ({
               ))}
               {/* Columna VACÍA: el "+" es el destino para poner lo que se quiera. Antes
                   las columnas nacían con texto de relleno que casi siempre se borraba. */}
-              {!(cols[i] || []).length && (
-                <Box
-                  onClick={(e) => { if (onAddToColumn) { e.stopPropagation(); onAddToColumn(i, e.currentTarget); } }}
-                  sx={{
-                    border: '2px dashed #cbd5e1', borderRadius: 1.5, minHeight: 84,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: '#94a3b8', cursor: onAddToColumn ? 'pointer' : 'default',
-                    transition: 'border-color .15s, color .15s',
-                    '&:hover': onAddToColumn ? { borderColor: 'primary.main', color: 'primary.main' } : undefined,
-                  }}
-                >
-                  <AddIcon sx={{ fontSize: 30 }} />
-                </Box>
-              )}
+              {!(cols[i] || []).length && (() => {
+                const activo = Boolean(dragging && canDropInColumn && hoverColumn === i);
+                return (
+                  <Box
+                    onClick={(e) => { if (onAddToColumn) { e.stopPropagation(); onAddToColumn(i, e.currentTarget); } }}
+                    // Además de botón, el "+" es DESTINO de arrastre: se puede soltar aquí
+                    // un bloque de la paleta o mover uno que ya esté en el lienzo.
+                    onDragOver={(e) => {
+                      if (!canDropInColumn || !onColumnDragOver) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onColumnDragOver(i);
+                    }}
+                    onDragLeave={() => onColumnDragLeave?.()}
+                    onDrop={(e) => {
+                      if (!canDropInColumn || !onDropInColumn) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onDropInColumn(i);
+                    }}
+                    sx={{
+                      border: '2px dashed', borderRadius: 1.5, minHeight: 84,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      borderColor: activo ? 'primary.main' : '#cbd5e1',
+                      bgcolor: activo ? 'rgba(0,117,190,.10)' : 'transparent',
+                      color: activo ? 'primary.main' : '#94a3b8',
+                      cursor: onAddToColumn ? 'pointer' : 'default',
+                      transition: 'border-color .15s, color .15s, background .15s',
+                      '&:hover': onAddToColumn ? { borderColor: 'primary.main', color: 'primary.main' } : undefined,
+                    }}
+                  >
+                    <AddIcon sx={{ fontSize: activo ? 36 : 30, transition: 'font-size .15s' }} />
+                  </Box>
+                );
+              })()}
             </Box>
           ))}
         </Box>
