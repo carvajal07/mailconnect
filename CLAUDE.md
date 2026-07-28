@@ -75,8 +75,11 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   **slider de 1 a 4 columnas** (más allá, en móvil cada celda queda inservible y en Outlook
   la tabla se desarma) y, según ese número, una **galería de distribuciones** en miniatura
   (`COLUMN_LAYOUTS`: 50/50 · 33/67 · 67/33 · 25/75 · 75/25 · 33/34/33 · 25/50/25 · … ).
-  Las columnas nacen **VACÍAS** con un **“+”** por celda en el LIENZO que abre el menú de
-  tipos anidables. Los bloques de dentro se **seleccionan y editan en el lienzo**
+  Las columnas nacen **VACÍAS** con un **“+”** por celda en el LIENZO que hace de **botón**
+  (abre el menú de tipos anidables) **y de DESTINO de arrastre**: se puede soltar ahí un
+  bloque de la paleta o mover uno que ya estaba en el lienzo (sale del nivel superior y
+  entra a la columna en una sola actualización). Solo acepta `NESTABLE_TYPES` — meter una
+  tabla ancha (columnas, productos, redes) en una celda estrecha la desarma. Los bloques de dentro se **seleccionan y editan en el lienzo**
   (`findBlockDeep`/`patchBlockDeep`/`removeBlockDeep` recorren el árbol). Al reducir el
   número de columnas, el contenido de las que desaparecen se **mueve a la última**, no se
   borra en silencio. El campo `widths` reemplaza a `ratio`, que se sigue leyendo para las
@@ -86,6 +89,9 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   (redes, productos, HTML crudo). Los combinados (imagen+texto, texto+botón…) eran atajos
   rígidos que el bloque de columnas cubre mejor. ⚠️ Se siguen **renderizando y editando**
   (`LEGACY_TYPES`) para no romper plantillas ya guardadas; solo no se pueden crear nuevos.
+- **Selector de base ARRIBA, no en el panel de propiedades:** al fondo del panel quedaba
+  fuera de vista en cuanto el bloque seleccionado tenía muchas opciones, y es algo que se
+  usa mientras se redacta. Ahora va bajo la barra de acciones, solo en la vista de editor.
 - **Barra de herramientas del bloque por ENCIMA de él** (`top:-16` + `pt` en el contenedor
   del lienzo): antes (`top:6`) tapaba justo el contenido que se acababa de seleccionar.
 - **Zona final del lienzo.** En cuanto se agregaba el primer bloque, los bloques cubrían
@@ -117,6 +123,127 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   `UpdateItem/CreateTable/DescribeTable assistantRateLimit`, `PutItem adminAudit`; env
   `SENDER_EMAIL` y opcional `TEST_SEND_DAILY_LIMIT` (default 20). `Api_V1_MessageTemplate_
   Create` acepta el canal `HTML` (sin cambios de infra: misma tabla y misma ruta).
+
+### Constructor HTML: texto plano, fidelidad, redes e imágenes reutilizables (ago 2026)
+> Dos DEFECTOS + los dos huecos más visibles del análisis del editor.
+
+- **Texto plano del correo (defecto).** Al publicar, la `TextPart` de la plantilla SES se
+  armaba con `blocks.filter(text|heading).map(b => b.text)`. Con el texto enriquecido eso
+  emitía **HTML crudo dentro de la parte de texto**, se saltaba botones, columnas (un correo
+  hecho a base de columnas quedaba con el texto **VACÍO**), productos y redes, y **no incluía
+  `{{unsubscribeUrl}}`**. Los filtros anti-spam comparan la parte HTML con la de texto: una
+  discrepancia grande penaliza y no se ve en ningún reporte, solo en la reputación. Ahora
+  `generatePlainText()` recorre TODOS los tipos (aplanando las columnas en orden de lectura),
+  emite los botones como `Etiqueta: URL` (sin la URL el enlace no existe en texto), encabeza
+  con el preheader y cierra SIEMPRE con el pie de baja.
+- **Fidelidad del lienzo (defecto).** El contenedor del bloque en el lienzo era `p:2` fijo, así
+  que el `padY`/`padX`/`bgColor` que se configuraba **salía en el correo pero no se veía en el
+  editor**. Ya refleja los tres. ⚠️ La causa de fondo sigue: hay **dos implementaciones del
+  render** (`BlockPreview` en React para el lienzo y `renderBlock` en string para el correo);
+  unificarlas en un iframe del HTML real es la deuda pendiente del editor.
+- **Redes sociales con INSIGNIAS.** `socialRow` emitía enlaces de texto (`Facebook · Instagram`),
+  que es lo que más delataba al editor. Ahora dibuja insignias redondas con el color de marca
+  (tabla + `bgcolor`, sin imágenes), 8 redes (suma YouTube, TikTok, WhatsApp y sitio web),
+  tamaño configurable y opción de **icono propio** por red.
+  ⚠️ **Por qué insignias y no logos:** una imagen de correo necesita URL pública absoluta.
+  Enlazar logos de un CDN ajeno repite el problema de `via.placeholder.com` (si ese dominio
+  cae, TODOS los correos ya enviados quedan rotos) y un `data:` URI lo bloquea Gmail. La
+  insignia pesa 0, se ve igual en todos los clientes y no depende de nadie. `border-radius` lo
+  ignora Outlook: queda cuadrada, que se ve bien igual. El estilo `text` queda como LEGADO.
+- **Biblioteca de imágenes (`Api_V1_Resources_List`, `POST /Resources/List`).** Cada imagen se
+  subía al prefijo público `resources/` del bucket del tenant y ahí se perdía: no había forma
+  de reutilizarla, así que el mismo logo se volvía a subir en cada plantilla. Ahora hay un
+  diálogo **"Mis imágenes"** (buscador + subir nueva) en los bloques de imagen, en el combo
+  legado y en la grilla de productos. La lambda solo lee el bucket del PROPIO cliente (el NIT
+  sale del token) y solo los prefijos **públicos** (`resources/`, `attachment/`): `database/`
+  y `document/` —bases de contactos y comprobantes— no se listan ni por error.
+- **Cobertura:** `htmlBuilder.test.ts` sube a **49** (+9 sobre el texto plano: sin etiquetas,
+  con enlace de baja, columnas aplanadas en orden, botón con su URL, botón sin destino
+  omitido, productos con enlace, preheader al inicio, jerarquía del encabezado, y el caso del
+  correo hecho SOLO de columnas que antes quedaba sin texto).
+- ⚠️ `[J]`: lambda `Api_V1_Resources_List` (el CD la crea) + ruta `/Resources/List` **ya en
+  routes.json**; IAM **`s3:ListBucket`** sobre los buckets de cliente (`mailconnect-*`).
+
+### Constructor HTML: UTM, visibilidad, bandeja y render unificado (ago 2026)
+> Puntos 3, 4 y 5 del análisis del editor.
+
+- **UTM automático** (`settings.utm`): se agregan `utm_source/medium/campaign` a **todos**
+  los enlaces al GENERAR, no al escribirlos — así el usuario ve y edita su URL limpia, y
+  cambiar la campaña re-etiqueta todo de una vez. ⚠️ **No se tocan las variables de
+  plantilla**: meterle parámetros a `{{unsubscribeUrl}}` rompería el enlace firmado que
+  arma el motor de envío. Tampoco `mailto:`/`tel:`/anclas, y un enlace que ya traiga
+  `utm_source` a mano se respeta. Sin UTM el tráfico del correo llega a Analytics como
+  "directo" y la campaña no se puede atribuir.
+- **Visibilidad por dispositivo** (`hideMobile`/`hideDesktop`). ⚠️ Asimetría deliberada:
+  "solo móvil" nace **oculto** en el HTML y la media query lo enciende; al revés, un
+  cliente que ignora las media queries mostraría los DOS bloques.
+- **Botón configurable**: **ancho completo** (lo que más convierte en móvil), radio,
+  tamaño de fuente y relleno. Era el elemento que genera las conversiones y el menos
+  configurable de todos.
+- **Vista de bandeja**: en Vista previa se simula **remitente + asunto + preheader** como
+  se ven en Gmail, con ambos campos editables ahí mismo y contador de caracteres. Antes el
+  asunto vivía en el diálogo de Publicar y el preheader en Ajustes: la terna que decide si
+  ABREN el correo no se podía ver junta en ningún lado.
+- **Chequeo previo ampliado**: expresiones que marcan **spam** (avisa desde 2 acumuladas —
+  una promoción legítima usa "gratis"), preheader en mayúsculas o con `¡¡!!`, **contraste**
+  por debajo de 4.5:1 (WCAG AA, con `contrastRatio` propio), texto **menor a 14 px**
+  (ilegible en móvil y iOS lo reescala rompiendo la maquetación), productos sin título
+  (es su texto alternativo) y enlaces sin UTM.
+- **Render UNIFICADO (punto 5).** `renderBlock` se exporta y **el lienzo dibuja el HTML
+  REAL** del correo para botón, redes, productos, divisor y HTML crudo. Había dos
+  renderizadores que divergían en silencio (el relleno y el fondo por bloque salían en el
+  correo pero no al editar). ⚠️ **Alcance:** los bloques con interacción propia en el
+  lienzo —texto/encabezado (editor en línea), imagen (marcador de vacío) y columnas ("+"
+  por celda y selección de hijos)— conservan su capa React. Cambiar TODO a un iframe
+  exigiría rehacer el arrastre sobre el iframe y perder la edición en línea; no compensa.
+- **Cobertura:** `htmlBuilder.test.ts` sube a **65** (+16: UTM etiquetando/respetando/
+  ignorando variables y con `&`, visibilidad en ambos sentidos, botón completo y sus
+  medidas, los 5 chequeos nuevos + `contrastRatio`, y un guard de que el lienzo usa
+  literalmente la misma función que el correo).
+
+### Constructor HTML: vídeo, redimensionar, atajos y versionado (ago 2026)
+> Cuatro faltantes de la lista del análisis del editor. El primero es de producto (el vídeo
+> es de los formatos que más se piden) y los otros tres son de ergonomía de uso diario.
+
+- **Bloque de VÍDEO.** Emite **miniatura clicable + botón debajo**, nunca `<video>` ni
+  `<iframe>`: Gmail y Outlook los eliminan, así que un correo con vídeo "embebido" llega
+  vacío. De un enlace de **YouTube** (`watch?v=` / `youtu.be` / `shorts/` / `embed/`) se
+  deriva la miniatura sola (`img.youtube.com/vi/{id}/hqdefault.jpg`); para otras
+  plataformas se sube una propia. ⚠️ El botón va **DEBAJO**, no superpuesto sobre la
+  imagen: superponer exige `background` en el `td`, que en Outlook necesita VML y se rompe
+  con facilidad. Sin enlace o sin miniatura el bloque se **omite** al generar y el chequeo
+  previo lo reporta como **error** (si no, el cliente creería que envió el vídeo).
+- **Redimensionar imágenes ARRASTRANDO** (`ResizableImage`): tirador en el borde de la
+  imagen del lienzo que escribe `imageWidth`. ⚠️ El desplazamiento se multiplica por 2 en
+  las imágenes **centradas** (crecen por los dos lados). El campo numérico del panel sigue
+  ahí; el ancho llega al correo como atributo `width` + `max-width:100%` (fluida en móvil).
+- **Atajos de teclado**: `Ctrl+Z`/`Ctrl+Shift+Z`/`Ctrl+Y` (deshacer/rehacer), **`Ctrl+D`**
+  (duplicar el bloque), **`Supr`/`Retroceso`** (eliminar), **`Alt+↑`/`Alt+↓`** (mover) y
+  `Esc` (quitar la selección). ⚠️ El manejador **sale temprano** si el foco está en un
+  `INPUT`/`TEXTAREA`/`contentEditable`: sin eso, borrar una letra del texto borraría el
+  bloque entero. Como el listener se registra UNA vez, el bloque seleccionado y la lista
+  se leen de `useRef` (un closure sobre el estado se quedaría con el valor del montaje).
+  Se descubren por un botón **⌨ con la lista** en la barra (un atajo que nadie conoce no
+  existe).
+- **Duplicar y VERSIONAR plantillas.** Guardar con un nombre que ya existe **actualiza** ese
+  diseño (antes llenaba la galería de copias) y la versión anterior queda en
+  **`messageTemplate.designHistory`** (`{at, designJson}`, la más reciente primero, tope
+  `DESIGN_MAX_VERSIONS`=10). En la galería: **"Duplicar"** (crea una copia con nombre propio
+  — para partir de un diseño aprobado sin arriesgarse a pisarlo) y **"Restaurar"** por
+  versión (la carga en el lienzo; queda vigente solo si se vuelve a guardar).
+  ⚠️ **Tope por TAMAÑO además del de cantidad** (`HISTORY_BUDGET_BYTES`, 320 KB): 10 diseños
+  grandes pasan el límite de **400 KB por ítem** de DynamoDB → el `put_item` fallaría y se
+  perdería el guardado del usuario **por culpa del historial**. Se recortan las versiones
+  más viejas hasta caber. Versionar valida el dueño (403 cross-tenant).
+- **Cobertura:** `htmlBuilder.test.ts` sube a **72** (+7: id de YouTube y miniatura derivada,
+  miniatura propia que gana, que NO salga `<video>`/`<iframe>`, vídeo sin enlace omitido +
+  reportado, ancho redimensionado en el correo, enlace del vídeo en la parte de TEXTO) y
+  `test_message_templates.py` a **18** (+6 del canal HTML:
+  guarda el modelo, 400 sin diseño, actualizar versiona en vez de duplicar,
+  tope de 10, recorte por presupuesto sin fallar el guardado, y 403 cross-tenant).
+- ⚠️ `[J]`: **sin cambios de infra** — mismo `messageTemplate`, misma ruta
+  `/MessageTemplate/Create`. Envs opcionales `DESIGN_MAX_VERSIONS` (10) y
+  `DESIGN_HISTORY_BUDGET` (327680).
 
 ### Interruptor GLOBAL del IVA (ago 2026)
 - **Qué:** MailConnect puede **no ser responsable de IVA**. Nuevo ajuste de plataforma

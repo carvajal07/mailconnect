@@ -10,6 +10,10 @@
 import { createBlock, nextId, DEFAULT_SETTINGS, type Block, type BlockType, type EmailSettings } from './htmlBuilder';
 
 export interface TemplatePreset {
+  /** Id del diseño guardado en backend (solo los compartidos con el equipo). */
+  messageTemplateId?: string;
+  /** Versiones anteriores, la más reciente primero. */
+  history?: { at: string; designJson: string }[];
   id: string;
   name: string;
   description: string;

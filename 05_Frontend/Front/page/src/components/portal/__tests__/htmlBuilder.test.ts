@@ -15,11 +15,16 @@ import {
 import {
   createBlock,
   generateHtml,
+  generatePlainText,
   analyzeTemplate,
   DEFAULT_SETTINGS,
   COLUMN_LAYOUTS,
   MAX_COLUMNS,
   columnWidths,
+  contrastRatio,
+  renderBlock,
+  videoThumbnail,
+  youtubeId,
   type Block,
 } from '../htmlBuilder';
 
@@ -283,5 +288,242 @@ describe('distribuciones de columnas', () => {
     const b = { ...createBlock('columns'), widths: [25, 25, 25, 25] };
     const out = generateHtml([b], settings);
     expect((out.match(/width="25%"/g) || []).length).toBe(4);
+  });
+});
+
+describe('generatePlainText — la parte de TEXTO del correo', () => {
+  it('NO lleva etiquetas HTML aunque el bloque sea enriquecido', () => {
+    const b = { ...createBlock('text'), text: 'Hola <strong>Ana</strong>, <a href="https://x.co">mira</a>', rich: true };
+    const out = generatePlainText([b], settings);
+    expect(out).toContain('Hola Ana, mira');
+    expect(out).not.toContain('<strong>');
+    expect(out).not.toContain('href=');
+  });
+
+  it('incluye SIEMPRE el enlace de baja (si no, esa versión incumple)', () => {
+    const out = generatePlainText([createBlock('text')], settings);
+    expect(out).toContain('{{unsubscribeUrl}}');
+    expect(out).toContain('{{preferencesUrl}}');
+  });
+
+  it('aplana las columnas en orden de lectura (antes quedaba VACÍO)', () => {
+    const b = {
+      ...createBlock('columns'),
+      cols: [
+        [{ ...createBlock('text'), text: 'texto de la izquierda' }],
+        [{ ...createBlock('text'), text: 'texto de la derecha' }],
+      ],
+    };
+    const out = generatePlainText([b], settings);
+    expect(out.indexOf('texto de la izquierda')).toBeGreaterThan(-1);
+    expect(out.indexOf('texto de la derecha')).toBeGreaterThan(out.indexOf('texto de la izquierda'));
+  });
+
+  it('el botón lleva su URL: sin ella el destinatario no puede hacer clic', () => {
+    const b = { ...createBlock('button'), text: 'Comprar', url: 'https://tienda.co/x' };
+    expect(generatePlainText([b], settings)).toContain('Comprar: https://tienda.co/x');
+  });
+
+  it('omite el botón sin destino en vez de escribir "https://"', () => {
+    const b = createBlock('button');   // nace con url 'https://'
+    expect(generatePlainText([b], settings)).not.toContain('https://\n');
+  });
+
+  it('incluye los productos con su enlace', () => {
+    const b = {
+      ...createBlock('products'),
+      items: [{ image: '', title: 'Camisa', text: 'Algodón', url: 'https://t.co/1' }],
+    };
+    const out = generatePlainText([b], settings);
+    expect(out).toContain('Camisa — Algodón: https://t.co/1');
+  });
+
+  it('el preheader encabeza el texto (es lo que se ve en la bandeja)', () => {
+    const out = generatePlainText([createBlock('text')], { ...settings, preheader: 'Novedades de julio' });
+    expect(out.startsWith('Novedades de julio')).toBe(true);
+  });
+
+  it('el encabezado se marca para dar jerarquía sin formato', () => {
+    const b = { ...createBlock('heading'), text: 'Titulo', rich: true };
+    expect(generatePlainText([b], settings)).toContain('======');
+  });
+
+  it('un correo hecho SOLO de columnas ya no queda sin texto', () => {
+    const b = { ...createBlock('columns'), cols: [[{ ...createBlock('text'), text: 'contenido real' }], []] };
+    const out = generatePlainText([b], settings);
+    expect(out).toContain('contenido real');
+  });
+});
+
+describe('UTM automático', () => {
+  const conUtm = { ...settings, utm: { enabled: true, source: 'mailconnect', medium: 'email', campaign: 'agosto' } };
+
+  it('etiqueta los enlaces http(s)', () => {
+    const b = { ...createBlock('button'), url: 'https://tienda.co/x' };
+    const out = generateHtml([b], conUtm);
+    expect(out).toContain('utm_source=mailconnect');
+    expect(out).toContain('utm_campaign=agosto');
+  });
+
+  it('NO toca las variables de plantilla (romperían el enlace firmado de baja)', () => {
+    const out = generateHtml([createBlock('text')], conUtm);
+    expect(out).toContain('href="{{unsubscribeUrl}}"');
+    expect(out).not.toContain('{{unsubscribeUrl}}?utm');
+  });
+
+  it('respeta un enlace que ya venía etiquetado a mano', () => {
+    const b = { ...createBlock('button'), url: 'https://t.co/x?utm_source=propio' };
+    const out = generateHtml([b], conUtm);
+    expect(out).toContain('utm_source=propio');
+    expect(out).not.toContain('utm_source=mailconnect');
+  });
+
+  it('usa & cuando la URL ya tiene parámetros', () => {
+    const b = { ...createBlock('button'), url: 'https://t.co/x?id=7' };
+    expect(generateHtml([b], conUtm)).toContain('id=7&utm_source=');
+  });
+
+  it('desactivado no agrega nada', () => {
+    const b = { ...createBlock('button'), url: 'https://t.co/x' };
+    expect(generateHtml([b], settings)).not.toContain('utm_');
+  });
+});
+
+describe('visibilidad por dispositivo', () => {
+  it('“solo escritorio” marca el bloque para ocultarlo en móvil', () => {
+    const b = { ...createBlock('text'), hideMobile: true };
+    expect(generateHtml([b], settings)).toContain('mc-hide-mobile');
+  });
+
+  it('“solo móvil” nace OCULTO y la media query lo enciende', () => {
+    // Al revés no sirve: un cliente que ignora las media queries mostraría ambos bloques.
+    const b = { ...createBlock('text'), hideDesktop: true };
+    const out = generateHtml([b], settings);
+    expect(out).toContain('mc-hide-desktop');
+    expect(out).toContain('display:none;max-height:0;overflow:hidden;mso-hide:all;');
+  });
+});
+
+describe('botón configurable', () => {
+  it('el ancho completo ocupa toda la fila', () => {
+    const b = { ...createBlock('button'), buttonFullWidth: true, url: 'https://x.co' };
+    const out = generateHtml([b], settings);
+    expect(out).toContain('width="100%"');
+    expect(out).toContain('display:block;');
+  });
+
+  it('respeta radio, tamaño y relleno', () => {
+    const b = { ...createBlock('button'), url: 'https://x.co', buttonRadius: 24, buttonFontSize: 18, buttonPadY: 16, buttonPadX: 40 };
+    const out = generateHtml([b], settings);
+    expect(out).toContain('border-radius:24px');
+    expect(out).toContain('font-size:18px');
+    expect(out).toContain('padding:16px 40px');
+  });
+});
+
+describe('chequeo previo ampliado', () => {
+  const find = (issues: ReturnType<typeof analyzeTemplate>, frag: string) =>
+    issues.find((i) => i.title.toLowerCase().includes(frag));
+
+  it('avisa cuando se acumulan expresiones de spam', () => {
+    const b = { ...createBlock('text'), text: 'GRATIS y garantizado, última oportunidad para gana dinero', rich: true };
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, 'spam')).toBeTruthy();
+  });
+
+  it('una palabra suelta NO dispara el aviso (una promoción legítima las usa)', () => {
+    const b = { ...createBlock('text'), text: 'Envío gratis en compras superiores a cien mil pesos colombianos.', rich: true };
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, 'spam')).toBeFalsy();
+  });
+
+  it('detecta poco contraste', () => {
+    const b = { ...createBlock('text'), color: '#f2f2f2' };   // casi blanco sobre blanco
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, 'contraste')).toBeTruthy();
+  });
+
+  it('detecta texto por debajo de 14 px', () => {
+    const b = { ...createBlock('text'), fontSize: 11 };
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, '14 px')).toBeTruthy();
+  });
+
+  it('avisa de los enlaces sin UTM', () => {
+    const b = { ...createBlock('button'), url: 'https://x.co' };
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, 'utm')).toBeTruthy();
+  });
+
+  it('contrastRatio: negro sobre blanco es el máximo', () => {
+    expect(Math.round(contrastRatio('#000000', '#ffffff') || 0)).toBe(21);
+  });
+});
+
+describe('render unificado lienzo ↔ correo', () => {
+  it('renderBlock es la MISMA función que usa el correo', () => {
+    // El lienzo dibuja esto; si divergiera, volvería el bug de "en el editor se ve
+    // distinto" que motivó la unificación.
+    const b = { ...createBlock('button'), text: 'Comprar', url: 'https://x.co', buttonFullWidth: true };
+    const suelto = renderBlock(b, settings);
+    expect(generateHtml([b], settings)).toContain(suelto);
+  });
+});
+
+describe('bloque de vídeo', () => {
+  it('deriva la miniatura de un enlace de YouTube', () => {
+    expect(youtubeId('https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+    expect(youtubeId('https://youtu.be/dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+    expect(youtubeId('https://vimeo.com/12345')).toBeNull();
+
+    const b = { ...createBlock('video'), videoUrl: 'https://youtu.be/dQw4w9WgXcQ' };
+    expect(videoThumbnail(b)).toContain('img.youtube.com/vi/dQw4w9WgXcQ');
+  });
+
+  it('la miniatura propia gana sobre la derivada', () => {
+    const b = { ...createBlock('video'), videoUrl: 'https://youtu.be/abc123', videoThumb: 'https://cdn.x/portada.jpg' };
+    expect(videoThumbnail(b)).toBe('https://cdn.x/portada.jpg');
+  });
+
+  it('envía una IMAGEN clicable, nunca <video> ni <iframe> (los clientes los eliminan)', () => {
+    const b = { ...createBlock('video'), videoUrl: 'https://youtu.be/dQw4w9WgXcQ', videoLabel: 'Ver la demo' };
+    const html = generateHtml([b], settings);
+    expect(html).not.toContain('<video');
+    expect(html).not.toContain('<iframe');
+    expect(html).toContain('img.youtube.com/vi/dQw4w9WgXcQ');
+    // La miniatura lleva al vídeo y además queda el botón debajo.
+    expect(html).toContain('href="https://youtu.be/dQw4w9WgXcQ"');
+    expect(html).toContain('Ver la demo');
+  });
+
+  it('sin enlace se OMITE y el chequeo previo lo reporta como error', () => {
+    const b = { ...createBlock('video'), videoUrl: '' };
+    const html = generateHtml([b], settings);
+    expect(html).not.toContain('img.youtube.com');
+    const issues = analyzeTemplate([b], settings, html);
+    expect(issues.some((i) => i.level === 'error' && /vídeo/.test(i.title))).toBe(true);
+  });
+
+  it('respeta el ancho al que se redimensionó la miniatura', () => {
+    const b = { ...createBlock('video'), videoUrl: 'https://youtu.be/abc123', imageWidth: 320 };
+    expect(generateHtml([b], settings)).toContain('width="320"');
+  });
+});
+
+describe('redimensionar imágenes', () => {
+  it('el ancho del bloque llega al correo (no solo al lienzo)', () => {
+    const b = { ...createBlock('image'), url: 'https://cdn.x/a.png', text: 'Foto', imageWidth: 240 };
+    const html = generateHtml([b], settings);
+    expect(html).toContain('width="240"');
+    // Fluida igual: en móvil no debe desbordar el ancho de la pantalla.
+    expect(html).toContain('max-width:100%');
+  });
+});
+
+describe('vídeo en la parte de TEXTO del correo', () => {
+  it('emite el enlace: en texto plano la miniatura no existe', () => {
+    const b = { ...createBlock('video'), videoUrl: 'https://youtu.be/abc123', videoLabel: 'Ver la demo' };
+    const txt = generatePlainText([b], settings);
+    expect(txt).toContain('Ver la demo: https://youtu.be/abc123');
   });
 });

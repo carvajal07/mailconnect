@@ -61,9 +61,13 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import RestoreIcon from '@mui/icons-material/Restore';
+import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary';
+import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import FormatClearIcon from '@mui/icons-material/FormatClear';
+import KeyboardIcon from '@mui/icons-material/Keyboard';
 import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
+import { formatDateTime } from '../../utils/datetime';
 import { templatesService, sendTestEmail } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
 import { campaignsService } from '../../services/campaignsService';
@@ -72,6 +76,7 @@ import { useFeedback } from '../../hooks/useFeedback';
 import { allPresets, customPresets, cloneBlocks, type TemplatePreset } from './templatePresets';
 import { emailDesigns } from '../../services/messageTemplatesService';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
+import { ImageLibraryDialog } from './ImageLibraryDialog';
 import {
   BLOCK_LABELS,
   VARIABLES,
@@ -79,10 +84,15 @@ import {
   DEFAULT_SETTINGS,
   COLUMN_LAYOUTS,
   MAX_COLUMNS,
+  SOCIAL_NETWORKS,
+  videoThumbnail,
+  youtubeId,
   columnWidths,
   NESTABLE_TYPES,
   createBlock,
   generateHtml,
+  generatePlainText,
+  renderBlock,
   analyzeTemplate,
   htmlBytes,
   GMAIL_CLIP_BYTES,
@@ -93,7 +103,7 @@ import {
   type ProductItem,
 } from './htmlBuilder';
 import { RichTextEditor } from './RichTextEditor';
-import { blockContentHtml, variableToken, richToPlain, sanitizeBlockHtml } from './richText';
+import { blockContentHtml, variableToken, richToPlain } from './richText';
 
 /** Autoguardado del constructor (red de seguridad ante un cierre accidental). */
 const AUTOSAVE_KEY = 'mc_html_autosave';
@@ -112,6 +122,7 @@ const BLOCK_ICONS: Record<BlockType, ReactNode> = {
   textButton: <SmartButtonIcon fontSize="small" />,
   buttonTextRow: <SmartButtonIcon fontSize="small" />,
   products: <GridViewIcon fontSize="small" />,
+  video: <PlayCircleOutlineIcon fontSize="small" />,
   divider: <HorizontalRuleIcon fontSize="small" />,
   spacer: <HeightIcon fontSize="small" />,
 };
@@ -224,17 +235,47 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
+      // Nunca se secuestra un atajo mientras se escribe: dentro de un campo o del editor
+      // de texto, Ctrl+Z y Supr son del navegador y hacen falta.
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || el?.isContentEditable) return;
+
       const k = e.key.toLowerCase();
-      // No se secuestra el atajo mientras se escribe: el navegador ya deshace el texto.
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return;
-      if (k === 'z' && !e.shiftKey) { e.preventDefault(); travel(-1); }
-      else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); travel(1); }
+
+      if (e.ctrlKey || e.metaKey) {
+        if (k === 'z' && !e.shiftKey) { e.preventDefault(); travel(-1); }
+        else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); travel(1); }
+        else if (k === 'd' && selectedIdRef.current) {
+          e.preventDefault();
+          duplicateBlock(selectedIdRef.current);
+        }
+        return;
+      }
+
+      const id = selectedIdRef.current;
+      if (!id) return;
+
+      if (e.key === 'Escape') { setSelectedId(null); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeBlock(id); return; }
+      // Alt+flechas mueve el bloque; las flechas solas se dejan al desplazamiento normal.
+      if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        const idx = blocksRef.current.findIndex((b) => b.id === id);
+        if (idx >= 0) move(idx, e.key === 'ArrowUp' ? -1 : 1);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Referencias vivas para el manejador de teclado: se registra UNA vez, así que sin
+  // ellas leería el estado del primer render.
+  const selectedIdRef = useRef<string | null>(null);
+  const blocksRef = useRef<Block[]>([]);
+  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
+  useEffect(() => { blocksRef.current = blocks; }, [blocks]);
 
   // ── Autoguardado ────────────────────────────────────────────────────────────
   // Los borradores con nombre siguen siendo manuales; esto es la red de seguridad para
@@ -275,6 +316,8 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [appendAnchor, setAppendAnchor] = useState<null | HTMLElement>(null);
   // Menú del "+" de una columna vacía: qué bloque meter y en qué columna.
   const [columnAdd, setColumnAdd] = useState<{ blockId: string; colIndex: number; anchor: HTMLElement } | null>(null);
+  // Columna sobre la que se está arrastrando algo (para resaltar su "+").
+  const [columnHover, setColumnHover] = useState<{ blockId: string; colIndex: number } | null>(null);
   const [draftsAnchor, setDraftsAnchor] = useState<null | HTMLElement>(null);
   const [showHtml, setShowHtml] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -306,6 +349,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   // Chequeo previo de entregabilidad (peso, alt, enlaces vacíos, imagen/texto…).
   const issues = useMemo(() => analyzeTemplate(blocks, settings, html), [blocks, settings, html]);
   const bytes = useMemo(() => htmlBytes(html), [html]);
+  const plainText = useMemo(() => generatePlainText(blocks, settings), [blocks, settings]);
   // La selección puede apuntar a un bloque ANIDADO dentro de una columna, así que la
   // búsqueda y las mutaciones recorren el árbol, no solo el primer nivel.
   const selected = findBlockDeep(blocks, selectedId) ?? null;
@@ -328,6 +372,38 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const removeBlock = (id: string) => {
     setBlocks((prev) => removeBlockDeep(prev, id));
     if (selectedId === id) setSelectedId(null);
+  };
+
+  /**
+   * ¿El arrastre actual se puede soltar DENTRO de una columna? Solo los tipos anidables:
+   * meter una tabla ancha (columnas, productos, redes) en una celda estrecha la desarma.
+   */
+  const dragFitsColumn = (): boolean => {
+    const src = dragSource.current;
+    if (!src) return false;
+    const type = src.kind === 'palette' ? src.type : blocks[src.index]?.type;
+    return Boolean(type && NESTABLE_TYPES.includes(type));
+  };
+
+  /** Suelta el arrastre en curso dentro de una columna. */
+  const dropInColumn = (columnsId: string, colIndex: number) => {
+    const src = dragSource.current;
+    endDrag();
+    setColumnHover(null);
+    if (!src) return;
+
+    if (src.kind === 'palette') {
+      addToColumn(columnsId, colIndex, src.type);
+      return;
+    }
+    // Mover un bloque que ya estaba en el lienzo: sale del nivel superior y entra a la
+    // columna, en una sola actualización para no dejar un estado intermedio inconsistente.
+    const moved = blocks[src.index];
+    if (!moved || !NESTABLE_TYPES.includes(moved.type)) return;
+    setBlocks((prev) => patchBlockDeep(removeBlockDeep(prev, moved.id), columnsId, (b) => ({
+      cols: (b.cols || []).map((c, i) => (i === colIndex ? [...c, moved] : c)),
+    })));
+    setSelectedId(moved.id);
   };
 
   /** Agrega un bloque DENTRO de una columna (el "+" del lienzo). */
@@ -397,6 +473,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     dragSource.current = null;
     setDragging(false);
     setDropIndex(null);
+    setColumnHover(null);   // si el arrastre terminó fuera, el "+" no debe quedar resaltado
   };
 
   /** Actualiza el índice de inserción según si el cursor está en la mitad superior/inferior. */
@@ -507,10 +584,10 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
       templateName: meta.templateName,
       subject: meta.subject,
       htmlBody: html,
-      textBody: blocks
-        .filter((b) => b.type === 'text' || b.type === 'heading')
-        .map((b) => b.text)
-        .join('\n'),
+      // Alternativa de texto plano completa (recorre TODO, incluidas las columnas, y
+      // lleva el enlace de baja). Antes emitía el HTML crudo de los bloques enriquecidos
+      // y se saltaba botones/columnas/productos.
+      textBody: plainText,
     });
     setSaving(false);
     if (isOk(res)) {
@@ -574,6 +651,54 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   };
 
   /**
+   * DUPLICAR una plantilla: la copia queda con nombre propio, así se puede partir de un
+   * diseño aprobado sin arriesgarse a pisarlo (guardar con el MISMO nombre versiona el
+   * original). Se guarda en backend y en el espejo local, como el resto de la galería.
+   */
+  const duplicatePreset = async (p: TemplatePreset, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const usados = new Set(presetList.map((x) => x.name));
+    let name = `${p.name} (copia)`;
+    for (let i = 2; usados.has(name); i += 1) name = `${p.name} (copia ${i})`;
+    const description = p.description || 'Copia';
+    customPresets.save(name, cloneBlocks(p.blocks), p.settings, description);
+    setPresetsVersion((v) => v + 1);
+
+    // Sin messageTemplateId → el backend CREA una plantilla nueva (no versiona el original).
+    const res = await emailDesigns.save(sessionCustomerId, name, {
+      blocks: p.blocks, settings: p.settings, description,
+    });
+    if (isOk(res)) {
+      setSharedDesigns((prev) => [
+        ...prev,
+        { ...p, id: `shared:${res.data?.messageTemplateId ?? name}`, name, description, custom: true, messageTemplateId: res.data?.messageTemplateId, history: [] },
+      ]);
+      notify(`Se creó "${name}".`, 'success');
+    } else {
+      notify(`"${name}" quedó solo en este navegador (${res.description || 'error'}).`, 'warning');
+    }
+  };
+
+  /** Historial de versiones del diseño abierto en el diálogo (null = cerrado). */
+  const [historyOf, setHistoryOf] = useState<TemplatePreset | null>(null);
+
+  /** Carga una versión anterior en el lienzo. No la publica: hay que guardar para fijarla. */
+  const restoreVersion = (raw: string, at: string) => {
+    try {
+      const d = JSON.parse(raw || '{}');
+      if (!d?.blocks?.length) throw new Error('vacío');
+      setBlocks(cloneBlocks(d.blocks as Block[]));
+      setSettings({ ...DEFAULT_SETTINGS, ...(d.settings || {}) });
+      setSelectedId(null);
+      setHistoryOf(null);
+      setPresetsOpen(false);
+      notify(`Versión del ${formatDateTime(at)} cargada. Guárdala para dejarla como la vigente.`, 'success');
+    } catch {
+      notify('Esa versión no se pudo leer.', 'error');
+    }
+  };
+
+  /**
    * Guarda el diseño como prediseñado. Va al BACKEND (canal `HTML` de `messageTemplate`)
    * para que lo vea todo el equipo; el espejo en localStorage queda como respaldo para
    * seguir trabajando si la API no responde.
@@ -587,9 +712,13 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     setSavePresetOpen(false);
     setPresetMeta({ name: '', description: '' });
 
+    // Si ya existe un diseño con ESE nombre se actualiza (el backend guarda la versión
+    // anterior en el historial); si no, se crea. Así "guardar" no llena la galería de
+    // copias y sí deja rastro de los cambios.
+    const previo = sharedDesigns.find((d) => d.name === name)?.messageTemplateId;
     const res = await emailDesigns.save(sessionCustomerId, name, {
       blocks, settings, description: presetMeta.description.trim(),
-    });
+    }, previo);
     if (isOk(res)) {
       notify(`Plantilla "${name}" guardada y compartida con tu equipo.`, 'success');
     } else {
@@ -608,11 +737,14 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
           const d = JSON.parse(t.designJson || '{}');
           if (!d?.blocks?.length) return [];
           return [{
+            id: `shared:${t.messageTemplateId}`,
             name: t.name,
             description: d.description || 'Compartida con el equipo',
             blocks: d.blocks as Block[],
             settings: { ...DEFAULT_SETTINGS, ...(d.settings || {}) },
             custom: true,
+            messageTemplateId: t.messageTemplateId,
+            history: t.designHistory ?? [],
           } as TemplatePreset];
         } catch { return []; }
       });
@@ -679,6 +811,21 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               </IconButton>
             </span>
           </Tooltip>
+          {/* Los atajos no se descubren solos: sin esta ayuda nadie sabría que existen. */}
+          <Tooltip
+            title={
+              <Box sx={{ whiteSpace: 'pre-line', fontSize: 12 }}>
+                {'Atajos de teclado\n'
+                  + 'Ctrl+Z / Ctrl+Shift+Z · deshacer / rehacer\n'
+                  + 'Ctrl+D · duplicar el bloque seleccionado\n'
+                  + 'Supr · eliminar el bloque seleccionado\n'
+                  + 'Alt+↑ / Alt+↓ · mover el bloque\n'
+                  + 'Esc · quitar la selección'}
+              </Box>
+            }
+          >
+            <IconButton size="small"><KeyboardIcon fontSize="small" /></IconButton>
+          </Tooltip>
           <Button size="small" variant="outlined" startIcon={<CodeIcon />} onClick={() => setShowHtml(true)}>
             Ver HTML
           </Button>
@@ -727,8 +874,56 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         ))}
       </Menu>
 
+      {/* Campos de la base: alimentan el menú "Insertar variable" y permiten insertar en
+          el bloque seleccionado. Va ARRIBA (no al fondo del panel de propiedades, donde
+          quedaba fuera de vista en cuanto el bloque tenía muchas opciones). */}
+      {view === 'editor' && (
+        <Box sx={{ mb: 2 }}>
+          <DatabaseFieldPicker compact onFieldsChange={setDbFields} onInsert={insertVariable} />
+        </Box>
+      )}
+
       {view === 'preview' ? (
         <Box>
+          {/* Lo que realmente decide si abren el correo es la terna remitente + asunto +
+              preheader, y hasta ahora no había forma de verla junta: el asunto vivía en el
+              diálogo de publicar y el preheader en ajustes. */}
+          <Paper variant="outlined" sx={{ p: 2, mb: 2, maxWidth: 720, mx: 'auto' }}>
+            <Typography variant="overline" color="text.secondary">Así llega a la bandeja</Typography>
+            <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ mt: 1 }}>
+              <Box sx={{
+                width: 40, height: 40, borderRadius: '50%', bgcolor: 'primary.main', color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0,
+              }}>
+                {(sessionCustomer || 'M').charAt(0).toUpperCase()}
+              </Box>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Typography variant="body2" fontWeight={700} noWrap>
+                  {sessionCustomer || 'Tu empresa'}
+                </Typography>
+                <Typography variant="body2" fontWeight={600} noWrap sx={{ color: meta.subject ? 'text.primary' : 'error.main' }}>
+                  {meta.subject || '(sin asunto — lo pide el diálogo de Publicar)'}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" noWrap>
+                  {settings.preheader || '(sin texto de vista previa — el cliente de correo mostrará el primer texto que encuentre)'}
+                </Typography>
+              </Box>
+            </Stack>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 2 }}>
+              <TextField
+                size="small" fullWidth label="Asunto" value={meta.subject}
+                onChange={(e) => setMeta((m) => ({ ...m, subject: e.target.value }))}
+                helperText={`${meta.subject.length} caracteres · a partir de ~45 se recorta en móvil`}
+                error={meta.subject.length > 70}
+              />
+              <TextField
+                size="small" fullWidth label="Texto de vista previa" value={settings.preheader}
+                onChange={(e) => setSetting('preheader', e.target.value)}
+                helperText={`${settings.preheader.length} caracteres · se ve junto al asunto`}
+              />
+            </Stack>
+          </Paper>
+
           <Stack direction="row" justifyContent="center" mb={1.5}>
             <ToggleButtonGroup size="small" exclusive value={device} onChange={(_, v) => v && setDevice(v)}>
               <ToggleButton value="desktop">
@@ -904,14 +1099,28 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                         <DeleteIcon fontSize="small" />
                       </IconButton>
                     </Stack>
-                    <Box sx={{ p: 2 }}>
+                    {/* El lienzo refleja el relleno y el fondo PROPIOS del bloque: antes
+                        eran fijos (p:2), así que configurabas un fondo de sección y no se
+                        veía nada hasta la vista previa. */}
+                    <Box sx={{
+                      py: `${b.padY ?? 10}px`,
+                      px: `${b.padX ?? 24}px`,
+                      bgcolor: b.bgColor || 'transparent',
+                    }}>
                       <BlockPreview
                         block={b}
+                        settings={settings}
                         selectedId={selectedId}
                         onEditText={selectedId === b.id ? (patch) => updateSelected(patch) : undefined}
                         onSelectChild={setSelectedId}
                         onEditChild={(id, patch) => setBlocks((prev) => patchBlockDeep(prev, id, patch))}
                         onAddToColumn={(colIndex, anchor) => setColumnAdd({ blockId: b.id, colIndex, anchor })}
+                        dragging={dragging}
+                        canDropInColumn={dragFitsColumn()}
+                        hoverColumn={columnHover?.blockId === b.id ? columnHover.colIndex : null}
+                        onColumnDragOver={(colIndex) => setColumnHover({ blockId: b.id, colIndex })}
+                        onColumnDragLeave={() => setColumnHover(null)}
+                        onDropInColumn={(colIndex) => dropInColumn(b.id, colIndex)}
                         variables={dbFields.length ? dbFields : VARIABLES}
                         onRequestVariable={() => setVarDialog({ field: (dbFields[0] || VARIABLES[0]), fallback: '' })}
                       />
@@ -1003,11 +1212,6 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                 <BlockEditor block={selected} onChange={updateSelected} onInsertVariable={insertVariable} onUploadImage={uploadImage} variableFields={dbFields} />
               </Box>
             )}
-            {/* Campos desde una base: alimentan el menú "Insertar variable" y permiten
-                insertar directamente en el bloque de texto seleccionado. */}
-            <Box sx={{ mt: 2 }}>
-              <DatabaseFieldPicker compact onFieldsChange={setDbFields} onInsert={insertVariable} />
-            </Box>
           </Paper>
         </Stack>
       )}
@@ -1041,14 +1245,28 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                       {p.name}
                     </Typography>
                     {p.custom && (
-                      <>
-                        <Box component="span" sx={{ fontSize: 11, color: 'primary.main', border: '1px solid', borderColor: 'primary.main', borderRadius: 1, px: 0.5 }}>
-                          Personalizada
-                        </Box>
+                      <Box component="span" sx={{ fontSize: 11, color: 'primary.main', border: '1px solid', borderColor: 'primary.main', borderRadius: 1, px: 0.5 }}>
+                        Personalizada
+                      </Box>
+                    )}
+                    <Tooltip title="Duplicar">
+                      <IconButton size="small" onClick={(e) => duplicatePreset(p, e)}>
+                        <ContentCopyIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    {!!p.history?.length && (
+                      <Tooltip title={`${p.history.length} versión(es) anterior(es)`}>
+                        <IconButton size="small" onClick={(e) => { e.stopPropagation(); setHistoryOf(p); }}>
+                          <RestoreIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {p.custom && (
+                      <Tooltip title="Eliminar">
                         <IconButton size="small" color="error" onClick={(e) => deleteCustomPreset(p.name, e)}>
                           <DeleteIcon fontSize="small" />
                         </IconButton>
-                      </>
+                      </Tooltip>
                     )}
                   </Stack>
                   <Typography variant="caption" color="text.secondary">
@@ -1064,6 +1282,39 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         </DialogActions>
       </Dialog>
 
+      {/* Versiones anteriores de una plantilla compartida */}
+      <Dialog open={!!historyOf} onClose={() => setHistoryOf(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>Versiones de "{historyOf?.name}"</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Cada vez que alguien guarda con este nombre, la versión anterior queda aquí
+            (se conservan las 10 más recientes). Restaurar la carga en el lienzo; para
+            dejarla como la vigente hay que volver a guardar.
+          </Typography>
+          <Stack spacing={1}>
+            {(historyOf?.history ?? []).map((v, i) => (
+              <Paper key={`${v.at}-${i}`} variant="outlined" sx={{ p: 1.5 }}>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="body2" fontWeight={600}>{formatDateTime(v.at)}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {i === 0 ? 'Versión anterior más reciente' : `${i + 1}ª versión hacia atrás`}
+                      {' · '}{(new Blob([v.designJson || '']).size / 1024).toFixed(1)} KB
+                    </Typography>
+                  </Box>
+                  <Button size="small" startIcon={<RestoreIcon />} onClick={() => restoreVersion(v.designJson, v.at)}>
+                    Restaurar
+                  </Button>
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setHistoryOf(null)}>Cerrar</Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Guardar como plantilla prediseñada (admin) */}
       <Dialog open={savePresetOpen} onClose={() => setSavePresetOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Guardar como plantilla prediseñada</DialogTitle>
@@ -1072,8 +1323,9 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
             <TextField label="Nombre de la plantilla" value={presetMeta.name} onChange={(e) => setPresetMeta((m) => ({ ...m, name: e.target.value }))} fullWidth />
             <TextField label="Descripción" value={presetMeta.description} onChange={(e) => setPresetMeta((m) => ({ ...m, description: e.target.value }))} fullWidth multiline minRows={2} />
             <Typography variant="caption" color="text.secondary">
-              Quedará disponible en "Plantillas" para todos en este navegador. Persistir/compartir
-              entre usuarios requerirá backend.
+              Queda disponible en "Plantillas" para todo tu equipo. Si ya existe una con el
+              mismo nombre, se actualiza y la versión anterior se guarda en su historial;
+              usa "Duplicar" en la galería si prefieres no tocar el original.
             </Typography>
           </Stack>
         </DialogContent>
@@ -1131,6 +1383,39 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               <MenuItem value="'Trebuchet MS', Tahoma, sans-serif">Trebuchet / Tahoma</MenuItem>
               <MenuItem value="Verdana, Geneva, sans-serif">Verdana</MenuItem>
             </TextField>
+            <Divider textAlign="left" sx={{ gridColumn: '1 / -1' }}>
+              <Typography variant="caption" color="text.secondary">Seguimiento (UTM)</Typography>
+            </Divider>
+            <TextField
+              select label="Etiquetar los enlaces" size="small" fullWidth
+              value={settings.utm?.enabled ? 'yes' : 'no'}
+              onChange={(e) => setSetting('utm', { ...settings.utm, enabled: e.target.value === 'yes' })}
+              helperText="Sin UTM, el tráfico del correo llega a Analytics como “directo” y la campaña no se puede medir."
+            >
+              <MenuItem value="yes">Sí, agregar UTM</MenuItem>
+              <MenuItem value="no">No etiquetar</MenuItem>
+            </TextField>
+            {settings.utm?.enabled && (
+              <>
+                <TextField
+                  label="utm_source" size="small" fullWidth value={settings.utm.source}
+                  onChange={(e) => setSetting('utm', { ...settings.utm, source: e.target.value })}
+                />
+                <TextField
+                  label="utm_medium" size="small" fullWidth value={settings.utm.medium}
+                  onChange={(e) => setSetting('utm', { ...settings.utm, medium: e.target.value })}
+                />
+                <TextField
+                  label="utm_campaign" size="small" fullWidth value={settings.utm.campaign}
+                  onChange={(e) => setSetting('utm', { ...settings.utm, campaign: e.target.value })}
+                  placeholder="boletin-agosto"
+                  helperText="Los enlaces que ya traigan utm_source a mano no se tocan."
+                />
+              </>
+            )}
+            <Divider textAlign="left" sx={{ gridColumn: '1 / -1' }}>
+              <Typography variant="caption" color="text.secondary">Apariencia</Typography>
+            </Divider>
             <TextField
               select label="Modo oscuro" value={settings.darkMode ? 'yes' : 'no'}
               onChange={(e) => setSetting('darkMode', e.target.value === 'yes')} fullWidth size="small"
@@ -1365,6 +1650,80 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   );
 };
 
+/**
+ * Imagen del lienzo con TIRADOR de redimensionado. Antes el ancho solo se podía cambiar
+ * por un campo numérico en el panel, que es justo lo contrario de lo que se espera al
+ * ver una imagen seleccionada.
+ *
+ * El tirador aparece solo cuando el bloque está seleccionado (`onResize` definido) y el
+ * ancho se acota al del contenedor: una imagen más ancha que el correo se recorta.
+ */
+const ResizableImage = ({
+  block: b, maxWidth, onResize,
+}: { block: Block; maxWidth: number; onResize?: (w: number) => void }) => {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [dragW, setDragW] = useState<number | null>(null);
+
+  const ancho = dragW ?? b.imageWidth ?? (b.type === 'logo' ? 180 : maxWidth);
+
+  const startResize = (e: React.MouseEvent) => {
+    if (!onResize) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const inicioX = e.clientX;
+    const inicioW = ancho;
+
+    const mover = (ev: MouseEvent) => {
+      // Se redimensiona desde el borde derecho; con la imagen centrada el ancho crece al
+      // doble de rápido que el cursor (crece por los dos lados), y así se siente natural.
+      const factor = b.align === 'center' ? 2 : 1;
+      setDragW(Math.max(40, Math.min(maxWidth, Math.round(inicioW + (ev.clientX - inicioX) * factor))));
+    };
+    const soltar = () => {
+      window.removeEventListener('mousemove', mover);
+      window.removeEventListener('mouseup', soltar);
+      setDragW((w) => { if (w != null) onResize(w); return null; });
+    };
+    window.addEventListener('mousemove', mover);
+    window.addEventListener('mouseup', soltar);
+  };
+
+  return (
+    <Box
+      ref={wrapRef}
+      sx={{
+        position: 'relative', display: 'inline-block', maxWidth: '100%',
+        width: `${ancho}px`,
+        ...(b.align === 'center' ? { display: 'block', mx: 'auto' } : {}),
+        ...(b.align === 'right' ? { display: 'block', ml: 'auto' } : {}),
+      }}
+    >
+      <Box
+        component="img" src={b.url} alt={richToPlain(b.text || '') || 'imagen'}
+        sx={{ display: 'block', width: '100%', borderRadius: b.imageRadius ? `${b.imageRadius}px` : 0 }}
+      />
+      {onResize && (
+        <>
+          <Box
+            onMouseDown={startResize}
+            sx={{
+              position: 'absolute', top: '50%', right: -7, transform: 'translateY(-50%)',
+              width: 14, height: 34, borderRadius: 1, cursor: 'ew-resize',
+              bgcolor: 'primary.main', border: '2px solid #fff', boxShadow: 2, zIndex: 3,
+            }}
+          />
+          <Box sx={{
+            position: 'absolute', bottom: 4, right: 4, px: 0.75, borderRadius: 0.5,
+            bgcolor: 'rgba(16,35,63,.75)', color: '#fff', fontSize: 11, zIndex: 3,
+          }}>
+            {Math.round(ancho)} px
+          </Box>
+        </>
+      )}
+    </Box>
+  );
+};
+
 /* --------- Render de un bloque en el lienzo (aproximado al email) --------- */
 
 /** Texto del bloque tal como saldrá: HTML en línea saneado, o texto plano escapado. */
@@ -1399,16 +1758,40 @@ interface PreviewProps {
   onSelectChild?: (id: string) => void;
   /** Edita el texto de un bloque anidado. */
   onEditChild?: (id: string, patch: Partial<Block>) => void;
+  /** Ajustes del correo: el lienzo dibuja el HTML REAL, así que los necesita. */
+  settings: EmailSettings;
   /** Abre el menú para agregar un bloque a la columna `i` (el "+" del lienzo). */
   onAddToColumn?: (colIndex: number, anchor: HTMLElement) => void;
+  /** Hay un arrastre en curso en el lienzo. */
+  dragging?: boolean;
+  /** Lo que se arrastra CABE dentro de una columna (tipo anidable). */
+  canDropInColumn?: boolean;
+  /** Índice de la columna bajo el cursor (para resaltarla). */
+  hoverColumn?: number | null;
+  onColumnDragOver?: (colIndex: number) => void;
+  onColumnDragLeave?: () => void;
+  onDropInColumn?: (colIndex: number) => void;
 }
 
 const BlockPreview = ({
-  block: b, onEditText, variables = [], onRequestVariable,
+  block: b, onEditText, variables = [], onRequestVariable, settings: st,
   selectedId, onSelectChild, onEditChild, onAddToColumn,
+  dragging, canDropInColumn, hoverColumn, onColumnDragOver, onColumnDragLeave, onDropInColumn,
 }: PreviewProps) => {
   const align = b.align;
   const editable = Boolean(onEditText);
+
+  /**
+   * Render FIEL: el mismo HTML que va a viajar en el correo. Se usa para todo lo que no
+   * necesita interacción propia en el lienzo, así que lo que se ve al editar es
+   * literalmente lo que se envía — no una aproximación que puede divergir.
+   */
+  const Fiel = () => (
+    <Box
+      sx={{ '& img': { maxWidth: '100%' } }}
+      dangerouslySetInnerHTML={{ __html: renderBlock(b, st) }}
+    />
+  );
 
   /** Campo de texto: editor inline cuando el bloque está seleccionado, si no, estático. */
   const field = (which: 'text' | 'heading', sx: object) =>
@@ -1432,26 +1815,38 @@ const BlockPreview = ({
     case 'image':
     case 'logo':
       return b.url ? (
-        <Box
-          component="img" src={b.url} alt={richToPlain(b.text || '') || 'logo'}
-          sx={{
-            display: 'block',
-            maxWidth: b.imageWidth ? `${b.imageWidth}px` : b.type === 'logo' ? 180 : '100%',
-            width: '100%', borderRadius: b.imageRadius ? `${b.imageRadius}px` : 0,
-            mx: align === 'center' ? 'auto' : 0,
-          }}
+        <ResizableImage
+          block={b}
+          maxWidth={st.contentWidth - (b.padX ?? 24) * 2}
+          onResize={onEditText ? (w) => onEditText({ imageWidth: w }) : undefined}
         />
       ) : (
         <ImageSlot label={b.type === 'logo' ? 'Sin logo' : 'Sin imagen'} height={b.type === 'logo' ? 54 : 120} />
       );
+    // Botón, redes, productos, divisor y HTML crudo se dibujan con el HTML REAL: no
+    // tienen interacción propia en el lienzo y así no hay dos versiones que mantener.
     case 'button':
-      return (
-        <Box sx={{ textAlign: align }}>
-          <Box component="span" sx={{ display: 'inline-block', px: 2.5, py: 1.2, borderRadius: 1.5, bgcolor: b.color || '#0075be', color: '#fff', fontSize: 15 }}>
-            {richToPlain(blockContentHtml(b.text, b.rich)) || b.text}
+    case 'social':
+    case 'products':
+    case 'divider':
+    case 'html':
+      return <Fiel />;
+    case 'video': {
+      const thumb = videoThumbnail(b);
+      if (!thumb || !b.videoUrl?.trim()) {
+        return (
+          <Box sx={{
+            border: '2px dashed #cbd5e1', borderRadius: 1.5, py: 4,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5,
+            color: '#94a3b8',
+          }}>
+            <PlayCircleOutlineIcon sx={{ fontSize: 40 }} />
+            <Typography variant="caption">Pega el enlace del vídeo en el panel derecho</Typography>
           </Box>
-        </Box>
-      );
+        );
+      }
+      return <Fiel />;
+    }
     case 'columns': {
       const widths = columnWidths(b);
       // Modelo LEGADO (text/textRight sin `cols`): se sigue dibujando para no romper las
@@ -1476,6 +1871,7 @@ const BlockPreview = ({
                 >
                   <BlockPreview
                     block={child}
+                    settings={st}
                     selectedId={selectedId}
                     onEditText={selectedId === child.id && onEditChild ? (patch) => onEditChild(child.id, patch) : undefined}
                     variables={variables}
@@ -1485,36 +1881,44 @@ const BlockPreview = ({
               ))}
               {/* Columna VACÍA: el "+" es el destino para poner lo que se quiera. Antes
                   las columnas nacían con texto de relleno que casi siempre se borraba. */}
-              {!(cols[i] || []).length && (
-                <Box
-                  onClick={(e) => { if (onAddToColumn) { e.stopPropagation(); onAddToColumn(i, e.currentTarget); } }}
-                  sx={{
-                    border: '2px dashed #cbd5e1', borderRadius: 1.5, minHeight: 84,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: '#94a3b8', cursor: onAddToColumn ? 'pointer' : 'default',
-                    transition: 'border-color .15s, color .15s',
-                    '&:hover': onAddToColumn ? { borderColor: 'primary.main', color: 'primary.main' } : undefined,
-                  }}
-                >
-                  <AddIcon sx={{ fontSize: 30 }} />
-                </Box>
-              )}
+              {!(cols[i] || []).length && (() => {
+                const activo = Boolean(dragging && canDropInColumn && hoverColumn === i);
+                return (
+                  <Box
+                    onClick={(e) => { if (onAddToColumn) { e.stopPropagation(); onAddToColumn(i, e.currentTarget); } }}
+                    // Además de botón, el "+" es DESTINO de arrastre: se puede soltar aquí
+                    // un bloque de la paleta o mover uno que ya esté en el lienzo.
+                    onDragOver={(e) => {
+                      if (!canDropInColumn || !onColumnDragOver) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onColumnDragOver(i);
+                    }}
+                    onDragLeave={() => onColumnDragLeave?.()}
+                    onDrop={(e) => {
+                      if (!canDropInColumn || !onDropInColumn) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onDropInColumn(i);
+                    }}
+                    sx={{
+                      border: '2px dashed', borderRadius: 1.5, minHeight: 84,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      borderColor: activo ? 'primary.main' : '#cbd5e1',
+                      bgcolor: activo ? 'rgba(0,117,190,.10)' : 'transparent',
+                      color: activo ? 'primary.main' : '#94a3b8',
+                      cursor: onAddToColumn ? 'pointer' : 'default',
+                      transition: 'border-color .15s, color .15s, background .15s',
+                      '&:hover': onAddToColumn ? { borderColor: 'primary.main', color: 'primary.main' } : undefined,
+                    }}
+                  >
+                    <AddIcon sx={{ fontSize: activo ? 36 : 30, transition: 'font-size .15s' }} />
+                  </Box>
+                );
+              })()}
             </Box>
           ))}
         </Box>
-      );
-    }
-    case 'social': {
-      const items = [
-        ['Facebook', b.links.facebook],
-        ['Instagram', b.links.instagram],
-        ['X', b.links.x],
-        ['LinkedIn', b.links.linkedin],
-      ].filter(([, v]) => v && String(v).trim());
-      return (
-        <Typography sx={{ textAlign: 'center', color: '#0075be', fontSize: 14 }}>
-          {items.length ? items.map(([l]) => l).join('  ·  ') : '(configura tus redes)'}
-        </Typography>
       );
     }
     case 'imageText':
@@ -1555,26 +1959,6 @@ const BlockPreview = ({
         </Stack>
       );
     }
-    case 'products': {
-      const cols = Math.min(Math.max(b.columns || 3, 1), 4);
-      return (
-        <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 1.5 }}>
-          {(b.items || []).map((it, i) => (
-            <Box key={i} sx={{ textAlign: 'center' }}>
-              {it.image
-                ? <Box component="img" src={it.image} alt={it.title} sx={{ width: '100%', borderRadius: 1, display: 'block', mb: 0.5 }} />
-                : <Box sx={{ mb: 0.5 }}><ImageSlot label="" height={90} /></Box>}
-              <Typography sx={{ fontSize: 14, fontWeight: 700, color: '#16233f' }}>{it.title}</Typography>
-              <Typography sx={{ fontSize: 12, color: '#555' }}>{it.text}</Typography>
-            </Box>
-          ))}
-        </Box>
-      );
-    }
-    case 'html':
-      return <Box sx={{ fontSize: 13, color: '#555555' }} dangerouslySetInnerHTML={{ __html: sanitizeBlockHtml(b.text) }} />;
-    case 'divider':
-      return <Box sx={{ borderTop: `1px solid ${b.color || '#e4ebf3'}` }} />;
     case 'spacer':
       return <Box sx={{ height: b.height, bgcolor: '#eef2f7', border: '1px dashed #cbd5e1', borderRadius: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 12 }}>{b.height}px</Box>;
     default:
@@ -1599,6 +1983,9 @@ const BlockEditor = ({
 }) => {
   const [varAnchor, setVarAnchor] = useState<null | HTMLElement>(null);
   const [uploadingImg, setUploadingImg] = useState(false);
+  // Campo del bloque al que va la imagen elegida en la biblioteca ('url' | 'imageUrl'),
+  // o el índice del producto cuando se abre desde la grilla.
+  const [libraryFor, setLibraryFor] = useState<'url' | 'imageUrl' | 'videoThumb' | number | null>(null);
   const [uploadingItem, setUploadingItem] = useState<number | null>(null);
   const isImage = b.type === 'image' || b.type === 'logo';
   const hasText = b.type === 'heading' || b.type === 'text' || b.type === 'button';
@@ -1689,16 +2076,39 @@ const BlockEditor = ({
 
       {b.type === 'social' && (
         <>
-          {(['facebook', 'instagram', 'x', 'linkedin'] as const).map((net) => (
+          <TextField
+            select label="Estilo" size="small" fullWidth
+            value={b.socialStyle || 'badge'}
+            onChange={(e) => onChange({ socialStyle: e.target.value as 'badge' | 'text' })}
+          >
+            <MenuItem value="badge">Insignias de color</MenuItem>
+            <MenuItem value="text">Enlaces de texto</MenuItem>
+          </TextField>
+          {(b.socialStyle || 'badge') === 'badge' && (
             <TextField
-              key={net}
-              label={net.charAt(0).toUpperCase() + net.slice(1)}
-              value={b.links[net] ?? ''}
-              onChange={(e) => onChange({ links: { ...b.links, [net]: e.target.value } })}
-              fullWidth
-              size="small"
-              placeholder="https://"
+              label="Tamaño (px)" type="number" size="small" fullWidth
+              value={b.socialSize ?? 34}
+              onChange={(e) => onChange({ socialSize: Math.max(20, Math.min(64, parseInt(e.target.value) || 34)) })}
             />
+          )}
+          <Typography variant="caption" color="text.secondary">
+            Deja vacía la red que no uses. Las insignias se dibujan con color de fondo (no
+            son imágenes), así que no dependen de ningún servidor externo ni se rompen.
+          </Typography>
+          {SOCIAL_NETWORKS.map((n) => (
+            <Stack key={n.key} direction="row" spacing={1} alignItems="center">
+              <Box sx={{
+                width: 26, height: 26, borderRadius: '50%', bgcolor: n.color, color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 11, fontWeight: 700, flexShrink: 0,
+              }}>{n.initial}</Box>
+              <TextField
+                label={n.label}
+                value={b.links?.[n.key] ?? ''}
+                onChange={(e) => onChange({ links: { ...b.links, [n.key]: e.target.value } })}
+                fullWidth size="small" placeholder="https://"
+              />
+            </Stack>
           ))}
         </>
       )}
@@ -1708,10 +2118,15 @@ const BlockEditor = ({
           <TextField label="Título" value={b.heading ?? ''} onChange={(e) => onChange({ heading: e.target.value })} fullWidth size="small" />
           <TextField label="Texto" value={b.text} onChange={(e) => onChange({ text: e.target.value })} fullWidth multiline minRows={3} size="small" />
           <TextField label="URL de la imagen" value={b.imageUrl ?? ''} onChange={(e) => onChange({ imageUrl: e.target.value })} fullWidth size="small" />
-          <Button component="label" size="small" variant="outlined" disabled={uploadingImg} startIcon={uploadingImg ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}>
-            {uploadingImg ? 'Subiendo…' : 'Subir imagen a S3'}
-            <input type="file" accept="image/*" hidden onChange={(e) => handleUpload(e.target.files?.[0] ?? null)} />
-          </Button>
+          <Stack direction="row" spacing={1}>
+            <Button component="label" size="small" variant="outlined" fullWidth disabled={uploadingImg} startIcon={uploadingImg ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}>
+              {uploadingImg ? 'Subiendo…' : 'Subir'}
+              <input type="file" accept="image/*" hidden onChange={(e) => handleUpload(e.target.files?.[0] ?? null)} />
+            </Button>
+            <Button size="small" variant="outlined" fullWidth startIcon={<PhotoLibraryIcon />} onClick={() => setLibraryFor('imageUrl')}>
+              Mis imágenes
+            </Button>
+          </Stack>
           <TextField label="Texto del botón (opcional)" value={b.buttonText ?? ''} onChange={(e) => onChange({ buttonText: e.target.value })} fullWidth size="small" placeholder="Ver más" />
           <TextField label="Enlace del botón" value={b.buttonUrl ?? ''} onChange={(e) => onChange({ buttonUrl: e.target.value })} fullWidth size="small" placeholder="https://" />
         </>
@@ -1746,6 +2161,9 @@ const BlockEditor = ({
                 <TextField label="Texto" size="small" value={it.text} onChange={(e) => updateItem(i, { text: e.target.value })} fullWidth multiline minRows={2} />
                 <TextField label="Imagen (URL)" size="small" value={it.image} onChange={(e) => updateItem(i, { image: e.target.value })} fullWidth />
                 <TextField label="Enlace (opcional)" size="small" value={it.url ?? ''} onChange={(e) => updateItem(i, { url: e.target.value })} fullWidth placeholder="https://" />
+                <Button size="small" variant="outlined" startIcon={<PhotoLibraryIcon />} onClick={() => setLibraryFor(i)} sx={{ mr: 1 }}>
+                  Mis imágenes
+                </Button>
                 <Button component="label" size="small" variant="outlined" disabled={uploadingItem === i} startIcon={uploadingItem === i ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}>
                   {uploadingItem === i ? 'Subiendo…' : 'Subir imagen'}
                   <input type="file" accept="image/*" hidden onChange={(e) => uploadItemImage(i, e.target.files?.[0] ?? null)} />
@@ -1768,16 +2186,20 @@ const BlockEditor = ({
       )}
 
       {isImage && (
-        <Button
-          component="label"
-          size="small"
-          variant="outlined"
-          disabled={uploadingImg}
-          startIcon={uploadingImg ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}
-        >
-          {uploadingImg ? 'Subiendo…' : 'Subir imagen a S3'}
-          <input type="file" accept="image/*" hidden onChange={(e) => handleUpload(e.target.files?.[0] ?? null)} />
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button
+            component="label" size="small" variant="outlined" fullWidth
+            disabled={uploadingImg}
+            startIcon={uploadingImg ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}
+          >
+            {uploadingImg ? 'Subiendo…' : 'Subir'}
+            <input type="file" accept="image/*" hidden onChange={(e) => handleUpload(e.target.files?.[0] ?? null)} />
+          </Button>
+          {/* Reutilizar algo ya subido, en vez de volver a subir el mismo logo. */}
+          <Button size="small" variant="outlined" fullWidth startIcon={<PhotoLibraryIcon />} onClick={() => setLibraryFor('url')}>
+            Mis imágenes
+          </Button>
+        </Stack>
       )}
 
       {hasAlign && (
@@ -1832,6 +2254,86 @@ const BlockEditor = ({
         <ColumnsEditor block={b} onChange={onChange} />
       )}
 
+      {b.type === 'video' && (
+        <>
+          <TextField
+            label="Enlace del vídeo" size="small" fullWidth
+            value={b.videoUrl ?? ''} placeholder="https://youtube.com/watch?v=…"
+            onChange={(e) => onChange({ videoUrl: e.target.value })}
+            helperText="Ningún cliente de correo reproduce vídeo: se envía una miniatura que lleva al vídeo."
+          />
+          <TextField
+            label="Texto del botón" size="small" fullWidth
+            value={b.videoLabel ?? ''} placeholder="Ver el vídeo"
+            onChange={(e) => onChange({ videoLabel: e.target.value })}
+          />
+          <TextField
+            label="Miniatura propia (opcional)" size="small" fullWidth
+            value={b.videoThumb ?? ''}
+            onChange={(e) => onChange({ videoThumb: e.target.value })}
+            helperText={youtubeId(b.videoUrl || '')
+              ? 'Con un enlace de YouTube se usa su miniatura automáticamente. Sube una propia si quieres que lleve el botón de play dibujado.'
+              : 'Obligatoria si el vídeo no es de YouTube.'}
+          />
+          <Stack direction="row" spacing={1}>
+            <Button component="label" size="small" variant="outlined" fullWidth disabled={uploadingImg} startIcon={<AddPhotoAlternateIcon />}>
+              Subir
+              <input type="file" accept="image/*" hidden onChange={async (e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                setUploadingImg(true);
+                const url = await onUploadImage(f);
+                setUploadingImg(false);
+                if (url) onChange({ videoThumb: url });
+              }} />
+            </Button>
+            <Button size="small" variant="outlined" fullWidth startIcon={<PhotoLibraryIcon />} onClick={() => setLibraryFor('videoThumb')}>
+              Mis imágenes
+            </Button>
+          </Stack>
+        </>
+      )}
+
+      {/* ── Botón: lo que genera las conversiones, y era lo menos configurable ── */}
+      {b.type === 'button' && (
+        <>
+          <Divider textAlign="left"><Typography variant="caption" color="text.secondary">Botón</Typography></Divider>
+          <TextField
+            select label="Ancho" size="small" fullWidth
+            value={b.buttonFullWidth ? 'full' : 'auto'}
+            onChange={(e) => onChange({ buttonFullWidth: e.target.value === 'full' })}
+            helperText="El ancho completo es lo que más convierte en móvil."
+          >
+            <MenuItem value="auto">Ajustado al texto</MenuItem>
+            <MenuItem value="full">Ancho completo</MenuItem>
+          </TextField>
+          <Stack direction="row" spacing={1}>
+            <TextField
+              label="Esquinas" type="number" size="small" fullWidth placeholder="6"
+              value={b.buttonRadius ?? ''}
+              onChange={(e) => onChange({ buttonRadius: e.target.value === '' ? undefined : Math.max(0, parseInt(e.target.value) || 0) })}
+            />
+            <TextField
+              label="Texto (px)" type="number" size="small" fullWidth placeholder="15"
+              value={b.buttonFontSize ?? ''}
+              onChange={(e) => onChange({ buttonFontSize: parseInt(e.target.value) || undefined })}
+            />
+          </Stack>
+          <Stack direction="row" spacing={1}>
+            <TextField
+              label="Relleno ↕" type="number" size="small" fullWidth placeholder="12"
+              value={b.buttonPadY ?? ''}
+              onChange={(e) => onChange({ buttonPadY: parseInt(e.target.value) || undefined })}
+            />
+            <TextField
+              label="Relleno ↔" type="number" size="small" fullWidth placeholder="26"
+              value={b.buttonPadX ?? ''}
+              onChange={(e) => onChange({ buttonPadX: parseInt(e.target.value) || undefined })}
+            />
+          </Stack>
+        </>
+      )}
+
       {/* ── Estilo del bloque (antes TODO compartía padding:10px 24px fijo) ── */}
       <Divider textAlign="left"><Typography variant="caption" color="text.secondary">Estilo del bloque</Typography></Divider>
       <Stack direction="row" spacing={1}>
@@ -1857,6 +2359,19 @@ const BlockEditor = ({
           </Tooltip>
         )}
       </Stack>
+      <TextField
+        select label="Visibilidad" size="small" fullWidth
+        value={b.hideMobile ? 'desktop' : b.hideDesktop ? 'mobile' : 'all'}
+        onChange={(e) => onChange({
+          hideMobile: e.target.value === 'desktop',
+          hideDesktop: e.target.value === 'mobile',
+        })}
+      >
+        <MenuItem value="all">En todos los dispositivos</MenuItem>
+        <MenuItem value="desktop">Solo en escritorio</MenuItem>
+        <MenuItem value="mobile">Solo en móvil</MenuItem>
+      </TextField>
+
       {(b.type === 'text' || b.type === 'heading') && (
         <TextField
           label="Tamaño de fuente (px)" type="number" value={b.fontSize ?? ''}
@@ -1866,6 +2381,18 @@ const BlockEditor = ({
           helperText="Aplica a todo el bloque; para una palabra suelta usa la barra del editor."
         />
       )}
+
+      <ImageLibraryDialog
+        open={libraryFor !== null}
+        onClose={() => setLibraryFor(null)}
+        onUpload={onUploadImage}
+        onSelect={(url) => {
+          if (libraryFor === 'url') onChange({ url });
+          else if (libraryFor === 'imageUrl') onChange({ imageUrl: url });
+          else if (libraryFor === 'videoThumb') onChange({ videoThumb: url });
+          else if (typeof libraryFor === 'number') updateItem(libraryFor, { image: url });
+        }}
+      />
     </Stack>
   );
 };

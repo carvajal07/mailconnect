@@ -34,6 +34,14 @@ _audit_table = dynamodb.Table('adminAudit')
 
 VALID_CHANNELS = ('SMS', 'WSP', 'DOCX', 'PDF', 'HTML')
 
+# Versiones anteriores que se conservan de un diseño del constructor. El tope existe
+# porque el ítem de DynamoDB no puede pasar de 400 KB.
+MAX_VERSIONS = int(os.environ.get('DESIGN_MAX_VERSIONS', '10'))
+
+# Presupuesto en bytes para el diseño vigente + su historial. Deja margen bajo el límite
+# duro de 400 KB por ítem de DynamoDB para el resto de campos.
+HISTORY_BUDGET_BYTES = int(os.environ.get('DESIGN_HISTORY_BUDGET', str(320 * 1024)))
+
 
 def _json_field(value):
     """Normaliza un campo JSON (sketchJson/templateJson) a string JSON compacto.
@@ -163,6 +171,7 @@ def lambda_handler(event, context):
     # una nueva. Así "editar" reutiliza esta misma ruta sin una lambda/ruta aparte.
     incoming_id = str(payload.get('messageTemplateId', '')).strip()
     is_update = bool(incoming_id)
+    existing = None
     message_template_id = incoming_id or str(uuid.uuid4())
 
     # Al actualizar, conservar la fecha de creación original (put_item reemplaza el item).
@@ -181,6 +190,30 @@ def lambda_handler(event, context):
             if existing.get('created'):
                 created = existing['created']
 
+    # HISTORIAL de versiones (solo el canal HTML, que es el diseño del constructor).
+    # Publicar sobrescribía sin dejar rastro: un cambio desafortunado no tenía vuelta atrás.
+    # Se guarda la versión ANTERIOR antes de pisarla, con tope para no engordar el ítem
+    # (DynamoDB corta en 400 KB y un diseño con muchos bloques no es pequeño).
+    history = []
+    if channel == 'HTML' and is_update and existing:
+        previa = existing.get('designJson')
+        if previa:
+            history = list(existing.get('designHistory') or [])
+            history.insert(0, {'at': existing.get('updated') or created, 'designJson': previa})
+            history = history[:MAX_VERSIONS]
+            # El tope por CANTIDAD no basta: 10 diseños grandes pasan los 400 KB del ítem
+            # y el put_item fallaría → se PERDERÍA el guardado del usuario por culpa del
+            # historial. Se recortan las versiones más viejas hasta caber en el presupuesto.
+            presupuesto = HISTORY_BUDGET_BYTES - len(design_json.encode('utf-8'))
+            usado = 0
+            recortado = []
+            for v in history:
+                usado += len(str(v.get('designJson', '')).encode('utf-8'))
+                if usado > presupuesto:
+                    break
+                recortado.append(v)
+            history = recortado
+
     item = {
         'messageTemplateId': message_template_id,
         'customerId': customer_id,
@@ -195,6 +228,7 @@ def lambda_handler(event, context):
         'sketchJson': sketch_json,
         'templateJson': template_json,
         'designJson': design_json,
+        'designHistory': history,
         'params': params,
         'created': created,
         'updated': now,

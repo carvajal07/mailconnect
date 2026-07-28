@@ -35,6 +35,8 @@ export interface MessageTemplate {
   language?: string;
   /** HTML: modelo del constructor ({blocks, settings}) serializado. */
   designJson?: string;
+  /** HTML: versiones ANTERIORES del diseño, la más reciente primero. */
+  designHistory?: { at: string; designJson: string }[];
   /** DOCX: ruta del .docx ya subido a S3. */
   s3Path?: string;
   /** PDF (editor básico tipo Word): HTML del editor (con {{variables}}). */
@@ -92,6 +94,7 @@ export interface EmailDesign {
   messageTemplateId: string;
   name: string;
   designJson?: string;
+  designHistory?: { at: string; designJson: string }[];
   created?: string;
 }
 
