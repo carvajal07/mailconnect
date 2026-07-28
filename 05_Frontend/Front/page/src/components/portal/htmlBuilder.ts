@@ -34,18 +34,18 @@ export interface SocialLinks {
   youtube?: string;
   tiktok?: string;
   whatsapp?: string;
+  telegram?: string;
   website?: string;
 }
 
 /**
  * Redes soportadas, con su color de marca y la inicial de la INSIGNIA.
  *
- * ⚠️ Por qué insignias de color y no logos: una imagen en un correo tiene que estar en
- * una URL pública absoluta. Enlazar logos de un CDN ajeno repite el problema que ya
- * tuvimos con `via.placeholder.com` (si ese dominio cae o cambia, TODOS los correos ya
- * enviados quedan con imágenes rotas), y un `data:` URI lo bloquea Gmail. La insignia se
- * dibuja con tabla + color de fondo: se ve igual en todos los clientes, pesa 0 y no
- * depende de nadie. Quien quiera el logo real puede subir su propio icono (`icons`).
+ * La INSIGNIA (tabla + color de fondo + la inicial) es el respaldo que no depende de
+ * nadie: pesa 0 y se ve igual en todos los clientes. Para los **logos reales** está el
+ * paquete de iconos (`socialIconPack.ts`), que recolorea los PNG del repo en el navegador
+ * y los sube al bucket del PROPIO cliente — nunca a un CDN ajeno, que es lo que dejaría
+ * rotos TODOS los correos ya enviados el día que ese dominio caiga (`via.placeholder.com`).
  */
 export const SOCIAL_NETWORKS: { key: keyof SocialLinks; label: string; color: string; initial: string }[] = [
   { key: 'facebook', label: 'Facebook', color: '#1877F2', initial: 'f' },
@@ -55,6 +55,7 @@ export const SOCIAL_NETWORKS: { key: keyof SocialLinks; label: string; color: st
   { key: 'youtube', label: 'YouTube', color: '#FF0000', initial: '▶' },
   { key: 'tiktok', label: 'TikTok', color: '#010101', initial: '♪' },
   { key: 'whatsapp', label: 'WhatsApp', color: '#25D366', initial: 'wa' },
+  { key: 'telegram', label: 'Telegram', color: '#229ED9', initial: 'tg' },
   { key: 'website', label: 'Sitio web', color: '#0075be', initial: '🌐' },
 ];
 

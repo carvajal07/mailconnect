@@ -317,6 +317,27 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   logo propio que reemplaza la insignia, y un guard de que la tabla de iconos NO lleva
   `align` — el float que colapsaba el bloque).
 
+### Logos reales de las redes: paquete recoloreable (ago 2026)
+- **Los PNG del repo (`11_Iconos/`) son MÁSCARAS ALFA** — la silueta del logo en negro
+  sólido sobre transparente. Eso es lo que permite **teñirlos a cualquier color** con un
+  `canvas` (`globalCompositeOperation:'source-in'` conserva la forma y reemplaza el color).
+  Se copiaron a `public/social-icons/{red}.png` (mismo origen: si fueran de otro dominio,
+  el canvas quedaría "tainted" y no se podría exportar el PNG).
+- **`socialIconPack.ts` + `SocialIconPackDialog.tsx`:** botón **"Usar los logos reales"** en
+  el bloque de redes → color del logo, con/sin insignia, color de fondo y forma, con **vista
+  previa en vivo de las 9 redes**. Al aplicar, genera un PNG por red **que tenga enlace** y
+  lo sube al bucket del cliente (`resources/`), dejando la URL en `Block.icons`.
+- ⚠️ **Por qué se hornea el color en el archivo y no se recolorea al enviar:** un cliente de
+  correo **no aplica `filter`/`mask` de CSS** (Gmail los elimina), así que el color TIENE que
+  venir en el PNG. Cambiar de color = volver a aplicar el paquete. Y tiene que ser una
+  imagen porque el correo tampoco admite **SVG en línea** ni **`data:` URI**.
+- ⚠️ **Al bucket del PROPIO cliente, nunca a un CDN ajeno**: el día que ese dominio caiga
+  quedarían rotos TODOS los correos ya enviados (el problema de `via.placeholder.com`).
+- Se renderiza a **3× del tamaño lógico** (nitidez en pantallas de alta densidad) y el
+  nombre del archivo es estable por (red + estilo), así que re-aplicar el MISMO estilo
+  reescribe el objeto en vez de dejar una copia nueva en el bucket por cada ajuste.
+- **Telegram** entra al catálogo de redes (9 en total).
+
 ### Interruptor GLOBAL del IVA (ago 2026)
 - **Qué:** MailConnect puede **no ser responsable de IVA**. Nuevo ajuste de plataforma
   **`TAX_ENABLED`** (Configuración → **"Cobrar IVA"**, grupo *Facturación*): al apagarlo,
@@ -2663,6 +2684,12 @@ README.md
 ---
 
 ## 7. Referencias rápidas
+- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 336 CP en 22 módulos) y su
+  **planilla de ejecución `CASOS_PRUEBA_QA.xlsx`** (un CP por fila + columnas para marcar
+  **Pasó / No pasó**, resultado obtenido, observaciones, quién y cuándo; hoja de Resumen con
+  conteos por estado, prioridad y módulo). ⚠️ El **`.md` es la fuente de verdad**: la planilla
+  se REGENERA con `python3 scripts/casos_prueba_xlsx.py`, así que lo que QA haya escrito en
+  el Excel se pierde al regenerar (guardar una copia fechada antes).
 - **Definición de los archivos de bases (CSV con encabezado, CSV MULTIREGISTRO sin
   encabezado con columna 1 = tipo de registro, y JSON; columnas obligatorias, celdas
   con arrays → tablas con repetición): `FORMATO_BASES.md`** (raíz).

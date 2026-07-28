@@ -1,14 +1,22 @@
 # Casos de Prueba (CP) — QA MailConnect
 
-> Lista de casos de prueba **funcionales / de calidad** para lo construido hasta ahora,
-> incluido el **portal de pagos (prepago)** que está planificado (ver la sección Prepago en `CLAUDE.md`).
+> Lista de casos de prueba **funcionales / de calidad** de todo lo construido.
 > Formato para ejecución manual por QA. Complementa las pruebas automáticas de
-> `08_Pruebas/PruebasSeguridad/` (pytest+moto).
+> `08_Pruebas/PruebasSeguridad/` (pytest+moto, backend) y
+> `05_Frontend/Front/page/src/components/portal/__tests__/` (vitest, frontend).
+>
+> **Planilla de ejecución:** `CASOS_PRUEBA_QA.xlsx` (en la raíz) tiene un CP por fila con
+> columnas para marcar **Pasó / No pasó**, el resultado obtenido y observaciones. Se genera
+> desde este archivo con `scripts/casos_prueba_xlsx.py`, así que **este .md es la fuente de
+> verdad**: al agregar un CP aquí, se vuelve a correr el script y la planilla queda al día.
 
 ## Cómo leer esta lista
 - **ID:** `CP-<módulo>-<n>`.
 - **Prioridad:** 🔴 Alta (crítico) · 🟡 Media · 🟢 Baja.
-- **Estado (P):** ✅ implementado y testeable hoy · 🧩 planificado (portal de pagos — aún no existe).
+- **Estado (P):** ✅ implementado y testeable hoy · 🧩 pendiente de despliegue.
+- **Ojo con los `[J]` de `DESPLIEGUE.md`:** hay funciones construidas cuyo endpoint todavía
+  no está desplegado o le falta un permiso IAM. Si un CP falla con 403/404 de ruta, revisar
+  primero ahí antes de reportarlo como defecto.
 - **Roles:** `cliente` (usuario de empresa) · `admin` (personal MailConnect).
 - **Precondición** común salvo que se diga otra cosa: usuario válido, sesión iniciada con el rol indicado.
 
@@ -221,13 +229,299 @@
 
 ---
 
-## 11. Regresión / transversales
+## 11. Constructor de correos HTML  ✅
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-HTML-01 | 🔴 | Texto enriquecido en el lienzo | Escribir en un bloque de texto y aplicar negrita, cursiva, color y tamaño desde la barra flotante | El formato se ve en el lienzo y llega igual al HTML publicado |
+| CP-HTML-02 | 🔴 | **El cursor no salta al inicio** | Poner el cursor al FINAL de un texto existente y escribir 5-6 caracteres | El texto se agrega al final; el cursor NO salta al principio en ninguna tecla |
+| CP-HTML-03 | 🔴 | Pegado como texto plano | Copiar un párrafo con formato desde Word y pegarlo en un bloque | Entra sin estilos de Word; no aparecen `<div>`/`<font>` raros en "Ver HTML" |
+| CP-HTML-04 | 🔴 | Saneamiento del HTML crudo | Pegar `<script>alert(1)</script><p>ok</p>` en un bloque de HTML crudo | El `<p>` se conserva; el `<script>` NO aparece en el HTML publicado |
+| CP-HTML-05 | 🟡 | Enlace dentro de un párrafo | Seleccionar una palabra y aplicar "Insertar enlace" | Queda como `<a href>` en el HTML; `javascript:` se descarta |
+| CP-HTML-06 | 🟡 | Compatibilidad con plantillas viejas | Cargar una plantilla guardada antes del texto enriquecido que contenga `5 < 10` | Se ve `5 < 10` (escapado), no se rompe el bloque |
+| CP-HTML-07 | 🔴 | Variables con valor por defecto | Menú Variable → "Con valor por defecto" → campo `nombre`, respaldo "cliente" | Inserta `{{#if nombre}}{{nombre}}{{else}}cliente{{/if}}` |
+| CP-HTML-08 | 🔴 | **Variable con respaldo en envío REAL** | Publicar con esa variable y enviar una muestra a un registro con el campo VACÍO | Llega "Hola cliente", no "Hola ," ni el token en crudo (lo resuelve SES) |
+| CP-HTML-09 | 🟡 | Relleno, fondo y tamaño por bloque | Configurar relleno vertical/horizontal, fondo y tamaño de fuente en un bloque | Se ve igual en el lienzo y en el correo publicado |
+| CP-HTML-10 | 🟡 | Imagen con enlace | Bloque de imagen con "Enlace al hacer clic" | La imagen queda clicable en el correo |
+| CP-HTML-11 | 🔴 | Imagen vacía se omite | Agregar bloque de imagen sin subir nada y publicar | El correo NO trae `<img>` roto; "Revisar" lo reporta como error |
+| CP-HTML-12 | 🔴 | Columnas: slider 1-4 | Bloque de columnas → mover el slider y elegir distribución | Las celdas nacen VACÍAS con un "+"; se aplican los anchos elegidos |
+| CP-HTML-13 | 🔴 | Soltar un bloque en el "+" | Arrastrar un bloque de la paleta al "+" de una columna | Entra en esa celda; se puede seleccionar y editar dentro |
+| CP-HTML-14 | 🟡 | Mover un bloque del lienzo a una columna | Arrastrar un bloque ya existente al "+" de una celda | Sale del nivel superior y entra en la columna (una sola operación) |
+| CP-HTML-15 | 🟡 | Reducir columnas no borra contenido | Con 3 columnas llenas, bajar el slider a 2 | El contenido de la que desaparece se mueve a la última, no se pierde |
+| CP-HTML-16 | 🟡 | Bloques no anidables | Intentar meter Columnas/Productos/Redes dentro de una celda | No se ofrecen en el menú del "+" |
+| CP-HTML-17 | 🟡 | Zona final del lienzo | Con varios bloques, usar el área punteada del final | Se puede soltar ahí y "Agregar bloque" abre el menú y agrega al final |
+| CP-HTML-18 | 🔴 | Modo oscuro | Activar "Modo oscuro" en Ajustes y publicar | El HTML trae `prefers-color-scheme`; sin activarlo NO aparece |
+| CP-HTML-19 | 🔴 | Chequeo previo ("Revisar") | Plantilla con imagen sin alt, enlace `https://` y sin preheader | Lista los 3 problemas con su nivel (error/aviso/info) |
+| CP-HTML-20 | 🔴 | **Chequeo detecta gritos** | Escribir `GRATIS!!! OFERTA!!!` en el cuerpo → Revisar | Avisa "Mayúsculas sostenidas o signos repetidos **en el cuerpo del correo**" |
+| CP-HTML-21 | 🟡 | Gritos en el preheader | Poner `ULTIMA OPORTUNIDAD` como preheader → Revisar | Avisa señalando el texto de vista previa |
+| CP-HTML-22 | 🟡 | Variables en mayúsculas NO son gritos | Texto con `{{NOMBRE}}` y `{{CIUDAD}}` → Revisar | NO dispara el aviso de mayúsculas |
+| CP-HTML-23 | 🟡 | Peso > 102 KB | Plantilla muy pesada (mucho HTML crudo) → Revisar | Avisa del recorte de Gmail con el peso real |
+| CP-HTML-24 | 🟡 | Contraste bajo | Texto gris muy claro sobre fondo blanco → Revisar | Avisa de contraste < 4.5:1 |
+| CP-HTML-25 | 🟡 | Texto menor a 14 px | Bloque con tamaño 11 px → Revisar | Avisa de legibilidad en móvil |
+| CP-HTML-26 | 🔴 | **Enviarme una prueba** | Botón "Enviarme una prueba" con el correo del propio usuario | Llega el correo con el diseño actual; no crea campaña ni publica |
+| CP-HTML-27 | 🔴 | **Anti-relay de la prueba** | Intentar enviar la prueba a un correo que NO es de un usuario del tenant | Rechazado (403/400): solo correos de usuarios activos del mismo cliente |
+| CP-HTML-28 | 🟡 | Tope diario de pruebas | Enviar pruebas por encima del límite diario | 429 con mensaje claro |
+| CP-HTML-29 | 🔴 | Deshacer / rehacer | Hacer varios cambios y usar Ctrl+Z / Ctrl+Shift+Z | Vuelve paso a paso; escribir NO crea un paso por tecla |
+| CP-HTML-30 | 🟡 | Ctrl+Z no secuestra la escritura | Estando dentro de un texto, pulsar Ctrl+Z | Deshace en el texto, no elimina el bloque |
+| CP-HTML-31 | 🔴 | **Atajos: Supr no borra mientras se escribe** | Con el cursor dentro de un texto, borrar una letra con Supr/Retroceso | Borra la letra; NO elimina el bloque completo |
+| CP-HTML-32 | 🟡 | Atajos: duplicar y mover | Seleccionar un bloque → Ctrl+D, Alt+↑, Alt+↓, Supr, Esc | Duplica, mueve, elimina y quita la selección |
+| CP-HTML-33 | 🟢 | Lista de atajos visible | Botón ⌨ de la barra | Muestra la lista completa de atajos |
+| CP-HTML-34 | 🟡 | Autoguardado y recuperación | Editar, cerrar la pestaña sin guardar y volver a entrar | Ofrece recuperar el trabajo |
+| CP-HTML-35 | 🔴 | Guardar diseño en el backend | "Guardar plantilla" con un nombre nuevo | Queda en la galería y la ve OTRO usuario del mismo cliente |
+| CP-HTML-36 | 🔴 | **Guardar con nombre existente VERSIONA** | Guardar dos veces con el mismo nombre | NO se crea una copia en la galería; la versión anterior queda en el historial |
+| CP-HTML-37 | 🔴 | Restaurar una versión | Galería → icono de historial → "Restaurar" en una versión anterior | Se carga en el lienzo; queda vigente solo si se vuelve a guardar |
+| CP-HTML-38 | 🟡 | Duplicar plantilla | Galería → "Duplicar" | Crea una copia con nombre propio; el original no cambia |
+| CP-HTML-39 | 🟡 | Tope de 10 versiones | Guardar 12 veces con el mismo nombre | El historial conserva las 10 más recientes |
+| CP-HTML-40 | 🔴 | Diseño de otro cliente | Intentar versionar por id una plantilla de otra empresa | 403 |
+| CP-HTML-41 | 🔴 | **UTM automático** | Activar UTM en Ajustes con campaña "julio" y publicar | Todos los enlaces http(s) llevan `utm_source/medium/campaign` |
+| CP-HTML-42 | 🔴 | UTM no toca las variables | Con UTM activo, revisar `{{unsubscribeUrl}}` en el HTML | Queda intacta (sin parámetros añadidos) |
+| CP-HTML-43 | 🟡 | UTM respeta lo escrito a mano | Enlace que ya trae `utm_source` propio | No se sobreescribe |
+| CP-HTML-44 | 🟡 | Visibilidad por dispositivo | Marcar un bloque "solo móvil" y otro "solo escritorio" | En la vista previa móvil/escritorio se ve el que corresponde |
+| CP-HTML-45 | 🟡 | Botón de ancho completo | Activar "ancho completo" + radio + tamaño | Se refleja en el correo; en móvil ocupa todo el ancho |
+| CP-HTML-46 | 🟡 | Vista de bandeja | Vista previa → editar remitente/asunto/preheader ahí mismo | Se ve la simulación tipo Gmail con contador de caracteres |
+| CP-HTML-47 | 🔴 | **Parte de TEXTO del correo** | Publicar un correo hecho a base de columnas y revisar la plantilla SES | La `TextPart` NO está vacía: trae el texto de las columnas en orden y el enlace de baja |
+| CP-HTML-48 | 🟡 | Texto plano sin etiquetas | Publicar con texto en negrita/enlaces | La parte de texto no contiene HTML crudo |
+| CP-HTML-49 | 🔴 | **Bloque de vídeo** | Bloque de vídeo con un enlace de YouTube | Sale miniatura clicable + botón; el HTML NO contiene `<video>` ni `<iframe>` |
+| CP-HTML-50 | 🟡 | Vídeo de otra plataforma | Enlace de Vimeo + miniatura subida a mano | Usa la miniatura propia |
+| CP-HTML-51 | 🟡 | Vídeo incompleto | Bloque de vídeo sin enlace → Revisar y publicar | Se omite del correo y "Revisar" lo marca como error |
+| CP-HTML-52 | 🟡 | Redimensionar imagen arrastrando | Arrastrar el tirador del borde de una imagen del lienzo | Cambia el ancho; el correo lleva ese `width` y sigue siendo fluida en móvil |
+| CP-HTML-53 | 🔴 | **Redes: un solo color de marca** | Bloque de redes → estilo "Un solo color" → pegar el hex de la marca | Todas las insignias quedan de ese color en el lienzo y en el correo |
+| CP-HTML-54 | 🟡 | Hex a medio escribir | Borrar el hex y teclear `#00` | No se rompe el color; se usa el default hasta completar `#rrggbb` |
+| CP-HTML-55 | 🔴 | **Alineación de las redes** | Alinear el bloque de redes a izquierda / derecha / centro | Los iconos se alinean y el contenedor conserva su alto (no colapsa) |
+| CP-HTML-56 | 🟡 | Forma de la insignia | Cambiar entre círculo / cuadrado redondeado / cuadrado | Se refleja en el lienzo y en el correo |
+| CP-HTML-57 | 🔴 | **Logos reales de las redes** | "Usar los logos reales" → elegir colores → Aplicar | Genera y sube un PNG por red CON enlace; el bloque los muestra en vez de la insignia |
+| CP-HTML-58 | 🟡 | Recolor del paquete | Cambiar el color del logo/fondo y ver la vista previa | Los 9 logos cambian de color al instante antes de subir nada |
+| CP-HTML-59 | 🟡 | Icono de una sola red | Botón de imagen de una fila → elegir de "Mis imágenes" | Cambia solo esa red; el aspa vuelve a la insignia |
+| CP-HTML-60 | 🟡 | Biblioteca de imágenes | "Mis imágenes" en un bloque de imagen | Lista lo ya subido a `resources/`; el buscador filtra |
+| CP-HTML-61 | 🔴 | **La biblioteca no expone datos privados** | Revisar el listado de "Mis imágenes" | NO aparecen archivos de `database/` ni `document/` (bases y comprobantes) |
+| CP-HTML-62 | 🟡 | Ventana de edición aparte | Botón de pantalla completa (⛶) | El editor ocupa toda la ventana; el menú del portal desaparece; Esc cierra |
+| CP-HTML-63 | 🔴 | **Scroll independiente por panel** | Con un correo largo, hacer scroll en el lienzo | La paleta y las propiedades NO se van de vista; la página no scrollea como un todo |
+| CP-HTML-64 | 🟡 | Barra del bloque no tapa | Seleccionar un bloque | La barra (arrastrar/subir/bajar/copiar/eliminar) queda por ENCIMA, sin tapar la primera línea |
+| CP-HTML-65 | 🟡 | Plantillas prediseñadas | Abrir "Plantillas" y cargar una de las 5 integradas | Se carga en el lienzo; las imágenes nacen vacías (sin dominios de terceros) |
+| CP-HTML-66 | 🟢 | Móvil | Abrir el constructor en un móvil | Los paneles se apilan y la página vuelve al scroll normal |
+
+---
+
+## 12. Plantillas PDF (básicas · Estudio · Diseñador)  ✅
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-PDF-01 | 🔴 | Editor básico tipo Word | Crear plantilla con títulos, imagen, tabla y variables | Se guarda en `messageTemplate` canal PDF; se comparte con el equipo |
+| CP-PDF-02 | 🔴 | Vista previa PDF (básico) | Botón "Vista previa PDF" | Devuelve el PDF real con las `{{variables}}` sustituidas por valores de muestra |
+| CP-PDF-03 | 🔴 | Estudio PDF (lienzo) | Crear un diseño con texto, formas, tabla y guardar | Se guarda como `sketchJson`; abre a pantalla completa |
+| CP-PDF-04 | 🔴 | **Estudio: variables con datos reales** | Elegir una base en el panel de datos → Vista previa | El PDF trae los VALORES de la primera fila, no tokens `{{campo}}` en blanco |
+| CP-PDF-05 | 🟡 | Estudio: unidades y reglas | Cambiar la unidad (mm/cm/pt/px/in) y usar 1:1 / ajustar a ventana | Reglas y cursor se muestran en la unidad elegida |
+| CP-PDF-06 | 🟡 | Estudio: seleccionar elemento rotado | Girar un texto y hacer clic dentro de su caja visual | Lo selecciona (no arranca el marquee ni limpia la selección) |
+| CP-PDF-07 | 🟡 | Estudio: estilos vinculados | Vincular un estilo de texto/párrafo y editarlo | Los elementos vinculados cambian en vivo |
+| CP-PDF-08 | 🟡 | Diseñador PDF (full) | Abrir el Diseñador y crear un documento | Abre en overlay; las variables se alimentan de las columnas de la base |
+| CP-PDF-09 | 🔴 | **Campaña EAP-PDF de punta a punta** | Crear campaña EAP tipo PDF con una plantilla del Estudio, muestras y envío real | Cada destinatario recibe SU PDF con sus datos resueltos |
+| CP-PDF-10 | 🔴 | **Tabla que desborda pagina** | Plantilla con tabla `repeatBy` y un registro con 30+ filas | El PDF sale multipágina con el encabezado repetido, no encogido/ilegible |
+| CP-PDF-11 | 🟡 | Celdas con JSON (multiregistro) | Base con una columna que trae un array JSON | Alimenta la tabla del Estudio por destinatario |
+| CP-PDF-12 | 🟡 | Encabezados con BOM/espacios | Base exportada de Excel (BOM en la 1ª columna) | Las variables igual resuelven (alias saneados) |
+| CP-PDF-13 | 🟢 | Bordes y degradados | Formas con borde discontinuo y relleno degradado | Se ven igual en el lienzo y en el PDF |
+
+---
+
+## 13. Aprobaciones (maker-checker) y programación de envíos  ✅
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-APR-01 | 🔴 | Solicitar aprobación | Campaña con muestras enviadas → "Solicitar aprobación" | Pasa a `pending`; queda auditado |
+| CP-APR-02 | 🔴 | Sin muestras no se puede pedir | Campaña sin muestras → solicitar | 400 con el motivo |
+| CP-APR-03 | 🔴 | Aprobar habilita el envío real | Aprobador aprueba | Pasa a `approved`; se habilita "Enviar campaña real" |
+| CP-APR-04 | 🔴 | **Operator NO puede aprobar** | Usuario `operator` llama a `/Campaign/Approve` (por API, no por UI) | 403 |
+| CP-APR-05 | 🔴 | **Operator NO puede enviar real** | Usuario `operator` dispara el envío real por API | 403 (no gasta saldo ni envía) |
+| CP-APR-06 | 🟡 | Rechazar con motivo | Rechazar sin motivo y con motivo | Sin motivo 400; con motivo pasa a `rejected` y se ve el motivo |
+| CP-APR-07 | 🟡 | Doble aprobación | Aprobar una campaña ya aprobada | 409 |
+| CP-SCH-01 | 🔴 | Programar envío | Campaña aprobada → programar a una hora futura | 201; aparece en la lista como `pending` |
+| CP-SCH-02 | 🔴 | **Disparo a la hora exacta** | Programar a +2 minutos y esperar | Se dispara solo; queda `sent` con su `processId` |
+| CP-SCH-03 | 🟡 | Fecha en el pasado | Programar a una hora ya pasada | 400 |
+| CP-SCH-04 | 🟡 | Cancelar | Cancelar una programación `pending` | Pasa a `canceled` y no se dispara |
+| CP-SCH-05 | 🟡 | Cancelar una ya disparada | Cancelar una `sent` | 409 |
+| CP-SCH-06 | 🟡 | Sin aprobación no programa | Campaña sin aprobar → programar | 409 |
+| CP-SCH-07 | 🟡 | Zona horaria | Programar 3:00 p. m. hora local | Se guarda/dispara a esa hora local (conversión UTC correcta) |
+
+---
+
+## 14. Equipo del cliente y roles  ✅
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-USR-01 | 🔴 | **NIT ya registrado** | Registrarse con el NIT de una empresa existente | 409 "empresa ya registrada" (NO entra al tenant ajeno) |
+| CP-USR-02 | 🔴 | Owner agrega usuario | Tab Usuarios → agregar con rol operator/approver | Se crea activo, sin contraseña usable; le llega el correo para definirla |
+| CP-USR-03 | 🟡 | Tope de usuarios | Agregar más allá de `MAX_TEAM_USERS` | Bloquea con aviso |
+| CP-USR-04 | 🟡 | Correo duplicado | Agregar un correo que ya existe | Rechazado |
+| CP-USR-05 | 🔴 | Solo el owner gestiona | Un `operator` abre el tab Usuarios / llama la API | No visible; por API 403 |
+| CP-USR-06 | 🟡 | Eliminar usuario | Eliminar un miembro del equipo | Se borra; no permite borrar a un owner ni a sí mismo |
+| CP-USR-07 | 🟡 | Definir contraseña | Usuario nuevo usa "¿olvidaste tu contraseña?" | Recibe OTP y define su clave; ya puede entrar |
+| CP-USR-08 | 🔴 | **Refresh preserva el sub-rol** | Loguear como `operator`, esperar el refresco del token e intentar aprobar | Sigue siendo `operator` (no escala a owner) |
+
+---
+
+## 15. Dominios y correos remitentes  ✅
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-DOM-01 | 🔴 | Agregar dominio | Registrar `empresa.com` | 201 con 1 TXT + 3 CNAME de DKIM para publicar |
+| CP-DOM-02 | 🔴 | Verificación tras publicar DNS | Publicar los registros y refrescar la lista | Pasa a `verified` |
+| CP-DOM-03 | 🔴 | Agregar correo | Registrar `ventas@empresa.com` | SES envía el enlace a esa dirección; la UI muestra el paso a paso (sin DNS) |
+| CP-DOM-04 | 🟡 | Reenviar verificación | Volver a agregar un correo pendiente | Reenvía (200), no duplica |
+| CP-DOM-05 | 🔴 | **Solo el owner** | `operator` intenta agregar o borrar un dominio (por API) | 403 |
+| CP-DOM-06 | 🔴 | **Anti-spoofing en la campaña** | Crear campaña con un `from` de un dominio que NO es del cliente | Rechazado |
+| CP-DOM-07 | 🟡 | Remitente verificado en el selector | Crear campaña y abrir el selector "De (From)" | Aparecen el dominio de la plataforma, los dominios y los correos verificados |
+| CP-DOM-08 | 🟡 | Eliminar dominio | Borrar un dominio verificado | Se borra el registro y la identidad en SES |
+
+---
+
+## 16. Seguridad avanzada (2FA · bloqueo · revocación)  ✅
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-2FA-01 | 🔴 | Activar 2FA | Mi cuenta → escanear el QR con Google Authenticator → introducir el código | Queda activo y muestra 10 códigos de respaldo (una sola vez) |
+| CP-2FA-02 | 🔴 | Login con 2FA | Loguear con usuario/clave de una cuenta con 2FA | NO entra directo: pide el código de 6 dígitos |
+| CP-2FA-03 | 🔴 | Código correcto | Introducir el TOTP vigente | Entra al portal |
+| CP-2FA-04 | 🔴 | Código de respaldo | Entrar con un código de respaldo | Entra y ese código queda CONSUMIDO (no sirve dos veces) |
+| CP-2FA-05 | 🔴 | **Anti-fuerza-bruta** | Fallar el código 5 veces | 429; hay que volver a iniciar sesión |
+| CP-2FA-06 | 🟡 | Desactivar 2FA | Desactivar exigiendo un código válido | Sin código válido no se desactiva |
+| CP-2FA-07 | 🟡 | Auditoría del 2FA | Activar y desactivar → tab Auditoría | `security.2fa.enable` / `.disable` |
+| CP-SEC-24 | 🔴 | **Bloqueo progresivo de login** | Fallar la contraseña 3 veces | Al 2º avisa que queda 1 intento; al 3º → 429 y bloqueo de 5 min |
+| CP-SEC-25 | 🔴 | Escalada del bloqueo | Tras los 5 min, fallar otra vez, y otra | Escala a 1 h y luego a 24 h |
+| CP-SEC-26 | 🔴 | Bloqueo con clave correcta | Con bloqueo vigente, entrar con la clave CORRECTA | Sigue bloqueado (el bloqueo frena la fuerza bruta que acierta) |
+| CP-SEC-27 | 🟡 | Reset del contador | Login correcto con la cuenta desbloqueada | El contador y la escalera vuelven a cero |
+| CP-SEC-28 | 🔴 | **Revocación real de tokens** | Loguear, copiar el token, cerrar sesión y usar el token viejo en la API | 401/403 (la sesión está revocada) |
+| CP-SEC-29 | 🔴 | Cambio de clave revoca | Cambiar la contraseña y usar un token emitido antes | Denegado |
+| CP-SEC-30 | 🔴 | **Segunda barrera admin** | Llamar una ruta admin con el context falsificado pero SIN token válido | 403 (se revalida la firma del JWT) |
+| CP-SEC-31 | 🔴 | Token de cliente en ruta admin | Llamar `/Customer/List` con un token `role=client` | 403 |
+| CP-SEC-32 | 🟡 | Sesión por pestaña | Cerrar la pestaña y volver a abrir la app | Pide login (el token vive en `sessionStorage`) |
+| CP-SEC-33 | 🟡 | Sesión compartida entre pestañas | Con sesión abierta, abrir una pestaña nueva de la app | Entra sin re-loguear (handshake) |
+| CP-SEC-34 | 🟡 | Logout difundido | Cerrar sesión en una pestaña con otras abiertas | Todas las pestañas quedan deslogueadas |
+
+---
+
+## 17. Admin — Centro de mando, salud, soporte e impersonación  ✅
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-CMD-01 | 🔴 | Centro de mando carga | Entrar a `/admin` | Abre en "Centro de mando" con los chips de resumen |
+| CP-CMD-02 | 🔴 | Procesos atascados | Con un proceso en `Enviando` desde hace > 2 h | Aparece en la sección de pipeline |
+| CP-CMD-03 | 🔴 | **DLQ con mensajes = crítico** | Meter un mensaje en una DLQ | La cola sale marcada como crítica |
+| CP-CMD-04 | 🟡 | Dinero del día | Revisar débitos/recargas de hoy | Coinciden con el ledger |
+| CP-CMD-05 | 🔴 | **Saldo de plataforma sin huérfanos** | Comparar "Saldo total" del centro de mando con el tab Saldos | Coinciden; lo de clientes eliminados se reporta aparte como nota |
+| CP-CMD-06 | 🟡 | Reputación con tendencia | Sección de reputación | Top 5 por rebote/queja con la tendencia vs los 7 días previos |
+| CP-CMD-07 | 🟡 | Salud de servicios | Revisar la cuota SES y las tablas/colas | Muestra uso de cuota, tablas ACTIVE y colas accesibles |
+| CP-CMD-08 | 🟢 | Auto-refresco | Dejar el switch de auto-refresco activo | Se actualiza cada 60 s |
+| CP-DEP-01 | 🔴 | Salud de despliegue | Abrir el tab y esperar la verificación | Lista lambdas/tablas/colas críticas con su estado |
+| CP-DEP-02 | 🔴 | Recurso faltante | Con una tabla crítica sin crear | Sale `missing` y el resumen lo cuenta como error |
+| CP-DEP-03 | 🟡 | Sin permiso IAM ≠ faltante | Quitar el permiso de lectura de lambdas | Sale `unknown` con el aviso de que falta el permiso, no "no existe" |
+| CP-DEP-04 | 🟢 | Carga no bloqueante | Abrir el tab | Se ven los títulos de las 4 secciones desde el primer render |
+| CP-SOP-01 | 🔴 | Buscar destinatario | Soporte → buscar un correo de un cliente | Línea de tiempo de todos sus envíos con estado y detalle |
+| CP-SOP-02 | 🟡 | Buscar por celular | Buscar `3001234567` sin prefijo | Lo normaliza a E.164 y encuentra los envíos |
+| CP-SOP-03 | 🟡 | Banderas de listas | Buscar un contacto en lista negra / desuscrito | Se indican ambas banderas |
+| CP-SOP-04 | 🔴 | Reenviar activación | Ficha de cliente → reenviar activación a una cuenta inactiva | Llega el correo con enlace nuevo (24 h); auditado `support.*` |
+| CP-SOP-05 | 🟡 | Activación en cuenta ya activa | Reenviar activación a una cuenta activa | 409 |
+| CP-SOP-06 | 🔴 | Forzar reseteo | Ficha → forzar reseteo de contraseña | Llega el OTP y sirve en la pantalla de reseteo |
+| CP-SOP-07 | 🔴 | Cerrar sesiones | Ficha → cerrar sesiones de un usuario | Sus tokens dejan de funcionar |
+| CP-SOP-08 | 🟡 | Plantillas SES globales | Soporte → Plantillas SES | Inventario global con filtro por cliente y paginación |
+| CP-SOP-09 | 🔴 | **Ver plantilla de otro cliente** | Admin abre el contenido de una plantilla de otra empresa | Se ve (va por la ruta admin), sin el 403 de "no pertenece a tu cuenta" |
+| CP-SOP-10 | 🟡 | Dominios globales | Soporte → Dominios | Dominios/correos de todos los clientes, pendientes primero |
+| CP-IMP-01 | 🔴 | Ver como cliente | Ficha de cliente → "Ver como cliente" | Entra al portal de ese cliente con chip "solo lectura" |
+| CP-IMP-02 | 🔴 | **La impersonación no envía** | Estando impersonado, intentar enviar muestras o envío real | 403 (no gasta saldo ni dispara nada) |
+| CP-IMP-03 | 🔴 | Salir de la vista | Botón "Salir de la vista" | Vuelve a `/admin` con la sesión del admin, sin re-login |
+| CP-IMP-04 | 🟡 | Expira sola | Dejar pasar más de 30 minutos impersonado | El token vence |
+| CP-IMP-05 | 🟡 | Auditoría | Impersonar → tab Auditoría | `support.impersonate` con el admin como actor |
+
+---
+
+## 18. Configuración de plataforma y por cliente  ✅
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-CFG-01 | 🔴 | **Interruptor global del IVA** | Configuración → apagar "Cobrar IVA" | Se guarda al instante (sin botón Guardar) |
+| CP-CFG-02 | 🔴 | **IVA apagado: estimador y débito coinciden** | Con el IVA apagado, comparar el estimado con lo debitado en un envío real | Ambos a tarifa NETA y con el MISMO número |
+| CP-CFG-03 | 🔴 | IVA encendido | Volver a encenderlo y repetir | Ambos suman el 19% |
+| CP-CFG-04 | 🟡 | Tarifas con IVA apagado | Abrir Tarifas | El IVA efectivo sale en 0 con el aviso de que el campo se guarda pero no se aplica |
+| CP-CFG-05 | 🟡 | Otros ajustes | Cambiar `SENDER_EMAIL` y `OTP_EXPIRATION_MIN` | Aplican sin redesplegar; auditado `config.set` |
+| CP-CFG-06 | 🔴 | **Funciones por cliente** | Apagar "Plantillas PDF avanzadas" a un cliente y que ese cliente vuelva a entrar | El tab desaparece de su portal |
+| CP-CFG-07 | 🟡 | Cliente nuevo sin funciones avanzadas | Registrar una empresa nueva | Voz, WhatsApp, Estudio, Diseñador, multiregistro y JSON nacen apagados |
+| CP-CFG-08 | 🟡 | Clientes existentes no cambian | Revisar un cliente antiguo | Conserva todo habilitado (fail-open) |
+| CP-CFG-09 | 🔴 | **Cuotas de envío** | Fijar tope por campaña y diario, y superarlos | 429 sin tocar el saldo ni marcar la campaña en error |
+| CP-CFG-10 | 🟡 | Cuota diaria excluye muestras | Enviar muestras y luego el envío real | Las muestras no consumen la cuota diaria |
+| CP-CFG-11 | 🟡 | Sin tope configurado | Cliente con cuotas en 0/vacío | Sin límite |
+| CP-CFG-12 | 🔴 | **IP de envío dedicada** | Asignar un configuration set a un cliente y enviar | El envío sale con ESE configuration set |
+| CP-CFG-13 | 🟡 | Volver al pool general | Quitar la IP dedicada del cliente | Usa el configuration set general |
+| CP-CFG-14 | 🟡 | Eliminar cliente | Admin → eliminar una empresa | Borra empresa y usuarios; no permite borrar la propia |
+
+---
+
+## 19. Notificaciones y preferencias del suscriptor  ✅
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-NOT-01 | 🔴 | Aviso de saldo bajo | Con el umbral en 20.000, hacer un envío que deje el saldo por debajo | Llega el correo al owner |
+| CP-NOT-02 | 🟡 | No se repite el mismo día | Hacer otro envío el mismo día | NO llega un segundo aviso |
+| CP-NOT-03 | 🟡 | Aviso desactivado | Apagar el aviso de saldo bajo en Mi cuenta y repetir | No llega |
+| CP-NOT-04 | 🟡 | Resumen diario | Activar el resumen y esperar el cron | Llega con lo enviado ese día |
+| CP-NOT-05 | 🟡 | Reputación en riesgo | Cliente con rebote por encima del umbral | Llega el aviso de reputación |
+| CP-NOT-06 | 🟡 | Solo el owner configura | `operator` intenta cambiar las preferencias | 403 |
+| CP-PREF-01 | 🔴 | Centro de preferencias | Abrir el enlace "Administrar preferencias" de un correo | Página firmada con frecuencia y temas |
+| CP-PREF-02 | 🔴 | Elegir "ninguna" da de baja | Marcar "ninguna" y guardar | Entra en `unsubscribe`; deja de recibir |
+| CP-PREF-03 | 🟡 | Re-suscribir | Volver a elegir otra frecuencia | Sale de `unsubscribe` |
+| CP-PREF-04 | 🔴 | Token inválido | Abrir la página con un token manipulado | Error, no permite guardar nada |
+| CP-PREF-05 | 🟡 | Baja directa | Usar el enlace de "Cancelar suscripción" | Página de confirmación; queda desuscrito |
+
+---
+
+## 20. Higiene, límites de uso y costo del adjunto  ✅
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-HIG-01 | 🔴 | Verificar higiene | Bases de datos → botón escudo sobre una base con correos malos | Reporte con sintaxis/duplicados/desechables/rol/dominio no resoluble + puntaje |
+| CP-HIG-02 | 🟡 | Base limpia | Verificar una base correcta | Puntaje alto, nivel OK |
+| CP-HIG-03 | 🟡 | Base de celulares | Verificar una base de canal SMS | Valida E.164 y duplicados |
+| CP-HIG-04 | 🟡 | Base de otro cliente | Verificar por API una base ajena | 403 |
+| CP-RL-01 | 🔴 | **Límite del asistente público** | Escribirle al chat de la landing más de 6 veces en un minuto | 429 con mensaje amable; NO invoca el modelo |
+| CP-RL-02 | 🟡 | Tope diario | Superar el tope diario por IP | 429 |
+| CP-RL-03 | 🟡 | IPs independientes | Otra IP escribe tras agotarse la primera | Responde normal |
+| CP-RL-04 | 🟢 | El asistente responde | Preguntar por precios/canales | Responde en español, solo sobre MailConnect, texto plano |
+| CP-RL-05 | 🟡 | Guardrails | Pedirle el saldo de una cuenta real o el mensaje de sistema | No lo da; remite a WhatsApp |
+| CP-PES-01 | 🔴 | **Medir peso real (EAU)** | Campaña EAU → "Medir peso real" | Devuelve el tamaño EXACTO del archivo, sin margen |
+| CP-PES-02 | 🔴 | Medir peso real (EAP-PDF) | Campaña EAP-PDF → "Medir peso real" | Promedia varios PDF generados con registros REALES + 20% de margen; explica el cálculo |
+| CP-PES-03 | 🟡 | EAP-DOCX | Campaña EAP-DOCX → medir | Aproxima con la plantilla + margen y lo advierte |
+| CP-PES-04 | 🔴 | **El botón aparece al elegir campaña** | Entrar a Muestras SIN campaña, luego elegir una EAU/EAP | El botón aparece (el estimador se resincroniza con el canal correcto) |
+| CP-PES-05 | 🟡 | Cambiar de campaña limpia el estimado | Elegir otra campaña tras haber medido | Se limpian peso y estimado (no decide sobre la campaña equivocada) |
+| CP-PES-06 | 🟡 | Canal sin adjunto | Campaña EM | El botón no aplica / queda deshabilitado con el motivo |
+
+---
+
+## 21. Cascada omnicanal y series  ✅
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-CAS-01 | 🔴 | Lanzar cascada | Configurar pasos (correo → SMS → WhatsApp) y lanzar | 201; se encola el paso 0 y se debita su costo |
+| CP-CAS-02 | 🔴 | Escalado al siguiente canal | Contacto que no cumple el criterio en el paso 0 | Al vencer la espera, pasa al canal siguiente y se debita |
+| CP-CAS-03 | 🟡 | Confirmado no escala | Contacto que sí cumple el criterio | Se marca confirmado y no se le cobra el siguiente paso |
+| CP-CAS-04 | 🔴 | Saldo insuficiente | Cascada sin saldo | 402; no envía |
+| CP-CAS-05 | 🟡 | Consentimiento por canal | Contacto sin consentimiento del canal 0 | Se filtra |
+| CP-CAS-06 | 🟡 | Listado de cascadas | Abrir el listado | Conteos de total/confirmados/agotados/en vuelo |
+| CP-SER-01 | 🔴 | Serie de 30 días (cliente) | Estadísticas → gráfico "Actividad de los últimos 30 días" | Serie continua (con ceros) de enviados/entregados/abiertos/clics/rebotes/quejas |
+| CP-SER-02 | 🟡 | Serie global (admin) | Panel de control → gráfico | Misma serie de toda la plataforma |
+| CP-SER-03 | 🟡 | Muestras excluidas | Enviar muestras y revisar la serie | No cuentan |
+| CP-SER-04 | 🟡 | Aislamiento | Comparar la serie de dos clientes | Cada uno ve solo lo suyo |
+| CP-SER-05 | 🟢 | Adiós "(parcial)" | Con el rollup poblado, abrir Estadísticas/Facturación | Ya no aparece el aviso de datos parciales |
+| CP-SER-06 | 🟢 | Leyenda interactiva | Ocultar/mostrar series en el gráfico | Responde; el tooltip muestra el día |
+
+---
+
+## 22. Regresión / transversales
 
 | ID | Prioridad | Caso | Pasos | Resultado esperado |
 |----|-----------|------|-------|--------------------|
 | CP-REG-01 | 🔴 | Aislamiento multi-tenant | Cliente A intenta ver datos de B (campañas/bases/stats) | Nunca ve datos de otro (tenant del token) |
 | CP-REG-02 | 🟡 | Suite automática | Correr `pytest 08_Pruebas/PruebasSeguridad` | Todo verde |
 | CP-REG-03 | 🟡 | Build del front | `npm run build` | Compila sin errores de TypeScript |
+| CP-REG-06 | 🟡 | Pruebas del frontend | `npm test` en `05_Frontend/Front/page` | Todo verde (constructor de correos) |
+| CP-REG-07 | 🔴 | Sesión y tenant en TODA ruta nueva | Llamar cualquier endpoint nuevo sin token y con token de otro cliente | 403 en ambos casos |
+| CP-REG-08 | 🟢 | Fechas unificadas | Revisar las tablas del portal y del admin | Todas en `DD-MM-YYYY HH:MM:SS` |
 | CP-REG-04 | 🟢 | Tema claro/oscuro | Alternar tema en portal y admin | Legible en ambos; sin colores hardcodeados rotos |
 | CP-REG-05 | 🟢 | Responsive | Portal/admin en móvil | Sin scroll horizontal roto; tablas con scroll propio |
 

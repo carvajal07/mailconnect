@@ -65,6 +65,7 @@ import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import FormatClearIcon from '@mui/icons-material/FormatClear';
 import KeyboardIcon from '@mui/icons-material/Keyboard';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import type { ReactNode } from 'react';
@@ -79,6 +80,7 @@ import { allPresets, customPresets, cloneBlocks, type TemplatePreset } from './t
 import { emailDesigns } from '../../services/messageTemplatesService';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 import { ImageLibraryDialog } from './ImageLibraryDialog';
+import { SocialIconPackDialog } from './SocialIconPackDialog';
 import {
   BLOCK_LABELS,
   VARIABLES,
@@ -2062,6 +2064,8 @@ const BlockEditor = ({
   const [libraryFor, setLibraryFor] = useState<'url' | 'imageUrl' | 'videoThumb' | number | null>(null);
   /** Red a la que se le está eligiendo un logo propio (bloque de redes sociales). */
   const [iconFor, setIconFor] = useState<keyof SocialLinks | null>(null);
+  /** Diálogo del paquete de logos reales (recolorea y sube el set completo). */
+  const [packOpen, setPackOpen] = useState(false);
   const [uploadingItem, setUploadingItem] = useState<number | null>(null);
   const isImage = b.type === 'image' || b.type === 'logo';
   const hasText = b.type === 'heading' || b.type === 'text' || b.type === 'button';
@@ -2203,9 +2207,15 @@ const BlockEditor = ({
               </Stack>
             </>
           )}
+          <Button
+            size="small" variant="outlined" startIcon={<AutoAwesomeIcon />}
+            onClick={() => setPackOpen(true)}
+          >
+            Usar los logos reales
+          </Button>
           <Typography variant="caption" color="text.secondary">
-            Deja vacía la red que no uses. El botón de imagen reemplaza la insignia por el
-            logo real (una imagen tuya, alojada en tu propio bucket).
+            Deja vacía la red que no uses. "Usar los logos reales" pone los logos de cada
+            red con los colores que elijas; el botón de imagen de cada fila cambia una sola.
           </Typography>
           {SOCIAL_NETWORKS.map((n) => {
             const propio = b.icons?.[n.key];
@@ -2254,6 +2264,17 @@ const BlockEditor = ({
             onClose={() => setIconFor(null)}
             onUpload={onUploadImage}
             onSelect={(url) => { if (iconFor) onChange({ icons: { ...b.icons, [iconFor]: url } }); setIconFor(null); }}
+          />
+          <SocialIconPackDialog
+            open={packOpen}
+            onClose={() => setPackOpen(false)}
+            activas={SOCIAL_NETWORKS
+              .filter((n) => { const v = b.links?.[n.key]; return v && v.trim() && v !== 'https://'; })
+              .map((n) => n.key)}
+            size={b.socialSize ?? 34}
+            shape={b.socialShape}
+            onUpload={onUploadImage}
+            onApply={(icons) => onChange({ icons: { ...b.icons, ...icons } })}
           />
         </>
       )}
