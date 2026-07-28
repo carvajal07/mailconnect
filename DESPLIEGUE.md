@@ -751,3 +751,37 @@ no es responsable de IVA.
   solo las lambdas cambiadas en el push, así que verificar que el workflow las cubra todas.
 - ✅ Después de desplegar: entrar a **Configuración**, apagar **"Cobrar IVA"** y confirmar
   en **Muestras → Costo estimado** que el desglose ya no trae la línea de IVA.
+
+---
+
+## 14. Constructor de correos profesional (ago 2026)
+
+### 14a. `Api_V1_Email_Send-test` — "Enviarme una prueba"
+
+Lambda NUEVA (el CD la crea) + ruta `/Email/Send-test` **ya en `routes.json`**.
+
+- [ ] `[J]` **IAM**: `ses:SendEmail`; `dynamodb:Scan` sobre `user` (para resolver los
+  correos permitidos); `UpdateItem`/`CreateTable`/`DescribeTable` sobre `assistantRateLimit`
+  (tope diario, reusa la tabla del limitador del asistente); `PutItem` sobre `adminAudit`.
+- [ ] `[J]` **Env**: `SENDER_EMAIL` (remitente verificado en SES) y, opcional,
+  `TEST_SEND_DAILY_LIMIT` (default 20).
+- ℹ️ **Seguridad**: el destinatario está restringido a un correo de un usuario ACTIVO del
+  mismo tenant. Es deliberado — sin ese gate, un endpoint que envía HTML arbitrario a una
+  dirección arbitraria es un relay de spam con la reputación de envío de la plataforma,
+  que es compartida entre todos los clientes.
+
+### 14b. Canal `HTML` en `messageTemplate` (biblioteca de diseños)
+
+- **Nada que crear**: misma tabla `messageTemplate` y misma ruta `/MessageTemplate/Create`.
+  Solo se amplió el catálogo de canales y se agregó el campo `designJson`.
+
+### 14c. Verificación recomendada tras desplegar
+
+1. Abrir **Plantillas HTML**, escribir un texto y ponerle **negrita + un enlace**.
+2. **Revisar** → debe listar los problemas (o decir que todo está en orden).
+3. **Enviarme una prueba** → llega el correo; comprobar el formato en el móvil y, si se
+   puede, con el modo oscuro del cliente activado.
+4. ⚠️ **Validar el valor por defecto de las variables en un envío REAL**: el token
+   `{{#if campo}}…{{else}}…{{/if}}` lo resuelve el motor de plantillas de **SES** (el canal
+   EM delega la sustitución a SES). Si SES no lo interpretara en tu cuenta, el correo
+   mostraría el token en crudo — se detecta con una sola muestra.

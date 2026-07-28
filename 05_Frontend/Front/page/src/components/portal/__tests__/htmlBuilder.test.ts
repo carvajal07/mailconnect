@@ -1,0 +1,261 @@
+/**
+ * Pruebas del constructor de correos: SANEAMIENTO (lo más sensible: el HTML que sale de
+ * aquí viaja en el correo de un cliente), texto enriquecido, generación email-safe y el
+ * chequeo previo de entregabilidad.
+ */
+import { describe, it, expect } from 'vitest';
+import {
+  sanitizeInlineHtml,
+  sanitizeBlockHtml,
+  blockContentHtml,
+  variableToken,
+  usedVariables,
+  richToPlain,
+} from '../richText';
+import {
+  createBlock,
+  generateHtml,
+  analyzeTemplate,
+  DEFAULT_SETTINGS,
+  COLUMN_RATIOS,
+  type Block,
+} from '../htmlBuilder';
+
+const settings = { ...DEFAULT_SETTINGS };
+
+describe('sanitizeInlineHtml — lista blanca', () => {
+  it('conserva el formato que los clientes de correo sí renderizan', () => {
+    const out = sanitizeInlineHtml('<strong>Hola</strong> <em>mundo</em> <u>hoy</u>');
+    expect(out).toBe('<strong>Hola</strong> <em>mundo</em> <u>hoy</u>');
+  });
+
+  it('normaliza <b>/<i> a las etiquetas semánticas', () => {
+    expect(sanitizeInlineHtml('<b>a</b><i>b</i>')).toBe('<strong>a</strong><em>b</em>');
+  });
+
+  it('ELIMINA script y su contenido', () => {
+    const out = sanitizeInlineHtml('Hola<script>alert(document.cookie)</script>mundo');
+    expect(out).toBe('Holamundo');
+    expect(out).not.toContain('alert');
+  });
+
+  it('quita manejadores de evento aunque la etiqueta sea válida', () => {
+    const out = sanitizeInlineHtml('<span onclick="robar()" style="color:#f00">x</span>');
+    expect(out).not.toContain('onclick');
+    expect(out).toContain('color:#f00');
+  });
+
+  it('descarta enlaces javascript: dejando solo el texto', () => {
+    const out = sanitizeInlineHtml('<a href="javascript:alert(1)">clic</a>');
+    expect(out).toBe('clic');
+  });
+
+  it('acepta http, mailto y las variables de plantilla', () => {
+    expect(sanitizeInlineHtml('<a href="https://x.co">a</a>')).toContain('href="https://x.co"');
+    expect(sanitizeInlineHtml('<a href="mailto:a@b.co">a</a>')).toContain('mailto:a@b.co');
+    expect(sanitizeInlineHtml('<a href="{{unsubscribeUrl}}">baja</a>')).toContain('{{unsubscribeUrl}}');
+  });
+
+  it('filtra el CSS a la lista blanca (fuera position/expression)', () => {
+    const out = sanitizeInlineHtml('<span style="color:#0f0;position:fixed;width:expression(x)">t</span>');
+    expect(out).toContain('color:#0f0');
+    expect(out).not.toContain('position');
+    expect(out).not.toContain('expression');
+  });
+
+  it('desenvuelve los <div> que produce el contentEditable al presionar Enter', () => {
+    expect(sanitizeInlineHtml('<div>uno</div><div>dos</div>')).toBe('uno<br>dos<br>');
+  });
+
+  it('escapa el texto suelto (no se puede colar markup por la puerta de atrás)', () => {
+    expect(sanitizeInlineHtml('5 < 10 & 3 > 1')).toBe('5 &lt; 10 &amp; 3 &gt; 1');
+  });
+});
+
+describe('sanitizeBlockHtml — HTML crudo pegado por el usuario', () => {
+  it('conserva las tablas (así se maqueta un correo)', () => {
+    const out = sanitizeBlockHtml('<table><tr><td style="padding:8px">hola</td></tr></table>');
+    expect(out).toContain('<table>');
+    expect(out).toContain('padding:8px');
+  });
+
+  it('elimina script, iframe y form', () => {
+    const out = sanitizeBlockHtml('<div>ok</div><script>x()</script><iframe src="http://mal"></iframe><form></form>');
+    expect(out).toContain('ok');
+    expect(out).not.toContain('script');
+    expect(out).not.toContain('iframe');
+    expect(out).not.toContain('form');
+  });
+
+  it('quita src/href peligrosos pero deja los normales', () => {
+    const out = sanitizeBlockHtml('<img src="javascript:x"><a href="https://ok.co">a</a>');
+    expect(out).not.toContain('javascript:');
+    expect(out).toContain('https://ok.co');
+  });
+});
+
+describe('blockContentHtml — compatibilidad con plantillas viejas', () => {
+  it('un bloque LEGADO (sin `rich`) se escapa como antes', () => {
+    // Sin esta distinción, un texto viejo con "5 < 10" se rompería al tratarlo como HTML.
+    expect(blockContentHtml('5 < 10', undefined)).toBe('5 &lt; 10');
+  });
+
+  it('un bloque nuevo (`rich`) conserva su formato', () => {
+    expect(blockContentHtml('<strong>hola</strong>', true)).toBe('<strong>hola</strong>');
+  });
+
+  it('el salto de línea del texto plano se vuelve <br>', () => {
+    expect(blockContentHtml('a\nb', false)).toBe('a<br>b');
+  });
+});
+
+describe('variables con valor por defecto', () => {
+  it('sin respaldo emite el token simple', () => {
+    expect(variableToken('nombre')).toBe('{{nombre}}');
+  });
+
+  it('con respaldo emite la forma condicional', () => {
+    expect(variableToken('nombre', 'estimado cliente'))
+      .toBe('{{#if nombre}}{{nombre}}{{else}}estimado cliente{{/if}}');
+  });
+
+  it('detecta las variables usadas en ambas formas', () => {
+    const vars = usedVariables('Hola {{nombre}} de {{#if empresa}}{{empresa}}{{else}}tu empresa{{/if}}');
+    expect(vars.sort()).toEqual(['empresa', 'nombre']);
+  });
+});
+
+describe('generateHtml — el correo resultante', () => {
+  const withBlocks = (bs: Block[]) => generateHtml(bs, settings);
+
+  it('el formato del texto enriquecido llega al correo', () => {
+    const b = { ...createBlock('text'), text: 'Hola <strong>Ana</strong>', rich: true };
+    expect(withBlocks([b])).toContain('Hola <strong>Ana</strong>');
+  });
+
+  it('NO deja pasar script al correo, venga de donde venga', () => {
+    const rico = { ...createBlock('text'), text: 'x<script>evil()</script>', rich: true };
+    const crudo = { ...createBlock('html'), text: '<script>evil()</script><p>ok</p>', rich: false };
+    const out = withBlocks([rico, crudo]);
+    expect(out).not.toContain('evil()');
+    expect(out).toContain('<p>ok</p>');
+  });
+
+  it('omite la imagen sin src en vez de emitir una rota', () => {
+    const b = createBlock('image');           // nace vacía a propósito
+    expect(withBlocks([b])).not.toContain('<img');
+  });
+
+  it('la imagen con enlace queda clicable', () => {
+    const b = { ...createBlock('image'), url: 'https://cdn/x.png', imageHref: 'https://tienda.co' };
+    const out = withBlocks([b]);
+    expect(out).toContain('<a href="https://tienda.co"');
+    expect(out).toContain('<img src="https://cdn/x.png"');
+  });
+
+  it('respeta el relleno y el fondo propios del bloque', () => {
+    const b = { ...createBlock('text'), padY: 40, padX: 8, bgColor: '#eef' };
+    const out = withBlocks([b]);
+    expect(out).toContain('padding:40px 8px');
+    expect(out).toContain('background-color:#eef');
+  });
+
+  it('emite las reglas de modo oscuro solo si está activo', () => {
+    const b = createBlock('text');
+    expect(generateHtml([b], { ...settings, darkMode: true })).toContain('prefers-color-scheme: dark');
+    expect(generateHtml([b], { ...settings, darkMode: false })).not.toContain('prefers-color-scheme');
+  });
+
+  it('las columnas respetan la proporción elegida', () => {
+    const b = { ...createBlock('columns'), ratio: '33-67' as const };
+    const out = withBlocks([b]);
+    expect(out).toContain('width="33%"');
+    expect(out).toContain('width="67%"');
+  });
+
+  it('las columnas renderizan los bloques ANIDADOS', () => {
+    const b = {
+      ...createBlock('columns'),
+      cols: [[{ ...createBlock('text'), text: 'izquierda' }], [{ ...createBlock('button'), text: 'Comprar' }]],
+    };
+    const out = withBlocks([b]);
+    expect(out).toContain('izquierda');
+    expect(out).toContain('Comprar');
+  });
+
+  it('el modelo LEGADO de columnas (text/textRight) sigue funcionando', () => {
+    // Plantilla guardada antes de las columnas anidadas: no puede dejar de renderizar.
+    const legacy: Block = {
+      ...createBlock('columns'), cols: undefined, rich: false,
+      text: 'columna vieja izq', textRight: 'columna vieja der',
+    };
+    const out = withBlocks([legacy]);
+    expect(out).toContain('columna vieja izq');
+    expect(out).toContain('columna vieja der');
+  });
+
+  it('el pie de desuscripción va SIEMPRE (requisito anti-spam)', () => {
+    const out = withBlocks([createBlock('text')]);
+    expect(out).toContain('{{unsubscribeUrl}}');
+    expect(out).toContain('{{preferencesUrl}}');
+  });
+
+  it('mantiene los condicionales de Outlook y el doctype de correo', () => {
+    const out = withBlocks([createBlock('text')]);
+    expect(out).toContain('<!--[if mso]>');
+    expect(out).toContain('XHTML 1.0 Transitional');
+  });
+});
+
+describe('analyzeTemplate — chequeo previo', () => {
+  const find = (issues: ReturnType<typeof analyzeTemplate>, frag: string) =>
+    issues.find((i) => i.title.toLowerCase().includes(frag));
+
+  it('reporta la imagen sin definir como ERROR', () => {
+    const bs = [createBlock('image')];
+    const issues = analyzeTemplate(bs, settings, generateHtml(bs, settings));
+    expect(find(issues, 'sin imagen')?.level).toBe('error');
+  });
+
+  it('reporta los enlaces sin destino', () => {
+    const bs = [createBlock('button')];   // nace con href "https://"
+    const issues = analyzeTemplate(bs, settings, generateHtml(bs, settings));
+    expect(find(issues, 'sin destino')?.level).toBe('error');
+  });
+
+  it('avisa cuando hay imagen y casi nada de texto', () => {
+    const bs = [{ ...createBlock('image'), url: 'https://cdn/x.png', text: 'foto' }];
+    const issues = analyzeTemplate(bs, settings, generateHtml(bs, settings));
+    expect(find(issues, 'poco texto')).toBeTruthy();
+  });
+
+  it('avisa del recorte de Gmail por encima de 102 KB', () => {
+    const gordo = { ...createBlock('text'), text: 'x'.repeat(110 * 1024), rich: false };
+    const issues = analyzeTemplate([gordo], settings, generateHtml([gordo], settings));
+    expect(find(issues, '102 kb')?.level).toBe('warning');
+  });
+
+  it('una plantilla sana no reporta errores', () => {
+    const bs: Block[] = [
+      { ...createBlock('heading'), text: 'Novedades del mes' },
+      { ...createBlock('text'), text: 'Texto suficientemente largo para que la proporción imagen/texto no dispare el aviso de correo casi-solo-imagen en el chequeo previo.' },
+      { ...createBlock('button'), text: 'Ver', url: 'https://mailconnect.com.co' },
+    ];
+    const issues = analyzeTemplate(bs, { ...settings, preheader: 'Novedades' }, generateHtml(bs, settings));
+    expect(issues.filter((i) => i.level === 'error')).toHaveLength(0);
+  });
+});
+
+describe('richToPlain', () => {
+  it('extrae el texto de un contenido enriquecido', () => {
+    expect(richToPlain('<strong>Hola</strong> <em>Ana</em>')).toBe('Hola Ana');
+  });
+});
+
+describe('COLUMN_RATIOS', () => {
+  it('toda proporción suma 100 (si no, la fila se desarma en el correo)', () => {
+    for (const r of COLUMN_RATIOS) {
+      expect(r.widths.reduce((a, b) => a + b, 0)).toBe(100);
+    }
+  });
+});

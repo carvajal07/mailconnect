@@ -26,6 +26,75 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Constructor de correos HTML: nivel profesional (ago 2026)
+> Cuatro frentes en una tanda. El HTML que salía ya era correcto (doctype XHTML,
+> condicionales MSO, media queries, botones bulletproof); lo que faltaba era **poder de
+> edición** y **control de calidad**.
+
+- **A · Texto ENRIQUECIDO (el hueco más grande).** El generador hacía `esc(texto)`, así que
+  no se podía poner una palabra en negrita ni un enlace dentro de un párrafo. Ahora:
+  - **`richText.ts`** — saneamiento por **LISTA BLANCA** (sin DOMPurify, que no es
+    dependencia del repo). Se sanea en los DOS sentidos: al entrar (lo que produce el
+    `contentEditable`, que al pegar mete `<div>`, `<font>` y estilos de Word) y al salir.
+    Etiquetas en línea permitidas + CSS acotado a color/tamaño/peso/decoración; `href`
+    solo http(s)/mailto/tel/`{{variable}}` (fuera `javascript:` y `data:`).
+  - **`RichTextEditor.tsx`** — edición **EN EL LIENZO** con barra flotante (negrita,
+    cursiva, subrayado, tachado, tamaño, color, listas, enlace, quitar formato, variables).
+    Pega SIEMPRE como texto plano. Mismo enfoque `contentEditable`+`execCommand` del
+    editor de Plantillas PDF: sin dependencias nuevas.
+  - ⚠️ **Compatibilidad:** la marca **`Block.rich`** distingue el formato nuevo del LEGADO.
+    Sin ella, una plantilla vieja con `"5 < 10"` se rompería al tratarla como HTML — por eso
+    la migración es POR BLOQUE, no una conversión masiva.
+- **B · Diseño por bloque.** Antes todo compartía `padding:10px 24px` fijo y tamaños
+  clavados. Ahora hay **relleno, fondo y tamaño de fuente por bloque**; la **imagen** acepta
+  **enlace** (una promoción no clicable pierde conversiones), ancho y esquinas; y las
+  **columnas** pasan de 50/50 con texto plano a **proporciones** (50-50 · 1/3+2/3 · 2/3+1/3 ·
+  3 iguales) con **bloques ANIDADOS** dentro de cada una (un nivel: anidar columnas dentro
+  de columnas multiplica las tablas y rompe en Outlook). El modelo viejo (`text`/`textRight`)
+  se sigue renderizando.
+- **C · Entregabilidad.**
+  - **Modo oscuro** (`prefers-color-scheme` + `color-scheme`): sin esto Apple Mail y Outlook
+    invierten los colores por su cuenta y suelen romper el contraste.
+  - **Chequeo previo** (`analyzeTemplate`, botón **"Revisar"**): peso >102 KB (**Gmail
+    recorta ahí** y esconde el pie de baja), imágenes sin `src` o sin `alt`, enlaces a
+    `https://`/`#`, correo casi-solo-imagen, sin preheader, variables sin respaldo.
+  - **HTML crudo SANEADO**: `case 'html'` insertaba lo pegado tal cual → un pegado
+    malicioso viajaba en el correo. Ahora pasa por `sanitizeBlockHtml` (conserva tablas,
+    elimina script/iframe/`on*`/`javascript:`).
+  - **Variables con VALOR POR DEFECTO**: `{{nombre}}` vacío deja "Hola ,". El menú emite
+    la forma condicional `{{#if campo}}{{campo}}{{else}}respaldo{{/if}}`, que es la que
+    entiende el motor de plantillas de SES. ⚠️ Verificar en un envío real que SES la
+    resuelve (EM delega la sustitución a SES vía `ReplacementTemplateData`).
+  - **`Api_V1_Email_Send-test`** (`POST /Email/Send-test`) — **"Enviarme una prueba"** desde
+    el editor, sin publicar ni crear campaña. ⚠️ **Anti-relay:** el destinatario se
+    restringe a un correo de un usuario ACTIVO del MISMO tenant; un endpoint que enviara
+    HTML arbitrario a direcciones arbitrarias sería un relay de spam con la reputación
+    (COMPARTIDA) de la plataforma. Tope diario por tenant y auditoría `template.test-send`.
+- **D · Productividad.** **Deshacer/rehacer** (Ctrl+Z / Ctrl+Shift+Z; snapshots con debounce
+  para no crear un paso por tecla, y sin secuestrar el atajo mientras se escribe),
+  **autoguardado** con diálogo de recuperación al volver, y **biblioteca de diseños en
+  backend**: `messageTemplate` gana el canal **`HTML`** (campo `designJson` con
+  `{blocks, settings}` — el MODELO, no el HTML, para poder seguir editándolo). Antes los
+  prediseñados vivían solo en localStorage: se perdían al cambiar de navegador y no se
+  compartían con el equipo. El espejo local queda como respaldo si la API falla.
+- **Placeholder de terceros eliminado:** los bloques y los 5 presets apuntaban a
+  `via.placeholder.com` (7 sitios). Si el cliente no cambiaba la imagen, salía un correo
+  REAL con la imagen de un dominio ajeno — que además ha tenido caídas. Ahora nacen
+  **vacíos**: el lienzo muestra un marcador, el generador **omite** la imagen (mejor un
+  hueco que una imagen rota) y el chequeo previo lo reporta como error.
+- **Cobertura — primeras pruebas de FRONTEND del repo:** `vitest` + `jsdom`
+  (`src/components/portal/__tests__/htmlBuilder.test.ts`, 36) sobre el saneamiento
+  (script, `on*`, `javascript:`, CSS fuera de lista, escapado), la compatibilidad del
+  bloque legado, el token de variable con respaldo, la generación (formato que llega,
+  script que NO llega, imagen vacía omitida, imagen clicable, relleno/fondo, modo oscuro,
+  columnas con proporción y anidadas, modelo legado, pie de baja, MSO) y el chequeo previo.
+  `npm test` + `npm run build` corren ahora en CI junto a pytest.
+- ⚠️ `[J]`: lambda `Api_V1_Email_Send-test` (el CD la crea) + ruta `/Email/Send-test`
+  **ya en routes.json**; IAM `ses:SendEmail`, `dynamodb:Scan user`,
+  `UpdateItem/CreateTable/DescribeTable assistantRateLimit`, `PutItem adminAudit`; env
+  `SENDER_EMAIL` y opcional `TEST_SEND_DAILY_LIMIT` (default 20). `Api_V1_MessageTemplate_
+  Create` acepta el canal `HTML` (sin cambios de infra: misma tabla y misma ruta).
+
 ### Interruptor GLOBAL del IVA (ago 2026)
 - **Qué:** MailConnect puede **no ser responsable de IVA**. Nuevo ajuste de plataforma
   **`TAX_ENABLED`** (Configuración → **"Cobrar IVA"**, grupo *Facturación*): al apagarlo,

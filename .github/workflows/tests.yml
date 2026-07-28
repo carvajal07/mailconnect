@@ -32,3 +32,34 @@ jobs:
 
       - name: Ejecutar pruebas
         run: pytest -v
+
+  pruebas-frontend:
+    name: vitest (constructor de correos)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: 05_Frontend/Front/page
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: 05_Frontend/Front/page/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # El saneamiento del constructor decide qué HTML viaja en el correo de un cliente:
+      # una regresión ahí es un XSS en la bandeja del destinatario.
+      - name: Ejecutar pruebas
+        run: npm test
+
+      # Atrapa regresiones de TypeScript antes del merge (el frontend se despliega a mano).
+      - name: Compilar
+        run: npm run build

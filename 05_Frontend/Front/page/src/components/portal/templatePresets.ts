@@ -33,7 +33,7 @@ export const BUILTIN_PRESETS: TemplatePreset[] = [
       b('logo'),
       b('heading', { text: 'Novedades del mes', align: 'center', color: '#16233f' }),
       b('text', { text: 'Hola {{nombre}}, esto es lo más importante de este mes en {{empresa}}.' }),
-      b('image', { url: 'https://via.placeholder.com/600x260?text=Destacado', align: 'center' }),
+      b('image', { url: '', align: 'center' }),
       b('text', { text: 'Cuéntale a tus lectores por qué esto les interesa. Mantén los párrafos cortos.' }),
       b('button', { text: 'Leer más', url: 'https://', align: 'center', color: '#0075be' }),
       b('divider'),
@@ -47,7 +47,7 @@ export const BUILTIN_PRESETS: TemplatePreset[] = [
     settings: S({ linkColor: '#1fbf87' }),
     blocks: [
       b('heading', { text: '¡50% de descuento!', align: 'center', color: '#0075be' }),
-      b('image', { url: 'https://via.placeholder.com/600x300?text=Oferta', align: 'center' }),
+      b('image', { url: '', align: 'center' }),
       b('text', { text: 'Solo por hoy, {{nombre}}. Aprovecha antes de que se acabe.', align: 'center' }),
       b('button', { text: 'Comprar ahora', url: 'https://', align: 'center', color: '#1fbf87' }),
       b('spacer', { height: 16 }),
@@ -75,7 +75,7 @@ export const BUILTIN_PRESETS: TemplatePreset[] = [
     settings: S(),
     blocks: [
       b('heading', { text: 'Tenemos algo nuevo', align: 'center', color: '#16233f' }),
-      b('image', { url: 'https://via.placeholder.com/600x240?text=Novedad', align: 'center' }),
+      b('image', { url: '', align: 'center' }),
       b('columns', { text: 'Qué es\nUna breve descripción de la novedad.', textRight: 'Por qué importa\nCómo beneficia a {{nombre}}.' }),
       b('button', { text: 'Ver detalles', url: 'https://', align: 'center', color: '#0075be' }),
     ],

@@ -61,3 +61,16 @@ export const templatesService = {
   remove: (userId: string, templateName: string) =>
     apiPost(TEMPLATE_ENDPOINTS.DELETE, { userId, templateName }),
 };
+
+/**
+ * Envía una PRUEBA del HTML del constructor a un correo del propio equipo
+ * (POST /Email/Send-test). El backend restringe el destinatario a usuarios del tenant:
+ * un endpoint que enviara HTML arbitrario a direcciones arbitrarias sería un relay de
+ * spam con la reputación de envío de la plataforma, que es compartida.
+ */
+export const sendTestEmail = (
+  html: string,
+  to: string,
+  subject?: string,
+): Promise<ApiResponse<{ to: string; messageId: string }>> =>
+  apiPost('/Email/Send-test', { html, to, subject });

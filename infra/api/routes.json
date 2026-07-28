@@ -71,6 +71,7 @@
     { "path": "/Report/State-report",      "lambda": "Api_V1_Reports_state-report" },
     { "path": "/Cost/Estimate",            "lambda": "Api_V1_Cost_Estimate" },
     { "path": "/Cost/Attachment-weight",   "lambda": "Api_V1_Cost_Attachment-weight" },
+    { "path": "/Email/Send-test",          "lambda": "Api_V1_Email_Send-test" },
     { "path": "/Balance/Get",              "lambda": "Api_V1_Balance_Get" },
     { "path": "/Balance/Topup-init",       "lambda": "Api_V1_Balance_Topup-init" },
     { "path": "/Balance/Topup-manual-request", "lambda": "Api_V1_Balance_Topup-manual-request" },
