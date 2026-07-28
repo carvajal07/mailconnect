@@ -276,6 +276,47 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   a medias que no llega al correo, alineación izquierda/derecha/centro en insignias y en el
   estilo de texto legado).
 
+### Constructor HTML: 4 defectos + forma y logos de las redes (ago 2026)
+- **Defecto — el cursor saltaba AL INICIO al escribir** (`RichTextEditor`). La guarda era
+  `if (el.innerHTML !== value) el.innerHTML = value`, pero **`sanitizeInlineHtml` NORMALIZA**
+  el markup (`<b>`→`<strong>`, los `<div>` del `contentEditable`→`<br>`, escapes), así que
+  lo que vuelve por prop casi nunca es idéntico byte a byte al DOM → cada tecla reescribía
+  el nodo y el cursor se iba al principio. Ahora se ignora el **eco del propio `emit`**
+  (`lastEmitted`) y solo se aplica un valor que venga de FUERA (cargar plantilla, insertar
+  variable desde el panel).
+- **Defecto — alinear las redes a izquierda/derecha rompía el bloque.** Por especificación
+  de HTML, **`<table align="left|right">` se renderiza como `float`**: la fila salía del
+  flujo, el contenedor colapsaba (en el lienzo, una franja delgada con los iconos por fuera)
+  y en el correo el bloque siguiente se le habría subido al lado. Ahora la alineación va en
+  una **tabla envolvente** con `align` en el `td` (lo que respeta Outlook) + margen en la
+  tabla interna. ⚠️ `align="center"` sí era seguro (mapea a `margin:auto`, no a float), pero
+  se trata igual para no tener dos caminos.
+- **Barra de herramientas del bloque** subida a `top:-34` (su alto completo): con `-16`
+  seguía montada sobre la primera línea del bloque seleccionado.
+- **Chequeo previo — los GRITOS ahora se miran en el CUERPO, no solo en el preheader.**
+  `GRATIS!!! OFERTA!!!` **no se detectaba**: las mayúsculas sostenidas y los signos
+  repetidos solo se revisaban en el preheader, y "gratis" sola no llega al umbral de 2
+  expresiones. Ahora es un aviso propio (mayúsculas de 4+ letras o `!!`/`??`) sobre
+  preheader y cuerpo — es el GRITO lo que puntúan los filtros, más que la palabra, que
+  puede ser legítima. ⚠️ Las `{{variables}}` se excluyen: hay bases con las columnas en
+  mayúsculas por convención y no son el usuario gritando.
+- **Forma de la insignia** (`socialShape`: círculo · **cuadrado redondeado** · cuadrado) —
+  el cuadrado redondeado es el estilo actual. Default `circle`, así que nada cambia solo.
+  ⚠️ Outlook ignora `border-radius`: ahí TODAS salen cuadradas, que es justo por lo que
+  `rounded`/`square` se ven más consistentes entre clientes que el círculo.
+- **Logo REAL por red (`icons`), ahora expuesto en la UI.** El campo existía en el modelo y
+  en el generador pero **no había forma de llenarlo desde el portal**. Cada red gana un
+  botón que abre "Mis imágenes" (biblioteca + subir) y otro para volver a la insignia.
+  ⚠️ **Por qué una imagen y no un icono vectorial:** el correo no admite **SVG en línea**
+  (Gmail lo elimina) ni **`data:` URI** (Gmail los bloquea), así que un logo real SOLO puede
+  ser una imagen con URL pública. Se sube al bucket del **propio cliente** (`resources/`),
+  nunca a un CDN ajeno — que es lo que dejaría rotos los correos YA enviados si ese dominio
+  cae (el problema de `via.placeholder.com`).
+- **Cobertura:** `htmlBuilder.test.ts` sube a **85** (+8: gritos en cuerpo/preheader, texto
+  normal y variables en mayúsculas que NO disparan, radio por forma, forma en el correo,
+  logo propio que reemplaza la insignia, y un guard de que la tabla de iconos NO lleva
+  `align` — el float que colapsaba el bloque).
+
 ### Interruptor GLOBAL del IVA (ago 2026)
 - **Qué:** MailConnect puede **no ser responsable de IVA**. Nuevo ajuste de plataforma
   **`TAX_ENABLED`** (Configuración → **"Cobrar IVA"**, grupo *Facturación*): al apagarlo,
