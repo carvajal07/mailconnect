@@ -25,6 +25,9 @@ import {
   renderBlock,
   videoThumbnail,
   youtubeId,
+  isHexColor,
+  socialMonoColor,
+  DEFAULT_SOCIAL_MONO,
   type Block,
 } from '../htmlBuilder';
 
@@ -525,5 +528,54 @@ describe('vídeo en la parte de TEXTO del correo', () => {
     const b = { ...createBlock('video'), videoUrl: 'https://youtu.be/abc123', videoLabel: 'Ver la demo' };
     const txt = generatePlainText([b], settings);
     expect(txt).toContain('Ver la demo: https://youtu.be/abc123');
+  });
+});
+
+describe('redes sociales: color de marca y alineación', () => {
+  const conRedes = (extra: Partial<Block> = {}) => ({
+    ...createBlock('social'),
+    links: { facebook: 'https://fb.com/x', instagram: 'https://ig.com/x' },
+    ...extra,
+  } as Block);
+
+  it('por defecto cada red lleva SU color', () => {
+    const html = generateHtml([conRedes()], settings);
+    expect(html).toContain('#1877F2');  // Facebook
+    expect(html).toContain('#E4405F');  // Instagram
+  });
+
+  it('en "mono" TODAS usan el color de la marca del cliente', () => {
+    const html = generateHtml([conRedes({ socialStyle: 'mono', socialColor: '#0075be' })], settings);
+    expect(html).not.toContain('#1877F2');
+    expect(html).not.toContain('#E4405F');
+    expect(html.match(/#0075be/gi)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('un hex a medio escribir NO llega al correo', () => {
+    // El cliente pega el hex de su manual de marca; entre tecla y tecla vale "#00".
+    expect(isHexColor('#0075be')).toBe(true);
+    expect(isHexColor('#00')).toBe(false);
+    expect(socialMonoColor('#00')).toBe(DEFAULT_SOCIAL_MONO);
+    expect(socialMonoColor('#0075be')).toBe('#0075be');
+    const html = generateHtml([conRedes({ socialStyle: 'mono', socialColor: '#00' })], settings);
+    expect(html).toContain(DEFAULT_SOCIAL_MONO);
+  });
+
+  it('la alineación del bloque se respeta (iba clavada a center)', () => {
+    const izq = generateHtml([conRedes({ align: 'left' })], settings);
+    expect(izq).toContain('align="left"');
+    expect(izq).toContain('margin:0;');
+
+    const der = generateHtml([conRedes({ align: 'right' })], settings);
+    expect(der).toContain('align="right"');
+    expect(der).toContain('margin:0 0 0 auto;');
+
+    const centro = generateHtml([conRedes({ align: 'center' })], settings);
+    expect(centro).toContain('margin:0 auto;');
+  });
+
+  it('el estilo LEGADO de texto también se alinea', () => {
+    const html = generateHtml([conRedes({ socialStyle: 'text', align: 'right' })], settings);
+    expect(html).toContain('text-align:right');
   });
 });

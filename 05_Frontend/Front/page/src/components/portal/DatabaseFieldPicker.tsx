@@ -71,37 +71,84 @@ export const DatabaseFieldPicker = ({ onInsert, onFieldsChange, compact }: Props
     else navigator.clipboard?.writeText(`{{${field}}}`).catch(() => { /* sin portapapeles: no pasa nada */ });
   };
 
+  const selector = (
+    <TextField
+      select
+      size="small"
+      label="Base de datos"
+      value={selectedId}
+      onChange={(e) => setSelectedId(e.target.value)}
+      fullWidth={!compact}
+      sx={compact ? { minWidth: 210 } : undefined}
+      helperText={compact ? undefined : (
+        databases.length === 0
+          ? (loading ? 'Cargando bases…' : 'No tienes bases cargadas. Súbelas en "Bases de datos".')
+          : 'Elige una base para ver sus campos.'
+      )}
+    >
+      {databases.length === 0 && (
+        <MenuItem value="" disabled>{loading ? 'Cargando…' : 'Sin bases'}</MenuItem>
+      )}
+      {databases.map((d) => (
+        <MenuItem key={d.databaseFileId} value={d.databaseFileId}>
+          <StorageIcon fontSize="small" style={{ marginRight: 8, verticalAlign: 'middle' }} />
+          {d.fileName} {d.channel ? `· ${d.channel}` : ''}
+        </MenuItem>
+      ))}
+    </TextField>
+  );
+
+  const chips = fields.map((f) => (
+    <Tooltip key={f} title={`Insertar {{${f}}}`}>
+      <Chip label={f} size="small" variant="outlined" color="primary" onClick={() => handleField(f)} clickable />
+    </Tooltip>
+  ));
+
+  /**
+   * COMPACTO = una sola FILA (título + selector + campos). En el constructor de correos
+   * este bloque vive encima del lienzo y en formato tarjeta se llevaba ~120 px de alto
+   * que le hacen falta al lienzo, que es lo que de verdad se está editando.
+   */
+  if (compact) {
+    return (
+      <Paper variant="outlined" sx={{ px: 1.5, py: 1 }}>
+        <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
+          <Stack direction="row" spacing={0.75} alignItems="center" sx={{ flexShrink: 0 }}>
+            <DataObjectIcon fontSize="small" color="primary" />
+            <Typography variant="body2" fontWeight={700}>Campos de la base</Typography>
+            {loading && <CircularProgress size={14} />}
+          </Stack>
+          {selector}
+          {chips.length > 0 && (
+            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ flex: 1, minWidth: 0 }}>
+              {chips}
+            </Stack>
+          )}
+          {databases.length === 0 && !loading && (
+            <Typography variant="caption" color="text.secondary">
+              No tienes bases cargadas. Súbelas en "Bases de datos".
+            </Typography>
+          )}
+        </Stack>
+        {selected && fields.length === 0 && (
+          <Alert severity="info" sx={{ mt: 1 }}>
+            Esta base no tiene columnas registradas (se cargó antes de esta función). Vuelve a
+            subirla para habilitar sus campos.
+          </Alert>
+        )}
+      </Paper>
+    );
+  }
+
   return (
-    <Paper variant="outlined" sx={{ p: compact ? 1.5 : 2 }}>
+    <Paper variant="outlined" sx={{ p: 2 }}>
       <Stack direction="row" spacing={1} alignItems="center" mb={1}>
         <DataObjectIcon fontSize="small" color="primary" />
         <Typography variant="subtitle2" fontWeight={700}>Campos desde una base de datos</Typography>
         {loading && <CircularProgress size={14} />}
       </Stack>
 
-      <TextField
-        select
-        size="small"
-        fullWidth
-        label="Base de datos"
-        value={selectedId}
-        onChange={(e) => setSelectedId(e.target.value)}
-        helperText={
-          databases.length === 0
-            ? (loading ? 'Cargando bases…' : 'No tienes bases cargadas. Súbelas en "Bases de datos".')
-            : 'Elige una base para ver sus campos.'
-        }
-      >
-        {databases.length === 0 && (
-          <MenuItem value="" disabled>{loading ? 'Cargando…' : 'Sin bases'}</MenuItem>
-        )}
-        {databases.map((d) => (
-          <MenuItem key={d.databaseFileId} value={d.databaseFileId}>
-            <StorageIcon fontSize="small" style={{ marginRight: 8, verticalAlign: 'middle' }} />
-            {d.fileName} {d.channel ? `· ${d.channel}` : ''}
-          </MenuItem>
-        ))}
-      </TextField>
+      {selector}
 
       {selected && fields.length === 0 && (
         <Alert severity="info" sx={{ mt: 1.5 }}>
@@ -116,11 +163,7 @@ export const DatabaseFieldPicker = ({ onInsert, onFieldsChange, compact }: Props
             {onInsert ? 'Haz clic en un campo para insertarlo:' : 'Haz clic para copiar el campo (úsalo como {{campo}}):'}
           </Typography>
           <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 0.75 }}>
-            {fields.map((f) => (
-              <Tooltip key={f} title={`Insertar {{${f}}}`}>
-                <Chip label={f} size="small" variant="outlined" color="primary" onClick={() => handleField(f)} clickable />
-              </Tooltip>
-            ))}
+            {chips}
           </Stack>
         </Box>
       )}

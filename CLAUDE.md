@@ -245,6 +245,37 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   `/MessageTemplate/Create`. Envs opcionales `DESIGN_MAX_VERSIONS` (10) y
   `DESIGN_HISTORY_BUDGET` (327680).
 
+### Constructor HTML: redes con color de marca y ventana de edición aparte (ago 2026)
+- **Redes de UN SOLO COLOR (`socialStyle:'mono'` + `socialColor`).** El estilo `badge` pinta
+  cada red con SU color (Facebook azul, Instagram rosa), que es lo correcto por defecto pero
+  rompe cualquier manual de marca serio. El estilo nuevo las pinta TODAS del color que elija
+  el cliente, con **selector + campo de código HTML** (el manual da el hex exacto `#0075BE`;
+  acertarlo con el cuentagotas es imposible). ⚠️ Un hex a medio escribir (`#00`, entre tecla
+  y tecla) **no llega al correo**: `socialMonoColor()` cae al default si no es `#rrggbb`.
+- **Fix — la alineación de las redes no hacía nada.** `socialRow` emitía `align="center"` y
+  `margin:0 auto` CLAVADOS, así que los botones izquierda/derecha del panel no tenían efecto
+  (y en el estilo de texto legado, `text-align:center` fijo). Ahora sale del bloque, con el
+  atributo `align` (que es lo que respeta Outlook) más el margen para el resto de clientes.
+- **Ventana de edición APARTE + scroll independiente por panel (rediseño del armazón).** El
+  editor era una página larga: los tres paneles eran `sticky` sobre el scroll de la PÁGINA,
+  así que al bajar por un correo largo la paleta y las propiedades se iban de vista, y el
+  menú del portal se llevaba ~240 px de ancho. Ahora:
+  - El armazón es una **columna flex de alto acotado** (`calc(100vh - 168px)`): barra arriba
+    y, debajo, la fila de paneles que se reparte el resto. **Cada panel hace su propio
+    scroll** (`minHeight:0` es obligatorio: sin él un hijo flex crece en vez de desbordar).
+    La paleta queda **fija** y solo scrollea si su propio contenido no cabe.
+  - Botón de **pantalla completa** (⛶) que lleva el editor a un overlay `fixed inset-0`
+    —igual que el Estudio y el Diseñador de PDF—, con el scroll del `body` bloqueado para
+    que la página de atrás no deje su barra. **Esc** cierra la ventana (si no hay bloque
+    seleccionado; con selección, Esc la suelta primero).
+  - ⚠️ **En móvil se apila y vuelve al scroll normal de la página**: acotar el alto en una
+    pantalla estrecha deja tres cajitas inservibles. Todo el `overflow`/alto va bajo `md`.
+  - La paleta se compactó y el selector de base (`DatabaseFieldPicker compact`) pasa de
+    tarjeta a **una sola fila** — se llevaba ~120 px de alto que le hacen falta al lienzo.
+- **Cobertura:** `htmlBuilder.test.ts` sube a **77** (+5: color por red vs color único, hex
+  a medias que no llega al correo, alineación izquierda/derecha/centro en insignias y en el
+  estilo de texto legado).
+
 ### Interruptor GLOBAL del IVA (ago 2026)
 - **Qué:** MailConnect puede **no ser responsable de IVA**. Nuevo ajuste de plataforma
   **`TAX_ENABLED`** (Configuración → **"Cobrar IVA"**, grupo *Facturación*): al apagarlo,
