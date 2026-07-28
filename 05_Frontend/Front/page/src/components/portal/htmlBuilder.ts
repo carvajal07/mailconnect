@@ -58,8 +58,26 @@ export const SOCIAL_NETWORKS: { key: keyof SocialLinks; label: string; color: st
   { key: 'website', label: 'Sitio web', color: '#0075be', initial: '🌐' },
 ];
 
-/** Estilo del bloque de redes. `text` es el LEGADO (enlaces de texto). */
-export type SocialStyle = 'badge' | 'text';
+/**
+ * Estilo del bloque de redes:
+ *  - `badge` — cada red con SU color de marca (Facebook azul, Instagram rosa…).
+ *  - `mono`  — todas del MISMO color, el que elija el cliente (`socialColor`). Es lo que
+ *              pide un manual de marca serio: los colores ajenos rompen la paleta.
+ *  - `text`  — LEGADO: enlaces de texto separados por puntos.
+ */
+export type SocialStyle = 'badge' | 'mono' | 'text';
+
+/** Color único de las insignias cuando el estilo es `mono`. */
+export const DEFAULT_SOCIAL_MONO = '#16233f';
+
+export const isHexColor = (v?: string): boolean => /^#[0-9a-fA-F]{6}$/.test(String(v || '').trim());
+
+/**
+ * Color monocromático efectivo. El cliente puede pegar el hex de su manual de marca, así
+ * que mientras lo escribe el valor está a medias ("#01"): ahí se usa el default en vez de
+ * emitir un color inválido al correo.
+ */
+export const socialMonoColor = (v?: string): string => (isHexColor(v) ? String(v).trim() : DEFAULT_SOCIAL_MONO);
 
 /** Un producto de la grilla `products`. */
 export interface ProductItem {
@@ -112,8 +130,10 @@ export interface Block {
   color: string; // color de texto / fondo del botón / barra del logo
   height: number; // alto del espaciador (px)
   links: SocialLinks; // redes sociales
-  /** Estilo del bloque de redes: insignias de color (default) o enlaces de texto. */
+  /** Estilo del bloque de redes: insignias de color (default), monocromáticas o texto. */
   socialStyle?: SocialStyle;
+  /** Color de TODAS las insignias cuando el estilo es `mono` (manual de marca del cliente). */
+  socialColor?: string;
   /** Tamaño de la insignia en px. */
   socialSize?: number;
   /** Icono PROPIO por red (URL de una imagen subida por el cliente). Si está, gana. */
@@ -372,11 +392,15 @@ function socialRow(b: Block, st: EmailSettings): string {
   });
   if (!activos.length) return '';
 
+  // La alineación del bloque manda: antes iba clavada a `center` y los botones de
+  // izquierda/derecha del panel no hacían nada.
+  const align = b.align || 'center';
+
   // LEGADO: enlaces de texto separados por puntos.
   if (style === 'text') {
     const items = activos.map((n) =>
       `<a href="${esc(String(links[n.key]))}" target="_blank" style="color:${st.linkColor};text-decoration:none;font-family:${st.fontFamily};font-size:14px">${n.label}</a>`);
-    return `<p style="margin:0;text-align:center">${items.join(' &nbsp;·&nbsp; ')}</p>`;
+    return `<p style="margin:0;text-align:${align}">${items.join(' &nbsp;·&nbsp; ')}</p>`;
   }
 
   // Insignias: una celda por red. `border-radius` lo ignora Outlook (queda cuadrada,
@@ -384,15 +408,19 @@ function socialRow(b: Block, st: EmailSettings): string {
   const celdas = activos.map((n) => {
     const href = esc(String(links[n.key]));
     const propio = b.icons?.[n.key];
+    // En `mono` todas comparten el color elegido por el cliente; en `badge`, el de cada marca.
+    const color = style === 'mono' ? socialMonoColor(b.socialColor) : n.color;
     const contenido = propio
       ? `<img src="${esc(propio)}" alt="${esc(n.label)}" width="${size}" height="${size}" style="display:block;width:${size}px;height:${size}px;border:0;border-radius:${Math.round(size / 2)}px;" />`
       : `<a href="${href}" target="_blank" style="display:block;width:${size}px;height:${size}px;line-height:${size}px;text-align:center;font-family:${st.fontFamily};font-size:${Math.round(size * 0.42)}px;font-weight:bold;color:#ffffff;text-decoration:none;">${esc(n.initial)}</a>`;
-    const bg = propio ? '' : ` bgcolor="${n.color}"`;
-    const bgStyle = propio ? '' : `background-color:${n.color};`;
+    const bg = propio ? '' : ` bgcolor="${color}"`;
+    const bgStyle = propio ? '' : `background-color:${color};`;
     return `<td style="padding:0 5px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0"><tr><td${bg} style="${bgStyle}border-radius:${Math.round(size / 2)}px;" width="${size}" height="${size}" align="center" valign="middle">${propio ? `<a href="${href}" target="_blank" style="display:block;text-decoration:none;">${contenido}</a>` : contenido}</td></tr></table></td>`;
   });
 
-  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto;"><tr>${celdas.join('')}</tr></table>`;
+  // `align` en la tabla lo respeta Outlook; el margen cubre a los demás clientes.
+  const margen = align === 'center' ? 'margin:0 auto;' : align === 'right' ? 'margin:0 0 0 auto;' : 'margin:0;';
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" align="${align}" style="${margen}"><tr>${celdas.join('')}</tr></table>`;
 }
 
 /**

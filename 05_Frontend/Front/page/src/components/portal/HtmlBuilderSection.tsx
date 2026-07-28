@@ -65,6 +65,8 @@ import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import FormatClearIcon from '@mui/icons-material/FormatClear';
 import KeyboardIcon from '@mui/icons-material/Keyboard';
+import FullscreenIcon from '@mui/icons-material/Fullscreen';
+import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
 import { formatDateTime } from '../../utils/datetime';
@@ -85,6 +87,9 @@ import {
   COLUMN_LAYOUTS,
   MAX_COLUMNS,
   SOCIAL_NETWORKS,
+  DEFAULT_SOCIAL_MONO,
+  socialMonoColor,
+  isHexColor,
   videoThumbnail,
   youtubeId,
   columnWidths,
@@ -101,6 +106,7 @@ import {
   type BlockType,
   type EmailSettings,
   type ProductItem,
+  type SocialStyle,
 } from './htmlBuilder';
 import { RichTextEditor } from './RichTextEditor';
 import { blockContentHtml, variableToken, richToPlain } from './richText';
@@ -184,6 +190,42 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [settings, setSettings] = useState<EmailSettings>({ ...DEFAULT_SETTINGS });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<'editor' | 'preview'>('editor');
+
+  /**
+   * Ventana de edición APARTE (overlay a pantalla completa), igual que el Estudio y el
+   * Diseñador de PDF. El menú lateral del portal se lleva ~240 px que en un editor de tres
+   * paneles salen del lienzo, que es lo único que de verdad importa aquí.
+   */
+  const [fullscreen, setFullscreen] = useState(false);
+
+  // Sin esto, la página que queda DEBAJO del overlay sigue scrolleando (y deja su barra a
+  // la derecha), que es justo el ruido que la ventana aparte viene a quitar.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const previo = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previo; };
+  }, [fullscreen]);
+
+  /**
+   * El armazón es una COLUMNA FLEX de alto acotado: la barra arriba y, debajo, la fila de
+   * paneles que se reparte el resto. Cada panel hace su propio scroll (`minHeight:0` es
+   * obligatorio: sin él un hijo flex crece en vez de desbordar) en vez de arrastrar toda
+   * la página, que era lo que hacía que la paleta y las propiedades se fueran de vista al
+   * bajar por un correo largo. En móvil se apila y vuelve al scroll normal de la página:
+   * acotar el alto en una pantalla estrecha deja tres cajitas inservibles.
+   */
+  const shellSx = fullscreen
+    ? {
+      position: 'fixed' as const, inset: 0, zIndex: 1300,
+      bgcolor: 'background.default', p: 2,
+      display: 'flex', flexDirection: 'column' as const,
+    }
+    : {
+      display: 'flex', flexDirection: 'column' as const,
+      height: { md: 'calc(100vh - 168px)' },
+      minHeight: { md: 520 },
+    };
   const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
   const [draftName, setDraftName] = useState('');
   // Campos de la base seleccionada (para las variables {{campo}}). Vacío = usa las por defecto.
@@ -253,10 +295,17 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         return;
       }
 
+      // Esc: primero suelta la selección y, si no hay nada seleccionado, cierra la ventana
+      // de edición. Es lo que espera quien abrió una pantalla completa.
+      if (e.key === 'Escape') {
+        if (selectedIdRef.current) setSelectedId(null);
+        else setFullscreen(false);
+        return;
+      }
+
       const id = selectedIdRef.current;
       if (!id) return;
 
-      if (e.key === 'Escape') { setSelectedId(null); return; }
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeBlock(id); return; }
       // Alt+flechas mueve el bloque; las flechas solas se dejan al desplazamiento normal.
       if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
@@ -754,11 +803,12 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   }, [presetsOpen, sessionCustomerId]);
 
   return (
-    <Box>
+    <Box sx={shellSx}>
       {/* Barra de herramientas */}
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1}
+        sx={{ flexShrink: 0 }}>
         <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography variant="h4">Plantillas HTML</Typography>
+          <Typography variant={fullscreen ? 'h6' : 'h4'}>Plantillas HTML</Typography>
           <TextField
             size="small"
             placeholder="Nombre del borrador"
@@ -820,7 +870,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                   + 'Ctrl+D · duplicar el bloque seleccionado\n'
                   + 'Supr · eliminar el bloque seleccionado\n'
                   + 'Alt+↑ / Alt+↓ · mover el bloque\n'
-                  + 'Esc · quitar la selección'}
+                  + 'Esc · quitar la selección (y cerrar la ventana de edición)'}
               </Box>
             }
           >
@@ -845,6 +895,13 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
           <Button size="small" variant="contained" startIcon={<SaveIcon />} onClick={() => setSaveOpen(true)} disabled={blocks.length === 0}>
             Publicar
           </Button>
+          {/* Ventana aparte: el menú lateral del portal se lleva ~240 px que en un editor
+              de 3 paneles se notan en el lienzo, que es lo único que importa aquí. */}
+          <Tooltip title={fullscreen ? 'Salir de la ventana de edición (Esc)' : 'Abrir el editor en una ventana aparte'}>
+            <IconButton size="small" onClick={() => setFullscreen((f) => !f)}>
+              {fullscreen ? <FullscreenExitIcon fontSize="small" /> : <FullscreenIcon fontSize="small" />}
+            </IconButton>
+          </Tooltip>
           {autosavedAt && (
             <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
               Guardado automático {autosavedAt}
@@ -878,13 +935,13 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
           el bloque seleccionado. Va ARRIBA (no al fondo del panel de propiedades, donde
           quedaba fuera de vista en cuanto el bloque tenía muchas opciones). */}
       {view === 'editor' && (
-        <Box sx={{ mb: 2 }}>
+        <Box sx={{ mb: 2, flexShrink: 0 }}>
           <DatabaseFieldPicker compact onFieldsChange={setDbFields} onInsert={insertVariable} />
         </Box>
       )}
 
       {view === 'preview' ? (
-        <Box>
+        <Box sx={{ flex: 1, minHeight: 0, overflowY: { md: 'auto' } }}>
           {/* Lo que realmente decide si abren el correo es la terna remitente + asunto +
               preheader, y hasta ahora no había forma de verla junta: el asunto vivía en el
               diálogo de publicar y el preheader en ajustes. */}
@@ -951,15 +1008,21 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
           </Paper>
         </Box>
       ) : (
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="flex-start">
-          {/* Paleta agrupada (con icono por bloque) */}
-          <Paper variant="outlined" sx={{ p: 1.5, width: { md: 200 }, flexShrink: 0, position: { md: 'sticky' }, top: { md: 88 } }}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="stretch"
+          sx={{ flex: 1, minHeight: 0 }}>
+          {/* Paleta agrupada (con icono por bloque). Queda FIJA: solo hace scroll si su
+              propio contenido no cabe, nunca por lo largo que sea el correo. */}
+          <Paper variant="outlined" sx={{
+            p: 1.5, width: { md: 200 }, flexShrink: 0,
+            overflowY: { md: 'auto' }, minHeight: 0,
+          }}>
             {PALETTE_GROUPS.map((group) => (
-              <Box key={group.label} sx={{ mb: 1.5 }}>
-                <Typography variant="overline" color="text.secondary" sx={{ px: 0.5, letterSpacing: 0.6 }}>
+              <Box key={group.label} sx={{ mb: 1 }}>
+                <Typography variant="overline" color="text.secondary"
+                  sx={{ px: 0.5, letterSpacing: 0.6, fontSize: 10, lineHeight: 1.8 }}>
                   {group.label}
                 </Typography>
-                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.75, mt: 0.5 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5, mt: 0.25 }}>
                   {group.types.map((type) => (
                     <Button
                       key={type}
@@ -971,11 +1034,13 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                       title="Arrástralo al lienzo o haz clic para agregarlo"
                       sx={{
                         flexDirection: 'column',
-                        gap: 0.25,
-                        py: 1,
+                        gap: 0.15,
+                        py: 0.6,
+                        px: 0.5,
+                        minWidth: 0,
                         textTransform: 'none',
-                        fontSize: 11,
-                        lineHeight: 1.2,
+                        fontSize: 10.5,
+                        lineHeight: 1.15,
                         cursor: 'grab',
                         color: 'text.primary',
                         borderColor: 'divider',
@@ -992,14 +1057,16 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
             ))}
           </Paper>
 
-          {/* Lienzo: hoja de correo centrada sobre un backdrop (theme-aware) */}
+          {/* Lienzo: hoja de correo centrada sobre un backdrop (theme-aware). Es el único
+              panel que suele desbordar, y ahora hace SU scroll sin mover a los otros dos. */}
           <Box
             sx={{
               flex: 1,
               minWidth: 0,
+              minHeight: { xs: '72vh', md: 0 },
+              overflowY: { md: 'auto' },
               borderRadius: 2,
               p: { xs: 1.5, md: 3 },
-              minHeight: '72vh',
               display: 'flex',
               justifyContent: 'center',
               alignItems: 'flex-start',
@@ -1198,8 +1265,12 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
             ])}
           </Menu>
 
-          {/* Propiedades */}
-          <Paper variant="outlined" sx={{ p: 2, width: { md: 300 }, flexShrink: 0, position: { md: 'sticky' }, top: { md: 88 } }}>
+          {/* Propiedades: su propio scroll — un bloque con muchas opciones (redes,
+              productos) es más alto que la pantalla y antes empujaba la página entera. */}
+          <Paper variant="outlined" sx={{
+            p: 2, width: { md: 300 }, flexShrink: 0,
+            overflowY: { md: 'auto' }, minHeight: 0,
+          }}>
             <Typography variant="overline" color="text.secondary" sx={{ letterSpacing: 0.6 }}>
               Propiedades
             </Typography>
@@ -2079,26 +2150,51 @@ const BlockEditor = ({
           <TextField
             select label="Estilo" size="small" fullWidth
             value={b.socialStyle || 'badge'}
-            onChange={(e) => onChange({ socialStyle: e.target.value as 'badge' | 'text' })}
+            onChange={(e) => onChange({ socialStyle: e.target.value as SocialStyle })}
           >
-            <MenuItem value="badge">Insignias de color</MenuItem>
+            <MenuItem value="badge">Colores de cada red</MenuItem>
+            <MenuItem value="mono">Un solo color (tu marca)</MenuItem>
             <MenuItem value="text">Enlaces de texto</MenuItem>
           </TextField>
-          {(b.socialStyle || 'badge') === 'badge' && (
-            <TextField
-              label="Tamaño (px)" type="number" size="small" fullWidth
-              value={b.socialSize ?? 34}
-              onChange={(e) => onChange({ socialSize: Math.max(20, Math.min(64, parseInt(e.target.value) || 34)) })}
-            />
+          {(b.socialStyle || 'badge') !== 'text' && (
+            <>
+              {/* Un manual de marca serio no admite los colores ajenos de cada red. Se
+                  ofrecen el selector Y el hex escribible: el manual de marca da el código
+                  exacto (#0075BE), y acertarlo con el cuentagotas es imposible. */}
+              {b.socialStyle === 'mono' && (
+                <Stack direction="row" spacing={1}>
+                  <TextField
+                    label="Color" type="color" size="small"
+                    // El input de color EXIGE un #rrggbb válido: mientras se escribe el
+                    // hex a mano ("#01") se le pasa el último válido para que no salte.
+                    value={socialMonoColor(b.socialColor)}
+                    onChange={(e) => onChange({ socialColor: e.target.value })}
+                    sx={{ width: 92, flexShrink: 0 }}
+                  />
+                  <TextField
+                    label="Código HTML" size="small" fullWidth placeholder="#16233f"
+                    value={b.socialColor ?? DEFAULT_SOCIAL_MONO}
+                    onChange={(e) => onChange({ socialColor: e.target.value })}
+                    error={!!b.socialColor && !isHexColor(b.socialColor)}
+                    helperText={b.socialColor && !isHexColor(b.socialColor) ? 'Formato #rrggbb' : ' '}
+                  />
+                </Stack>
+              )}
+              <TextField
+                label="Tamaño (px)" type="number" size="small" fullWidth
+                value={b.socialSize ?? 34}
+                onChange={(e) => onChange({ socialSize: Math.max(20, Math.min(64, parseInt(e.target.value) || 34)) })}
+              />
+            </>
           )}
           <Typography variant="caption" color="text.secondary">
-            Deja vacía la red que no uses. Las insignias se dibujan con color de fondo (no
-            son imágenes), así que no dependen de ningún servidor externo ni se rompen.
+            Deja vacía la red que no uses.
           </Typography>
           {SOCIAL_NETWORKS.map((n) => (
             <Stack key={n.key} direction="row" spacing={1} alignItems="center">
               <Box sx={{
-                width: 26, height: 26, borderRadius: '50%', bgcolor: n.color, color: '#fff',
+                width: 26, height: 26, borderRadius: '50%', color: '#fff',
+                bgcolor: b.socialStyle === 'mono' ? (b.socialColor || DEFAULT_SOCIAL_MONO) : n.color,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: 11, fontWeight: 700, flexShrink: 0,
               }}>{n.initial}</Box>
