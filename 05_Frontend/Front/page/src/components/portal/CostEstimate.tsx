@@ -17,6 +17,7 @@ import {
   MenuItem,
   InputAdornment,
   Alert,
+  Tooltip,
 } from '@mui/material';
 import PaidIcon from '@mui/icons-material/Paid';
 import CalculateIcon from '@mui/icons-material/Calculate';
@@ -209,14 +210,24 @@ export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMo
           {loading ? 'Calculando…' : 'Calcular estimado'}
         </Button>
 
-        {withAttachment && campaignId && (
-          <Button
-            variant="outlined" size="small"
-            startIcon={weighing ? <CircularProgress size={16} color="inherit" /> : <ScaleIcon />}
-            onClick={measure} disabled={weighing}
-          >
-            {weighing ? 'Midiendo…' : 'Medir peso real'}
-          </Button>
+        {/* El botón se MUESTRA siempre que el tipo de correo lleve adjunto, y se
+            DESHABILITA (con el motivo en el tooltip) si aún no hay campaña elegida.
+            Antes se ocultaba por completo sin campaña: el usuario no tenía forma de
+            saber que la función existía ni por qué no aparecía. */}
+        {withAttachment && (
+          <Tooltip title={campaignId
+            ? 'Genera el adjunto con registros reales de la base para medir cuánto pesa'
+            : 'Elige primero una campaña arriba: el peso se mide sobre SU adjunto y SU base'}>
+            <span>
+              <Button
+                variant="outlined" size="small"
+                startIcon={weighing ? <CircularProgress size={16} color="inherit" /> : <ScaleIcon />}
+                onClick={measure} disabled={weighing || !campaignId}
+              >
+                {weighing ? 'Midiendo…' : 'Medir peso real'}
+              </Button>
+            </span>
+          </Tooltip>
         )}
       </Stack>
 
