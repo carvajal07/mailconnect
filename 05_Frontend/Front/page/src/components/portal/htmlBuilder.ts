@@ -23,7 +23,8 @@ export type BlockType =
   | 'textImage'   // combo: texto a la izquierda + imagen a la derecha
   | 'textButton'  // combo: texto a la izquierda + botón a la derecha
   | 'buttonTextRow' // combo: botón a la izquierda + texto a la derecha
-  | 'products';   // grilla de productos (imagen + título + texto + enlace)
+  | 'products'   // grilla de productos (imagen + título + texto + enlace)
+  | 'video';     // miniatura enlazada al vídeo (el correo no puede reproducirlo)
 
 export interface SocialLinks {
   facebook?: string;
@@ -136,6 +137,14 @@ export interface Block {
   buttonPadY?: number;
   buttonPadX?: number;
 
+  // ── Vídeo ──
+  /** Enlace al vídeo (YouTube, Vimeo o el que sea). */
+  videoUrl?: string;
+  /** Miniatura propia. Si está vacía y la URL es de YouTube, se deriva de ahí. */
+  videoThumb?: string;
+  /** Etiqueta del botón de reproducción. */
+  videoLabel?: string;
+
   // ── Estilo propio del bloque (antes todo compartía padding:10px 24px fijo) ──
   padY?: number;      // relleno vertical (px)
   padX?: number;      // relleno horizontal (px)
@@ -215,6 +224,7 @@ export const BLOCK_LABELS: Record<BlockType, string> = {
   textButton: 'Texto + Botón',
   buttonTextRow: 'Botón + Texto',
   products: 'Productos',
+  video: 'Vídeo',
 };
 
 /**
@@ -224,7 +234,7 @@ export const BLOCK_LABELS: Record<BlockType, string> = {
  * no se pueden crear nuevos.
  */
 export const PALETTE_GROUPS: { label: string; types: BlockType[] }[] = [
-  { label: 'Contenido', types: ['heading', 'text', 'image', 'button', 'logo'] },
+  { label: 'Contenido', types: ['heading', 'text', 'image', 'button', 'logo', 'video'] },
   { label: 'Estructura', types: ['columns', 'divider', 'spacer'] },
   { label: 'Avanzado', types: ['social', 'products', 'html'] },
 ];
@@ -301,6 +311,8 @@ export const createBlock = (type: BlockType): Block => {
       };
     case 'products':
       return { ...b, align: 'center', columns: 3, items: [defaultProduct(), defaultProduct(), defaultProduct()] };
+    case 'video':
+      return { ...b, align: 'center', videoUrl: '', videoThumb: '', videoLabel: 'Ver el vídeo', color: '#0075be' };
     default:
       return b;
   }
@@ -430,6 +442,41 @@ function ctaHtml(b: Block, st: EmailSettings, buttonLeft: boolean): string {
       </tr></table>`;
 }
 
+
+/** Id del vídeo si la URL es de YouTube (para derivar la miniatura). */
+export const youtubeId = (url: string): string | null => {
+  const m = /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/.exec(String(url || ''));
+  return m ? m[1] : null;
+};
+
+/** Miniatura efectiva del bloque de vídeo: la propia, o la de YouTube si se puede derivar. */
+export const videoThumbnail = (b: Block): string => {
+  if (b.videoThumb && b.videoThumb.trim()) return b.videoThumb;
+  const id = youtubeId(b.videoUrl || '');
+  return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : '';
+};
+
+/**
+ * Bloque de VÍDEO: miniatura clicable + botón de reproducción debajo.
+ *
+ * ⚠️ Ningún cliente de correo reproduce vídeo embebido (Gmail y Outlook eliminan
+ * `<video>` e `<iframe>`), así que lo que se envía SIEMPRE es una imagen que lleva al
+ * vídeo. El botón va DEBAJO y no superpuesto: superponer exige `background` en el `td`,
+ * que en Outlook necesita VML y se rompe con facilidad; un botón aparte funciona en todos.
+ */
+function videoHtml(b: Block, st: EmailSettings, innerW: number): string {
+  const thumb = videoThumbnail(b);
+  const href = b.videoUrl && b.videoUrl.trim() ? b.videoUrl : '';
+  if (!thumb || !href) return '';
+  const img = imageHtml(thumb, richToPlain(content(b)) || 'Ver el vídeo', b.align || 'center',
+                        b.imageWidth || innerW, href, b.imageRadius);
+  const boton = buttonHtml(
+    { ...b, type: 'button', rich: false, text: b.videoLabel || 'Ver el vídeo', url: href, align: 'center' },
+    st,
+  );
+  return `${img}<div style="padding-top:12px;">${boton}</div>`;
+}
+
 /** Grilla de productos: imagen + título + texto + enlace, en filas de `columns` (apilan en móvil). */
 function productsHtml(b: Block, st: EmailSettings): string {
   const items = b.items || [];
@@ -506,6 +553,8 @@ export function renderBlock(b: Block, st: EmailSettings, widthOverride?: number)
       return ctaHtml(b, st, true); // botón izquierda, texto derecha
     case 'products':
       return productsHtml(b, st);
+    case 'video':
+      return videoHtml(b, st, innerW);
     // HTML pegado por el usuario: se SANEA (fuera script, iframe, on*, javascript:).
     // Antes se insertaba tal cual, así que un pegado malicioso viajaba en el correo.
     case 'html':
@@ -723,6 +772,14 @@ export function generatePlainText(blocks: Block[], settings: EmailSettings = DEF
           }
           break;
         }
+        // El vídeo en texto plano es su ENLACE: sin él, quien lee la parte de texto no
+        // tiene forma de llegar al vídeo (la miniatura no existe ahí).
+        case 'video': {
+          if (b.videoUrl && b.videoUrl.trim()) {
+            lines.push(`${b.videoLabel || 'Ver el vídeo'}: ${b.videoUrl.trim()}`, '');
+          }
+          break;
+        }
         case 'products': {
           for (const it of b.items || []) {
             const partes = [it.title, it.text].filter(Boolean).join(' — ');
@@ -857,6 +914,17 @@ export function analyzeTemplate(blocks: Block[], settings: EmailSettings, html: 
       level: 'warning',
       title: `${sinAlt.length} imagen(es) sin texto alternativo`,
       detail: 'Muchos clientes bloquean las imágenes por defecto: sin el texto alternativo, ahí no se ve NADA. También lo usan los lectores de pantalla.',
+    });
+  }
+
+  // Un bloque de vídeo sin enlace (o sin miniatura derivable) se OMITE al generar: el
+  // cliente creería que envió el vídeo y en la bandeja no habría nada.
+  const videoRoto = all.filter((b) => b.type === 'video' && (!b.videoUrl?.trim() || !videoThumbnail(b)));
+  if (videoRoto.length) {
+    issues.push({
+      level: 'error',
+      title: `${videoRoto.length} bloque(s) de vídeo sin enlace o miniatura`,
+      detail: 'Se omiten al generar el correo. Pega el enlace del vídeo (de YouTube se toma la miniatura sola) o sube una miniatura propia.',
     });
   }
 

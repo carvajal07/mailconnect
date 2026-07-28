@@ -62,9 +62,12 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import RestoreIcon from '@mui/icons-material/Restore';
 import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary';
+import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import FormatClearIcon from '@mui/icons-material/FormatClear';
+import KeyboardIcon from '@mui/icons-material/Keyboard';
 import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
+import { formatDateTime } from '../../utils/datetime';
 import { templatesService, sendTestEmail } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
 import { campaignsService } from '../../services/campaignsService';
@@ -82,6 +85,8 @@ import {
   COLUMN_LAYOUTS,
   MAX_COLUMNS,
   SOCIAL_NETWORKS,
+  videoThumbnail,
+  youtubeId,
   columnWidths,
   NESTABLE_TYPES,
   createBlock,
@@ -117,6 +122,7 @@ const BLOCK_ICONS: Record<BlockType, ReactNode> = {
   textButton: <SmartButtonIcon fontSize="small" />,
   buttonTextRow: <SmartButtonIcon fontSize="small" />,
   products: <GridViewIcon fontSize="small" />,
+  video: <PlayCircleOutlineIcon fontSize="small" />,
   divider: <HorizontalRuleIcon fontSize="small" />,
   spacer: <HeightIcon fontSize="small" />,
 };
@@ -229,17 +235,47 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
+      // Nunca se secuestra un atajo mientras se escribe: dentro de un campo o del editor
+      // de texto, Ctrl+Z y Supr son del navegador y hacen falta.
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || el?.isContentEditable) return;
+
       const k = e.key.toLowerCase();
-      // No se secuestra el atajo mientras se escribe: el navegador ya deshace el texto.
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return;
-      if (k === 'z' && !e.shiftKey) { e.preventDefault(); travel(-1); }
-      else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); travel(1); }
+
+      if (e.ctrlKey || e.metaKey) {
+        if (k === 'z' && !e.shiftKey) { e.preventDefault(); travel(-1); }
+        else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); travel(1); }
+        else if (k === 'd' && selectedIdRef.current) {
+          e.preventDefault();
+          duplicateBlock(selectedIdRef.current);
+        }
+        return;
+      }
+
+      const id = selectedIdRef.current;
+      if (!id) return;
+
+      if (e.key === 'Escape') { setSelectedId(null); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeBlock(id); return; }
+      // Alt+flechas mueve el bloque; las flechas solas se dejan al desplazamiento normal.
+      if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        const idx = blocksRef.current.findIndex((b) => b.id === id);
+        if (idx >= 0) move(idx, e.key === 'ArrowUp' ? -1 : 1);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Referencias vivas para el manejador de teclado: se registra UNA vez, así que sin
+  // ellas leería el estado del primer render.
+  const selectedIdRef = useRef<string | null>(null);
+  const blocksRef = useRef<Block[]>([]);
+  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
+  useEffect(() => { blocksRef.current = blocks; }, [blocks]);
 
   // ── Autoguardado ────────────────────────────────────────────────────────────
   // Los borradores con nombre siguen siendo manuales; esto es la red de seguridad para
@@ -615,6 +651,54 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   };
 
   /**
+   * DUPLICAR una plantilla: la copia queda con nombre propio, así se puede partir de un
+   * diseño aprobado sin arriesgarse a pisarlo (guardar con el MISMO nombre versiona el
+   * original). Se guarda en backend y en el espejo local, como el resto de la galería.
+   */
+  const duplicatePreset = async (p: TemplatePreset, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const usados = new Set(presetList.map((x) => x.name));
+    let name = `${p.name} (copia)`;
+    for (let i = 2; usados.has(name); i += 1) name = `${p.name} (copia ${i})`;
+    const description = p.description || 'Copia';
+    customPresets.save(name, cloneBlocks(p.blocks), p.settings, description);
+    setPresetsVersion((v) => v + 1);
+
+    // Sin messageTemplateId → el backend CREA una plantilla nueva (no versiona el original).
+    const res = await emailDesigns.save(sessionCustomerId, name, {
+      blocks: p.blocks, settings: p.settings, description,
+    });
+    if (isOk(res)) {
+      setSharedDesigns((prev) => [
+        ...prev,
+        { ...p, id: `shared:${res.data?.messageTemplateId ?? name}`, name, description, custom: true, messageTemplateId: res.data?.messageTemplateId, history: [] },
+      ]);
+      notify(`Se creó "${name}".`, 'success');
+    } else {
+      notify(`"${name}" quedó solo en este navegador (${res.description || 'error'}).`, 'warning');
+    }
+  };
+
+  /** Historial de versiones del diseño abierto en el diálogo (null = cerrado). */
+  const [historyOf, setHistoryOf] = useState<TemplatePreset | null>(null);
+
+  /** Carga una versión anterior en el lienzo. No la publica: hay que guardar para fijarla. */
+  const restoreVersion = (raw: string, at: string) => {
+    try {
+      const d = JSON.parse(raw || '{}');
+      if (!d?.blocks?.length) throw new Error('vacío');
+      setBlocks(cloneBlocks(d.blocks as Block[]));
+      setSettings({ ...DEFAULT_SETTINGS, ...(d.settings || {}) });
+      setSelectedId(null);
+      setHistoryOf(null);
+      setPresetsOpen(false);
+      notify(`Versión del ${formatDateTime(at)} cargada. Guárdala para dejarla como la vigente.`, 'success');
+    } catch {
+      notify('Esa versión no se pudo leer.', 'error');
+    }
+  };
+
+  /**
    * Guarda el diseño como prediseñado. Va al BACKEND (canal `HTML` de `messageTemplate`)
    * para que lo vea todo el equipo; el espejo en localStorage queda como respaldo para
    * seguir trabajando si la API no responde.
@@ -628,9 +712,13 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     setSavePresetOpen(false);
     setPresetMeta({ name: '', description: '' });
 
+    // Si ya existe un diseño con ESE nombre se actualiza (el backend guarda la versión
+    // anterior en el historial); si no, se crea. Así "guardar" no llena la galería de
+    // copias y sí deja rastro de los cambios.
+    const previo = sharedDesigns.find((d) => d.name === name)?.messageTemplateId;
     const res = await emailDesigns.save(sessionCustomerId, name, {
       blocks, settings, description: presetMeta.description.trim(),
-    });
+    }, previo);
     if (isOk(res)) {
       notify(`Plantilla "${name}" guardada y compartida con tu equipo.`, 'success');
     } else {
@@ -649,11 +737,14 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
           const d = JSON.parse(t.designJson || '{}');
           if (!d?.blocks?.length) return [];
           return [{
+            id: `shared:${t.messageTemplateId}`,
             name: t.name,
             description: d.description || 'Compartida con el equipo',
             blocks: d.blocks as Block[],
             settings: { ...DEFAULT_SETTINGS, ...(d.settings || {}) },
             custom: true,
+            messageTemplateId: t.messageTemplateId,
+            history: t.designHistory ?? [],
           } as TemplatePreset];
         } catch { return []; }
       });
@@ -719,6 +810,21 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                 <RedoIcon fontSize="small" />
               </IconButton>
             </span>
+          </Tooltip>
+          {/* Los atajos no se descubren solos: sin esta ayuda nadie sabría que existen. */}
+          <Tooltip
+            title={
+              <Box sx={{ whiteSpace: 'pre-line', fontSize: 12 }}>
+                {'Atajos de teclado\n'
+                  + 'Ctrl+Z / Ctrl+Shift+Z · deshacer / rehacer\n'
+                  + 'Ctrl+D · duplicar el bloque seleccionado\n'
+                  + 'Supr · eliminar el bloque seleccionado\n'
+                  + 'Alt+↑ / Alt+↓ · mover el bloque\n'
+                  + 'Esc · quitar la selección'}
+              </Box>
+            }
+          >
+            <IconButton size="small"><KeyboardIcon fontSize="small" /></IconButton>
           </Tooltip>
           <Button size="small" variant="outlined" startIcon={<CodeIcon />} onClick={() => setShowHtml(true)}>
             Ver HTML
@@ -1139,14 +1245,28 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                       {p.name}
                     </Typography>
                     {p.custom && (
-                      <>
-                        <Box component="span" sx={{ fontSize: 11, color: 'primary.main', border: '1px solid', borderColor: 'primary.main', borderRadius: 1, px: 0.5 }}>
-                          Personalizada
-                        </Box>
+                      <Box component="span" sx={{ fontSize: 11, color: 'primary.main', border: '1px solid', borderColor: 'primary.main', borderRadius: 1, px: 0.5 }}>
+                        Personalizada
+                      </Box>
+                    )}
+                    <Tooltip title="Duplicar">
+                      <IconButton size="small" onClick={(e) => duplicatePreset(p, e)}>
+                        <ContentCopyIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    {!!p.history?.length && (
+                      <Tooltip title={`${p.history.length} versión(es) anterior(es)`}>
+                        <IconButton size="small" onClick={(e) => { e.stopPropagation(); setHistoryOf(p); }}>
+                          <RestoreIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {p.custom && (
+                      <Tooltip title="Eliminar">
                         <IconButton size="small" color="error" onClick={(e) => deleteCustomPreset(p.name, e)}>
                           <DeleteIcon fontSize="small" />
                         </IconButton>
-                      </>
+                      </Tooltip>
                     )}
                   </Stack>
                   <Typography variant="caption" color="text.secondary">
@@ -1162,6 +1282,39 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         </DialogActions>
       </Dialog>
 
+      {/* Versiones anteriores de una plantilla compartida */}
+      <Dialog open={!!historyOf} onClose={() => setHistoryOf(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>Versiones de "{historyOf?.name}"</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Cada vez que alguien guarda con este nombre, la versión anterior queda aquí
+            (se conservan las 10 más recientes). Restaurar la carga en el lienzo; para
+            dejarla como la vigente hay que volver a guardar.
+          </Typography>
+          <Stack spacing={1}>
+            {(historyOf?.history ?? []).map((v, i) => (
+              <Paper key={`${v.at}-${i}`} variant="outlined" sx={{ p: 1.5 }}>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="body2" fontWeight={600}>{formatDateTime(v.at)}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {i === 0 ? 'Versión anterior más reciente' : `${i + 1}ª versión hacia atrás`}
+                      {' · '}{(new Blob([v.designJson || '']).size / 1024).toFixed(1)} KB
+                    </Typography>
+                  </Box>
+                  <Button size="small" startIcon={<RestoreIcon />} onClick={() => restoreVersion(v.designJson, v.at)}>
+                    Restaurar
+                  </Button>
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setHistoryOf(null)}>Cerrar</Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Guardar como plantilla prediseñada (admin) */}
       <Dialog open={savePresetOpen} onClose={() => setSavePresetOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Guardar como plantilla prediseñada</DialogTitle>
@@ -1170,8 +1323,9 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
             <TextField label="Nombre de la plantilla" value={presetMeta.name} onChange={(e) => setPresetMeta((m) => ({ ...m, name: e.target.value }))} fullWidth />
             <TextField label="Descripción" value={presetMeta.description} onChange={(e) => setPresetMeta((m) => ({ ...m, description: e.target.value }))} fullWidth multiline minRows={2} />
             <Typography variant="caption" color="text.secondary">
-              Quedará disponible en "Plantillas" para todos en este navegador. Persistir/compartir
-              entre usuarios requerirá backend.
+              Queda disponible en "Plantillas" para todo tu equipo. Si ya existe una con el
+              mismo nombre, se actualiza y la versión anterior se guarda en su historial;
+              usa "Duplicar" en la galería si prefieres no tocar el original.
             </Typography>
           </Stack>
         </DialogContent>
@@ -1496,6 +1650,80 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   );
 };
 
+/**
+ * Imagen del lienzo con TIRADOR de redimensionado. Antes el ancho solo se podía cambiar
+ * por un campo numérico en el panel, que es justo lo contrario de lo que se espera al
+ * ver una imagen seleccionada.
+ *
+ * El tirador aparece solo cuando el bloque está seleccionado (`onResize` definido) y el
+ * ancho se acota al del contenedor: una imagen más ancha que el correo se recorta.
+ */
+const ResizableImage = ({
+  block: b, maxWidth, onResize,
+}: { block: Block; maxWidth: number; onResize?: (w: number) => void }) => {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [dragW, setDragW] = useState<number | null>(null);
+
+  const ancho = dragW ?? b.imageWidth ?? (b.type === 'logo' ? 180 : maxWidth);
+
+  const startResize = (e: React.MouseEvent) => {
+    if (!onResize) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const inicioX = e.clientX;
+    const inicioW = ancho;
+
+    const mover = (ev: MouseEvent) => {
+      // Se redimensiona desde el borde derecho; con la imagen centrada el ancho crece al
+      // doble de rápido que el cursor (crece por los dos lados), y así se siente natural.
+      const factor = b.align === 'center' ? 2 : 1;
+      setDragW(Math.max(40, Math.min(maxWidth, Math.round(inicioW + (ev.clientX - inicioX) * factor))));
+    };
+    const soltar = () => {
+      window.removeEventListener('mousemove', mover);
+      window.removeEventListener('mouseup', soltar);
+      setDragW((w) => { if (w != null) onResize(w); return null; });
+    };
+    window.addEventListener('mousemove', mover);
+    window.addEventListener('mouseup', soltar);
+  };
+
+  return (
+    <Box
+      ref={wrapRef}
+      sx={{
+        position: 'relative', display: 'inline-block', maxWidth: '100%',
+        width: `${ancho}px`,
+        ...(b.align === 'center' ? { display: 'block', mx: 'auto' } : {}),
+        ...(b.align === 'right' ? { display: 'block', ml: 'auto' } : {}),
+      }}
+    >
+      <Box
+        component="img" src={b.url} alt={richToPlain(b.text || '') || 'imagen'}
+        sx={{ display: 'block', width: '100%', borderRadius: b.imageRadius ? `${b.imageRadius}px` : 0 }}
+      />
+      {onResize && (
+        <>
+          <Box
+            onMouseDown={startResize}
+            sx={{
+              position: 'absolute', top: '50%', right: -7, transform: 'translateY(-50%)',
+              width: 14, height: 34, borderRadius: 1, cursor: 'ew-resize',
+              bgcolor: 'primary.main', border: '2px solid #fff', boxShadow: 2, zIndex: 3,
+            }}
+          />
+          <Box sx={{
+            position: 'absolute', bottom: 4, right: 4, px: 0.75, borderRadius: 0.5,
+            bgcolor: 'rgba(16,35,63,.75)', color: '#fff', fontSize: 11, zIndex: 3,
+          }}>
+            {Math.round(ancho)} px
+          </Box>
+        </>
+      )}
+    </Box>
+  );
+};
+
 /* --------- Render de un bloque en el lienzo (aproximado al email) --------- */
 
 /** Texto del bloque tal como saldrá: HTML en línea saneado, o texto plano escapado. */
@@ -1587,14 +1815,10 @@ const BlockPreview = ({
     case 'image':
     case 'logo':
       return b.url ? (
-        <Box
-          component="img" src={b.url} alt={richToPlain(b.text || '') || 'logo'}
-          sx={{
-            display: 'block',
-            maxWidth: b.imageWidth ? `${b.imageWidth}px` : b.type === 'logo' ? 180 : '100%',
-            width: '100%', borderRadius: b.imageRadius ? `${b.imageRadius}px` : 0,
-            mx: align === 'center' ? 'auto' : 0,
-          }}
+        <ResizableImage
+          block={b}
+          maxWidth={st.contentWidth - (b.padX ?? 24) * 2}
+          onResize={onEditText ? (w) => onEditText({ imageWidth: w }) : undefined}
         />
       ) : (
         <ImageSlot label={b.type === 'logo' ? 'Sin logo' : 'Sin imagen'} height={b.type === 'logo' ? 54 : 120} />
@@ -1607,6 +1831,22 @@ const BlockPreview = ({
     case 'divider':
     case 'html':
       return <Fiel />;
+    case 'video': {
+      const thumb = videoThumbnail(b);
+      if (!thumb || !b.videoUrl?.trim()) {
+        return (
+          <Box sx={{
+            border: '2px dashed #cbd5e1', borderRadius: 1.5, py: 4,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5,
+            color: '#94a3b8',
+          }}>
+            <PlayCircleOutlineIcon sx={{ fontSize: 40 }} />
+            <Typography variant="caption">Pega el enlace del vídeo en el panel derecho</Typography>
+          </Box>
+        );
+      }
+      return <Fiel />;
+    }
     case 'columns': {
       const widths = columnWidths(b);
       // Modelo LEGADO (text/textRight sin `cols`): se sigue dibujando para no romper las
@@ -1745,7 +1985,7 @@ const BlockEditor = ({
   const [uploadingImg, setUploadingImg] = useState(false);
   // Campo del bloque al que va la imagen elegida en la biblioteca ('url' | 'imageUrl'),
   // o el índice del producto cuando se abre desde la grilla.
-  const [libraryFor, setLibraryFor] = useState<'url' | 'imageUrl' | number | null>(null);
+  const [libraryFor, setLibraryFor] = useState<'url' | 'imageUrl' | 'videoThumb' | number | null>(null);
   const [uploadingItem, setUploadingItem] = useState<number | null>(null);
   const isImage = b.type === 'image' || b.type === 'logo';
   const hasText = b.type === 'heading' || b.type === 'text' || b.type === 'button';
@@ -2014,6 +2254,46 @@ const BlockEditor = ({
         <ColumnsEditor block={b} onChange={onChange} />
       )}
 
+      {b.type === 'video' && (
+        <>
+          <TextField
+            label="Enlace del vídeo" size="small" fullWidth
+            value={b.videoUrl ?? ''} placeholder="https://youtube.com/watch?v=…"
+            onChange={(e) => onChange({ videoUrl: e.target.value })}
+            helperText="Ningún cliente de correo reproduce vídeo: se envía una miniatura que lleva al vídeo."
+          />
+          <TextField
+            label="Texto del botón" size="small" fullWidth
+            value={b.videoLabel ?? ''} placeholder="Ver el vídeo"
+            onChange={(e) => onChange({ videoLabel: e.target.value })}
+          />
+          <TextField
+            label="Miniatura propia (opcional)" size="small" fullWidth
+            value={b.videoThumb ?? ''}
+            onChange={(e) => onChange({ videoThumb: e.target.value })}
+            helperText={youtubeId(b.videoUrl || '')
+              ? 'Con un enlace de YouTube se usa su miniatura automáticamente. Sube una propia si quieres que lleve el botón de play dibujado.'
+              : 'Obligatoria si el vídeo no es de YouTube.'}
+          />
+          <Stack direction="row" spacing={1}>
+            <Button component="label" size="small" variant="outlined" fullWidth disabled={uploadingImg} startIcon={<AddPhotoAlternateIcon />}>
+              Subir
+              <input type="file" accept="image/*" hidden onChange={async (e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                setUploadingImg(true);
+                const url = await onUploadImage(f);
+                setUploadingImg(false);
+                if (url) onChange({ videoThumb: url });
+              }} />
+            </Button>
+            <Button size="small" variant="outlined" fullWidth startIcon={<PhotoLibraryIcon />} onClick={() => setLibraryFor('videoThumb')}>
+              Mis imágenes
+            </Button>
+          </Stack>
+        </>
+      )}
+
       {/* ── Botón: lo que genera las conversiones, y era lo menos configurable ── */}
       {b.type === 'button' && (
         <>
@@ -2109,6 +2389,7 @@ const BlockEditor = ({
         onSelect={(url) => {
           if (libraryFor === 'url') onChange({ url });
           else if (libraryFor === 'imageUrl') onChange({ imageUrl: url });
+          else if (libraryFor === 'videoThumb') onChange({ videoThumb: url });
           else if (typeof libraryFor === 'number') updateItem(libraryFor, { image: url });
         }}
       />

@@ -23,6 +23,8 @@ import {
   columnWidths,
   contrastRatio,
   renderBlock,
+  videoThumbnail,
+  youtubeId,
   type Block,
 } from '../htmlBuilder';
 
@@ -465,5 +467,63 @@ describe('render unificado lienzo ↔ correo', () => {
     const b = { ...createBlock('button'), text: 'Comprar', url: 'https://x.co', buttonFullWidth: true };
     const suelto = renderBlock(b, settings);
     expect(generateHtml([b], settings)).toContain(suelto);
+  });
+});
+
+describe('bloque de vídeo', () => {
+  it('deriva la miniatura de un enlace de YouTube', () => {
+    expect(youtubeId('https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+    expect(youtubeId('https://youtu.be/dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+    expect(youtubeId('https://vimeo.com/12345')).toBeNull();
+
+    const b = { ...createBlock('video'), videoUrl: 'https://youtu.be/dQw4w9WgXcQ' };
+    expect(videoThumbnail(b)).toContain('img.youtube.com/vi/dQw4w9WgXcQ');
+  });
+
+  it('la miniatura propia gana sobre la derivada', () => {
+    const b = { ...createBlock('video'), videoUrl: 'https://youtu.be/abc123', videoThumb: 'https://cdn.x/portada.jpg' };
+    expect(videoThumbnail(b)).toBe('https://cdn.x/portada.jpg');
+  });
+
+  it('envía una IMAGEN clicable, nunca <video> ni <iframe> (los clientes los eliminan)', () => {
+    const b = { ...createBlock('video'), videoUrl: 'https://youtu.be/dQw4w9WgXcQ', videoLabel: 'Ver la demo' };
+    const html = generateHtml([b], settings);
+    expect(html).not.toContain('<video');
+    expect(html).not.toContain('<iframe');
+    expect(html).toContain('img.youtube.com/vi/dQw4w9WgXcQ');
+    // La miniatura lleva al vídeo y además queda el botón debajo.
+    expect(html).toContain('href="https://youtu.be/dQw4w9WgXcQ"');
+    expect(html).toContain('Ver la demo');
+  });
+
+  it('sin enlace se OMITE y el chequeo previo lo reporta como error', () => {
+    const b = { ...createBlock('video'), videoUrl: '' };
+    const html = generateHtml([b], settings);
+    expect(html).not.toContain('img.youtube.com');
+    const issues = analyzeTemplate([b], settings, html);
+    expect(issues.some((i) => i.level === 'error' && /vídeo/.test(i.title))).toBe(true);
+  });
+
+  it('respeta el ancho al que se redimensionó la miniatura', () => {
+    const b = { ...createBlock('video'), videoUrl: 'https://youtu.be/abc123', imageWidth: 320 };
+    expect(generateHtml([b], settings)).toContain('width="320"');
+  });
+});
+
+describe('redimensionar imágenes', () => {
+  it('el ancho del bloque llega al correo (no solo al lienzo)', () => {
+    const b = { ...createBlock('image'), url: 'https://cdn.x/a.png', text: 'Foto', imageWidth: 240 };
+    const html = generateHtml([b], settings);
+    expect(html).toContain('width="240"');
+    // Fluida igual: en móvil no debe desbordar el ancho de la pantalla.
+    expect(html).toContain('max-width:100%');
+  });
+});
+
+describe('vídeo en la parte de TEXTO del correo', () => {
+  it('emite el enlace: en texto plano la miniatura no existe', () => {
+    const b = { ...createBlock('video'), videoUrl: 'https://youtu.be/abc123', videoLabel: 'Ver la demo' };
+    const txt = generatePlainText([b], settings);
+    expect(txt).toContain('Ver la demo: https://youtu.be/abc123');
   });
 });

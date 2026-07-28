@@ -1,7 +1,9 @@
 """
-Pruebas de las plantillas de mensaje multicanal (SMS / WSP / DOCX):
-Create, List (filtro por canal + tenant) y Delete (verifica dueño).
+Pruebas de las plantillas de mensaje multicanal (SMS / WSP / DOCX / HTML):
+Create, List (filtro por canal + tenant) y Delete (verifica dueño), más el
+VERSIONADO de los diseños del constructor de correos (canal HTML).
 """
+import json
 import os
 import importlib.util
 from pathlib import Path
@@ -150,3 +152,83 @@ def test_delete_verifica_dueno(mt):
 def test_delete_inexistente_404(mt):
     _, _, delete = mt
     assert delete.lambda_handler(_ctx({'messageTemplateId': 'nope'}), None)['statusCode'] == 404
+
+
+# --------- Canal HTML: biblioteca de diseños del constructor + versionado ---------
+
+def _design(texto):
+    return json.dumps({'blocks': [{'id': 'b1', 'type': 'text', 'text': texto}], 'settings': {}})
+
+
+def test_create_html_guarda_el_diseno(mt):
+    create, lst, _ = mt
+    resp = create.lambda_handler(_ctx({'channel': 'HTML', 'name': 'Boletín', 'designJson': _design('v1')}), None)
+    assert resp['statusCode'] == 201
+    tpl = lst.lambda_handler(_ctx({'channel': 'HTML'}), None)['data']['templates'][0]
+    # Se guarda el MODELO (no el HTML) para poder seguir editándolo.
+    assert json.loads(tpl['designJson'])['blocks'][0]['text'] == 'v1'
+    assert tpl['designHistory'] == []
+
+
+def test_create_html_sin_diseno_400(mt):
+    create, _, _ = mt
+    assert create.lambda_handler(_ctx({'channel': 'HTML', 'name': 'X'}), None)['statusCode'] == 400
+
+
+def test_guardar_con_el_mismo_id_versiona_en_vez_de_duplicar(mt):
+    create, lst, _ = mt
+    tid = create.lambda_handler(
+        _ctx({'channel': 'HTML', 'name': 'Boletín', 'designJson': _design('v1')}), None)['data']['messageTemplateId']
+
+    r2 = create.lambda_handler(
+        _ctx({'channel': 'HTML', 'name': 'Boletín', 'designJson': _design('v2'),
+              'messageTemplateId': tid}), None)
+    assert r2['statusCode'] == 200
+    assert r2['data']['messageTemplateId'] == tid
+
+    templates = lst.lambda_handler(_ctx({'channel': 'HTML'}), None)['data']['templates']
+    assert len(templates) == 1, 'actualizar no debe crear una copia en la galería'
+    tpl = templates[0]
+    assert json.loads(tpl['designJson'])['blocks'][0]['text'] == 'v2'
+    # La versión anterior queda recuperable: sin esto un cambio desafortunado no tiene vuelta atrás.
+    assert len(tpl['designHistory']) == 1
+    assert json.loads(tpl['designHistory'][0]['designJson'])['blocks'][0]['text'] == 'v1'
+
+
+def test_historial_conserva_solo_las_ultimas_versiones(mt):
+    create, lst, _ = mt
+    tid = create.lambda_handler(
+        _ctx({'channel': 'HTML', 'name': 'B', 'designJson': _design('v0')}), None)['data']['messageTemplateId']
+    for i in range(1, 14):
+        create.lambda_handler(_ctx({'channel': 'HTML', 'name': 'B', 'designJson': _design('v%d' % i),
+                                    'messageTemplateId': tid}), None)
+    tpl = lst.lambda_handler(_ctx({'channel': 'HTML'}), None)['data']['templates'][0]
+    assert len(tpl['designHistory']) == create.MAX_VERSIONS
+    # La más reciente primero.
+    assert json.loads(tpl['designHistory'][0]['designJson'])['blocks'][0]['text'] == 'v12'
+
+
+def test_historial_se_recorta_para_no_reventar_el_limite_del_item(mt, monkeypatch):
+    """Un diseño grande × 10 versiones pasa los 400 KB de DynamoDB: el put_item fallaría
+    y se PERDERÍA el guardado del usuario por culpa del historial. Se recorta lo viejo."""
+    create, lst, _ = mt
+    monkeypatch.setattr(create, 'HISTORY_BUDGET_BYTES', 60 * 1024)
+    grande = json.dumps({'blocks': [{'id': 'b1', 'type': 'text', 'text': 'x' * 20000}], 'settings': {}})
+    tid = create.lambda_handler(
+        _ctx({'channel': 'HTML', 'name': 'G', 'designJson': grande}), None)['data']['messageTemplateId']
+    for _ in range(5):
+        resp = create.lambda_handler(_ctx({'channel': 'HTML', 'name': 'G', 'designJson': grande,
+                                           'messageTemplateId': tid}), None)
+        assert resp['statusCode'] == 200, 'guardar nunca debe fallar por el historial'
+    tpl = lst.lambda_handler(_ctx({'channel': 'HTML'}), None)['data']['templates'][0]
+    assert 0 < len(tpl['designHistory']) < 5
+
+
+def test_no_se_puede_versionar_la_plantilla_de_otro_tenant(mt):
+    create, _, _ = mt
+    tid = create.lambda_handler(
+        _ctx({'channel': 'HTML', 'name': 'B', 'designJson': _design('v1')}), None)['data']['messageTemplateId']
+    ajeno = create.lambda_handler(
+        _ctx({'channel': 'HTML', 'name': 'B', 'designJson': _design('robado'), 'messageTemplateId': tid},
+             cid='CU2', cust='otra'), None)
+    assert ajeno['statusCode'] == 403

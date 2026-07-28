@@ -201,6 +201,50 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   medidas, los 5 chequeos nuevos + `contrastRatio`, y un guard de que el lienzo usa
   literalmente la misma función que el correo).
 
+### Constructor HTML: vídeo, redimensionar, atajos y versionado (ago 2026)
+> Cuatro faltantes de la lista del análisis del editor. El primero es de producto (el vídeo
+> es de los formatos que más se piden) y los otros tres son de ergonomía de uso diario.
+
+- **Bloque de VÍDEO.** Emite **miniatura clicable + botón debajo**, nunca `<video>` ni
+  `<iframe>`: Gmail y Outlook los eliminan, así que un correo con vídeo "embebido" llega
+  vacío. De un enlace de **YouTube** (`watch?v=` / `youtu.be` / `shorts/` / `embed/`) se
+  deriva la miniatura sola (`img.youtube.com/vi/{id}/hqdefault.jpg`); para otras
+  plataformas se sube una propia. ⚠️ El botón va **DEBAJO**, no superpuesto sobre la
+  imagen: superponer exige `background` en el `td`, que en Outlook necesita VML y se rompe
+  con facilidad. Sin enlace o sin miniatura el bloque se **omite** al generar y el chequeo
+  previo lo reporta como **error** (si no, el cliente creería que envió el vídeo).
+- **Redimensionar imágenes ARRASTRANDO** (`ResizableImage`): tirador en el borde de la
+  imagen del lienzo que escribe `imageWidth`. ⚠️ El desplazamiento se multiplica por 2 en
+  las imágenes **centradas** (crecen por los dos lados). El campo numérico del panel sigue
+  ahí; el ancho llega al correo como atributo `width` + `max-width:100%` (fluida en móvil).
+- **Atajos de teclado**: `Ctrl+Z`/`Ctrl+Shift+Z`/`Ctrl+Y` (deshacer/rehacer), **`Ctrl+D`**
+  (duplicar el bloque), **`Supr`/`Retroceso`** (eliminar), **`Alt+↑`/`Alt+↓`** (mover) y
+  `Esc` (quitar la selección). ⚠️ El manejador **sale temprano** si el foco está en un
+  `INPUT`/`TEXTAREA`/`contentEditable`: sin eso, borrar una letra del texto borraría el
+  bloque entero. Como el listener se registra UNA vez, el bloque seleccionado y la lista
+  se leen de `useRef` (un closure sobre el estado se quedaría con el valor del montaje).
+  Se descubren por un botón **⌨ con la lista** en la barra (un atajo que nadie conoce no
+  existe).
+- **Duplicar y VERSIONAR plantillas.** Guardar con un nombre que ya existe **actualiza** ese
+  diseño (antes llenaba la galería de copias) y la versión anterior queda en
+  **`messageTemplate.designHistory`** (`{at, designJson}`, la más reciente primero, tope
+  `DESIGN_MAX_VERSIONS`=10). En la galería: **"Duplicar"** (crea una copia con nombre propio
+  — para partir de un diseño aprobado sin arriesgarse a pisarlo) y **"Restaurar"** por
+  versión (la carga en el lienzo; queda vigente solo si se vuelve a guardar).
+  ⚠️ **Tope por TAMAÑO además del de cantidad** (`HISTORY_BUDGET_BYTES`, 320 KB): 10 diseños
+  grandes pasan el límite de **400 KB por ítem** de DynamoDB → el `put_item` fallaría y se
+  perdería el guardado del usuario **por culpa del historial**. Se recortan las versiones
+  más viejas hasta caber. Versionar valida el dueño (403 cross-tenant).
+- **Cobertura:** `htmlBuilder.test.ts` sube a **72** (+7: id de YouTube y miniatura derivada,
+  miniatura propia que gana, que NO salga `<video>`/`<iframe>`, vídeo sin enlace omitido +
+  reportado, ancho redimensionado en el correo, enlace del vídeo en la parte de TEXTO) y
+  `test_message_templates.py` a **18** (+6 del canal HTML:
+  guarda el modelo, 400 sin diseño, actualizar versiona en vez de duplicar,
+  tope de 10, recorte por presupuesto sin fallar el guardado, y 403 cross-tenant).
+- ⚠️ `[J]`: **sin cambios de infra** — mismo `messageTemplate`, misma ruta
+  `/MessageTemplate/Create`. Envs opcionales `DESIGN_MAX_VERSIONS` (10) y
+  `DESIGN_HISTORY_BUDGET` (327680).
+
 ### Interruptor GLOBAL del IVA (ago 2026)
 - **Qué:** MailConnect puede **no ser responsable de IVA**. Nuevo ajuste de plataforma
   **`TAX_ENABLED`** (Configuración → **"Cobrar IVA"**, grupo *Facturación*): al apagarlo,

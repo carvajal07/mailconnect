@@ -770,10 +770,18 @@ Lambda NUEVA (el CD la crea) + ruta `/Email/Send-test` **ya en `routes.json`**.
   dirección arbitraria es un relay de spam con la reputación de envío de la plataforma,
   que es compartida entre todos los clientes.
 
-### 14b. Canal `HTML` en `messageTemplate` (biblioteca de diseños)
+### 14b. Canal `HTML` en `messageTemplate` (biblioteca de diseños + versionado)
 
 - **Nada que crear**: misma tabla `messageTemplate` y misma ruta `/MessageTemplate/Create`.
-  Solo se amplió el catálogo de canales y se agregó el campo `designJson`.
+  Solo se amplió el catálogo de canales y se agregaron los campos `designJson` y
+  `designHistory` (versiones anteriores del diseño).
+- [ ] `[J]` **Envs OPCIONALES** de `Api_V1_MessageTemplate_Create`:
+  `DESIGN_MAX_VERSIONS` (default 10, cuántas versiones se conservan) y
+  `DESIGN_HISTORY_BUDGET` (default 327680 bytes = 320 KB, tope de tamaño del diseño
+  vigente + su historial). El segundo existe porque un ítem de DynamoDB no puede pasar de
+  **400 KB**: sin él, 10 versiones de un diseño grande harían fallar el `put_item` y el
+  usuario perdería el guardado por culpa del historial. Con los defaults no hay nada que
+  configurar.
 
 ### 14c. Verificación recomendada tras desplegar
 
