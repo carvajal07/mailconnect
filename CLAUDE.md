@@ -48,10 +48,19 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   `requestContext.authorizer` del llamante y pide `store:false` (PDF en base64, sin dejar
   basura en S3). Las celdas con JSON embebido se **parsean** igual que en el combinador —
   si llegaran como texto, la tabla no se renderiza y el peso medido saldría muy por debajo.
-- **Front:** `CostEstimate` acepta `campaignId` y muestra el botón **"Medir peso real"**
-  (solo EAU/EAP); el resultado llena el campo "Peso adjunto" (que sigue siendo editable) y
-  un `Alert` explica cómo se calculó (promedio, rango de las muestras y margen).
-  `MuestrasSection` le pasa la campaña seleccionada.
+- **Front — dónde está:** portal → **Muestras** → tarjeta **"Costo estimado del envío"** →
+  botón **"Medir peso real"** (aparece solo con una campaña **EAU/EAP** seleccionada). El
+  resultado llena el campo "Peso adjunto" (que sigue siendo editable) y un `Alert` explica
+  cómo se calculó (promedio, rango de las muestras y margen).
+- ⚠️ **Fix necesario para que el botón se viera (`CostEstimate`):** el canal y el tipo de
+  correo se inicializaban con los props (`useState(initChannel)`) y **nunca se
+  resincronizaban**. Como la sección monta SIN campaña elegida, al seleccionar una después
+  el estimador se quedaba en `EM — sin adjunto` → `withAttachment` false → el botón no
+  aparecía nunca, y además el estimado se calculaba con el canal equivocado (bug previo,
+  no solo del peso). Ahora hay `useEffect` que resincroniza canal/tipo/destinatarios y
+  limpia peso + estimado al cambiar de campaña (avisando al padre con `onResult(null)`,
+  porque el gate de "Enviar campaña real" compara el estimado contra el saldo y con uno
+  viejo decidiría sobre la campaña equivocada).
 - **Cobertura:** `test_attachment_weight.py` (11: gates 403/400/404, canal sin adjunto,
   EAU exacto sin margen, EAP-DOCX con margen, EAP-PDF promediando 3 registros REALES con
   sus datos en el payload, tope de `samples`, HTML→Render-pdf vs sketch→Render-engine,

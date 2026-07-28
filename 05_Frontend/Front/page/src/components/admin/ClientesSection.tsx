@@ -346,7 +346,9 @@ export const ClientesSection = () => {
       </TableContainer>
 
       {/* Ficha del cliente */}
-      <Dialog open={open} onClose={closeFicha} maxWidth="md" fullWidth>
+      {/* `lg`: la ficha lleva una tabla de usuarios con 5 columnas + acciones; en `md`
+          se apretaba y aparecía scroll horizontal. */}
+      <Dialog open={open} onClose={closeFicha} maxWidth="lg" fullWidth>
         <DialogTitle>
           <Stack direction="row" spacing={1} alignItems="center">
             <ApartmentIcon color="primary" />
@@ -428,8 +430,9 @@ export const ClientesSection = () => {
                   <Table size="small">
                     <TableHead>
                       <TableRow>
-                        <TableCell>Nombre</TableCell>
-                        <TableCell>Email</TableCell>
+                        {/* Nombre y correo van JUNTOS: el correo es lo que empujaba el
+                            ancho de la tabla y obligaba al scroll horizontal. */}
+                        <TableCell>Usuario</TableCell>
                         <TableCell>Rol</TableCell>
                         <TableCell>
                           <Tooltip title="Sub-rol dentro de la empresa (RBAC): owner (todo), approver (aprueba + envía), operator (solo prepara y solicita aprobación).">
@@ -442,16 +445,23 @@ export const ClientesSection = () => {
                     </TableHead>
                     <TableBody>
                       {detail.users.length === 0 && (
-                        <TableRow><TableCell colSpan={6} align="center" sx={{ py: 2, color: 'text.secondary' }}>Sin usuarios.</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={5} align="center" sx={{ py: 2, color: 'text.secondary' }}>Sin usuarios.</TableCell></TableRow>
                       )}
                       {detail.users.map((u) => (
                         <TableRow key={u.userId} hover>
-                          <TableCell>{u.name || '—'}{me?.email && u.email === me.email && <Chip size="small" label="tú" sx={{ ml: 1, height: 18 }} />}</TableCell>
-                          <TableCell>{u.email}</TableCell>
+                          <TableCell>
+                            <Stack direction="row" spacing={0.75} alignItems="center">
+                              <Typography variant="body2" fontWeight={600}>{u.name || '—'}</Typography>
+                              {me?.email && u.email === me.email && (
+                                <Chip size="small" label="tú" sx={{ height: 18 }} />
+                              )}
+                            </Stack>
+                            <Typography variant="caption" color="text.secondary">{u.email}</Typography>
+                          </TableCell>
                           <TableCell>
                             <Chip size="small" icon={u.role === 'admin' ? <AdminPanelSettingsIcon /> : <PersonIcon />}
                               color={u.role === 'admin' ? 'primary' : 'default'} variant={u.role === 'admin' ? 'filled' : 'outlined'}
-                              label={u.role === 'admin' ? 'Administrador' : 'Cliente'} />
+                              label={u.role === 'admin' ? 'Admin' : 'Cliente'} />
                           </TableCell>
                           <TableCell>
                             <Select
@@ -459,7 +469,7 @@ export const ClientesSection = () => {
                               value={u.tenantRole ?? 'owner'}
                               onChange={(e) => changeTenantRole(u, e.target.value as TenantRole)}
                               disabled={roleBusy === u.userId}
-                              sx={{ minWidth: 120 }}
+                              sx={{ minWidth: 112 }}
                             >
                               <MenuItem value="owner">Owner</MenuItem>
                               <MenuItem value="approver">Aprobador</MenuItem>

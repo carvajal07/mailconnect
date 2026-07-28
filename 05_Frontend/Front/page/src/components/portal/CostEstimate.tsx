@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Paper,
   Stack,
@@ -74,6 +74,29 @@ export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMo
   const [error, setError] = useState('');
   const [weight, setWeight] = useState<AttachmentWeight | null>(null);
   const [weighing, setWeighing] = useState(false);
+
+  /**
+   * El canal y el tipo de correo se INICIALIZABAN con los props y nunca volvían a
+   * sincronizarse: como la sección monta SIN campaña elegida, al seleccionar una después
+   * el estimador se quedaba en "EM — sin adjunto" (calculando un precio que no era el de
+   * la campaña, y sin ofrecer "Medir peso real"). Se resincroniza cuando cambia la
+   * campaña; el usuario puede seguir tocando los selectores a mano después.
+   */
+  useEffect(() => { setChannel(initChannel); }, [initChannel]);
+  useEffect(() => { setEmailMode(initMode); }, [initMode]);
+  useEffect(() => {
+    setRecipients(initRecipients ? String(initRecipients) : '');
+  }, [initRecipients]);
+  // Al cambiar de campaña, el peso medido y el estimado son de OTRA campaña: se limpian.
+  // También se avisa al padre (el gate de "Enviar campaña real" compara el estimado con
+  // el saldo; con un estimado viejo el gate decidiría sobre la campaña equivocada).
+  useEffect(() => {
+    setWeight(null);
+    setAttachmentSizeMB('');
+    setResult(null);
+    onResult?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId]);
 
   const withAttachment = channel === 'EMAIL' && (emailMode === 'EAU' || emailMode === 'EAP');
 
