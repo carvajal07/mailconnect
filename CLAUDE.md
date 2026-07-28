@@ -70,6 +70,29 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
     restringe a un correo de un usuario ACTIVO del MISMO tenant; un endpoint que enviara
     HTML arbitrario a direcciones arbitrarias sería un relay de spam con la reputación
     (COMPARTIDA) de la plataforma. Tope diario por tenant y auditoría `template.test-send`.
+- **Columnas rediseñadas (el bloque de estructura de verdad).** Antes: proporción fija en
+  un desplegable y las columnas nacían con dos bloques de texto de relleno. Ahora:
+  **slider de 1 a 4 columnas** (más allá, en móvil cada celda queda inservible y en Outlook
+  la tabla se desarma) y, según ese número, una **galería de distribuciones** en miniatura
+  (`COLUMN_LAYOUTS`: 50/50 · 33/67 · 67/33 · 25/75 · 75/25 · 33/34/33 · 25/50/25 · … ).
+  Las columnas nacen **VACÍAS** con un **“+”** por celda en el LIENZO que abre el menú de
+  tipos anidables. Los bloques de dentro se **seleccionan y editan en el lienzo**
+  (`findBlockDeep`/`patchBlockDeep`/`removeBlockDeep` recorren el árbol). Al reducir el
+  número de columnas, el contenido de las que desaparecen se **mueve a la última**, no se
+  borra en silencio. El campo `widths` reemplaza a `ratio`, que se sigue leyendo para las
+  plantillas guardadas (`columnWidths`).
+- **Paleta reordenada y COMBINADOS retirados.** Grupos: **Contenido** (encabezado, texto,
+  imagen, botón, logo) · **Estructura** (columnas, divisor, espaciador) · **Avanzado**
+  (redes, productos, HTML crudo). Los combinados (imagen+texto, texto+botón…) eran atajos
+  rígidos que el bloque de columnas cubre mejor. ⚠️ Se siguen **renderizando y editando**
+  (`LEGACY_TYPES`) para no romper plantillas ya guardadas; solo no se pueden crear nuevos.
+- **Barra de herramientas del bloque por ENCIMA de él** (`top:-16` + `pt` en el contenedor
+  del lienzo): antes (`top:6`) tapaba justo el contenido que se acababa de seleccionar.
+- **Zona final del lienzo.** En cuanto se agregaba el primer bloque, los bloques cubrían
+  toda la hoja y para soltar AL FINAL había que apuntarle a la franja de pocos píxeles que
+  quedaba debajo del último. Ahora hay un área punteada permanente al final del lienzo que
+  es destino de arrastre cómodo **y** botón: **"Agregar bloque"** abre el menú de la paleta
+  y lo agrega al final sin arrastrar.
 - **D · Productividad.** **Deshacer/rehacer** (Ctrl+Z / Ctrl+Shift+Z; snapshots con debounce
   para no crear un paso por tecla, y sin secuestrar el atajo mientras se escribe),
   **autoguardado** con diálogo de recuperación al volver, y **biblioteca de diseños en
