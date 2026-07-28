@@ -107,6 +107,8 @@ import {
   type EmailSettings,
   type ProductItem,
   type SocialStyle,
+  type SocialShape,
+  type SocialLinks,
 } from './htmlBuilder';
 import { RichTextEditor } from './RichTextEditor';
 import { blockContentHtml, variableToken, richToPlain } from './richText';
@@ -1106,7 +1108,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                   onDrop={(e) => { e.preventDefault(); insertAt(dropIndex ?? blocks.length); }}
                   // Aire arriba para que la barra de herramientas del PRIMER bloque (que
                   // flota por encima de él) no la recorte el borde de la hoja.
-                  sx={{ pt: 2.5 }}
+                  sx={{ pt: 5 }}
                 >
                 {blocks.map((b, index) => (
                   <Fragment key={b.id}>
@@ -1134,9 +1136,10 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                       className="block-tools"
                       sx={{
                         position: 'absolute',
-                        // Por ENCIMA del bloque, no sobre él: antes (top:6) la barra
-                        // tapaba justo el contenido que se acababa de seleccionar.
-                        top: -16,
+                        // COMPLETAMENTE por encima del bloque, no montada sobre su borde:
+                        // la barra mide ~30 px, así que se sube su alto entero (con -16
+                        // seguía tapando la primera línea del bloque seleccionado).
+                        top: -34,
                         right: 6,
                         opacity: selectedId === b.id ? 1 : 0,
                         transition: 'opacity .2s',
@@ -2057,6 +2060,8 @@ const BlockEditor = ({
   // Campo del bloque al que va la imagen elegida en la biblioteca ('url' | 'imageUrl'),
   // o el índice del producto cuando se abre desde la grilla.
   const [libraryFor, setLibraryFor] = useState<'url' | 'imageUrl' | 'videoThumb' | number | null>(null);
+  /** Red a la que se le está eligiendo un logo propio (bloque de redes sociales). */
+  const [iconFor, setIconFor] = useState<keyof SocialLinks | null>(null);
   const [uploadingItem, setUploadingItem] = useState<number | null>(null);
   const isImage = b.type === 'image' || b.type === 'logo';
   const hasText = b.type === 'heading' || b.type === 'text' || b.type === 'button';
@@ -2180,32 +2185,76 @@ const BlockEditor = ({
                   />
                 </Stack>
               )}
-              <TextField
-                label="Tamaño (px)" type="number" size="small" fullWidth
-                value={b.socialSize ?? 34}
-                onChange={(e) => onChange({ socialSize: Math.max(20, Math.min(64, parseInt(e.target.value) || 34)) })}
-              />
+              <Stack direction="row" spacing={1}>
+                <TextField
+                  select label="Forma" size="small" fullWidth
+                  value={b.socialShape || 'circle'}
+                  onChange={(e) => onChange({ socialShape: e.target.value as SocialShape })}
+                >
+                  <MenuItem value="circle">Círculo</MenuItem>
+                  <MenuItem value="rounded">Cuadrado redondeado</MenuItem>
+                  <MenuItem value="square">Cuadrado</MenuItem>
+                </TextField>
+                <TextField
+                  label="Tamaño (px)" type="number" size="small" sx={{ width: 120 }}
+                  value={b.socialSize ?? 34}
+                  onChange={(e) => onChange({ socialSize: Math.max(20, Math.min(64, parseInt(e.target.value) || 34)) })}
+                />
+              </Stack>
             </>
           )}
           <Typography variant="caption" color="text.secondary">
-            Deja vacía la red que no uses.
+            Deja vacía la red que no uses. El botón de imagen reemplaza la insignia por el
+            logo real (una imagen tuya, alojada en tu propio bucket).
           </Typography>
-          {SOCIAL_NETWORKS.map((n) => (
-            <Stack key={n.key} direction="row" spacing={1} alignItems="center">
-              <Box sx={{
-                width: 26, height: 26, borderRadius: '50%', color: '#fff',
-                bgcolor: b.socialStyle === 'mono' ? (b.socialColor || DEFAULT_SOCIAL_MONO) : n.color,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 11, fontWeight: 700, flexShrink: 0,
-              }}>{n.initial}</Box>
-              <TextField
-                label={n.label}
-                value={b.links?.[n.key] ?? ''}
-                onChange={(e) => onChange({ links: { ...b.links, [n.key]: e.target.value } })}
-                fullWidth size="small" placeholder="https://"
-              />
-            </Stack>
-          ))}
+          {SOCIAL_NETWORKS.map((n) => {
+            const propio = b.icons?.[n.key];
+            const forma = b.socialShape === 'square' ? 0
+              : b.socialShape === 'rounded' ? '22%' : '50%';
+            return (
+              <Stack key={n.key} direction="row" spacing={1} alignItems="center">
+                <Box sx={{
+                  width: 26, height: 26, borderRadius: forma, color: '#fff', overflow: 'hidden',
+                  bgcolor: propio ? 'transparent'
+                    : b.socialStyle === 'mono' ? socialMonoColor(b.socialColor) : n.color,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 11, fontWeight: 700, flexShrink: 0,
+                }}>
+                  {propio
+                    ? <Box component="img" src={propio} alt={n.label} sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    : n.initial}
+                </Box>
+                <TextField
+                  label={n.label}
+                  value={b.links?.[n.key] ?? ''}
+                  onChange={(e) => onChange({ links: { ...b.links, [n.key]: e.target.value } })}
+                  fullWidth size="small" placeholder="https://"
+                />
+                <Tooltip title={propio ? `Cambiar el icono de ${n.label}` : `Usar el logo real de ${n.label} (imagen propia)`}>
+                  <IconButton size="small" onClick={() => setIconFor(n.key)}>
+                    <PhotoLibraryIcon fontSize="small" color={propio ? 'primary' : 'inherit'} />
+                  </IconButton>
+                </Tooltip>
+                {propio && (
+                  <Tooltip title="Volver a la insignia de color">
+                    <IconButton size="small" onClick={() => onChange({ icons: { ...b.icons, [n.key]: '' } })}>
+                      <FormatClearIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                )}
+              </Stack>
+            );
+          })}
+          {/* Los logos REALES tienen que ser IMÁGENES: el correo no admite SVG en línea
+              (Gmail lo elimina) ni `data:` URI, así que el icono se sube al bucket del
+              propio cliente — nunca a un CDN ajeno, que es lo que rompe los correos ya
+              enviados si ese dominio cae. */}
+          <ImageLibraryDialog
+            open={!!iconFor}
+            onClose={() => setIconFor(null)}
+            onUpload={onUploadImage}
+            onSelect={(url) => { if (iconFor) onChange({ icons: { ...b.icons, [iconFor]: url } }); setIconFor(null); }}
+          />
         </>
       )}
 

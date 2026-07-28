@@ -70,6 +70,20 @@ export type SocialStyle = 'badge' | 'mono' | 'text';
 /** Color único de las insignias cuando el estilo es `mono`. */
 export const DEFAULT_SOCIAL_MONO = '#16233f';
 
+/** Forma de la insignia. `rounded` (cuadrado de esquinas suaves) es el look actual. */
+export type SocialShape = 'circle' | 'rounded' | 'square';
+
+/**
+ * Radio de la insignia en px. ⚠️ Outlook ignora `border-radius`: ahí TODAS salen
+ * cuadradas, que es justo por lo que `square`/`rounded` se ven mejor que el círculo — la
+ * diferencia entre lo que ve un usuario de Gmail y uno de Outlook es mucho menor.
+ */
+export const socialRadius = (size: number, shape?: SocialShape): number => {
+  if (shape === 'square') return 0;
+  if (shape === 'rounded') return Math.max(4, Math.round(size * 0.26));
+  return Math.round(size / 2);
+};
+
 export const isHexColor = (v?: string): boolean => /^#[0-9a-fA-F]{6}$/.test(String(v || '').trim());
 
 /**
@@ -134,6 +148,8 @@ export interface Block {
   socialStyle?: SocialStyle;
   /** Color de TODAS las insignias cuando el estilo es `mono` (manual de marca del cliente). */
   socialColor?: string;
+  /** Forma de la insignia (círculo por defecto; `rounded` es el estilo actual). */
+  socialShape?: SocialShape;
   /** Tamaño de la insignia en px. */
   socialSize?: number;
   /** Icono PROPIO por red (URL de una imagen subida por el cliente). Si está, gana. */
@@ -405,22 +421,30 @@ function socialRow(b: Block, st: EmailSettings): string {
 
   // Insignias: una celda por red. `border-radius` lo ignora Outlook (queda cuadrada,
   // que se ve bien igual); el color de fondo sí lo respeta.
+  const radio = socialRadius(size, b.socialShape);
   const celdas = activos.map((n) => {
     const href = esc(String(links[n.key]));
     const propio = b.icons?.[n.key];
     // En `mono` todas comparten el color elegido por el cliente; en `badge`, el de cada marca.
     const color = style === 'mono' ? socialMonoColor(b.socialColor) : n.color;
     const contenido = propio
-      ? `<img src="${esc(propio)}" alt="${esc(n.label)}" width="${size}" height="${size}" style="display:block;width:${size}px;height:${size}px;border:0;border-radius:${Math.round(size / 2)}px;" />`
+      ? `<img src="${esc(propio)}" alt="${esc(n.label)}" width="${size}" height="${size}" style="display:block;width:${size}px;height:${size}px;border:0;border-radius:${radio}px;" />`
       : `<a href="${href}" target="_blank" style="display:block;width:${size}px;height:${size}px;line-height:${size}px;text-align:center;font-family:${st.fontFamily};font-size:${Math.round(size * 0.42)}px;font-weight:bold;color:#ffffff;text-decoration:none;">${esc(n.initial)}</a>`;
     const bg = propio ? '' : ` bgcolor="${color}"`;
     const bgStyle = propio ? '' : `background-color:${color};`;
-    return `<td style="padding:0 5px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0"><tr><td${bg} style="${bgStyle}border-radius:${Math.round(size / 2)}px;" width="${size}" height="${size}" align="center" valign="middle">${propio ? `<a href="${href}" target="_blank" style="display:block;text-decoration:none;">${contenido}</a>` : contenido}</td></tr></table></td>`;
+    return `<td style="padding:0 5px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0"><tr><td${bg} style="${bgStyle}border-radius:${radio}px;" width="${size}" height="${size}" align="center" valign="middle">${propio ? `<a href="${href}" target="_blank" style="display:block;text-decoration:none;">${contenido}</a>` : contenido}</td></tr></table></td>`;
   });
 
-  // `align` en la tabla lo respeta Outlook; el margen cubre a los demás clientes.
+  // ⚠️ `align` NO puede ir en esta tabla: por la especificación de HTML,
+  // `<table align="left|right">` se renderiza como **float**, que saca la fila del flujo
+  // → el contenedor del bloque colapsa (en el lienzo se veía como una franja delgada con
+  // los iconos por fuera) y en el correo el bloque siguiente se le sube al lado. Se alinea
+  // desde una tabla ENVOLVENTE con `align` en el `td` (lo que respeta Outlook) + el margen
+  // de la tabla interna para el resto de clientes. `align="center"` sí sería seguro (mapea
+  // a `margin:auto`, no a float), pero se trata igual para no tener dos caminos.
   const margen = align === 'center' ? 'margin:0 auto;' : align === 'right' ? 'margin:0 0 0 auto;' : 'margin:0;';
-  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" align="${align}" style="${margen}"><tr>${celdas.join('')}</tr></table>`;
+  const fila = `<table role="presentation" border="0" cellpadding="0" cellspacing="0" style="${margen}"><tr>${celdas.join('')}</tr></table>`;
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"><tr><td align="${align}">${fila}</td></tr></table>`;
 }
 
 /**
@@ -1017,13 +1041,29 @@ export function analyzeTemplate(blocks: Block[], settings: EmailSettings, html: 
     });
   }
 
-  // Asunto/preheader GRITANDO o con exceso de signos: de lo más penalizado.
-  const gritos = /[A-ZÁÉÍÓÚÑ]{5,}/.test(settings.preheader) || /[!¡]{2,}|[?¿]{2,}/.test(settings.preheader);
-  if (gritos) {
+  // GRITOS: mayúsculas sostenidas y signos repetidos ("GRATIS!!! OFERTA!!!"). Es de las
+  // señales que más puntúan los filtros — más que la palabra en sí, que puede ser legítima.
+  // Se mira en el preheader Y EN EL CUERPO: antes solo en el preheader, así que un correo
+  // gritando de arriba abajo pasaba el chequeo sin un solo aviso.
+  const gritar = (t: string) => {
+    // Las variables van en mayúsculas por convención de algunas bases: no son gritos.
+    const limpio = t.replace(/\{\{[^}]*\}\}/g, ' ');
+    return {
+      mayus: (limpio.match(/\b[A-ZÁÉÍÓÚÑ]{4,}\b/g) || []).length,
+      signos: /[!¡]{2,}|[?¿]{2,}/.test(limpio),
+    };
+  };
+  const pre = gritar(settings.preheader);
+  const cuerpo = gritar(texto);
+  const donde = [
+    (pre.mayus >= 1 || pre.signos) && 'el texto de vista previa',
+    (cuerpo.mayus >= 2 || cuerpo.signos) && 'el cuerpo del correo',
+  ].filter(Boolean);
+  if (donde.length) {
     issues.push({
       level: 'warning',
-      title: 'El texto de vista previa grita',
-      detail: 'Mayúsculas sostenidas o signos repetidos (¡¡!!) en el preheader son de las señales de spam más puntuadas.',
+      title: `Mayúsculas sostenidas o signos repetidos en ${donde.join(' y ')}`,
+      detail: 'Escribir "GRATIS!!!" o "OFERTA!!!" es de las señales de spam más puntuadas, por encima de la palabra en sí. Usa mayúscula y minúscula normales y un solo signo de admiración.',
     });
   }
 

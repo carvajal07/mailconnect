@@ -51,17 +51,33 @@ export const RichTextEditor = ({ value, onChange, style, placeholder, variables 
   const [linkUrl, setLinkUrl] = useState('');
   const savedRange = useRef<Range | null>(null);
 
-  // El HTML entra por prop pero el nodo es contentEditable: solo se reescribe cuando el
-  // valor EXTERNO difiere del que ya hay en el DOM. Sin esa guarda, cada tecla movería
-  // el cursor al final (React re-renderiza con el valor que acaba de emitir).
+  /** Último HTML que EMITIMOS nosotros. Ver la guarda del efecto de abajo. */
+  const lastEmitted = useRef<string | null>(null);
+
+  /**
+   * El HTML entra por prop pero el nodo es contentEditable, así que reescribir su
+   * `innerHTML` manda el cursor AL INICIO del texto.
+   *
+   * ⚠️ No basta con comparar `el.innerHTML !== value`: `sanitizeInlineHtml` **normaliza**
+   * el markup (`<b>`→`<strong>`, los `<div>` del contentEditable→`<br>`, escapes…), así
+   * que lo que vuelve por prop casi nunca es idéntico byte a byte a lo que hay en el DOM.
+   * Con esa sola comparación, cada tecla reescribía el nodo y el cursor saltaba al
+   * principio. Por eso se ignora el ECO de nuestro propio `emit` y solo se aplica un
+   * valor que venga de FUERA (cargar una plantilla, insertar variable desde el panel…).
+   */
   useEffect(() => {
     const el = ref.current;
-    if (el && el.innerHTML !== value) el.innerHTML = value || '';
+    if (!el) return;
+    if (lastEmitted.current !== null && value === lastEmitted.current) return;
+    if (el.innerHTML !== value) el.innerHTML = value || '';
   }, [value]);
 
   const emit = useCallback(() => {
     const el = ref.current;
-    if (el) onChange(sanitizeInlineHtml(el.innerHTML));
+    if (!el) return;
+    const limpio = sanitizeInlineHtml(el.innerHTML);
+    lastEmitted.current = limpio;
+    onChange(limpio);
   }, [onChange]);
 
   /** Guarda la selección: al tocar un botón de la barra el foco sale del editable. */

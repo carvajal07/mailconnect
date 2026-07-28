@@ -27,6 +27,7 @@ import {
   youtubeId,
   isHexColor,
   socialMonoColor,
+  socialRadius,
   DEFAULT_SOCIAL_MONO,
   type Block,
 } from '../htmlBuilder';
@@ -577,5 +578,76 @@ describe('redes sociales: color de marca y alineación', () => {
   it('el estilo LEGADO de texto también se alinea', () => {
     const html = generateHtml([conRedes({ socialStyle: 'text', align: 'right' })], settings);
     expect(html).toContain('text-align:right');
+  });
+});
+
+describe('gritos: mayúsculas sostenidas y signos repetidos', () => {
+  const find = (issues: ReturnType<typeof analyzeTemplate>, frag: string) =>
+    issues.find((i) => i.title.toLowerCase().includes(frag));
+
+  it('detecta "GRATIS!!! OFERTA!!!" en el CUERPO (antes solo miraba el preheader)', () => {
+    const b = { ...createBlock('text'), text: 'GRATIS!!! OFERTA!!!', rich: true };
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, 'mayúsculas sostenidas')).toBeTruthy();
+  });
+
+  it('sigue detectándolo en el texto de vista previa', () => {
+    const b = createBlock('text');
+    const st = { ...settings, preheader: 'ULTIMA OPORTUNIDAD' };
+    expect(find(analyzeTemplate([b], st, generateHtml([b], st)), 'mayúsculas sostenidas')).toBeTruthy();
+  });
+
+  it('un texto normal NO lo dispara', () => {
+    const b = { ...createBlock('text'), text: 'Hola Ana, te contamos las novedades del mes. ¡Que lo disfrutes!', rich: true };
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, 'mayúsculas sostenidas')).toBeFalsy();
+  });
+
+  it('una variable en mayúsculas no cuenta como grito', () => {
+    // Hay bases cuyas columnas van en mayúsculas por convención; no es el usuario gritando.
+    const b = { ...createBlock('text'), text: 'Hola {{NOMBRE}}, tu saldo de {{CIUDAD}} está listo.', rich: true };
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, 'mayúsculas sostenidas')).toBeFalsy();
+  });
+});
+
+describe('forma de las insignias de redes', () => {
+  const conRedes = (extra: Partial<Block> = {}) => ({
+    ...createBlock('social'),
+    links: { facebook: 'https://fb.com/x' },
+    ...extra,
+  } as Block);
+
+  it('círculo por defecto, cuadrado redondeado y cuadrado', () => {
+    expect(socialRadius(34)).toBe(17);
+    expect(socialRadius(34, 'circle')).toBe(17);
+    expect(socialRadius(34, 'rounded')).toBe(9);
+    expect(socialRadius(34, 'square')).toBe(0);
+  });
+
+  it('la forma elegida llega al correo', () => {
+    expect(generateHtml([conRedes({ socialShape: 'square', socialSize: 40 })], settings))
+      .toContain('border-radius:0px');
+    expect(generateHtml([conRedes({ socialShape: 'rounded', socialSize: 40 })], settings))
+      .toContain('border-radius:10px');
+  });
+
+  it('el logo PROPIO reemplaza la insignia y respeta la forma', () => {
+    const html = generateHtml([conRedes({
+      socialShape: 'rounded', socialSize: 40, icons: { facebook: 'https://cdn.mio/fb.png' },
+    })], settings);
+    expect(html).toContain('<img src="https://cdn.mio/fb.png"');
+    expect(html).toContain('border-radius:10px');
+    // Con logo propio no se pinta el fondo de color: la imagen ya lo trae.
+    expect(html).not.toContain('bgcolor="#1877F2"');
+  });
+
+  it('la alineación NO usa align en la tabla de iconos (sería un float)', () => {
+    // <table align="left"> se renderiza como float: saca la fila del flujo y el
+    // contenedor del bloque colapsa (era el bug del "contenedor azul" chiquito).
+    const html = generateHtml([conRedes({ align: 'left' })], settings);
+    const tablaIconos = html.slice(html.indexOf('<td align="left">'));
+    expect(tablaIconos).toContain('<td align="left">');
+    expect(tablaIconos).not.toContain('<table role="presentation" border="0" cellpadding="0" cellspacing="0" align=');
   });
 });
