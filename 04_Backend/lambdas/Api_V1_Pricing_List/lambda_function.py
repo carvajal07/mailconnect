@@ -27,6 +27,34 @@ REGION = 'us-east-1'
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 table_rates = dynamodb.Table('pricingRate')
 
+# ── Interruptor GLOBAL del IVA (platformConfig · TAX_ENABLED) ────────────────
+_cfg_table = dynamodb.Table('platformConfig')
+
+
+def tax_enabled():
+    """¿La plataforma cobra IVA? Lo decide el admin en Configuración (TAX_ENABLED).
+
+    FAIL-OPEN a True: si la tabla o la clave no existen se mantiene el comportamiento
+    histórico (cobrar 19%), de modo que desplegar este código NO cambia por sí solo lo
+    que se le cobra a nadie. Solo un `false` explícito lo apaga.
+
+    ⚠️ Este helper está COPIADO en las 6 lambdas que calculan dinero (estimador, cobro
+    real, facturación, tarifas y las dos de cascada) — tienen que leer el MISMO valor:
+    si el estimador y el débito discreparan, el gate de saldo decidiría con un número y
+    se cobraría otro.
+    """
+    try:
+        item = _cfg_table.get_item(Key={'configKey': 'TAX_ENABLED'}).get('Item')
+    except Exception:
+        return True
+    if not item or item.get('value') in (None, ''):
+        return True
+    value = item['value']
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in ('false', '0', 'no')
+
+
 CURRENCY = 'COP'
 
 # Debe reflejar los DEFAULT_RATES de Api_V1_Cost_Estimate. Si cambian allá, cambian aquí.
@@ -176,6 +204,10 @@ def lambda_handler(event, context):
         defaults = {}
         effective = {}
         overrides = {}
+        # Si el IVA está APAGADO a nivel de plataforma, la tarifa efectiva que se muestra
+        # en Tarifas es 0%: así el admin ve el mismo número que se le cobra al cliente y
+        # no cree que el `taxRate` guardado en pricingRate sigue aplicando.
+        taxing = tax_enabled()
         for channel in CHANNELS:
             base = dict(DEFAULT_RATES.get(channel, {}))
             base.update(DEFAULT_RATES['COMMON'])   # taxRate/minCampaign viven por canal
@@ -190,6 +222,8 @@ def lambda_handler(event, context):
                 eff.update(own_row)
             # 'overrides' = lo explícito en ESTE alcance (global si '*', si no el del cliente).
             overrides[channel] = global_row if customer_id == '*' else own_row
+            if not taxing:
+                eff['taxRate'] = 0
             effective[channel] = eff
 
         return {
@@ -204,6 +238,9 @@ def lambda_handler(event, context):
                 # Precios escalonados por volumen (todo incluido). Si un canal no tiene
                 # override plano, se cobra por estos tramos (elegidos por nº de envíos).
                 'tiers': {k: [{'min': m, 'unit': u} for m, u in v] for k, v in VOLUME_TIERS.items()},
+                # Interruptor global del IVA: la UI lo usa para avisar que el campo IVA
+                # por canal está inactivo mientras la plataforma no cobre IVA.
+                'taxEnabled': taxing,
             }
         }
     except Exception as e:

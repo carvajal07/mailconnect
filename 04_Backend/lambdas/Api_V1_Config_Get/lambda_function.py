@@ -37,6 +37,16 @@ SCHEMA = [
      'default': 5,
      'help': 'Minutos de validez de los códigos OTP (verificación y recuperación).',
      'consumers': ['Create-otp', 'Recovery-password']},
+    # Interruptor GLOBAL del IVA. Default `true` (comportamiento histórico: se cobraba
+    # siempre 19%); al apagarlo, TODA la plataforma cotiza y cobra sin IVA — útil mientras
+    # MailConnect no sea responsable de IVA. Lo leen las 6 lambdas que calculan dinero,
+    # así que el estimado que ve el cliente y el débito real siempre coinciden.
+    {'key': 'TAX_ENABLED', 'label': 'Cobrar IVA', 'group': 'Facturación', 'type': 'bool',
+     'default': True,
+     'help': 'Si se apaga, ni el estimador ni el cobro real ni la facturación suman IVA '
+             '(se cotiza a tarifa neta). Apágalo si aún no eres responsable de IVA.',
+     'consumers': ['Cost_Estimate', 'Prepare-batch', 'Billing_Summary', 'Pricing_List',
+                   'Cascade_Dispatch', 'Cascade_Advance']},
 ]
 
 
@@ -131,6 +141,12 @@ def _is_admin(event):
 def _coerce(value, type_):
     if isinstance(value, Decimal):
         value = int(value) if value % 1 == 0 else float(value)
+    if type_ == 'bool':
+        # Se guarda como booleano nativo, pero se tolera el texto por si el ítem se
+        # editó a mano en la consola de DynamoDB.
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ('true', '1', 'si', 'sí', 'yes')
     if type_ == 'number':
         try:
             return int(value) if float(value) % 1 == 0 else float(value)

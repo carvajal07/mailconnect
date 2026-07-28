@@ -17,17 +17,18 @@ export const CONFIG_ENDPOINTS = {
   SET: '/Config/Set',
 };
 
-export type ConfigType = 'string' | 'email' | 'number';
+/** `bool` se dibuja como interruptor y se guarda solo (sin botón "Guardar"). */
+export type ConfigType = 'string' | 'email' | 'number' | 'bool';
 
 export interface ConfigSetting {
   key: string;
   label: string;
   group: string;
   type: ConfigType;
-  default: string | number;
+  default: string | number | boolean;
   help: string;
   consumers: string[];
-  value: string | number;
+  value: string | number | boolean;
   isOverridden: boolean;
 }
 
@@ -35,6 +36,6 @@ export const configService = {
   get: (): Promise<ApiResponse<{ settings: ConfigSetting[] }>> =>
     apiPost(CONFIG_ENDPOINTS.GET, {}),
 
-  set: (key: string, value: string | number): Promise<ApiResponse<{ key?: string }>> =>
+  set: (key: string, value: string | number | boolean): Promise<ApiResponse<{ key?: string }>> =>
     apiPost(CONFIG_ENDPOINTS.SET, { key, value }),
 };

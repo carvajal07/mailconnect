@@ -726,3 +726,28 @@ Lambda NUEVA (el CD la crea) + ruta `/Cost/Attachment-weight` **ya en `routes.js
   responde 502 con el aviso — no devuelve un peso inventado.
 - [ ] `[J]` (opcional) Envs `ATTACHMENT_WEIGHT_MARGIN` (default `0.20` = +20%),
   `ATTACHMENT_WEIGHT_SAMPLES` / `_MAX_SAMPLES` (default `10`).
+
+---
+
+## 13. Interruptor global del IVA (ago 2026)
+
+Ajuste de plataforma **`TAX_ENABLED`** (Configuración → **"Cobrar IVA"**). Al apagarlo,
+toda la plataforma cotiza y cobra **sin IVA** (tarifa neta) — para cuando MailConnect aún
+no es responsable de IVA.
+
+- **No hay nada que crear:** la clave vive en la tabla `platformConfig` (ya existe) y la
+  escribe `Config/Set` la primera vez que se usa el switch.
+- [ ] `[J]` **IAM `dynamodb:GetItem` sobre `platformConfig`** en las 6 lambdas que
+  calculan dinero: `Api_V1_Cost_Estimate`, `Api_V1_Email_Prepare-batch-template`,
+  `Api_V1_Billing_Summary`, `Api_V1_Pricing_List`, `Api_V1_Cascade_Dispatch`,
+  `Api_V1_Cascade_Advance`. Las que ya tienen un rol `Lambda_DynFull*` **no necesitan
+  nada**; verificar solo las de rol restringido.
+- ℹ️ **Sin el permiso NO rompen**: `tax_enabled()` es fail-open → devuelve `True` y se
+  sigue cobrando IVA. El síntoma sería "apagué el switch y me sigue cobrando IVA": ahí
+  hay que revisar este permiso.
+- ⚠️ **Las 6 tienen que quedar desplegadas juntas.** Si el estimador (`Cost_Estimate`)
+  leyera el interruptor y el débito (`Prepare-batch`) no, el cliente vería un precio y se
+  le cobraría otro, y el gate de saldo decidiría con la cifra equivocada. El CD despliega
+  solo las lambdas cambiadas en el push, así que verificar que el workflow las cubra todas.
+- ✅ Después de desplegar: entrar a **Configuración**, apagar **"Cobrar IVA"** y confirmar
+  en **Muestras → Costo estimado** que el desglose ya no trae la línea de IVA.

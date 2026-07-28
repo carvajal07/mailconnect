@@ -76,6 +76,9 @@ export const TarifasSection = () => {
   const [overrides, setOverrides] = useState<RatesByChannel | null>(null);
   const [form, setForm] = useState<RatesByChannel | null>(null);
   const [tiers, setTiers] = useState<Record<string, { min: number; unit: number }[]>>({});
+  // Interruptor global del IVA (Configuración → Cobrar IVA): si está apagado, el campo
+  // IVA de esta pantalla queda guardado pero NO se aplica en el cobro.
+  const [taxEnabled, setTaxEnabled] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [savingChannel, setSavingChannel] = useState<string | null>(null);
@@ -88,6 +91,7 @@ export const TarifasSection = () => {
     if (isOk(res) && res.data) {
       setOverrides(res.data.overrides);
       setTiers(res.data.tiers ?? {});
+      setTaxEnabled(res.data.taxEnabled !== false);
       // El formulario arranca desde los valores efectivos (editable).
       setForm(JSON.parse(JSON.stringify(res.data.effective)));
     } else {
@@ -281,6 +285,16 @@ export const TarifasSection = () => {
               </Typography>
               <Divider sx={{ mb: 1.5 }} />
               <Stack spacing={1.5}>
+                {/* El IVA tiene un interruptor GLOBAL en Configuración. Si está apagado,
+                    este campo queda guardado pero NO se aplica: se avisa aquí para que
+                    nadie crea que editándolo cambia lo que se cobra. */}
+                {!taxEnabled && (
+                  <Alert severity="info" sx={{ py: 0.5 }}>
+                    El cobro de IVA está <strong>desactivado</strong> en Configuración →
+                    Cobrar IVA: la plataforma cotiza y cobra sin IVA. Este valor queda
+                    guardado, pero no se aplica hasta que lo vuelvas a activar.
+                  </Alert>
+                )}
                 <TextField
                   size="small"
                   type="number"

@@ -31,6 +31,34 @@ table_balance = dynamodb.Table('customerBalance')
 table_wallet = dynamodb.Table('walletTransaction')
 table_rates = dynamodb.Table('pricingRate')
 
+# ── Interruptor GLOBAL del IVA (platformConfig · TAX_ENABLED) ────────────────
+_cfg_table = dynamodb.Table('platformConfig')
+
+
+def tax_enabled():
+    """¿La plataforma cobra IVA? Lo decide el admin en Configuración (TAX_ENABLED).
+
+    FAIL-OPEN a True: si la tabla o la clave no existen se mantiene el comportamiento
+    histórico (cobrar 19%), de modo que desplegar este código NO cambia por sí solo lo
+    que se le cobra a nadie. Solo un `false` explícito lo apaga.
+
+    ⚠️ Este helper está COPIADO en las 6 lambdas que calculan dinero (estimador, cobro
+    real, facturación, tarifas y las dos de cascada) — tienen que leer el MISMO valor:
+    si el estimador y el débito discreparan, el gate de saldo decidiría con un número y
+    se cobraría otro.
+    """
+    try:
+        item = _cfg_table.get_item(Key={'configKey': 'TAX_ENABLED'}).get('Item')
+    except Exception:
+        return True
+    if not item or item.get('value') in (None, ''):
+        return True
+    value = item['value']
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in ('false', '0', 'no')
+
+
 # Colas por canal (mismas que Prepare-batch). La cascada v1 admite EM/SMS/WSP/VOZ.
 CHANNEL_QUEUE = {
     'EM': os.environ.get('URL_SQS_EM', 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-template-EM'),
@@ -163,7 +191,8 @@ def channel_cost(customer_id, channel, recipients):
     if channel == 'VOZ':
         unit = unit * AVG_VOICE_MIN
     subtotal = max(unit * recipients, DEFAULT_MIN)
-    return int(round(subtotal * (1 + DEFAULT_TAX_RATE)))
+    # IVA: solo si la plataforma lo tiene habilitado (Configuración → Cobrar IVA).
+    return int(round(subtotal * (1 + (DEFAULT_TAX_RATE if tax_enabled() else 0.0))))
 
 
 def unit_cost(customer_id, channel):
@@ -178,7 +207,7 @@ def unit_cost(customer_id, channel):
         unit = _tier_unit(tier_key, 1)
     if channel == 'VOZ':
         unit = unit * AVG_VOICE_MIN
-    return int(round(unit * (1 + DEFAULT_TAX_RATE)))
+    return int(round(unit * (1 + (DEFAULT_TAX_RATE if tax_enabled() else 0.0))))
 
 
 # ============================ Monedero (débito atómico) ====================================

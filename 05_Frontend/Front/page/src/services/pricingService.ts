@@ -37,6 +37,9 @@ export interface PricingListData {
   /** Precios por TRAMO de volumen (todo incluido). Si un canal no tiene override plano, se
    *  cobra por estos tramos. Claves: EM/EAU/EAP/SMS/WHATSAPP/VOICE. */
   tiers?: Record<string, { min: number; unit: number }[]>;
+  /** Interruptor GLOBAL del IVA (Configuración → Cobrar IVA). Si es false, el `taxRate`
+   *  guardado por canal NO se aplica en ningún lado y `effective.taxRate` llega en 0. */
+  taxEnabled?: boolean;
 }
 
 export const pricingService = {
