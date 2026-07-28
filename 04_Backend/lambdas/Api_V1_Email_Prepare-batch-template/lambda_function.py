@@ -326,7 +326,11 @@ def _campaign_cost(customer_id, channel_name, recipients, document_format=None, 
     rate = _load_rate(customer_id, channel)
     unit = _campaign_unit(rate, channel_name, recipients, document_format, delivery)
     subtotal = max(unit * recipients, rate.get('minCampaign', DEFAULT_MIN_CAMPAIGN))
-    total = subtotal * (1 + rate.get('taxRate', DEFAULT_TAX_RATE))
+    # IVA: solo si la plataforma lo tiene habilitado (Configuración → Cobrar IVA). Debe
+    # leer el MISMO interruptor que Cost_Estimate: el front compara el estimado con el
+    # saldo antes de enviar, y aquí es donde se DEBITA de verdad.
+    tax_rate = rate.get('taxRate', DEFAULT_TAX_RATE) if tax_enabled() else 0.0
+    total = subtotal * (1 + tax_rate)
     return int(round(total))
 
 
@@ -412,6 +416,34 @@ def _wallet_ledger(st, tx_type, amount, balance_after, detail):
 NOTIFY_DASHBOARD_URL = os.environ.get('NOTIFY_DASHBOARD_URL', 'https://mailconnect.com.co/panel')
 NOTIFY_LOG_TABLE = os.environ.get('NOTIFY_LOG_TABLE', 'notificationLog')
 _notify_log = dynamodb.Table(NOTIFY_LOG_TABLE)
+
+# ── Interruptor GLOBAL del IVA (platformConfig · TAX_ENABLED) ────────────────
+_cfg_table = dynamodb.Table('platformConfig')
+
+
+def tax_enabled():
+    """¿La plataforma cobra IVA? Lo decide el admin en Configuración (TAX_ENABLED).
+
+    FAIL-OPEN a True: si la tabla o la clave no existen se mantiene el comportamiento
+    histórico (cobrar 19%), de modo que desplegar este código NO cambia por sí solo lo
+    que se le cobra a nadie. Solo un `false` explícito lo apaga.
+
+    ⚠️ Este helper está COPIADO en las 6 lambdas que calculan dinero (estimador, cobro
+    real, facturación, tarifas y las dos de cascada) — tienen que leer el MISMO valor:
+    si el estimador y el débito discreparan, el gate de saldo decidiría con un número y
+    se cobraría otro.
+    """
+    try:
+        item = _cfg_table.get_item(Key={'configKey': 'TAX_ENABLED'}).get('Item')
+    except Exception:
+        return True
+    if not item or item.get('value') in (None, ''):
+        return True
+    value = item['value']
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in ('false', '0', 'no')
+
 
 
 def _customer_notify_prefs(customer_id):

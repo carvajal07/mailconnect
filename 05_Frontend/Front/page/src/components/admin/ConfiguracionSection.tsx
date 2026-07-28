@@ -11,6 +11,7 @@ import {
   Alert,
   Divider,
   Tooltip,
+  Switch,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SaveIcon from '@mui/icons-material/Save';
@@ -50,6 +51,19 @@ export const ConfiguracionSection = () => {
     load();
   }, [load]);
 
+  /** Escribe el ajuste y refresca. Compartido por el formulario y por los interruptores. */
+  const persist = async (key: string, value: string | number | boolean) => {
+    setSavingKey(key);
+    const res = await configService.set(key, value);
+    setSavingKey(null);
+    if (isOk(res)) {
+      notify('Ajuste guardado.', 'success');
+      load();
+    } else {
+      notify(res.description || 'No se pudo guardar el ajuste.', 'error');
+    }
+  };
+
   const save = async (s: ConfigSetting) => {
     const raw = draft[s.key] ?? '';
     const value: string | number = s.type === 'number' ? Number(raw) : raw;
@@ -59,15 +73,7 @@ export const ConfiguracionSection = () => {
     if (s.type === 'email' && !raw.includes('@')) {
       return notify('Ingresa un correo válido.', 'warning');
     }
-    setSavingKey(s.key);
-    const res = await configService.set(s.key, value);
-    setSavingKey(null);
-    if (isOk(res)) {
-      notify('Ajuste guardado.', 'success');
-      load();
-    } else {
-      notify(res.description || 'No se pudo guardar el ajuste.', 'error');
-    }
+    persist(s.key, value);
   };
 
   const groups = Array.from(new Set(settings.map((s) => s.group)));
@@ -100,6 +106,40 @@ export const ConfiguracionSection = () => {
           <Stack spacing={2.5}>
             {settings.filter((s) => s.group === group).map((s) => (
               <Box key={s.key}>
+                {/* Los ajustes booleanos van como INTERRUPTOR (verde/gris, igual que
+                    "Funciones por cliente") y se guardan al instante: un switch con un
+                    botón "Guardar" al lado invita a creer que ya quedó aplicado. */}
+                {s.type === 'bool' ? (
+                  <Stack direction="row" spacing={1.5} alignItems="center" justifyContent="space-between">
+                    <Box>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Typography variant="body1" fontWeight={600}>{s.label}</Typography>
+                        {s.isOverridden
+                          ? <Chip size="small" color="primary" variant="outlined" label="personalizado" sx={{ height: 20 }} />
+                          : <Tooltip title={`Usando el valor por defecto: ${s.default ? 'activado' : 'desactivado'}`}>
+                              <Chip size="small" variant="outlined" label="por defecto" sx={{ height: 20 }} />
+                            </Tooltip>}
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">{s.help}</Typography>
+                    </Box>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Chip
+                        size="small"
+                        color={s.value ? 'success' : 'default'}
+                        variant="outlined"
+                        label={s.value ? 'Activado' : 'Desactivado'}
+                      />
+                      {savingKey === s.key
+                        ? <CircularProgress size={20} />
+                        : <Switch
+                            color="success"
+                            checked={Boolean(s.value)}
+                            onChange={(e) => persist(s.key, e.target.checked)}
+                            disabled={savingKey !== null}
+                          />}
+                    </Stack>
+                  </Stack>
+                ) : (
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'flex-start' }}>
                   <TextField
                     size="small"
@@ -125,6 +165,7 @@ export const ConfiguracionSection = () => {
                     Guardar
                   </Button>
                 </Stack>
+                )}
                 <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 0.5 }}>
                   <InfoOutlinedIcon sx={{ fontSize: 14, color: 'text.disabled' }} />
                   <Typography variant="caption" color="text.secondary">

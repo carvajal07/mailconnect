@@ -40,6 +40,34 @@ REGION = 'us-east-1'
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 table_rates = dynamodb.Table('pricingRate')
 
+# ── Interruptor GLOBAL del IVA (platformConfig · TAX_ENABLED) ────────────────
+_cfg_table = dynamodb.Table('platformConfig')
+
+
+def tax_enabled():
+    """¿La plataforma cobra IVA? Lo decide el admin en Configuración (TAX_ENABLED).
+
+    FAIL-OPEN a True: si la tabla o la clave no existen se mantiene el comportamiento
+    histórico (cobrar 19%), de modo que desplegar este código NO cambia por sí solo lo
+    que se le cobra a nadie. Solo un `false` explícito lo apaga.
+
+    ⚠️ Este helper está COPIADO en las 6 lambdas que calculan dinero (estimador, cobro
+    real, facturación, tarifas y las dos de cascada) — tienen que leer el MISMO valor:
+    si el estimador y el débito discreparan, el gate de saldo decidiría con un número y
+    se cobraría otro.
+    """
+    try:
+        item = _cfg_table.get_item(Key={'configKey': 'TAX_ENABLED'}).get('Item')
+    except Exception:
+        return True
+    if not item or item.get('value') in (None, ''):
+        return True
+    value = item['value']
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in ('false', '0', 'no')
+
+
 CURRENCY = 'COP'
 DEFAULT_TAX_RATE = 0.19          # IVA Colombia
 DEFAULT_MIN_CAMPAIGN = 5000      # mínimo por campaña (COP)
@@ -278,7 +306,8 @@ def lambda_handler(event, context):
             breakdown.append(('Mínimo por campaña', f'Se aplica el mínimo de ${min_campaign:.0f}', min_campaign - subtotal))
             subtotal = min_campaign
 
-        tax_rate = rate.get('taxRate', DEFAULT_TAX_RATE)
+        # IVA: solo si la plataforma lo tiene habilitado (Configuración → Cobrar IVA).
+        tax_rate = rate.get('taxRate', DEFAULT_TAX_RATE) if tax_enabled() else 0.0
         tax = subtotal * tax_rate
         total = subtotal + tax
 

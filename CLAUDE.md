@@ -26,6 +26,37 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Interruptor GLOBAL del IVA (ago 2026)
+- **Qué:** MailConnect puede **no ser responsable de IVA**. Nuevo ajuste de plataforma
+  **`TAX_ENABLED`** (Configuración → **"Cobrar IVA"**, grupo *Facturación*): al apagarlo,
+  TODA la plataforma cotiza y cobra **a tarifa neta**, sin sumar el 19%.
+- **Default `true` (FAIL-OPEN):** sin la clave —o si la lectura de `platformConfig` falla—
+  se cobra IVA, o sea el comportamiento histórico. Desplegar este código **no cambia por sí
+  solo lo que se le cobra a nadie**; el cambio lo decide el admin con el switch.
+- **Tipo `bool` en el catálogo de configuración:** `Config/Get` y `Config/Set` soportan
+  ahora ajustes booleanos (se guardan como booleano nativo, se tolera el texto
+  `true/false/1/0/si/no` por si el ítem se editó a mano en la consola de DynamoDB). En la
+  UI se dibujan como **interruptor verde/gris** (igual que "Funciones por cliente") y se
+  **guardan al instante** — un switch con un botón "Guardar" al lado invita a creer que ya
+  quedó aplicado.
+- **Las 6 lambdas que calculan dinero leen el MISMO interruptor** con el helper copiado
+  `tax_enabled()`: `Cost_Estimate` (lo que ve el cliente), **`Prepare-batch`** (lo que se
+  DEBITA), `Billing_Summary`, `Pricing_List` y `Cascade_{Dispatch,Advance}`. ⚠️ Es
+  obligatorio que coincidan: el front compara el estimado contra el saldo antes de enviar,
+  así que si el estimador y el débito discreparan, el gate decidiría con un número y se
+  cobraría otro. Cubierto por una prueba explícita de paridad.
+- **Tarifas (admin):** `Pricing_List` devuelve `taxEnabled` y, con el IVA apagado, el
+  `effective.taxRate` sale en **0** (los `defaults` conservan el 19% para cuando se
+  reactive). La sección **Tarifas** muestra un aviso de que el campo IVA queda guardado
+  pero NO se aplica.
+- **Cobertura:** `test_tax_switch.py` (18: default sin la clave y sin la tabla, parseo de
+  booleano y texto, fail-open ante error de lectura, estimador con/sin IVA conservando el
+  neto, **paridad estimador ↔ débito real en ambos estados**, Pricing_List en 0 + aviso,
+  cascada, y la validación booleana de `Config/Set` + su exposición en `Config/Get`).
+- ⚠️ `[J]`: **`dynamodb:GetItem` sobre `platformConfig`** en las 6 lambdas de dinero (las
+  que ya tienen rol `Lambda_DynFull*` no necesitan nada). Sin el permiso NO rompen: caen al
+  fail-open y siguen cobrando IVA. La clave la crea `Config/Set` al usar el switch.
+
 ### Peso REAL del adjunto en el estimador de costo (ago 2026)
 - **Problema:** `/Cost/Estimate` recibía `attachmentSizeMB` **declarado a mano** por el
   usuario. Para **EAU** el peso es un dato que YA existe (el archivo está en S3) y para
@@ -620,7 +651,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Admin/Dashboard` | `{ month? }` (**admin**) | 200 `data:{kpis, funnel[], byChannel[], health:[{company, sent, bounceRate, complaintRate, level}], series:[{date, enviados, entregados, abiertos, ...}], truncated}` (panel global + reputación + serie diaria de 30 días de toda la plataforma) |
 | `Admin/Jobs` | `{ month?, state? }` (**admin**) | 200 `data:{jobs:[{campaignName, company, channelLabel, processState, campaignState, sent, registersToSend, progress, blocked{}}], counts, truncated}` (solo lectura) |
 | `Config/Get` | `{}` (**admin**) | 200 `data:{settings:[{key, label, group, type, default, value, isOverridden, consumers[]}]}` |
-| `Config/Set` | `{ key, value }` (**admin**) | 200 ok · 400 key/valor inválido. Crea `platformConfig` si no existe |
+| `Config/Set` | `{ key, value }` (**admin**) | 200 ok · 400 key/valor inválido. Crea `platformConfig` si no existe. Tipos: `string`/`email`/`number`/**`bool`** (este último se guarda como booleano nativo; acepta `true/false/1/0/si/no`). Clave **`TAX_ENABLED`** = interruptor global del IVA |
 | `Admin/Audit` | `{ month?, action?, actor?, dateFrom?, dateTo? }` (**admin**) | 200 `data:{entries:[{date, actor, action, target, detail}], count, actions[], truncated}` (bitácora, solo lectura; `dateFrom/dateTo` YYYY-MM-DD inclusivo = rango del export CSV de la UI) |
 | `Admin/Control-center` | `{}` (**admin**) | 200 `data:{pipeline:{stuckProcesses[], stuckCount, failedSchedules[], queues:[{queue, depth, oldestSeconds, dlqDepth, level}]}, money:{todayDebits, todayTopups, pendingTopups, platformBalance}, reputation:{top:[{company, sent, bounceRate, complaintRate, level, trend}]}, health:{services:[{service, status, detail, metric?}]}, audit[], generatedAt}` — **Centro de mando** (operación en vivo; cada sección best-effort) |
 | `Admin/Deployment-health` | `{}` (**admin**) | 200 `data:{sections:[{key, title, level, ok, total, items:[{name, status, detail}]}], summary:{ok, warning, error, unknown}, generatedAt}` — **Salud de despliegue**: verifica contra AWS que lambdas/tablas/colas/`SECRET_KEY`/triggers críticos existan (deriva "construido pero no desplegado"; best-effort → `unknown` sin el permiso IAM) |
@@ -1351,6 +1382,9 @@ Tres tabs nuevos en `/admin` (todos **admin-only**, gating por `authorizer.role`
   - `SENDER_EMAIL` → `Register`, `Create-otp`, `Recovery-password` (remitente de los correos).
   - `ACTIVATION_URL` → `Register` (enlace del botón "Activar mi cuenta").
   - `OTP_EXPIRATION_MIN` → `Create-otp`, `Recovery-password` (vigencia del OTP).
+  - **`TAX_ENABLED`** (bool, ago 2026) → `Cost_Estimate`, `Prepare-batch`, `Billing_Summary`,
+    `Pricing_List`, `Cascade_{Dispatch,Advance}` (interruptor global del IVA — ver la
+    sección "Interruptor GLOBAL del IVA" arriba).
   El patrón `_platform_cfg(key)` (get_item defensivo con fallback) se puede adoptar en más
   lambdas. `Config/Get` devuelve el catálogo con `value`/`isOverridden`/`consumers` para la UI.
 

@@ -47,6 +47,7 @@ FIELD_TYPES = {
     'SENDER_EMAIL': 'email',
     'ACTIVATION_URL': 'string',
     'OTP_EXPIRATION_MIN': 'number',
+    'TAX_ENABLED': 'bool',
 }
 
 
@@ -173,6 +174,17 @@ _EMAIL_RE = re.compile(r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
 def _validate(key, value):
     """Devuelve (valor_normalizado, error). El valor numérico se guarda como Decimal."""
     type_ = FIELD_TYPES[key]
+    if type_ == 'bool':
+        # Se acepta booleano nativo o su texto (el mapping template no-proxy puede
+        # entregar "true"/"false" como cadena) y se guarda SIEMPRE como booleano.
+        if isinstance(value, bool):
+            return value, None
+        text = str(value).strip().lower()
+        if text in ('true', '1', 'si', 'sí', 'yes'):
+            return True, None
+        if text in ('false', '0', 'no'):
+            return False, None
+        return None, 'El valor debe ser verdadero o falso.'
     if type_ == 'number':
         try:
             num = float(value)

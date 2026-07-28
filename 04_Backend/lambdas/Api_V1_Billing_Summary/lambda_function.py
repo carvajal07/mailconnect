@@ -46,6 +46,34 @@ table_campaign = dynamodb.Table('campaign')
 table_process = dynamodb.Table('process')
 table_rates = dynamodb.Table('pricingRate')
 
+# ── Interruptor GLOBAL del IVA (platformConfig · TAX_ENABLED) ────────────────
+_cfg_table = dynamodb.Table('platformConfig')
+
+
+def tax_enabled():
+    """¿La plataforma cobra IVA? Lo decide el admin en Configuración (TAX_ENABLED).
+
+    FAIL-OPEN a True: si la tabla o la clave no existen se mantiene el comportamiento
+    histórico (cobrar 19%), de modo que desplegar este código NO cambia por sí solo lo
+    que se le cobra a nadie. Solo un `false` explícito lo apaga.
+
+    ⚠️ Este helper está COPIADO en las 6 lambdas que calculan dinero (estimador, cobro
+    real, facturación, tarifas y las dos de cascada) — tienen que leer el MISMO valor:
+    si el estimador y el débito discreparan, el gate de saldo decidiría con un número y
+    se cobraría otro.
+    """
+    try:
+        item = _cfg_table.get_item(Key={'configKey': 'TAX_ENABLED'}).get('Item')
+    except Exception:
+        return True
+    if not item or item.get('value') in (None, ''):
+        return True
+    value = item['value']
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in ('false', '0', 'no')
+
+
 
 def tenant_key(nit):
     """Llave de tenant (NIT saneado) para las tablas de estados por cliente
@@ -401,6 +429,10 @@ def _bill_customer(cust, camps_by_customer, procs_by_campaign, rate_cache, budge
         })
     breakdown.sort(key=lambda x: x['amount'], reverse=True)
 
+    # IVA: solo si la plataforma lo tiene habilitado (Configuración → Cobrar IVA). Se
+    # anula al final (no por canal) para que el resumen cuadre con lo que se debitó.
+    if not tax_enabled():
+        tax_rate = 0.0
     tax = subtotal * tax_rate
     return {
         'customerId': customer_id,
