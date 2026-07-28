@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
 
@@ -11,5 +11,11 @@ export default defineConfig({
       // alias '@' para sus imports internos. El resto del front NO usa '@'.
       '@': path.resolve(__dirname, './src/pdfsketch'),
     },
+  },
+  // Pruebas del constructor de correos (saneamiento + generación email-safe). Necesitan
+  // DOM porque el sanitizador usa DOMParser, que es API del navegador.
+  test: {
+    environment: 'jsdom',
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
   },
 })

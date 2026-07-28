@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, useState } from 'react';
+import { Fragment, useMemo, useRef, useState, useEffect } from 'react';
 import {
   Box,
   Paper,
@@ -51,28 +51,50 @@ import GridViewIcon from '@mui/icons-material/GridView';
 import AddIcon from '@mui/icons-material/Add';
 import BookmarkAddIcon from '@mui/icons-material/BookmarkAdd';
 import AddPhotoAlternateIcon from '@mui/icons-material/AddPhotoAlternate';
+import UndoIcon from '@mui/icons-material/Undo';
+import RedoIcon from '@mui/icons-material/Redo';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
+import ForwardToInboxIcon from '@mui/icons-material/ForwardToInbox';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import RestoreIcon from '@mui/icons-material/Restore';
+import FormatClearIcon from '@mui/icons-material/FormatClear';
 import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
-import { templatesService } from '../../services/templatesService';
+import { templatesService, sendTestEmail } from '../../services/templatesService';
 import type { TemplateSummary } from '../../services/templatesService';
 import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { allPresets, customPresets, cloneBlocks, type TemplatePreset } from './templatePresets';
+import { emailDesigns } from '../../services/messageTemplatesService';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 import {
   BLOCK_LABELS,
   VARIABLES,
   PALETTE_GROUPS,
   DEFAULT_SETTINGS,
+  COLUMN_RATIOS,
+  NESTABLE_TYPES,
   createBlock,
   generateHtml,
+  analyzeTemplate,
+  htmlBytes,
+  GMAIL_CLIP_BYTES,
   drafts,
   type Block,
   type BlockType,
+  type ColumnRatio,
   type EmailSettings,
   type ProductItem,
 } from './htmlBuilder';
+import { RichTextEditor } from './RichTextEditor';
+import { blockContentHtml, variableToken, richToPlain, sanitizeBlockHtml } from './richText';
+
+/** Autoguardado del constructor (red de seguridad ante un cierre accidental). */
+const AUTOSAVE_KEY = 'mc_html_autosave';
 
 const BLOCK_ICONS: Record<BlockType, ReactNode> = {
   heading: <TitleIcon fontSize="small" />,
@@ -127,6 +149,94 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [dragging, setDragging] = useState(false);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
+  // ── Deshacer / rehacer ──────────────────────────────────────────────────────
+  // Se lleva por SNAPSHOTS con debounce en vez de envolver cada setBlocks: así no hay
+  // que tocar los ~15 puntos que mutan el estado (y escribir en un campo de texto no
+  // genera un paso de historial por tecla).
+  const history = useRef<{ blocks: Block[]; settings: EmailSettings }[]>([]);
+  const histIndex = useRef(-1);
+  const restoring = useRef(false);
+  const [histFlags, setHistFlags] = useState({ canUndo: false, canRedo: false });
+
+  const syncHistFlags = () => setHistFlags({
+    canUndo: histIndex.current > 0,
+    canRedo: histIndex.current < history.current.length - 1,
+  });
+
+  useEffect(() => {
+    if (restoring.current) { restoring.current = false; return; }
+    const t = setTimeout(() => {
+      const snap = { blocks: cloneBlocks(blocks), settings: { ...settings } };
+      // Se descarta lo que hubiera "adelante": editar tras deshacer abre una rama nueva.
+      history.current = history.current.slice(0, histIndex.current + 1);
+      history.current.push(snap);
+      if (history.current.length > 60) history.current.shift();
+      histIndex.current = history.current.length - 1;
+      syncHistFlags();
+    }, 400);
+    return () => clearTimeout(t);
+  }, [blocks, settings]);
+
+  const travel = (delta: number) => {
+    const next = histIndex.current + delta;
+    const snap = history.current[next];
+    if (!snap) return;
+    histIndex.current = next;
+    restoring.current = true;
+    setBlocks(cloneBlocks(snap.blocks));
+    setSettings({ ...snap.settings });
+    syncHistFlags();
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      // No se secuestra el atajo mientras se escribe: el navegador ya deshace el texto.
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return;
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); travel(-1); }
+      else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); travel(1); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // ── Autoguardado ────────────────────────────────────────────────────────────
+  // Los borradores con nombre siguen siendo manuales; esto es la red de seguridad para
+  // no perder el trabajo si se cierra la pestaña por accidente.
+  const [autosavedAt, setAutosavedAt] = useState<string>('');
+  useEffect(() => {
+    if (!blocks.length) return;
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ blocks, settings, at: new Date().toISOString() }));
+        setAutosavedAt(new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }));
+      } catch { /* cuota llena: el autoguardado es best-effort */ }
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [blocks, settings]);
+
+  const [recoverOpen, setRecoverOpen] = useState(false);
+  const recovered = useRef<{ blocks: Block[]; settings: EmailSettings; at: string } | null>(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(AUTOSAVE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed?.blocks?.length) { recovered.current = parsed; setRecoverOpen(true); }
+    } catch { /* ignorar */ }
+  }, []);
+
+  // ── Chequeo previo de entregabilidad ────────────────────────────────────────
+  const [checkOpen, setCheckOpen] = useState(false);
+  // ── Prueba de envío ─────────────────────────────────────────────────────────
+  const [testOpen, setTestOpen] = useState(false);
+  const [testEmail, setTestEmail] = useState(getUser()?.email ?? '');
+  const [testing, setTesting] = useState(false);
+  // ── Variable con valor por defecto ──────────────────────────────────────────
+  const [varDialog, setVarDialog] = useState<{ field: string; fallback: string } | null>(null);
+
   const [draftsAnchor, setDraftsAnchor] = useState<null | HTMLElement>(null);
   const [showHtml, setShowHtml] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -155,6 +265,9 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [presetMeta, setPresetMeta] = useState({ name: '', description: '' });
 
   const html = useMemo(() => generateHtml(blocks, settings), [blocks, settings]);
+  // Chequeo previo de entregabilidad (peso, alt, enlaces vacíos, imagen/texto…).
+  const issues = useMemo(() => analyzeTemplate(blocks, settings, html), [blocks, settings, html]);
+  const bytes = useMemo(() => htmlBytes(html), [html]);
   const selected = blocks.find((b) => b.id === selectedId) ?? null;
 
   const setSetting = <K extends keyof EmailSettings>(key: K, value: EmailSettings[K]) =>
@@ -246,12 +359,28 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     setDropIndex(e.clientY < r.top + r.height / 2 ? index : index + 1);
   };
 
+  /** Inserta una variable en el bloque seleccionado. Acepta el NOMBRE del campo o un
+   *  token ya formado (el de "valor por defecto" viene como `{{#if …}}`). */
   const insertVariable = (v: string) => {
     if (!selected) {
       notify('Selecciona un bloque de texto para insertar la variable.', 'info');
       return;
     }
-    updateSelected({ text: `${selected.text}{{${v}}}` });
+    const token = v.includes('{{') ? v : `{{${v}}}`;
+    updateSelected({ text: `${selected.text}${token}` });
+  };
+
+  /** Prueba de envío a un correo del propio equipo (ver el correo REAL en la bandeja). */
+  const sendTest = async () => {
+    setTesting(true);
+    const res = await sendTestEmail(html, testEmail.trim(), `[Prueba] ${meta.templateName || 'Plantilla'}`);
+    setTesting(false);
+    if (isOk(res)) {
+      notify(`Prueba enviada a ${res.data?.to || testEmail}. Revisa la bandeja (y spam).`, 'success');
+      setTestOpen(false);
+    } else {
+      notify(res.description || 'No se pudo enviar la prueba.', 'error');
+    }
   };
 
   /* ---------------- Borradores (localStorage) ---------------- */
@@ -344,7 +473,14 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   };
 
   const draftList = useMemo(() => drafts.list(), [draftsVersion]);
-  const presetList = useMemo(() => allPresets(), [presetsVersion, presetsOpen]);
+  /** Diseños compartidos del equipo (backend). Se cargan al abrir la galería. */
+  const [sharedDesigns, setSharedDesigns] = useState<TemplatePreset[]>([]);
+
+  const presetList = useMemo(() => {
+    const local = allPresets();
+    const names = new Set(local.map((p) => p.name));
+    return [...local, ...sharedDesigns.filter((d) => !names.has(d.name))];
+  }, [presetsVersion, presetsOpen, sharedDesigns]);
 
   /* ---------------- Imágenes → S3 ---------------- */
   const uploadImage = async (file: File): Promise<string | null> => {
@@ -388,7 +524,12 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     notify(`Plantilla "${name}" eliminada.`, 'info');
   };
 
-  const savePreset = () => {
+  /**
+   * Guarda el diseño como prediseñado. Va al BACKEND (canal `HTML` de `messageTemplate`)
+   * para que lo vea todo el equipo; el espejo en localStorage queda como respaldo para
+   * seguir trabajando si la API no responde.
+   */
+  const savePreset = async () => {
     const name = presetMeta.name.trim();
     if (!name) return notify('Escribe un nombre para la plantilla.', 'warning');
     if (blocks.length === 0) return notify('Agrega bloques antes de guardar la plantilla.', 'warning');
@@ -396,8 +537,40 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     setPresetsVersion((v) => v + 1);
     setSavePresetOpen(false);
     setPresetMeta({ name: '', description: '' });
-    notify(`Plantilla "${name}" guardada como prediseñada.`, 'success');
+
+    const res = await emailDesigns.save(sessionCustomerId, name, {
+      blocks, settings, description: presetMeta.description.trim(),
+    });
+    if (isOk(res)) {
+      notify(`Plantilla "${name}" guardada y compartida con tu equipo.`, 'success');
+    } else {
+      notify(`Plantilla "${name}" guardada solo en este navegador (no se pudo compartir: ${res.description || 'error'}).`, 'warning');
+    }
   };
+
+  useEffect(() => {
+    if (!presetsOpen || !sessionCustomerId) return;
+    let cancelled = false;
+    (async () => {
+      const res = await emailDesigns.list(sessionCustomerId);
+      if (cancelled || !isOk(res)) return;
+      const parsed: TemplatePreset[] = (res.data?.templates ?? []).flatMap((t) => {
+        try {
+          const d = JSON.parse(t.designJson || '{}');
+          if (!d?.blocks?.length) return [];
+          return [{
+            name: t.name,
+            description: d.description || 'Compartida con el equipo',
+            blocks: d.blocks as Block[],
+            settings: { ...DEFAULT_SETTINGS, ...(d.settings || {}) },
+            custom: true,
+          } as TemplatePreset];
+        } catch { return []; }
+      });
+      setSharedDesigns(parsed);
+    })();
+    return () => { cancelled = true; };
+  }, [presetsOpen, sessionCustomerId]);
 
   return (
     <Box>
@@ -443,12 +616,44 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               <VisibilityIcon fontSize="small" sx={{ mr: 0.5 }} /> Vista previa
             </ToggleButton>
           </ToggleButtonGroup>
+          <Tooltip title="Deshacer (Ctrl+Z)">
+            <span>
+              <IconButton size="small" onClick={() => travel(-1)} disabled={!histFlags.canUndo}>
+                <UndoIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="Rehacer (Ctrl+Shift+Z)">
+            <span>
+              <IconButton size="small" onClick={() => travel(1)} disabled={!histFlags.canRedo}>
+                <RedoIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
           <Button size="small" variant="outlined" startIcon={<CodeIcon />} onClick={() => setShowHtml(true)}>
             Ver HTML
+          </Button>
+          {/* Chequeo previo: las causas típicas de que un correo bien diseñado llegue
+              roto o a spam. Es más barato verlas aquí que en el reporte de rebotes. */}
+          <Button
+            size="small" variant="outlined"
+            color={issues.some((i) => i.level === 'error') ? 'error' : 'primary'}
+            startIcon={<FactCheckIcon />} onClick={() => setCheckOpen(true)}
+            disabled={blocks.length === 0}
+          >
+            Revisar{issues.length ? ` (${issues.length})` : ''}
+          </Button>
+          <Button size="small" variant="outlined" startIcon={<ForwardToInboxIcon />} onClick={() => setTestOpen(true)} disabled={blocks.length === 0}>
+            Enviarme una prueba
           </Button>
           <Button size="small" variant="contained" startIcon={<SaveIcon />} onClick={() => setSaveOpen(true)} disabled={blocks.length === 0}>
             Publicar
           </Button>
+          {autosavedAt && (
+            <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
+              Guardado automático {autosavedAt}
+            </Typography>
+          )}
         </Stack>
       </Stack>
 
@@ -646,7 +851,12 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                       </IconButton>
                     </Stack>
                     <Box sx={{ p: 2 }}>
-                      <BlockPreview block={b} />
+                      <BlockPreview
+                        block={b}
+                        onEditText={selectedId === b.id ? (patch) => updateSelected(patch) : undefined}
+                        variables={dbFields.length ? dbFields : VARIABLES}
+                        onRequestVariable={() => setVarDialog({ field: (dbFields[0] || VARIABLES[0]), fallback: '' })}
+                      />
                     </Box>
                   </Box>
                   </Fragment>
@@ -799,6 +1009,14 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               <MenuItem value="'Trebuchet MS', Tahoma, sans-serif">Trebuchet / Tahoma</MenuItem>
               <MenuItem value="Verdana, Geneva, sans-serif">Verdana</MenuItem>
             </TextField>
+            <TextField
+              select label="Modo oscuro" value={settings.darkMode ? 'yes' : 'no'}
+              onChange={(e) => setSetting('darkMode', e.target.value === 'yes')} fullWidth size="small"
+              helperText="Sin estas reglas, Apple Mail y Outlook invierten los colores por su cuenta y suelen romper el contraste."
+            >
+              <MenuItem value="yes">Adaptar el correo al modo oscuro</MenuItem>
+              <MenuItem value="no">No adaptarlo</MenuItem>
+            </TextField>
             <TextField select label="Esquinas del contenedor" value={settings.rounded ? 'yes' : 'no'} onChange={(e) => setSetting('rounded', e.target.value === 'yes')} fullWidth size="small">
               <MenuItem value="yes">Redondeadas</MenuItem>
               <MenuItem value="no">Rectas</MenuItem>
@@ -895,37 +1113,236 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         </DialogActions>
       </Dialog>
 
+      {/* Chequeo previo de entregabilidad */}
+      <Dialog open={checkOpen} onClose={() => setCheckOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Revisión de la plantilla</DialogTitle>
+        <DialogContent dividers>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Peso del correo: <strong>{(bytes / 1024).toFixed(1)} KB</strong>
+            </Typography>
+            <Box sx={{ flex: 1, height: 6, borderRadius: 3, bgcolor: 'action.hover', overflow: 'hidden' }}>
+              <Box sx={{
+                width: `${Math.min(100, (bytes / GMAIL_CLIP_BYTES) * 100)}%`, height: '100%',
+                bgcolor: bytes > GMAIL_CLIP_BYTES ? 'error.main' : bytes > GMAIL_CLIP_BYTES * 0.8 ? 'warning.main' : 'success.main',
+              }} />
+            </Box>
+            <Typography variant="caption" color="text.secondary">límite 102 KB</Typography>
+          </Stack>
+
+          {issues.length === 0 ? (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 3 }}>
+              <CheckCircleOutlineIcon color="success" />
+              <Typography variant="body2">Todo en orden. La plantilla no tiene problemas conocidos de entregabilidad.</Typography>
+            </Stack>
+          ) : (
+            <Stack spacing={1.5}>
+              {issues.map((it, i) => (
+                <Stack key={i} direction="row" spacing={1.25} alignItems="flex-start">
+                  {it.level === 'error' ? <ErrorOutlineIcon color="error" fontSize="small" />
+                    : it.level === 'warning' ? <WarningAmberIcon color="warning" fontSize="small" />
+                    : <InfoOutlinedIcon color="info" fontSize="small" />}
+                  <Box>
+                    <Typography variant="body2" fontWeight={600}>{it.title}</Typography>
+                    <Typography variant="caption" color="text.secondary">{it.detail}</Typography>
+                  </Box>
+                </Stack>
+              ))}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCheckOpen(false)}>Cerrar</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Prueba de envío: el correo real a la bandeja propia, sin salir del editor */}
+      <Dialog open={testOpen} onClose={() => setTestOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Enviarme una prueba</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Se envía el correo tal como quedó, con valores de ejemplo en las variables. No
+            consume saldo ni cuenta como muestra de una campaña.
+          </Typography>
+          <TextField
+            fullWidth size="small" label="Correo de destino" value={testEmail}
+            onChange={(e) => setTestEmail(e.target.value)} placeholder="tu@empresa.com"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setTestOpen(false)}>Cancelar</Button>
+          <Button variant="contained" onClick={sendTest} disabled={testing || !testEmail.includes('@')}>
+            {testing ? <CircularProgress size={22} /> : 'Enviar'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Recuperar el autoguardado tras un cierre accidental */}
+      <Dialog open={recoverOpen} onClose={() => setRecoverOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Recuperar trabajo sin guardar</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2">
+            Quedó una plantilla sin publicar de tu última sesión
+            {recovered.current?.at ? ` (${new Date(recovered.current.at).toLocaleString('es-CO')})` : ''}. ¿La recuperas?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { localStorage.removeItem(AUTOSAVE_KEY); setRecoverOpen(false); }}>Descartar</Button>
+          <Button
+            variant="contained" startIcon={<RestoreIcon />}
+            onClick={() => {
+              const r = recovered.current;
+              if (r) { setBlocks(cloneBlocks(r.blocks)); setSettings({ ...DEFAULT_SETTINGS, ...r.settings }); }
+              setRecoverOpen(false);
+            }}
+          >
+            Recuperar
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Variable con VALOR POR DEFECTO: evita el "Hola ," cuando el dato viene vacío */}
+      <Dialog open={Boolean(varDialog)} onClose={() => setVarDialog(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Variable con valor por defecto</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Si el campo viene vacío en la base, se usa el texto de respaldo en lugar de
+            dejar un hueco.
+          </Typography>
+          <Stack spacing={2}>
+            <TextField
+              select fullWidth size="small" label="Campo"
+              value={varDialog?.field ?? ''}
+              onChange={(e) => setVarDialog((v) => (v ? { ...v, field: e.target.value } : v))}
+            >
+              {(dbFields.length ? dbFields : VARIABLES).map((f) => <MenuItem key={f} value={f}>{f}</MenuItem>)}
+            </TextField>
+            <TextField
+              fullWidth size="small" label="Si viene vacío, usar…" placeholder="estimado cliente"
+              value={varDialog?.fallback ?? ''}
+              onChange={(e) => setVarDialog((v) => (v ? { ...v, fallback: e.target.value } : v))}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setVarDialog(null)}>Cancelar</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              if (varDialog) insertVariable(variableToken(varDialog.field, varDialog.fallback));
+              setVarDialog(null);
+            }}
+          >
+            Insertar
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {FeedbackSnackbar}
     </Box>
   );
 };
 
 /* --------- Render de un bloque en el lienzo (aproximado al email) --------- */
-const BlockPreview = ({ block: b }: { block: Block }) => {
+
+/** Texto del bloque tal como saldrá: HTML en línea saneado, o texto plano escapado. */
+const Rich = ({ b, field = 'text', sx }: { b: Block; field?: 'text' | 'heading'; sx?: object }) => (
+  <Box
+    sx={{ '& a': { color: '#0075be' }, '& ul, & ol': { m: '0 0 0 20px', p: 0 }, ...sx }}
+    dangerouslySetInnerHTML={{ __html: blockContentHtml(field === 'text' ? b.text : b.heading || '', b.rich) }}
+  />
+);
+
+/** Marcador de imagen sin definir. Antes se pintaba una imagen de via.placeholder.com,
+ *  que podía terminar EN EL CORREO REAL; ahora el hueco es evidente en el lienzo y el
+ *  chequeo previo lo reporta como error. */
+const ImageSlot = ({ label = 'Sin imagen', height = 120 }: { label?: string; height?: number }) => (
+  <Box sx={{
+    height, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.75,
+    border: '1px dashed #cbd5e1', borderRadius: 1, bgcolor: '#f8fafc', color: '#94a3b8', fontSize: 13,
+  }}>
+    <AddPhotoAlternateIcon fontSize="small" /> {label}
+  </Box>
+);
+
+interface PreviewProps {
+  block: Block;
+  /** Si viene, el bloque está seleccionado y su texto se edita EN EL LIENZO. */
+  onEditText?: (patch: Partial<Block>) => void;
+  variables?: string[];
+  onRequestVariable?: () => void;
+}
+
+const BlockPreview = ({ block: b, onEditText, variables = [], onRequestVariable }: PreviewProps) => {
   const align = b.align;
+  const editable = Boolean(onEditText);
+
+  /** Campo de texto: editor inline cuando el bloque está seleccionado, si no, estático. */
+  const field = (which: 'text' | 'heading', sx: object) =>
+    editable ? (
+      <RichTextEditor
+        value={blockContentHtml(which === 'text' ? b.text : b.heading || '', b.rich)}
+        onChange={(html) => onEditText!(which === 'text' ? { text: html, rich: true } : { heading: html, rich: true })}
+        style={sx as React.CSSProperties}
+        variables={variables}
+        onRequestVariable={onRequestVariable}
+      />
+    ) : (
+      <Rich b={b} field={which} sx={sx} />
+    );
+
   switch (b.type) {
     case 'heading':
-      return <Typography sx={{ fontSize: 24, fontWeight: 700, color: b.color || '#16233f', textAlign: align }}>{b.text}</Typography>;
+      return field('text', { fontSize: b.fontSize || 24, fontWeight: 700, color: b.color || '#16233f', textAlign: align });
     case 'text':
-      return <Typography sx={{ fontSize: 15, color: '#333', textAlign: align, whiteSpace: 'pre-wrap' }}>{b.text}</Typography>;
+      return field('text', { fontSize: b.fontSize || 15, color: b.color || '#333', textAlign: align });
     case 'image':
     case 'logo':
-      return <Box component="img" src={b.url} alt={b.text || 'logo'} sx={{ display: 'block', maxWidth: b.type === 'logo' ? 180 : '100%', mx: align === 'center' ? 'auto' : 0 }} />;
+      return b.url ? (
+        <Box
+          component="img" src={b.url} alt={richToPlain(b.text || '') || 'logo'}
+          sx={{
+            display: 'block',
+            maxWidth: b.imageWidth ? `${b.imageWidth}px` : b.type === 'logo' ? 180 : '100%',
+            width: '100%', borderRadius: b.imageRadius ? `${b.imageRadius}px` : 0,
+            mx: align === 'center' ? 'auto' : 0,
+          }}
+        />
+      ) : (
+        <ImageSlot label={b.type === 'logo' ? 'Sin logo' : 'Sin imagen'} height={b.type === 'logo' ? 54 : 120} />
+      );
     case 'button':
       return (
         <Box sx={{ textAlign: align }}>
           <Box component="span" sx={{ display: 'inline-block', px: 2.5, py: 1.2, borderRadius: 1.5, bgcolor: b.color || '#0075be', color: '#fff', fontSize: 15 }}>
-            {b.text}
+            {richToPlain(blockContentHtml(b.text, b.rich)) || b.text}
           </Box>
         </Box>
       );
-    case 'columns':
+    case 'columns': {
+      const ratio = COLUMN_RATIOS.find((r) => r.value === (b.ratio || '50-50')) || COLUMN_RATIOS[0];
+      // Modelo LEGADO (text/textRight sin `cols`): se sigue dibujando para no romper las
+      // plantillas guardadas antes de las columnas anidadas.
+      const cols: Block[][] = b.cols?.length
+        ? b.cols
+        : [[{ ...b, type: 'text' as BlockType, cols: undefined }], [{ ...b, type: 'text' as BlockType, text: b.textRight, cols: undefined }]];
       return (
-        <Stack direction="row" spacing={2}>
-          <Typography sx={{ flex: 1, fontSize: 15, color: '#333', whiteSpace: 'pre-wrap' }}>{b.text}</Typography>
-          <Typography sx={{ flex: 1, fontSize: 15, color: '#333', whiteSpace: 'pre-wrap' }}>{b.textRight}</Typography>
-        </Stack>
+        <Box sx={{ display: 'grid', gridTemplateColumns: ratio.widths.map((w) => `${w}fr`).join(' '), gap: 1.5 }}>
+          {ratio.widths.map((_, i) => (
+            <Box key={i} sx={{ minHeight: 24 }}>
+              {(cols[i] || []).map((child) => (
+                <Box key={child.id} sx={{ mb: 1 }}><BlockPreview block={child} /></Box>
+              ))}
+              {!(cols[i] || []).length && (
+                <Box sx={{ border: '1px dashed #cbd5e1', borderRadius: 1, p: 1, color: '#94a3b8', fontSize: 12, textAlign: 'center' }}>
+                  Columna vacía
+                </Box>
+              )}
+            </Box>
+          ))}
+        </Box>
       );
+    }
     case 'social': {
       const items = [
         ['Facebook', b.links.facebook],
@@ -941,13 +1358,15 @@ const BlockPreview = ({ block: b }: { block: Block }) => {
     }
     case 'imageText':
     case 'textImage': {
-      const img = <Box component="img" src={b.imageUrl} alt={b.heading || ''} sx={{ width: '42%', maxWidth: 220, borderRadius: 1, display: 'block' }} />;
+      const img = b.imageUrl
+        ? <Box component="img" src={b.imageUrl} alt={richToPlain(b.heading || '')} sx={{ width: '42%', maxWidth: 220, borderRadius: b.imageRadius ? `${b.imageRadius}px` : 1, display: 'block' }} />
+        : <Box sx={{ width: '42%' }}><ImageSlot height={140} /></Box>;
       const txt = (
         <Box sx={{ flex: 1 }}>
-          {b.heading && <Typography sx={{ fontSize: 17, fontWeight: 700, color: '#16233f', mb: 0.5 }}>{b.heading}</Typography>}
-          <Typography sx={{ fontSize: 14, color: '#333', whiteSpace: 'pre-wrap' }}>{b.text}</Typography>
+          {b.heading !== undefined && field('heading', { fontSize: 17, fontWeight: 700, color: '#16233f', marginBottom: '4px' })}
+          {field('text', { fontSize: 14, color: '#333' })}
           {b.buttonText && (
-            <Box component="span" sx={{ display: 'inline-block', mt: 1, px: 2, py: 0.75, borderRadius: 1.5, bgcolor: '#0075be', color: '#fff', fontSize: 13 }}>{b.buttonText}</Box>
+            <Box component="span" sx={{ display: 'inline-block', mt: 1, px: 2, py: 0.75, borderRadius: 1.5, bgcolor: b.color || '#0075be', color: '#fff', fontSize: 13 }}>{b.buttonText}</Box>
           )}
         </Box>
       );
@@ -964,8 +1383,8 @@ const BlockPreview = ({ block: b }: { block: Block }) => {
       ) : null;
       const txtEl = (
         <Box sx={{ flex: 1 }}>
-          {b.heading && <Typography sx={{ fontSize: 17, fontWeight: 700, color: '#16233f', mb: 0.25 }}>{b.heading}</Typography>}
-          <Typography sx={{ fontSize: 14, color: '#333', whiteSpace: 'pre-wrap' }}>{b.text}</Typography>
+          {b.heading !== undefined && field('heading', { fontSize: 17, fontWeight: 700, color: '#16233f', marginBottom: '2px' })}
+          {field('text', { fontSize: 14, color: '#333' })}
         </Box>
       );
       const btnLeft = b.type === 'buttonTextRow';
@@ -981,7 +1400,9 @@ const BlockPreview = ({ block: b }: { block: Block }) => {
         <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 1.5 }}>
           {(b.items || []).map((it, i) => (
             <Box key={i} sx={{ textAlign: 'center' }}>
-              {it.image && <Box component="img" src={it.image} alt={it.title} sx={{ width: '100%', borderRadius: 1, display: 'block', mb: 0.5 }} />}
+              {it.image
+                ? <Box component="img" src={it.image} alt={it.title} sx={{ width: '100%', borderRadius: 1, display: 'block', mb: 0.5 }} />
+                : <Box sx={{ mb: 0.5 }}><ImageSlot label="" height={90} /></Box>}
               <Typography sx={{ fontSize: 14, fontWeight: 700, color: '#16233f' }}>{it.title}</Typography>
               <Typography sx={{ fontSize: 12, color: '#555' }}>{it.text}</Typography>
             </Box>
@@ -990,9 +1411,9 @@ const BlockPreview = ({ block: b }: { block: Block }) => {
       );
     }
     case 'html':
-      return <Box sx={{ fontSize: 13, color: '#555555' }} dangerouslySetInnerHTML={{ __html: b.text }} />;
+      return <Box sx={{ fontSize: 13, color: '#555555' }} dangerouslySetInnerHTML={{ __html: sanitizeBlockHtml(b.text) }} />;
     case 'divider':
-      return <Box sx={{ borderTop: '1px solid #e4ebf3' }} />;
+      return <Box sx={{ borderTop: `1px solid ${b.color || '#e4ebf3'}` }} />;
     case 'spacer':
       return <Box sx={{ height: b.height, bgcolor: '#eef2f7', border: '1px dashed #cbd5e1', borderRadius: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 12 }}>{b.height}px</Box>;
     default:
@@ -1040,7 +1461,7 @@ const BlockEditor = ({
   const updateItem = (i: number, patch: Partial<ProductItem>) =>
     onChange({ items: items.map((it, j) => (j === i ? { ...it, ...patch } : it)) });
   const addItem = () =>
-    onChange({ items: [...items, { image: 'https://via.placeholder.com/200x200?text=Producto', title: 'Producto', text: 'Descripción breve', url: '' }] });
+    onChange({ items: [...items, { image: '', title: 'Producto', text: 'Descripción breve', url: '' }] });
   const removeItem = (i: number) => onChange({ items: items.filter((_, j) => j !== i) });
   const uploadItemImage = async (i: number, file: File | null) => {
     if (!file) return;
@@ -1217,6 +1638,141 @@ const BlockEditor = ({
       {b.type === 'spacer' && (
         <TextField label="Alto (px)" type="number" value={b.height} onChange={(e) => onChange({ height: parseInt(e.target.value) || 0 })} fullWidth size="small" />
       )}
+
+      {/* ── Opciones de IMAGEN ── */}
+      {isImage && (
+        <>
+          <Divider textAlign="left"><Typography variant="caption" color="text.secondary">Imagen</Typography></Divider>
+          <TextField
+            label="Al hacer clic, ir a" placeholder="https://…" value={b.imageHref ?? ''}
+            onChange={(e) => onChange({ imageHref: e.target.value })} fullWidth size="small"
+            helperText="Una imagen de promoción que no es clicable pierde conversiones."
+          />
+          <Stack direction="row" spacing={1}>
+            <TextField
+              label="Ancho (px)" type="number" value={b.imageWidth ?? ''} placeholder="auto"
+              onChange={(e) => onChange({ imageWidth: parseInt(e.target.value) || undefined })}
+              fullWidth size="small"
+            />
+            <TextField
+              label="Esquinas" type="number" value={b.imageRadius ?? ''} placeholder="0"
+              onChange={(e) => onChange({ imageRadius: parseInt(e.target.value) || undefined })}
+              fullWidth size="small"
+            />
+          </Stack>
+        </>
+      )}
+
+      {/* ── COLUMNAS: proporción + bloques anidados por columna ── */}
+      {b.type === 'columns' && (
+        <ColumnsEditor block={b} onChange={onChange} />
+      )}
+
+      {/* ── Estilo del bloque (antes TODO compartía padding:10px 24px fijo) ── */}
+      <Divider textAlign="left"><Typography variant="caption" color="text.secondary">Estilo del bloque</Typography></Divider>
+      <Stack direction="row" spacing={1}>
+        <TextField
+          label="Relleno ↕" type="number" value={b.padY ?? ''} placeholder="10"
+          onChange={(e) => onChange({ padY: e.target.value === '' ? undefined : Math.max(0, parseInt(e.target.value) || 0) })}
+          fullWidth size="small"
+        />
+        <TextField
+          label="Relleno ↔" type="number" value={b.padX ?? ''} placeholder="24"
+          onChange={(e) => onChange({ padX: e.target.value === '' ? undefined : Math.max(0, parseInt(e.target.value) || 0) })}
+          fullWidth size="small"
+        />
+      </Stack>
+      <Stack direction="row" spacing={1} alignItems="center">
+        <TextField
+          label="Fondo del bloque" type="color" value={b.bgColor || '#ffffff'}
+          onChange={(e) => onChange({ bgColor: e.target.value })} fullWidth size="small"
+        />
+        {b.bgColor && (
+          <Tooltip title="Quitar el fondo">
+            <IconButton size="small" onClick={() => onChange({ bgColor: undefined })}><FormatClearIcon fontSize="small" /></IconButton>
+          </Tooltip>
+        )}
+      </Stack>
+      {(b.type === 'text' || b.type === 'heading') && (
+        <TextField
+          label="Tamaño de fuente (px)" type="number" value={b.fontSize ?? ''}
+          placeholder={b.type === 'heading' ? '26' : '15'}
+          onChange={(e) => onChange({ fontSize: parseInt(e.target.value) || undefined })}
+          fullWidth size="small"
+          helperText="Aplica a todo el bloque; para una palabra suelta usa la barra del editor."
+        />
+      )}
     </Stack>
+  );
+};
+
+/* --------- Editor de COLUMNAS: proporción + bloques dentro de cada columna --------- */
+const ColumnsEditor = ({ block: b, onChange }: { block: Block; onChange: (patch: Partial<Block>) => void }) => {
+  const ratio = COLUMN_RATIOS.find((r) => r.value === (b.ratio || '50-50')) || COLUMN_RATIOS[0];
+  // Migración del modelo LEGADO (text/textRight) al de bloques anidados, en el momento
+  // en que el usuario toca las columnas por primera vez.
+  const cols: Block[][] = b.cols?.length
+    ? b.cols
+    : [[{ ...createBlock('text'), text: b.text }], [{ ...createBlock('text'), text: b.textRight }]];
+
+  const setCols = (next: Block[][]) => onChange({ cols: next });
+
+  const changeRatio = (value: ColumnRatio) => {
+    const target = COLUMN_RATIOS.find((r) => r.value === value)!;
+    const next = target.widths.map((_, i) => cols[i] || []);
+    onChange({ ratio: value, cols: next });
+  };
+
+  return (
+    <>
+      <Divider textAlign="left"><Typography variant="caption" color="text.secondary">Columnas</Typography></Divider>
+      <TextField
+        select label="Proporción" value={b.ratio || '50-50'} size="small" fullWidth
+        onChange={(e) => changeRatio(e.target.value as ColumnRatio)}
+      >
+        {COLUMN_RATIOS.map((r) => <MenuItem key={r.value} value={r.value}>{r.label}</MenuItem>)}
+      </TextField>
+
+      {ratio.widths.map((w, i) => (
+        <Box key={i} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1 }}>
+          <Typography variant="caption" color="text.secondary">Columna {i + 1} ({w}%)</Typography>
+          <Stack spacing={0.75} sx={{ mt: 0.75 }}>
+            {(cols[i] || []).map((child, j) => (
+              <Stack key={child.id} direction="row" spacing={0.5} alignItems="center">
+                <Typography variant="body2" sx={{ flex: 1 }}>{BLOCK_LABELS[child.type]}</Typography>
+                <IconButton
+                  size="small" color="error"
+                  onClick={() => setCols(cols.map((c, ci) => (ci === i ? c.filter((_, cj) => cj !== j) : c)))}
+                >
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </Stack>
+            ))}
+            {(cols[i] || []).map((child, j) => (
+              child.type === 'text' || child.type === 'heading' || child.type === 'button' ? (
+                <TextField
+                  key={`t${child.id}`} size="small" fullWidth multiline minRows={2}
+                  label={`${BLOCK_LABELS[child.type]} ${j + 1}`}
+                  value={richToPlain(blockContentHtml(child.text, child.rich))}
+                  onChange={(e) => setCols(cols.map((c, ci) => (
+                    ci === i ? c.map((cc, cj) => (cj === j ? { ...cc, text: e.target.value, rich: false } : cc)) : c
+                  )))}
+                />
+              ) : null
+            ))}
+            <TextField
+              select size="small" fullWidth value="" label="Agregar bloque"
+              onChange={(e) => {
+                const t = e.target.value as BlockType;
+                if (!t) return;
+                setCols(cols.map((c, ci) => (ci === i ? [...c, createBlock(t)] : c)));
+              }}
+            >
+              {NESTABLE_TYPES.map((t) => <MenuItem key={t} value={t}>{BLOCK_LABELS[t]}</MenuItem>)}
+            </TextField>
+          </Stack>
+        </Box>
+      ))}
+    </>
   );
 };

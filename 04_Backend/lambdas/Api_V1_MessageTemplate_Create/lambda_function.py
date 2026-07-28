@@ -11,6 +11,10 @@ Request (según canal):
                                                           hsmName = plantilla HSM de Meta
                                                           params  = etiquetas de {{1}},{{2}}…
   - DOCX: { channel:'DOCX', name, s3Path, params? }      s3Path = .docx ya subido a S3
+  - HTML: { channel:'HTML', name, designJson }           designJson = {blocks, settings} del
+           constructor de correos. Es la BIBLIOTECA de diseños del equipo: antes los
+           "prediseñados" del admin vivían en localStorage, así que se perdían al cambiar
+           de navegador y no se compartían con nadie.
                                                           params  = campos de combinación
   customerId/customer se prefieren del context del Authorizer (multi-tenant).
 
@@ -28,7 +32,7 @@ dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('messageTemplate')
 _audit_table = dynamodb.Table('adminAudit')
 
-VALID_CHANNELS = ('SMS', 'WSP', 'DOCX', 'PDF')
+VALID_CHANNELS = ('SMS', 'WSP', 'DOCX', 'PDF', 'HTML')
 
 
 def _json_field(value):
@@ -116,7 +120,7 @@ def lambda_handler(event, context):
         return {'status': False, 'statusCode': 400, 'description': 'Falta el customerId.'}
     if channel not in VALID_CHANNELS:
         return {'status': False, 'statusCode': 400,
-                'description': 'channel inválido. Usa SMS, WSP, DOCX o PDF.'}
+                'description': 'channel inválido. Usa SMS, WSP, DOCX, PDF o HTML.'}
     if not name:
         return {'status': False, 'statusCode': 400, 'description': 'Indica el nombre de la plantilla.'}
 
@@ -145,6 +149,10 @@ def lambda_handler(event, context):
         return {'status': False, 'statusCode': 400, 'description': 'La plantilla WhatsApp necesita el nombre HSM.'}
     if channel == 'DOCX' and not s3_path:
         return {'status': False, 'statusCode': 400, 'description': 'La plantilla DOCX necesita el s3Path del archivo.'}
+    design_json = _json_field(payload.get('designJson'))
+    if channel == 'HTML' and not design_json:
+        return {'status': False, 'statusCode': 400,
+                'description': 'La plantilla HTML necesita el diseño del constructor (designJson).'}
     if channel == 'PDF' and not html.strip() and not sketch_json and not template_json:
         return {'status': False, 'statusCode': 400,
                 'description': 'La plantilla PDF necesita el contenido del editor (html, sketchJson o templateJson).'}
@@ -186,6 +194,7 @@ def lambda_handler(event, context):
         'html': html,
         'sketchJson': sketch_json,
         'templateJson': template_json,
+        'designJson': design_json,
         'params': params,
         'created': created,
         'updated': now,

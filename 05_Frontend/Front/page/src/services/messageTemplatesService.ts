@@ -18,7 +18,8 @@ export const MESSAGE_TEMPLATE_ENDPOINTS = {
   DELETE: '/MessageTemplate/Delete',
 };
 
-export type MessageChannel = 'SMS' | 'WSP' | 'DOCX' | 'PDF';
+/** `HTML` = diseño del CONSTRUCTOR de correos (biblioteca compartida del equipo). */
+export type MessageChannel = 'SMS' | 'WSP' | 'DOCX' | 'PDF' | 'HTML';
 
 export interface MessageTemplate {
   messageTemplateId: string;
@@ -32,6 +33,8 @@ export interface MessageTemplate {
   hsmName?: string;
   /** WSP: idioma de la plantilla (default 'es'). */
   language?: string;
+  /** HTML: modelo del constructor ({blocks, settings}) serializado. */
+  designJson?: string;
   /** DOCX: ruta del .docx ya subido a S3. */
   s3Path?: string;
   /** PDF (editor básico tipo Word): HTML del editor (con {{variables}}). */
@@ -59,6 +62,8 @@ export interface CreateMessageTemplatePayload {
   sketchJson?: Record<string, unknown> | string;
   /** PDF DocumentDesigner: ídem. */
   templateJson?: Record<string, unknown> | string;
+  /** HTML: modelo del constructor de correos ({blocks, settings}) como string JSON. */
+  designJson?: string;
   params?: string[];
   /** Si se envía, la ruta Create ACTUALIZA esa plantilla (upsert) en vez de crear una nueva. */
   messageTemplateId?: string;
@@ -75,4 +80,28 @@ export const messageTemplatesService = {
 
   delete: (messageTemplateId: string): Promise<ApiResponse> =>
     apiPost(MESSAGE_TEMPLATE_ENDPOINTS.DELETE, { messageTemplateId }),
+};
+
+/**
+ * BIBLIOTECA de diseños del constructor de correos (canal `HTML` de `messageTemplate`).
+ * Guarda el MODELO ({blocks, settings}), no el HTML: así el diseño se puede seguir
+ * editando. Antes los "prediseñados" vivían en localStorage — se perdían al cambiar de
+ * navegador y no se compartían con el equipo.
+ */
+export interface EmailDesign {
+  messageTemplateId: string;
+  name: string;
+  designJson?: string;
+  created?: string;
+}
+
+export const emailDesigns = {
+  save: (customerId: string, name: string, design: unknown, messageTemplateId?: string) =>
+    messageTemplatesService.create({
+      customerId, channel: 'HTML', name,
+      designJson: JSON.stringify(design),
+      ...(messageTemplateId ? { messageTemplateId } : {}),
+    }),
+
+  list: (customerId: string) => messageTemplatesService.list(customerId, 'HTML'),
 };
