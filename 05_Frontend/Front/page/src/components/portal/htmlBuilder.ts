@@ -122,6 +122,20 @@ export interface Block {
    *  bloque: sin ella se escapa como siempre, así que las plantillas viejas no se rompen. */
   rich?: boolean;
 
+  // ── Visibilidad por dispositivo ──
+  /** Oculta el bloque en pantallas pequeñas (una imagen enorme solo tiene sentido en
+   *  escritorio; un botón compacto, solo en móvil). */
+  hideMobile?: boolean;
+  /** Oculta el bloque en escritorio. */
+  hideDesktop?: boolean;
+
+  // ── Botón ──
+  buttonFullWidth?: boolean;  // ancho completo: en móvil es lo que más convierte
+  buttonRadius?: number;      // radio de la esquina (px)
+  buttonFontSize?: number;
+  buttonPadY?: number;
+  buttonPadX?: number;
+
   // ── Estilo propio del bloque (antes todo compartía padding:10px 24px fijo) ──
   padY?: number;      // relleno vertical (px)
   padX?: number;      // relleno horizontal (px)
@@ -164,6 +178,9 @@ export interface EmailSettings {
   /** Emite reglas `prefers-color-scheme: dark`. Sin esto, Apple Mail y Outlook invierten
    *  los colores por su cuenta y suelen romper el contraste del diseño. */
   darkMode: boolean;
+  /** Parámetros UTM que se agregan a TODOS los enlaces del correo al generar. Sin esto,
+   *  el tráfico del correo llega a Analytics como "directo" y la campaña no se puede medir. */
+  utm: { enabled: boolean; source: string; medium: string; campaign: string };
 }
 
 export const DEFAULT_SETTINGS: EmailSettings = {
@@ -176,6 +193,7 @@ export const DEFAULT_SETTINGS: EmailSettings = {
   rounded: true,
   preheader: '',
   darkMode: true,
+  utm: { enabled: false, source: 'mailconnect', medium: 'email', campaign: '' },
 };
 
 let seq = 0;
@@ -312,9 +330,19 @@ function paragraph(b: Block, align: string, st: EmailSettings, size?: number): s
 function buttonHtml(b: Block, st: EmailSettings): string {
   const bg = b.color || st.linkColor;
   const alignAttr = b.align || 'left';
-  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin:${alignAttr === 'center' ? '0 auto' : '0'}"><tr>
-        <td align="center" bgcolor="${bg}" style="border-radius:6px;">
-          <a href="${esc(b.url)}" target="_blank" style="display:inline-block;padding:12px 26px;font-family:${st.fontFamily};font-size:15px;font-weight:bold;line-height:1;color:#ffffff;text-decoration:none;border-radius:6px;mso-padding-alt:0;">
+  const radius = b.buttonRadius ?? 6;
+  const fs = b.buttonFontSize ?? 15;
+  const py = b.buttonPadY ?? 12;
+  const px = b.buttonPadX ?? 26;
+  // Ancho completo: en móvil es lo que más convierte (el dedo no tiene que apuntar).
+  const full = b.buttonFullWidth;
+  const tableAttrs = full
+    ? 'width="100%" style="width:100%;"'
+    : `style="margin:${alignAttr === 'center' ? '0 auto' : '0'}"`;
+  const anchorDisplay = full ? 'display:block;' : 'display:inline-block;';
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" ${tableAttrs}><tr>
+        <td align="center" bgcolor="${bg}" style="border-radius:${radius}px;">
+          <a href="${esc(b.url)}" target="_blank" style="${anchorDisplay}padding:${py}px ${px}px;font-family:${st.fontFamily};font-size:${fs}px;font-weight:bold;line-height:1;color:#ffffff;text-decoration:none;border-radius:${radius}px;mso-padding-alt:0;">
             <!--[if mso]>&nbsp;&nbsp;<![endif]-->${richToPlain(content(b)) || esc(b.text)}<!--[if mso]>&nbsp;&nbsp;<![endif]-->
           </a>
         </td>
@@ -442,8 +470,15 @@ function columnsHtml(b: Block, st: EmailSettings): string {
   return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"><tr>${cells}</tr></table>`;
 }
 
-/** Serializa un bloque a HTML email-safe y responsive. */
-function renderBlock(b: Block, st: EmailSettings, widthOverride?: number): string {
+/**
+ * Serializa un bloque a HTML email-safe y responsive.
+ *
+ * Se EXPORTA a propósito: el lienzo del editor dibuja este mismo HTML en vez de tener su
+ * propia implementación en React. Antes había dos renderizadores (uno para el correo y
+ * otro para el lienzo) que divergían en silencio — el relleno y el fondo por bloque
+ * salían en el correo pero no se veían al editar, y nada lo detectaba.
+ */
+export function renderBlock(b: Block, st: EmailSettings, widthOverride?: number): string {
   const align = b.align || 'left';
   const innerW = widthOverride ?? st.contentWidth - 48; // contenedor menos padding lateral
   switch (b.type) {
@@ -484,6 +519,37 @@ function renderBlock(b: Block, st: EmailSettings, widthOverride?: number): strin
   }
 }
 
+
+/**
+ * Agrega los parámetros UTM a los enlaces http(s) del correo.
+ *
+ * Se hace sobre el HTML YA generado (no al escribir el enlace) para que el usuario vea y
+ * edite su URL limpia, y para que cambiar la campaña re-etiquete todo de una vez. Se
+ * respetan los que ya estén puestos a mano: si el enlace trae `utm_source`, no se pisa.
+ *
+ * NO se tocan: las variables de plantilla (`{{unsubscribeUrl}}`, que el motor reemplaza
+ * por una URL firmada — meterle parámetros la rompería), ni `mailto:`/`tel:`/anclas.
+ */
+function applyUtm(html: string, utm: EmailSettings['utm']): string {
+  if (!utm?.enabled) return html;
+  const params: [string, string][] = [
+    ['utm_source', utm.source],
+    ['utm_medium', utm.medium],
+    ['utm_campaign', utm.campaign],
+  ].filter(([, v]) => v && String(v).trim()) as [string, string][];
+  if (!params.length) return html;
+
+  return html.replace(/href="([^"]+)"/g, (full, url: string) => {
+    if (!/^https?:\/\//i.test(url)) return full;      // variables, mailto, tel, anclas
+    if (/[?&]utm_source=/i.test(url)) return full;      // ya etiquetado a mano
+    const faltantes = params.filter(([k]) => !new RegExp(`[?&]${k}=`, 'i').test(url));
+    if (!faltantes.length) return full;
+    const sep = url.includes('?') ? '&' : '?';
+    const qs = faltantes.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+    return `href="${url}${sep}${qs}"`;
+  });
+}
+
 /** Genera el correo completo (responsive, cross-client) a partir de bloques + ajustes. */
 export function generateHtml(blocks: Block[], settings: EmailSettings = DEFAULT_SETTINGS): string {
   const st = { ...DEFAULT_SETTINGS, ...settings };
@@ -496,7 +562,14 @@ export function generateHtml(blocks: Block[], settings: EmailSettings = DEFAULT_
         const padX = b.padX ?? 24;
         const bg = b.bgColor ? ` bgcolor="${esc(b.bgColor)}"` : '';
         const bgStyle = b.bgColor ? `background-color:${esc(b.bgColor)};` : '';
-        return `            <tr><td align="${b.align || 'left'}"${bg} class="mc-pad mc-row" style="${bgStyle}padding:${padY}px ${padX}px;">${renderBlock(b, st)}</td></tr>`;
+        // Visibilidad por dispositivo. `mc-hide-mobile` se apaga con la media query;
+        // `mc-hide-desktop` nace oculto y la media query lo enciende — al revés no
+        // funciona en los clientes que ignoran las media queries (verían ambos).
+        const vis = [b.hideMobile ? 'mc-hide-mobile' : '', b.hideDesktop ? 'mc-hide-desktop' : ''].filter(Boolean).join(' ');
+        const hidden = b.hideDesktop
+          ? 'display:none;max-height:0;overflow:hidden;mso-hide:all;'
+          : '';
+        return `            <tr class="${vis}"><td align="${b.align || 'left'}"${bg} class="mc-pad mc-row ${vis}" style="${hidden}${bgStyle}padding:${padY}px ${padX}px;">${renderBlock(b, st)}</td></tr>`;
       })
       .join('\n') ||
     `            <tr><td style="padding:24px;font-family:${st.fontFamily};color:#888888;">Plantilla vacía</td></tr>`;
@@ -536,7 +609,7 @@ export function generateHtml(blocks: Block[], settings: EmailSettings = DEFAULT_
               </p>
             </td></tr>`;
 
-  return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+  const doc = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" lang="es">
 <head>
   <meta charset="utf-8" />
@@ -560,6 +633,9 @@ ${colorScheme}  <title>MailConnect</title>
       .mc-col { display:block !important; width:100% !important; box-sizing:border-box; padding:8px 0 !important; }
       .mc-pad { padding-left:16px !important; padding-right:16px !important; }
       .mc-h1 { font-size:22px !important; }
+      .mc-hide-mobile { display:none !important; max-height:0 !important; overflow:hidden !important; }
+      .mc-hide-desktop { display:block !important; max-height:none !important; overflow:visible !important; }
+      tr.mc-hide-desktop { display:table-row !important; }
     }${darkCss}
   </style>
 </head>
@@ -579,6 +655,10 @@ ${unsubscribeFooter}
   </table>
 </body>
 </html>`;
+
+  // Los UTM se agregan al FINAL, sobre el HTML ya armado: así el usuario ve y edita su
+  // URL limpia, y cambiar la campaña re-etiqueta todos los enlaces de una vez.
+  return applyUtm(doc, st.utm);
 }
 
 // ───────────────────────── Alternativa de TEXTO PLANO ─────────────────────────
@@ -696,6 +776,40 @@ export function generatePlainText(blocks: Block[], settings: EmailSettings = DEF
 
 // ───────────────────────── Chequeo previo (entregabilidad) ─────────────────────────
 
+
+/**
+ * Palabras y patrones que los filtros anti-spam puntúan alto. No es una lista de
+ * prohibidas —una promoción legítima usa "descuento"— sino de señales que, ACUMULADAS,
+ * mandan el correo a Promociones o a spam.
+ */
+const SPAM_WORDS = [
+  'gratis', 'grátis', '100% gratis', 'sin costo', 'garantizado', 'garantizada',
+  'urgente', 'actúa ya', 'actua ya', 'última oportunidad', 'ultima oportunidad',
+  'oferta limitada', 'gana dinero', 'ingresos extra', 'sin riesgo', 'clic aquí',
+  'haz clic aquí', 'compra ahora', 'felicidades', 'ganaste', 'premio', 'viagra',
+  'crédito fácil', 'credito facil', 'préstamo', 'prestamo', 'money', 'free',
+];
+
+/** Luminancia relativa (WCAG) de un color #rgb / #rrggbb. */
+const luminance = (hex: string): number | null => {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  let h = m[1];
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  const f = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+};
+
+/** Relación de contraste WCAG entre dos colores (1 = idénticos, 21 = negro sobre blanco). */
+export const contrastRatio = (fg: string, bg: string): number | null => {
+  const l1 = luminance(fg);
+  const l2 = luminance(bg);
+  if (l1 === null || l2 === null) return null;
+  const [hi, lo] = l1 > l2 ? [l1, l2] : [l2, l1];
+  return (hi + 0.05) / (lo + 0.05);
+};
+
 export type IssueLevel = 'error' | 'warning' | 'info';
 
 export interface TemplateIssue {
@@ -793,6 +907,74 @@ export function analyzeTemplate(blocks: Block[], settings: EmailSettings, html: 
       level: 'info',
       title: 'Variables sin valor por defecto',
       detail: `${sinRespaldo.map((v) => `{{${v}}}`).join(', ')} — si el dato viene vacío en la base, queda un hueco ("Hola ,"). Puedes darles un respaldo desde el menú Variable.`,
+    });
+  }
+
+  // ── Palabras que disparan los filtros ──
+  const enMinusculas = texto.toLowerCase();
+  const encontradas = SPAM_WORDS.filter((w) => enMinusculas.includes(w));
+  if (encontradas.length >= 2) {
+    issues.push({
+      level: 'warning',
+      title: `${encontradas.length} expresiones que suelen marcar spam`,
+      detail: `Aparecen: ${encontradas.slice(0, 6).join(', ')}. Ninguna está prohibida, pero acumuladas mandan el correo a Promociones o a spam. Reescribe las que puedas.`,
+    });
+  }
+
+  // Asunto/preheader GRITANDO o con exceso de signos: de lo más penalizado.
+  const gritos = /[A-ZÁÉÍÓÚÑ]{5,}/.test(settings.preheader) || /[!¡]{2,}|[?¿]{2,}/.test(settings.preheader);
+  if (gritos) {
+    issues.push({
+      level: 'warning',
+      title: 'El texto de vista previa grita',
+      detail: 'Mayúsculas sostenidas o signos repetidos (¡¡!!) en el preheader son de las señales de spam más puntuadas.',
+    });
+  }
+
+  // ── Contraste y legibilidad ──
+  const fondo = settings.emailBg;
+  const bajoContraste = all.filter((b) => {
+    if (!['text', 'heading'].includes(b.type)) return false;
+    const color = b.color || (b.type === 'heading' ? '#16233f' : settings.textColor);
+    const r = contrastRatio(color, b.bgColor || fondo);
+    return r !== null && r < 4.5;      // umbral AA para texto normal
+  });
+  if (bajoContraste.length) {
+    issues.push({
+      level: 'warning',
+      title: `${bajoContraste.length} bloque(s) con poco contraste`,
+      detail: 'El texto no llega a la relación 4.5:1 de WCAG AA sobre su fondo. Se lee mal en pantallas con brillo bajo y penaliza accesibilidad.',
+    });
+  }
+
+  const chicos = all.filter((b) => (b.type === 'text' && (b.fontSize ?? 15) < 14));
+  if (chicos.length) {
+    issues.push({
+      level: 'warning',
+      title: `${chicos.length} bloque(s) con texto menor a 14 px`,
+      detail: 'En móvil se vuelve ilegible y iOS lo reescala por su cuenta, lo que suele romper la maquetación.',
+    });
+  }
+
+  // ── Imágenes de la grilla de productos sin alt ──
+  const prodSinAlt = all
+    .filter((b) => b.type === 'products')
+    .flatMap((b) => b.items || [])
+    .filter((it) => it.image && !String(it.title || '').trim());
+  if (prodSinAlt.length) {
+    issues.push({
+      level: 'warning',
+      title: `${prodSinAlt.length} producto(s) sin título`,
+      detail: 'El título es lo que se usa como texto alternativo de la imagen: con las imágenes bloqueadas, ese producto no se ve NI se lee.',
+    });
+  }
+
+  // ── Seguimiento ──
+  if (!settings.utm?.enabled && /href="https?:\/\//.test(html)) {
+    issues.push({
+      level: 'info',
+      title: 'Enlaces sin UTM',
+      detail: 'Sin parámetros UTM, el tráfico de este correo llega a Analytics como "directo" y no vas a poder atribuirle las conversiones.',
     });
   }
 

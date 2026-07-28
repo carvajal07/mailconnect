@@ -164,6 +164,43 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
 - ⚠️ `[J]`: lambda `Api_V1_Resources_List` (el CD la crea) + ruta `/Resources/List` **ya en
   routes.json**; IAM **`s3:ListBucket`** sobre los buckets de cliente (`mailconnect-*`).
 
+### Constructor HTML: UTM, visibilidad, bandeja y render unificado (ago 2026)
+> Puntos 3, 4 y 5 del análisis del editor.
+
+- **UTM automático** (`settings.utm`): se agregan `utm_source/medium/campaign` a **todos**
+  los enlaces al GENERAR, no al escribirlos — así el usuario ve y edita su URL limpia, y
+  cambiar la campaña re-etiqueta todo de una vez. ⚠️ **No se tocan las variables de
+  plantilla**: meterle parámetros a `{{unsubscribeUrl}}` rompería el enlace firmado que
+  arma el motor de envío. Tampoco `mailto:`/`tel:`/anclas, y un enlace que ya traiga
+  `utm_source` a mano se respeta. Sin UTM el tráfico del correo llega a Analytics como
+  "directo" y la campaña no se puede atribuir.
+- **Visibilidad por dispositivo** (`hideMobile`/`hideDesktop`). ⚠️ Asimetría deliberada:
+  "solo móvil" nace **oculto** en el HTML y la media query lo enciende; al revés, un
+  cliente que ignora las media queries mostraría los DOS bloques.
+- **Botón configurable**: **ancho completo** (lo que más convierte en móvil), radio,
+  tamaño de fuente y relleno. Era el elemento que genera las conversiones y el menos
+  configurable de todos.
+- **Vista de bandeja**: en Vista previa se simula **remitente + asunto + preheader** como
+  se ven en Gmail, con ambos campos editables ahí mismo y contador de caracteres. Antes el
+  asunto vivía en el diálogo de Publicar y el preheader en Ajustes: la terna que decide si
+  ABREN el correo no se podía ver junta en ningún lado.
+- **Chequeo previo ampliado**: expresiones que marcan **spam** (avisa desde 2 acumuladas —
+  una promoción legítima usa "gratis"), preheader en mayúsculas o con `¡¡!!`, **contraste**
+  por debajo de 4.5:1 (WCAG AA, con `contrastRatio` propio), texto **menor a 14 px**
+  (ilegible en móvil y iOS lo reescala rompiendo la maquetación), productos sin título
+  (es su texto alternativo) y enlaces sin UTM.
+- **Render UNIFICADO (punto 5).** `renderBlock` se exporta y **el lienzo dibuja el HTML
+  REAL** del correo para botón, redes, productos, divisor y HTML crudo. Había dos
+  renderizadores que divergían en silencio (el relleno y el fondo por bloque salían en el
+  correo pero no al editar). ⚠️ **Alcance:** los bloques con interacción propia en el
+  lienzo —texto/encabezado (editor en línea), imagen (marcador de vacío) y columnas ("+"
+  por celda y selección de hijos)— conservan su capa React. Cambiar TODO a un iframe
+  exigiría rehacer el arrastre sobre el iframe y perder la edición en línea; no compensa.
+- **Cobertura:** `htmlBuilder.test.ts` sube a **65** (+16: UTM etiquetando/respetando/
+  ignorando variables y con `&`, visibilidad en ambos sentidos, botón completo y sus
+  medidas, los 5 chequeos nuevos + `contrastRatio`, y un guard de que el lienzo usa
+  literalmente la misma función que el correo).
+
 ### Interruptor GLOBAL del IVA (ago 2026)
 - **Qué:** MailConnect puede **no ser responsable de IVA**. Nuevo ajuste de plataforma
   **`TAX_ENABLED`** (Configuración → **"Cobrar IVA"**, grupo *Facturación*): al apagarlo,

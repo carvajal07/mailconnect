@@ -87,6 +87,7 @@ import {
   createBlock,
   generateHtml,
   generatePlainText,
+  renderBlock,
   analyzeTemplate,
   htmlBytes,
   GMAIL_CLIP_BYTES,
@@ -97,7 +98,7 @@ import {
   type ProductItem,
 } from './htmlBuilder';
 import { RichTextEditor } from './RichTextEditor';
-import { blockContentHtml, variableToken, richToPlain, sanitizeBlockHtml } from './richText';
+import { blockContentHtml, variableToken, richToPlain } from './richText';
 
 /** Autoguardado del constructor (red de seguridad ante un cierre accidental). */
 const AUTOSAVE_KEY = 'mc_html_autosave';
@@ -778,6 +779,45 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
 
       {view === 'preview' ? (
         <Box>
+          {/* Lo que realmente decide si abren el correo es la terna remitente + asunto +
+              preheader, y hasta ahora no había forma de verla junta: el asunto vivía en el
+              diálogo de publicar y el preheader en ajustes. */}
+          <Paper variant="outlined" sx={{ p: 2, mb: 2, maxWidth: 720, mx: 'auto' }}>
+            <Typography variant="overline" color="text.secondary">Así llega a la bandeja</Typography>
+            <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ mt: 1 }}>
+              <Box sx={{
+                width: 40, height: 40, borderRadius: '50%', bgcolor: 'primary.main', color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0,
+              }}>
+                {(sessionCustomer || 'M').charAt(0).toUpperCase()}
+              </Box>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Typography variant="body2" fontWeight={700} noWrap>
+                  {sessionCustomer || 'Tu empresa'}
+                </Typography>
+                <Typography variant="body2" fontWeight={600} noWrap sx={{ color: meta.subject ? 'text.primary' : 'error.main' }}>
+                  {meta.subject || '(sin asunto — lo pide el diálogo de Publicar)'}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" noWrap>
+                  {settings.preheader || '(sin texto de vista previa — el cliente de correo mostrará el primer texto que encuentre)'}
+                </Typography>
+              </Box>
+            </Stack>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 2 }}>
+              <TextField
+                size="small" fullWidth label="Asunto" value={meta.subject}
+                onChange={(e) => setMeta((m) => ({ ...m, subject: e.target.value }))}
+                helperText={`${meta.subject.length} caracteres · a partir de ~45 se recorta en móvil`}
+                error={meta.subject.length > 70}
+              />
+              <TextField
+                size="small" fullWidth label="Texto de vista previa" value={settings.preheader}
+                onChange={(e) => setSetting('preheader', e.target.value)}
+                helperText={`${settings.preheader.length} caracteres · se ve junto al asunto`}
+              />
+            </Stack>
+          </Paper>
+
           <Stack direction="row" justifyContent="center" mb={1.5}>
             <ToggleButtonGroup size="small" exclusive value={device} onChange={(_, v) => v && setDevice(v)}>
               <ToggleButton value="desktop">
@@ -963,6 +1003,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                     }}>
                       <BlockPreview
                         block={b}
+                        settings={settings}
                         selectedId={selectedId}
                         onEditText={selectedId === b.id ? (patch) => updateSelected(patch) : undefined}
                         onSelectChild={setSelectedId}
@@ -1188,6 +1229,39 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               <MenuItem value="'Trebuchet MS', Tahoma, sans-serif">Trebuchet / Tahoma</MenuItem>
               <MenuItem value="Verdana, Geneva, sans-serif">Verdana</MenuItem>
             </TextField>
+            <Divider textAlign="left" sx={{ gridColumn: '1 / -1' }}>
+              <Typography variant="caption" color="text.secondary">Seguimiento (UTM)</Typography>
+            </Divider>
+            <TextField
+              select label="Etiquetar los enlaces" size="small" fullWidth
+              value={settings.utm?.enabled ? 'yes' : 'no'}
+              onChange={(e) => setSetting('utm', { ...settings.utm, enabled: e.target.value === 'yes' })}
+              helperText="Sin UTM, el tráfico del correo llega a Analytics como “directo” y la campaña no se puede medir."
+            >
+              <MenuItem value="yes">Sí, agregar UTM</MenuItem>
+              <MenuItem value="no">No etiquetar</MenuItem>
+            </TextField>
+            {settings.utm?.enabled && (
+              <>
+                <TextField
+                  label="utm_source" size="small" fullWidth value={settings.utm.source}
+                  onChange={(e) => setSetting('utm', { ...settings.utm, source: e.target.value })}
+                />
+                <TextField
+                  label="utm_medium" size="small" fullWidth value={settings.utm.medium}
+                  onChange={(e) => setSetting('utm', { ...settings.utm, medium: e.target.value })}
+                />
+                <TextField
+                  label="utm_campaign" size="small" fullWidth value={settings.utm.campaign}
+                  onChange={(e) => setSetting('utm', { ...settings.utm, campaign: e.target.value })}
+                  placeholder="boletin-agosto"
+                  helperText="Los enlaces que ya traigan utm_source a mano no se tocan."
+                />
+              </>
+            )}
+            <Divider textAlign="left" sx={{ gridColumn: '1 / -1' }}>
+              <Typography variant="caption" color="text.secondary">Apariencia</Typography>
+            </Divider>
             <TextField
               select label="Modo oscuro" value={settings.darkMode ? 'yes' : 'no'}
               onChange={(e) => setSetting('darkMode', e.target.value === 'yes')} fullWidth size="small"
@@ -1456,6 +1530,8 @@ interface PreviewProps {
   onSelectChild?: (id: string) => void;
   /** Edita el texto de un bloque anidado. */
   onEditChild?: (id: string, patch: Partial<Block>) => void;
+  /** Ajustes del correo: el lienzo dibuja el HTML REAL, así que los necesita. */
+  settings: EmailSettings;
   /** Abre el menú para agregar un bloque a la columna `i` (el "+" del lienzo). */
   onAddToColumn?: (colIndex: number, anchor: HTMLElement) => void;
   /** Hay un arrastre en curso en el lienzo. */
@@ -1470,12 +1546,24 @@ interface PreviewProps {
 }
 
 const BlockPreview = ({
-  block: b, onEditText, variables = [], onRequestVariable,
+  block: b, onEditText, variables = [], onRequestVariable, settings: st,
   selectedId, onSelectChild, onEditChild, onAddToColumn,
   dragging, canDropInColumn, hoverColumn, onColumnDragOver, onColumnDragLeave, onDropInColumn,
 }: PreviewProps) => {
   const align = b.align;
   const editable = Boolean(onEditText);
+
+  /**
+   * Render FIEL: el mismo HTML que va a viajar en el correo. Se usa para todo lo que no
+   * necesita interacción propia en el lienzo, así que lo que se ve al editar es
+   * literalmente lo que se envía — no una aproximación que puede divergir.
+   */
+  const Fiel = () => (
+    <Box
+      sx={{ '& img': { maxWidth: '100%' } }}
+      dangerouslySetInnerHTML={{ __html: renderBlock(b, st) }}
+    />
+  );
 
   /** Campo de texto: editor inline cuando el bloque está seleccionado, si no, estático. */
   const field = (which: 'text' | 'heading', sx: object) =>
@@ -1511,14 +1599,14 @@ const BlockPreview = ({
       ) : (
         <ImageSlot label={b.type === 'logo' ? 'Sin logo' : 'Sin imagen'} height={b.type === 'logo' ? 54 : 120} />
       );
+    // Botón, redes, productos, divisor y HTML crudo se dibujan con el HTML REAL: no
+    // tienen interacción propia en el lienzo y así no hay dos versiones que mantener.
     case 'button':
-      return (
-        <Box sx={{ textAlign: align }}>
-          <Box component="span" sx={{ display: 'inline-block', px: 2.5, py: 1.2, borderRadius: 1.5, bgcolor: b.color || '#0075be', color: '#fff', fontSize: 15 }}>
-            {richToPlain(blockContentHtml(b.text, b.rich)) || b.text}
-          </Box>
-        </Box>
-      );
+    case 'social':
+    case 'products':
+    case 'divider':
+    case 'html':
+      return <Fiel />;
     case 'columns': {
       const widths = columnWidths(b);
       // Modelo LEGADO (text/textRight sin `cols`): se sigue dibujando para no romper las
@@ -1543,6 +1631,7 @@ const BlockPreview = ({
                 >
                   <BlockPreview
                     block={child}
+                    settings={st}
                     selectedId={selectedId}
                     onEditText={selectedId === child.id && onEditChild ? (patch) => onEditChild(child.id, patch) : undefined}
                     variables={variables}
@@ -1592,48 +1681,6 @@ const BlockPreview = ({
         </Box>
       );
     }
-    case 'social': {
-      const size = b.socialSize || 34;
-      const activos = SOCIAL_NETWORKS.filter((n) => {
-        const v = b.links?.[n.key];
-        return v && String(v).trim() && v !== 'https://';
-      });
-      if (!activos.length) {
-        return (
-          <Typography sx={{ textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
-            (agrega los enlaces de tus redes en el panel derecho)
-          </Typography>
-        );
-      }
-      if ((b.socialStyle || 'badge') === 'text') {
-        return (
-          <Typography sx={{ textAlign: 'center', color: '#0075be', fontSize: 14 }}>
-            {activos.map((n) => n.label).join('  ·  ')}
-          </Typography>
-        );
-      }
-      return (
-        <Stack direction="row" spacing={1} justifyContent="center">
-          {activos.map((n) => (
-            b.icons?.[n.key] ? (
-              <Box key={n.key} component="img" src={b.icons[n.key]} alt={n.label}
-                sx={{ width: size, height: size, borderRadius: '50%', display: 'block' }} />
-            ) : (
-              <Box
-                key={n.key}
-                sx={{
-                  width: size, height: size, borderRadius: '50%', bgcolor: n.color,
-                  color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: Math.round(size * 0.42), fontWeight: 700, lineHeight: 1,
-                }}
-              >
-                {n.initial}
-              </Box>
-            )
-          ))}
-        </Stack>
-      );
-    }
     case 'imageText':
     case 'textImage': {
       const img = b.imageUrl
@@ -1672,26 +1719,6 @@ const BlockPreview = ({
         </Stack>
       );
     }
-    case 'products': {
-      const cols = Math.min(Math.max(b.columns || 3, 1), 4);
-      return (
-        <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 1.5 }}>
-          {(b.items || []).map((it, i) => (
-            <Box key={i} sx={{ textAlign: 'center' }}>
-              {it.image
-                ? <Box component="img" src={it.image} alt={it.title} sx={{ width: '100%', borderRadius: 1, display: 'block', mb: 0.5 }} />
-                : <Box sx={{ mb: 0.5 }}><ImageSlot label="" height={90} /></Box>}
-              <Typography sx={{ fontSize: 14, fontWeight: 700, color: '#16233f' }}>{it.title}</Typography>
-              <Typography sx={{ fontSize: 12, color: '#555' }}>{it.text}</Typography>
-            </Box>
-          ))}
-        </Box>
-      );
-    }
-    case 'html':
-      return <Box sx={{ fontSize: 13, color: '#555555' }} dangerouslySetInnerHTML={{ __html: sanitizeBlockHtml(b.text) }} />;
-    case 'divider':
-      return <Box sx={{ borderTop: `1px solid ${b.color || '#e4ebf3'}` }} />;
     case 'spacer':
       return <Box sx={{ height: b.height, bgcolor: '#eef2f7', border: '1px dashed #cbd5e1', borderRadius: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 12 }}>{b.height}px</Box>;
     default:
@@ -1987,6 +2014,46 @@ const BlockEditor = ({
         <ColumnsEditor block={b} onChange={onChange} />
       )}
 
+      {/* ── Botón: lo que genera las conversiones, y era lo menos configurable ── */}
+      {b.type === 'button' && (
+        <>
+          <Divider textAlign="left"><Typography variant="caption" color="text.secondary">Botón</Typography></Divider>
+          <TextField
+            select label="Ancho" size="small" fullWidth
+            value={b.buttonFullWidth ? 'full' : 'auto'}
+            onChange={(e) => onChange({ buttonFullWidth: e.target.value === 'full' })}
+            helperText="El ancho completo es lo que más convierte en móvil."
+          >
+            <MenuItem value="auto">Ajustado al texto</MenuItem>
+            <MenuItem value="full">Ancho completo</MenuItem>
+          </TextField>
+          <Stack direction="row" spacing={1}>
+            <TextField
+              label="Esquinas" type="number" size="small" fullWidth placeholder="6"
+              value={b.buttonRadius ?? ''}
+              onChange={(e) => onChange({ buttonRadius: e.target.value === '' ? undefined : Math.max(0, parseInt(e.target.value) || 0) })}
+            />
+            <TextField
+              label="Texto (px)" type="number" size="small" fullWidth placeholder="15"
+              value={b.buttonFontSize ?? ''}
+              onChange={(e) => onChange({ buttonFontSize: parseInt(e.target.value) || undefined })}
+            />
+          </Stack>
+          <Stack direction="row" spacing={1}>
+            <TextField
+              label="Relleno ↕" type="number" size="small" fullWidth placeholder="12"
+              value={b.buttonPadY ?? ''}
+              onChange={(e) => onChange({ buttonPadY: parseInt(e.target.value) || undefined })}
+            />
+            <TextField
+              label="Relleno ↔" type="number" size="small" fullWidth placeholder="26"
+              value={b.buttonPadX ?? ''}
+              onChange={(e) => onChange({ buttonPadX: parseInt(e.target.value) || undefined })}
+            />
+          </Stack>
+        </>
+      )}
+
       {/* ── Estilo del bloque (antes TODO compartía padding:10px 24px fijo) ── */}
       <Divider textAlign="left"><Typography variant="caption" color="text.secondary">Estilo del bloque</Typography></Divider>
       <Stack direction="row" spacing={1}>
@@ -2012,6 +2079,19 @@ const BlockEditor = ({
           </Tooltip>
         )}
       </Stack>
+      <TextField
+        select label="Visibilidad" size="small" fullWidth
+        value={b.hideMobile ? 'desktop' : b.hideDesktop ? 'mobile' : 'all'}
+        onChange={(e) => onChange({
+          hideMobile: e.target.value === 'desktop',
+          hideDesktop: e.target.value === 'mobile',
+        })}
+      >
+        <MenuItem value="all">En todos los dispositivos</MenuItem>
+        <MenuItem value="desktop">Solo en escritorio</MenuItem>
+        <MenuItem value="mobile">Solo en móvil</MenuItem>
+      </TextField>
+
       {(b.type === 'text' || b.type === 'heading') && (
         <TextField
           label="Tamaño de fuente (px)" type="number" value={b.fontSize ?? ''}

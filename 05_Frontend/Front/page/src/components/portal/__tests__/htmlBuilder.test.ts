@@ -21,6 +21,8 @@ import {
   COLUMN_LAYOUTS,
   MAX_COLUMNS,
   columnWidths,
+  contrastRatio,
+  renderBlock,
   type Block,
 } from '../htmlBuilder';
 
@@ -348,5 +350,120 @@ describe('generatePlainText — la parte de TEXTO del correo', () => {
     const b = { ...createBlock('columns'), cols: [[{ ...createBlock('text'), text: 'contenido real' }], []] };
     const out = generatePlainText([b], settings);
     expect(out).toContain('contenido real');
+  });
+});
+
+describe('UTM automático', () => {
+  const conUtm = { ...settings, utm: { enabled: true, source: 'mailconnect', medium: 'email', campaign: 'agosto' } };
+
+  it('etiqueta los enlaces http(s)', () => {
+    const b = { ...createBlock('button'), url: 'https://tienda.co/x' };
+    const out = generateHtml([b], conUtm);
+    expect(out).toContain('utm_source=mailconnect');
+    expect(out).toContain('utm_campaign=agosto');
+  });
+
+  it('NO toca las variables de plantilla (romperían el enlace firmado de baja)', () => {
+    const out = generateHtml([createBlock('text')], conUtm);
+    expect(out).toContain('href="{{unsubscribeUrl}}"');
+    expect(out).not.toContain('{{unsubscribeUrl}}?utm');
+  });
+
+  it('respeta un enlace que ya venía etiquetado a mano', () => {
+    const b = { ...createBlock('button'), url: 'https://t.co/x?utm_source=propio' };
+    const out = generateHtml([b], conUtm);
+    expect(out).toContain('utm_source=propio');
+    expect(out).not.toContain('utm_source=mailconnect');
+  });
+
+  it('usa & cuando la URL ya tiene parámetros', () => {
+    const b = { ...createBlock('button'), url: 'https://t.co/x?id=7' };
+    expect(generateHtml([b], conUtm)).toContain('id=7&utm_source=');
+  });
+
+  it('desactivado no agrega nada', () => {
+    const b = { ...createBlock('button'), url: 'https://t.co/x' };
+    expect(generateHtml([b], settings)).not.toContain('utm_');
+  });
+});
+
+describe('visibilidad por dispositivo', () => {
+  it('“solo escritorio” marca el bloque para ocultarlo en móvil', () => {
+    const b = { ...createBlock('text'), hideMobile: true };
+    expect(generateHtml([b], settings)).toContain('mc-hide-mobile');
+  });
+
+  it('“solo móvil” nace OCULTO y la media query lo enciende', () => {
+    // Al revés no sirve: un cliente que ignora las media queries mostraría ambos bloques.
+    const b = { ...createBlock('text'), hideDesktop: true };
+    const out = generateHtml([b], settings);
+    expect(out).toContain('mc-hide-desktop');
+    expect(out).toContain('display:none;max-height:0;overflow:hidden;mso-hide:all;');
+  });
+});
+
+describe('botón configurable', () => {
+  it('el ancho completo ocupa toda la fila', () => {
+    const b = { ...createBlock('button'), buttonFullWidth: true, url: 'https://x.co' };
+    const out = generateHtml([b], settings);
+    expect(out).toContain('width="100%"');
+    expect(out).toContain('display:block;');
+  });
+
+  it('respeta radio, tamaño y relleno', () => {
+    const b = { ...createBlock('button'), url: 'https://x.co', buttonRadius: 24, buttonFontSize: 18, buttonPadY: 16, buttonPadX: 40 };
+    const out = generateHtml([b], settings);
+    expect(out).toContain('border-radius:24px');
+    expect(out).toContain('font-size:18px');
+    expect(out).toContain('padding:16px 40px');
+  });
+});
+
+describe('chequeo previo ampliado', () => {
+  const find = (issues: ReturnType<typeof analyzeTemplate>, frag: string) =>
+    issues.find((i) => i.title.toLowerCase().includes(frag));
+
+  it('avisa cuando se acumulan expresiones de spam', () => {
+    const b = { ...createBlock('text'), text: 'GRATIS y garantizado, última oportunidad para gana dinero', rich: true };
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, 'spam')).toBeTruthy();
+  });
+
+  it('una palabra suelta NO dispara el aviso (una promoción legítima las usa)', () => {
+    const b = { ...createBlock('text'), text: 'Envío gratis en compras superiores a cien mil pesos colombianos.', rich: true };
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, 'spam')).toBeFalsy();
+  });
+
+  it('detecta poco contraste', () => {
+    const b = { ...createBlock('text'), color: '#f2f2f2' };   // casi blanco sobre blanco
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, 'contraste')).toBeTruthy();
+  });
+
+  it('detecta texto por debajo de 14 px', () => {
+    const b = { ...createBlock('text'), fontSize: 11 };
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, '14 px')).toBeTruthy();
+  });
+
+  it('avisa de los enlaces sin UTM', () => {
+    const b = { ...createBlock('button'), url: 'https://x.co' };
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(find(issues, 'utm')).toBeTruthy();
+  });
+
+  it('contrastRatio: negro sobre blanco es el máximo', () => {
+    expect(Math.round(contrastRatio('#000000', '#ffffff') || 0)).toBe(21);
+  });
+});
+
+describe('render unificado lienzo ↔ correo', () => {
+  it('renderBlock es la MISMA función que usa el correo', () => {
+    // El lienzo dibuja esto; si divergiera, volvería el bug de "en el editor se ve
+    // distinto" que motivó la unificación.
+    const b = { ...createBlock('button'), text: 'Comprar', url: 'https://x.co', buttonFullWidth: true };
+    const suelto = renderBlock(b, settings);
+    expect(generateHtml([b], settings)).toContain(suelto);
   });
 });
