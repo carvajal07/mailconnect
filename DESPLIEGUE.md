@@ -785,3 +785,18 @@ Lambda NUEVA (el CD la crea) + ruta `/Email/Send-test` **ya en `routes.json`**.
    `{{#if campo}}…{{else}}…{{/if}}` lo resuelve el motor de plantillas de **SES** (el canal
    EM delega la sustitución a SES). Si SES no lo interpretara en tu cuenta, el correo
    mostraría el token en crudo — se detecta con una sola muestra.
+
+---
+
+## 15. Biblioteca de imágenes del constructor (ago 2026)
+
+- [ ] `[J]` **`Api_V1_Resources_List`** + ruta `/Resources/List` **ya en `routes.json`**
+  (authorizer + CORS + mapping template con `customerId`/`customer`/`nit`). El CD crea la
+  lambda; su rol de convención sale como `Lambda_S3`.
+- [ ] `[J]` **IAM `s3:ListBucket`** sobre los buckets de cliente (`arn:aws:s3:::mailconnect-*`).
+  Ojo: `ListBucket` es permiso de BUCKET, no de objeto — si la política solo tiene
+  `arn:aws:s3:::mailconnect-*/*`, hay que agregar también el ARN sin `/*`.
+- ℹ️ Sin la lambda desplegada el constructor sigue funcionando: el botón "Mis imágenes"
+  muestra el error y la subida directa nunca dejó de estar disponible.
+- ℹ️ La lambda solo lista los prefijos **públicos** (`resources/`, `attachment/`). `database/`
+  y `document/` quedan fuera por diseño: son bases de contactos y comprobantes.

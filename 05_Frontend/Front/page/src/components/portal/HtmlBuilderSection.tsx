@@ -61,6 +61,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import RestoreIcon from '@mui/icons-material/Restore';
+import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary';
 import FormatClearIcon from '@mui/icons-material/FormatClear';
 import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
@@ -72,6 +73,7 @@ import { useFeedback } from '../../hooks/useFeedback';
 import { allPresets, customPresets, cloneBlocks, type TemplatePreset } from './templatePresets';
 import { emailDesigns } from '../../services/messageTemplatesService';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
+import { ImageLibraryDialog } from './ImageLibraryDialog';
 import {
   BLOCK_LABELS,
   VARIABLES,
@@ -79,10 +81,12 @@ import {
   DEFAULT_SETTINGS,
   COLUMN_LAYOUTS,
   MAX_COLUMNS,
+  SOCIAL_NETWORKS,
   columnWidths,
   NESTABLE_TYPES,
   createBlock,
   generateHtml,
+  generatePlainText,
   analyzeTemplate,
   htmlBytes,
   GMAIL_CLIP_BYTES,
@@ -308,6 +312,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   // Chequeo previo de entregabilidad (peso, alt, enlaces vacíos, imagen/texto…).
   const issues = useMemo(() => analyzeTemplate(blocks, settings, html), [blocks, settings, html]);
   const bytes = useMemo(() => htmlBytes(html), [html]);
+  const plainText = useMemo(() => generatePlainText(blocks, settings), [blocks, settings]);
   // La selección puede apuntar a un bloque ANIDADO dentro de una columna, así que la
   // búsqueda y las mutaciones recorren el árbol, no solo el primer nivel.
   const selected = findBlockDeep(blocks, selectedId) ?? null;
@@ -542,10 +547,10 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
       templateName: meta.templateName,
       subject: meta.subject,
       htmlBody: html,
-      textBody: blocks
-        .filter((b) => b.type === 'text' || b.type === 'heading')
-        .map((b) => b.text)
-        .join('\n'),
+      // Alternativa de texto plano completa (recorre TODO, incluidas las columnas, y
+      // lleva el enlace de baja). Antes emitía el HTML crudo de los bloques enriquecidos
+      // y se saltaba botones/columnas/productos.
+      textBody: plainText,
     });
     setSaving(false);
     if (isOk(res)) {
@@ -948,7 +953,14 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                         <DeleteIcon fontSize="small" />
                       </IconButton>
                     </Stack>
-                    <Box sx={{ p: 2 }}>
+                    {/* El lienzo refleja el relleno y el fondo PROPIOS del bloque: antes
+                        eran fijos (p:2), así que configurabas un fondo de sección y no se
+                        veía nada hasta la vista previa. */}
+                    <Box sx={{
+                      py: `${b.padY ?? 10}px`,
+                      px: `${b.padX ?? 24}px`,
+                      bgcolor: b.bgColor || 'transparent',
+                    }}>
                       <BlockPreview
                         block={b}
                         selectedId={selectedId}
@@ -1581,16 +1593,45 @@ const BlockPreview = ({
       );
     }
     case 'social': {
-      const items = [
-        ['Facebook', b.links.facebook],
-        ['Instagram', b.links.instagram],
-        ['X', b.links.x],
-        ['LinkedIn', b.links.linkedin],
-      ].filter(([, v]) => v && String(v).trim());
+      const size = b.socialSize || 34;
+      const activos = SOCIAL_NETWORKS.filter((n) => {
+        const v = b.links?.[n.key];
+        return v && String(v).trim() && v !== 'https://';
+      });
+      if (!activos.length) {
+        return (
+          <Typography sx={{ textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
+            (agrega los enlaces de tus redes en el panel derecho)
+          </Typography>
+        );
+      }
+      if ((b.socialStyle || 'badge') === 'text') {
+        return (
+          <Typography sx={{ textAlign: 'center', color: '#0075be', fontSize: 14 }}>
+            {activos.map((n) => n.label).join('  ·  ')}
+          </Typography>
+        );
+      }
       return (
-        <Typography sx={{ textAlign: 'center', color: '#0075be', fontSize: 14 }}>
-          {items.length ? items.map(([l]) => l).join('  ·  ') : '(configura tus redes)'}
-        </Typography>
+        <Stack direction="row" spacing={1} justifyContent="center">
+          {activos.map((n) => (
+            b.icons?.[n.key] ? (
+              <Box key={n.key} component="img" src={b.icons[n.key]} alt={n.label}
+                sx={{ width: size, height: size, borderRadius: '50%', display: 'block' }} />
+            ) : (
+              <Box
+                key={n.key}
+                sx={{
+                  width: size, height: size, borderRadius: '50%', bgcolor: n.color,
+                  color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: Math.round(size * 0.42), fontWeight: 700, lineHeight: 1,
+                }}
+              >
+                {n.initial}
+              </Box>
+            )
+          ))}
+        </Stack>
       );
     }
     case 'imageText':
@@ -1675,6 +1716,9 @@ const BlockEditor = ({
 }) => {
   const [varAnchor, setVarAnchor] = useState<null | HTMLElement>(null);
   const [uploadingImg, setUploadingImg] = useState(false);
+  // Campo del bloque al que va la imagen elegida en la biblioteca ('url' | 'imageUrl'),
+  // o el índice del producto cuando se abre desde la grilla.
+  const [libraryFor, setLibraryFor] = useState<'url' | 'imageUrl' | number | null>(null);
   const [uploadingItem, setUploadingItem] = useState<number | null>(null);
   const isImage = b.type === 'image' || b.type === 'logo';
   const hasText = b.type === 'heading' || b.type === 'text' || b.type === 'button';
@@ -1765,16 +1809,39 @@ const BlockEditor = ({
 
       {b.type === 'social' && (
         <>
-          {(['facebook', 'instagram', 'x', 'linkedin'] as const).map((net) => (
+          <TextField
+            select label="Estilo" size="small" fullWidth
+            value={b.socialStyle || 'badge'}
+            onChange={(e) => onChange({ socialStyle: e.target.value as 'badge' | 'text' })}
+          >
+            <MenuItem value="badge">Insignias de color</MenuItem>
+            <MenuItem value="text">Enlaces de texto</MenuItem>
+          </TextField>
+          {(b.socialStyle || 'badge') === 'badge' && (
             <TextField
-              key={net}
-              label={net.charAt(0).toUpperCase() + net.slice(1)}
-              value={b.links[net] ?? ''}
-              onChange={(e) => onChange({ links: { ...b.links, [net]: e.target.value } })}
-              fullWidth
-              size="small"
-              placeholder="https://"
+              label="Tamaño (px)" type="number" size="small" fullWidth
+              value={b.socialSize ?? 34}
+              onChange={(e) => onChange({ socialSize: Math.max(20, Math.min(64, parseInt(e.target.value) || 34)) })}
             />
+          )}
+          <Typography variant="caption" color="text.secondary">
+            Deja vacía la red que no uses. Las insignias se dibujan con color de fondo (no
+            son imágenes), así que no dependen de ningún servidor externo ni se rompen.
+          </Typography>
+          {SOCIAL_NETWORKS.map((n) => (
+            <Stack key={n.key} direction="row" spacing={1} alignItems="center">
+              <Box sx={{
+                width: 26, height: 26, borderRadius: '50%', bgcolor: n.color, color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 11, fontWeight: 700, flexShrink: 0,
+              }}>{n.initial}</Box>
+              <TextField
+                label={n.label}
+                value={b.links?.[n.key] ?? ''}
+                onChange={(e) => onChange({ links: { ...b.links, [n.key]: e.target.value } })}
+                fullWidth size="small" placeholder="https://"
+              />
+            </Stack>
           ))}
         </>
       )}
@@ -1784,10 +1851,15 @@ const BlockEditor = ({
           <TextField label="Título" value={b.heading ?? ''} onChange={(e) => onChange({ heading: e.target.value })} fullWidth size="small" />
           <TextField label="Texto" value={b.text} onChange={(e) => onChange({ text: e.target.value })} fullWidth multiline minRows={3} size="small" />
           <TextField label="URL de la imagen" value={b.imageUrl ?? ''} onChange={(e) => onChange({ imageUrl: e.target.value })} fullWidth size="small" />
-          <Button component="label" size="small" variant="outlined" disabled={uploadingImg} startIcon={uploadingImg ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}>
-            {uploadingImg ? 'Subiendo…' : 'Subir imagen a S3'}
-            <input type="file" accept="image/*" hidden onChange={(e) => handleUpload(e.target.files?.[0] ?? null)} />
-          </Button>
+          <Stack direction="row" spacing={1}>
+            <Button component="label" size="small" variant="outlined" fullWidth disabled={uploadingImg} startIcon={uploadingImg ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}>
+              {uploadingImg ? 'Subiendo…' : 'Subir'}
+              <input type="file" accept="image/*" hidden onChange={(e) => handleUpload(e.target.files?.[0] ?? null)} />
+            </Button>
+            <Button size="small" variant="outlined" fullWidth startIcon={<PhotoLibraryIcon />} onClick={() => setLibraryFor('imageUrl')}>
+              Mis imágenes
+            </Button>
+          </Stack>
           <TextField label="Texto del botón (opcional)" value={b.buttonText ?? ''} onChange={(e) => onChange({ buttonText: e.target.value })} fullWidth size="small" placeholder="Ver más" />
           <TextField label="Enlace del botón" value={b.buttonUrl ?? ''} onChange={(e) => onChange({ buttonUrl: e.target.value })} fullWidth size="small" placeholder="https://" />
         </>
@@ -1822,6 +1894,9 @@ const BlockEditor = ({
                 <TextField label="Texto" size="small" value={it.text} onChange={(e) => updateItem(i, { text: e.target.value })} fullWidth multiline minRows={2} />
                 <TextField label="Imagen (URL)" size="small" value={it.image} onChange={(e) => updateItem(i, { image: e.target.value })} fullWidth />
                 <TextField label="Enlace (opcional)" size="small" value={it.url ?? ''} onChange={(e) => updateItem(i, { url: e.target.value })} fullWidth placeholder="https://" />
+                <Button size="small" variant="outlined" startIcon={<PhotoLibraryIcon />} onClick={() => setLibraryFor(i)} sx={{ mr: 1 }}>
+                  Mis imágenes
+                </Button>
                 <Button component="label" size="small" variant="outlined" disabled={uploadingItem === i} startIcon={uploadingItem === i ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}>
                   {uploadingItem === i ? 'Subiendo…' : 'Subir imagen'}
                   <input type="file" accept="image/*" hidden onChange={(e) => uploadItemImage(i, e.target.files?.[0] ?? null)} />
@@ -1844,16 +1919,20 @@ const BlockEditor = ({
       )}
 
       {isImage && (
-        <Button
-          component="label"
-          size="small"
-          variant="outlined"
-          disabled={uploadingImg}
-          startIcon={uploadingImg ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}
-        >
-          {uploadingImg ? 'Subiendo…' : 'Subir imagen a S3'}
-          <input type="file" accept="image/*" hidden onChange={(e) => handleUpload(e.target.files?.[0] ?? null)} />
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button
+            component="label" size="small" variant="outlined" fullWidth
+            disabled={uploadingImg}
+            startIcon={uploadingImg ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}
+          >
+            {uploadingImg ? 'Subiendo…' : 'Subir'}
+            <input type="file" accept="image/*" hidden onChange={(e) => handleUpload(e.target.files?.[0] ?? null)} />
+          </Button>
+          {/* Reutilizar algo ya subido, en vez de volver a subir el mismo logo. */}
+          <Button size="small" variant="outlined" fullWidth startIcon={<PhotoLibraryIcon />} onClick={() => setLibraryFor('url')}>
+            Mis imágenes
+          </Button>
+        </Stack>
       )}
 
       {hasAlign && (
@@ -1942,6 +2021,17 @@ const BlockEditor = ({
           helperText="Aplica a todo el bloque; para una palabra suelta usa la barra del editor."
         />
       )}
+
+      <ImageLibraryDialog
+        open={libraryFor !== null}
+        onClose={() => setLibraryFor(null)}
+        onUpload={onUploadImage}
+        onSelect={(url) => {
+          if (libraryFor === 'url') onChange({ url });
+          else if (libraryFor === 'imageUrl') onChange({ imageUrl: url });
+          else if (typeof libraryFor === 'number') updateItem(libraryFor, { image: url });
+        }}
+      />
     </Stack>
   );
 };

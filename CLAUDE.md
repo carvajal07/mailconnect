@@ -124,6 +124,46 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   `SENDER_EMAIL` y opcional `TEST_SEND_DAILY_LIMIT` (default 20). `Api_V1_MessageTemplate_
   Create` acepta el canal `HTML` (sin cambios de infra: misma tabla y misma ruta).
 
+### Constructor HTML: texto plano, fidelidad, redes e imágenes reutilizables (ago 2026)
+> Dos DEFECTOS + los dos huecos más visibles del análisis del editor.
+
+- **Texto plano del correo (defecto).** Al publicar, la `TextPart` de la plantilla SES se
+  armaba con `blocks.filter(text|heading).map(b => b.text)`. Con el texto enriquecido eso
+  emitía **HTML crudo dentro de la parte de texto**, se saltaba botones, columnas (un correo
+  hecho a base de columnas quedaba con el texto **VACÍO**), productos y redes, y **no incluía
+  `{{unsubscribeUrl}}`**. Los filtros anti-spam comparan la parte HTML con la de texto: una
+  discrepancia grande penaliza y no se ve en ningún reporte, solo en la reputación. Ahora
+  `generatePlainText()` recorre TODOS los tipos (aplanando las columnas en orden de lectura),
+  emite los botones como `Etiqueta: URL` (sin la URL el enlace no existe en texto), encabeza
+  con el preheader y cierra SIEMPRE con el pie de baja.
+- **Fidelidad del lienzo (defecto).** El contenedor del bloque en el lienzo era `p:2` fijo, así
+  que el `padY`/`padX`/`bgColor` que se configuraba **salía en el correo pero no se veía en el
+  editor**. Ya refleja los tres. ⚠️ La causa de fondo sigue: hay **dos implementaciones del
+  render** (`BlockPreview` en React para el lienzo y `renderBlock` en string para el correo);
+  unificarlas en un iframe del HTML real es la deuda pendiente del editor.
+- **Redes sociales con INSIGNIAS.** `socialRow` emitía enlaces de texto (`Facebook · Instagram`),
+  que es lo que más delataba al editor. Ahora dibuja insignias redondas con el color de marca
+  (tabla + `bgcolor`, sin imágenes), 8 redes (suma YouTube, TikTok, WhatsApp y sitio web),
+  tamaño configurable y opción de **icono propio** por red.
+  ⚠️ **Por qué insignias y no logos:** una imagen de correo necesita URL pública absoluta.
+  Enlazar logos de un CDN ajeno repite el problema de `via.placeholder.com` (si ese dominio
+  cae, TODOS los correos ya enviados quedan rotos) y un `data:` URI lo bloquea Gmail. La
+  insignia pesa 0, se ve igual en todos los clientes y no depende de nadie. `border-radius` lo
+  ignora Outlook: queda cuadrada, que se ve bien igual. El estilo `text` queda como LEGADO.
+- **Biblioteca de imágenes (`Api_V1_Resources_List`, `POST /Resources/List`).** Cada imagen se
+  subía al prefijo público `resources/` del bucket del tenant y ahí se perdía: no había forma
+  de reutilizarla, así que el mismo logo se volvía a subir en cada plantilla. Ahora hay un
+  diálogo **"Mis imágenes"** (buscador + subir nueva) en los bloques de imagen, en el combo
+  legado y en la grilla de productos. La lambda solo lee el bucket del PROPIO cliente (el NIT
+  sale del token) y solo los prefijos **públicos** (`resources/`, `attachment/`): `database/`
+  y `document/` —bases de contactos y comprobantes— no se listan ni por error.
+- **Cobertura:** `htmlBuilder.test.ts` sube a **49** (+9 sobre el texto plano: sin etiquetas,
+  con enlace de baja, columnas aplanadas en orden, botón con su URL, botón sin destino
+  omitido, productos con enlace, preheader al inicio, jerarquía del encabezado, y el caso del
+  correo hecho SOLO de columnas que antes quedaba sin texto).
+- ⚠️ `[J]`: lambda `Api_V1_Resources_List` (el CD la crea) + ruta `/Resources/List` **ya en
+  routes.json**; IAM **`s3:ListBucket`** sobre los buckets de cliente (`mailconnect-*`).
+
 ### Interruptor GLOBAL del IVA (ago 2026)
 - **Qué:** MailConnect puede **no ser responsable de IVA**. Nuevo ajuste de plataforma
   **`TAX_ENABLED`** (Configuración → **"Cobrar IVA"**, grupo *Facturación*): al apagarlo,

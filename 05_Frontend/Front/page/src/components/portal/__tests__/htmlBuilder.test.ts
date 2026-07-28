@@ -15,6 +15,7 @@ import {
 import {
   createBlock,
   generateHtml,
+  generatePlainText,
   analyzeTemplate,
   DEFAULT_SETTINGS,
   COLUMN_LAYOUTS,
@@ -283,5 +284,69 @@ describe('distribuciones de columnas', () => {
     const b = { ...createBlock('columns'), widths: [25, 25, 25, 25] };
     const out = generateHtml([b], settings);
     expect((out.match(/width="25%"/g) || []).length).toBe(4);
+  });
+});
+
+describe('generatePlainText — la parte de TEXTO del correo', () => {
+  it('NO lleva etiquetas HTML aunque el bloque sea enriquecido', () => {
+    const b = { ...createBlock('text'), text: 'Hola <strong>Ana</strong>, <a href="https://x.co">mira</a>', rich: true };
+    const out = generatePlainText([b], settings);
+    expect(out).toContain('Hola Ana, mira');
+    expect(out).not.toContain('<strong>');
+    expect(out).not.toContain('href=');
+  });
+
+  it('incluye SIEMPRE el enlace de baja (si no, esa versión incumple)', () => {
+    const out = generatePlainText([createBlock('text')], settings);
+    expect(out).toContain('{{unsubscribeUrl}}');
+    expect(out).toContain('{{preferencesUrl}}');
+  });
+
+  it('aplana las columnas en orden de lectura (antes quedaba VACÍO)', () => {
+    const b = {
+      ...createBlock('columns'),
+      cols: [
+        [{ ...createBlock('text'), text: 'texto de la izquierda' }],
+        [{ ...createBlock('text'), text: 'texto de la derecha' }],
+      ],
+    };
+    const out = generatePlainText([b], settings);
+    expect(out.indexOf('texto de la izquierda')).toBeGreaterThan(-1);
+    expect(out.indexOf('texto de la derecha')).toBeGreaterThan(out.indexOf('texto de la izquierda'));
+  });
+
+  it('el botón lleva su URL: sin ella el destinatario no puede hacer clic', () => {
+    const b = { ...createBlock('button'), text: 'Comprar', url: 'https://tienda.co/x' };
+    expect(generatePlainText([b], settings)).toContain('Comprar: https://tienda.co/x');
+  });
+
+  it('omite el botón sin destino en vez de escribir "https://"', () => {
+    const b = createBlock('button');   // nace con url 'https://'
+    expect(generatePlainText([b], settings)).not.toContain('https://\n');
+  });
+
+  it('incluye los productos con su enlace', () => {
+    const b = {
+      ...createBlock('products'),
+      items: [{ image: '', title: 'Camisa', text: 'Algodón', url: 'https://t.co/1' }],
+    };
+    const out = generatePlainText([b], settings);
+    expect(out).toContain('Camisa — Algodón: https://t.co/1');
+  });
+
+  it('el preheader encabeza el texto (es lo que se ve en la bandeja)', () => {
+    const out = generatePlainText([createBlock('text')], { ...settings, preheader: 'Novedades de julio' });
+    expect(out.startsWith('Novedades de julio')).toBe(true);
+  });
+
+  it('el encabezado se marca para dar jerarquía sin formato', () => {
+    const b = { ...createBlock('heading'), text: 'Titulo', rich: true };
+    expect(generatePlainText([b], settings)).toContain('======');
+  });
+
+  it('un correo hecho SOLO de columnas ya no queda sin texto', () => {
+    const b = { ...createBlock('columns'), cols: [[{ ...createBlock('text'), text: 'contenido real' }], []] };
+    const out = generatePlainText([b], settings);
+    expect(out).toContain('contenido real');
   });
 });

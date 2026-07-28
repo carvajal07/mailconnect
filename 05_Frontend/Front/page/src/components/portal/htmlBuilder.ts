@@ -30,7 +30,35 @@ export interface SocialLinks {
   instagram?: string;
   x?: string;
   linkedin?: string;
+  youtube?: string;
+  tiktok?: string;
+  whatsapp?: string;
+  website?: string;
 }
+
+/**
+ * Redes soportadas, con su color de marca y la inicial de la INSIGNIA.
+ *
+ * ⚠️ Por qué insignias de color y no logos: una imagen en un correo tiene que estar en
+ * una URL pública absoluta. Enlazar logos de un CDN ajeno repite el problema que ya
+ * tuvimos con `via.placeholder.com` (si ese dominio cae o cambia, TODOS los correos ya
+ * enviados quedan con imágenes rotas), y un `data:` URI lo bloquea Gmail. La insignia se
+ * dibuja con tabla + color de fondo: se ve igual en todos los clientes, pesa 0 y no
+ * depende de nadie. Quien quiera el logo real puede subir su propio icono (`icons`).
+ */
+export const SOCIAL_NETWORKS: { key: keyof SocialLinks; label: string; color: string; initial: string }[] = [
+  { key: 'facebook', label: 'Facebook', color: '#1877F2', initial: 'f' },
+  { key: 'instagram', label: 'Instagram', color: '#E4405F', initial: 'ig' },
+  { key: 'x', label: 'X', color: '#000000', initial: 'X' },
+  { key: 'linkedin', label: 'LinkedIn', color: '#0A66C2', initial: 'in' },
+  { key: 'youtube', label: 'YouTube', color: '#FF0000', initial: '▶' },
+  { key: 'tiktok', label: 'TikTok', color: '#010101', initial: '♪' },
+  { key: 'whatsapp', label: 'WhatsApp', color: '#25D366', initial: 'wa' },
+  { key: 'website', label: 'Sitio web', color: '#0075be', initial: '🌐' },
+];
+
+/** Estilo del bloque de redes. `text` es el LEGADO (enlaces de texto). */
+export type SocialStyle = 'badge' | 'text';
 
 /** Un producto de la grilla `products`. */
 export interface ProductItem {
@@ -83,6 +111,12 @@ export interface Block {
   color: string; // color de texto / fondo del botón / barra del logo
   height: number; // alto del espaciador (px)
   links: SocialLinks; // redes sociales
+  /** Estilo del bloque de redes: insignias de color (default) o enlaces de texto. */
+  socialStyle?: SocialStyle;
+  /** Tamaño de la insignia en px. */
+  socialSize?: number;
+  /** Icono PROPIO por red (URL de una imagen subida por el cliente). Si está, gana. */
+  icons?: Partial<Record<keyof SocialLinks, string>>;
 
   /** El contenido de `text` (y `heading`) es HTML EN LÍNEA, no texto plano. Marca por
    *  bloque: sin ella se escapa como siempre, así que las plantillas viejas no se rompen. */
@@ -220,11 +254,9 @@ export const createBlock = (type: BlockType): Block => {
     case 'columns':
       return { ...b, widths: [50, 50], cols: [[], []] };
     case 'social':
-      return {
-        ...b,
-        align: 'center',
-        links: { facebook: 'https://', instagram: 'https://', x: '', linkedin: '' },
-      };
+      // Nace VACÍO: una insignia con enlace 'https://' no lleva a ningún lado y el
+      // chequeo previo la marcaría como enlace sin destino.
+      return { ...b, align: 'center', links: {}, socialStyle: 'badge', socialSize: 34 };
     case 'html':
       return { ...b, rich: false, text: '<p style="text-align:center">Tu HTML aquí</p>' };
     case 'imageText':
@@ -289,21 +321,38 @@ function buttonHtml(b: Block, st: EmailSettings): string {
       </tr></table>`;
 }
 
-function socialRow(links: SocialLinks, st: EmailSettings): string {
-  const items: string[] = [];
-  const push = (label: string, href?: string) => {
-    if (href && href.trim()) {
-      items.push(
-        `<a href="${esc(href)}" target="_blank" style="color:${st.linkColor};text-decoration:none;font-family:${st.fontFamily};font-size:14px">${label}</a>`,
-      );
-    }
-  };
-  push('Facebook', links.facebook);
-  push('Instagram', links.instagram);
-  push('X', links.x);
-  push('LinkedIn', links.linkedin);
-  if (!items.length) return '';
-  return `<p style="margin:0;text-align:center">${items.join(' &nbsp;·&nbsp; ')}</p>`;
+function socialRow(b: Block, st: EmailSettings): string {
+  const links = b.links || {};
+  const size = b.socialSize || 34;
+  const style: SocialStyle = b.socialStyle || 'badge';
+
+  const activos = SOCIAL_NETWORKS.filter((n) => {
+    const v = links[n.key];
+    return v && String(v).trim() && v !== 'https://';
+  });
+  if (!activos.length) return '';
+
+  // LEGADO: enlaces de texto separados por puntos.
+  if (style === 'text') {
+    const items = activos.map((n) =>
+      `<a href="${esc(String(links[n.key]))}" target="_blank" style="color:${st.linkColor};text-decoration:none;font-family:${st.fontFamily};font-size:14px">${n.label}</a>`);
+    return `<p style="margin:0;text-align:center">${items.join(' &nbsp;·&nbsp; ')}</p>`;
+  }
+
+  // Insignias: una celda por red. `border-radius` lo ignora Outlook (queda cuadrada,
+  // que se ve bien igual); el color de fondo sí lo respeta.
+  const celdas = activos.map((n) => {
+    const href = esc(String(links[n.key]));
+    const propio = b.icons?.[n.key];
+    const contenido = propio
+      ? `<img src="${esc(propio)}" alt="${esc(n.label)}" width="${size}" height="${size}" style="display:block;width:${size}px;height:${size}px;border:0;border-radius:${Math.round(size / 2)}px;" />`
+      : `<a href="${href}" target="_blank" style="display:block;width:${size}px;height:${size}px;line-height:${size}px;text-align:center;font-family:${st.fontFamily};font-size:${Math.round(size * 0.42)}px;font-weight:bold;color:#ffffff;text-decoration:none;">${esc(n.initial)}</a>`;
+    const bg = propio ? '' : ` bgcolor="${n.color}"`;
+    const bgStyle = propio ? '' : `background-color:${n.color};`;
+    return `<td style="padding:0 5px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0"><tr><td${bg} style="${bgStyle}border-radius:${Math.round(size / 2)}px;" width="${size}" height="${size}" align="center" valign="middle">${propio ? `<a href="${href}" target="_blank" style="display:block;text-decoration:none;">${contenido}</a>` : contenido}</td></tr></table></td>`;
+  });
+
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto;"><tr>${celdas.join('')}</tr></table>`;
 }
 
 /**
@@ -411,7 +460,7 @@ function renderBlock(b: Block, st: EmailSettings, widthOverride?: number): strin
     case 'columns':
       return columnsHtml(b, st);
     case 'social':
-      return socialRow(b.links, st);
+      return socialRow(b, st);
     case 'imageText':
       return comboHtml(b, st, true);
     case 'textImage':
@@ -530,6 +579,119 @@ ${unsubscribeFooter}
   </table>
 </body>
 </html>`;
+}
+
+// ───────────────────────── Alternativa de TEXTO PLANO ─────────────────────────
+
+/**
+ * Versión en TEXTO PLANO del correo (la `TextPart` de la plantilla SES).
+ *
+ * Por qué importa: los filtros anti-spam comparan la parte HTML con la de texto. Si la
+ * de texto va vacía, con etiquetas dentro o sin el enlace de baja, el correo se penaliza
+ * — y eso no aparece en ningún reporte, solo en la reputación.
+ *
+ * Antes se armaba con `blocks.filter(text|heading).map(b => b.text)`, que desde el texto
+ * enriquecido emitía HTML crudo, ignoraba botones/columnas/productos (un correo hecho a
+ * base de columnas quedaba con el texto VACÍO) y no incluía `{{unsubscribeUrl}}`.
+ */
+export function generatePlainText(blocks: Block[], settings: EmailSettings = DEFAULT_SETTINGS): string {
+  const lines: string[] = [];
+
+  if (settings.preheader.trim()) {
+    lines.push(settings.preheader.trim(), '');
+  }
+
+  const plain = (b: Block, field: 'text' | 'heading' = 'text') =>
+    richToPlain(blockContentHtml(field === 'text' ? b.text : b.heading || '', b.rich)).trim();
+
+  const walk = (list: Block[]) => {
+    for (const b of list) {
+      switch (b.type) {
+        case 'heading': {
+          const t = plain(b);
+          // Se subraya el encabezado: en texto plano es la única forma de jerarquía.
+          if (t) lines.push(t, '='.repeat(Math.min(t.length, 60)), '');
+          break;
+        }
+        case 'text': {
+          const t = plain(b);
+          if (t) lines.push(t, '');
+          break;
+        }
+        // El botón sin su URL es inútil en texto plano: el destinatario no puede hacer clic.
+        case 'button': {
+          const label = plain(b) || 'Ver más';
+          if (b.url && b.url !== 'https://') lines.push(`${label}: ${b.url}`, '');
+          break;
+        }
+        case 'image':
+        case 'logo': {
+          const alt = plain(b);
+          if (alt && b.url) lines.push(`[${alt}]`, '');
+          break;
+        }
+        case 'imageText':
+        case 'textImage':
+        case 'textButton':
+        case 'buttonTextRow': {
+          const h = plain(b, 'heading');
+          const t = plain(b);
+          if (h) lines.push(h, '');
+          if (t) lines.push(t, '');
+          if (b.buttonText && b.buttonUrl && b.buttonUrl !== 'https://') {
+            lines.push(`${b.buttonText}: ${b.buttonUrl}`, '');
+          }
+          break;
+        }
+        case 'products': {
+          for (const it of b.items || []) {
+            const partes = [it.title, it.text].filter(Boolean).join(' — ');
+            if (partes) lines.push(it.url ? `${partes}: ${it.url}` : partes);
+          }
+          if ((b.items || []).length) lines.push('');
+          break;
+        }
+        case 'social': {
+          const redes = Object.entries(b.links || {})
+            .filter(([, v]) => v && String(v).trim() && v !== 'https://')
+            .map(([k, v]) => `${k}: ${v}`);
+          if (redes.length) lines.push(...redes, '');
+          break;
+        }
+        case 'columns': {
+          // Las columnas se aplanan en orden de lectura: en texto plano no hay columnas.
+          const cols = b.cols?.length
+            ? b.cols
+            : [[{ ...b, type: 'text' as BlockType, cols: undefined }],
+               [{ ...b, type: 'text' as BlockType, text: b.textRight, cols: undefined }]];
+          for (const col of cols) walk(col);
+          break;
+        }
+        case 'divider':
+          lines.push('—'.repeat(40), '');
+          break;
+        case 'html': {
+          const t = richToPlain(sanitizeBlockHtml(b.text)).trim();
+          if (t) lines.push(t, '');
+          break;
+        }
+        default:
+          break;   // espaciador y demás no aportan nada al texto
+      }
+    }
+  };
+  walk(blocks);
+
+  // Pie obligatorio: sin el enlace de baja en la parte de texto, esa versión del correo
+  // incumple lo mismo que el HTML sí cumple.
+  lines.push(
+    '—'.repeat(40),
+    'Recibes este correo porque estás suscrito a nuestras comunicaciones.',
+    'Administrar preferencias: {{preferencesUrl}}',
+    'Cancelar suscripción: {{unsubscribeUrl}}',
+  );
+
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 // ───────────────────────── Chequeo previo (entregabilidad) ─────────────────────────
