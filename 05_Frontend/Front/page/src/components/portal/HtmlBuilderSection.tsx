@@ -19,6 +19,7 @@ import {
   Tooltip,
   CircularProgress,
   ListItemText,
+  Slider,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
@@ -76,7 +77,9 @@ import {
   VARIABLES,
   PALETTE_GROUPS,
   DEFAULT_SETTINGS,
-  COLUMN_RATIOS,
+  COLUMN_LAYOUTS,
+  MAX_COLUMNS,
+  columnWidths,
   NESTABLE_TYPES,
   createBlock,
   generateHtml,
@@ -86,7 +89,6 @@ import {
   drafts,
   type Block,
   type BlockType,
-  type ColumnRatio,
   type EmailSettings,
   type ProductItem,
 } from './htmlBuilder';
@@ -121,6 +123,38 @@ const BLOCK_ICONS: Record<BlockType, ReactNode> = {
  * aplica el mismo saneo como defensa adicional.
  */
 const sanitizeTemplateName = (s: string) => s.replace(/\s+/g, '-').replace(/[^A-Za-z0-9_-]/g, '');
+
+/* ---- Recorrido del árbol de bloques (un bloque de COLUMNAS contiene otros) ---- */
+
+/** Busca un bloque por id en cualquier nivel. */
+const findBlockDeep = (list: Block[], id: string | null): Block | null => {
+  if (!id) return null;
+  for (const b of list) {
+    if (b.id === id) return b;
+    for (const col of b.cols || []) {
+      const hit = findBlockDeep(col, id);
+      if (hit) return hit;
+    }
+  }
+  return null;
+};
+
+/** Aplica un parche (objeto o función del bloque actual) al bloque con ese id. */
+const patchBlockDeep = (
+  list: Block[],
+  id: string,
+  patch: Partial<Block> | ((b: Block) => Partial<Block>),
+): Block[] =>
+  list.map((b) => {
+    const next = b.id === id ? { ...b, ...(typeof patch === 'function' ? patch(b) : patch) } : b;
+    return next.cols ? { ...next, cols: next.cols.map((c) => patchBlockDeep(c, id, patch)) } : next;
+  });
+
+/** Elimina el bloque con ese id, esté donde esté. */
+const removeBlockDeep = (list: Block[], id: string): Block[] =>
+  list
+    .filter((b) => b.id !== id)
+    .map((b) => (b.cols ? { ...b, cols: b.cols.map((c) => removeBlockDeep(c, id)) } : b));
 
 /** Línea indicadora de dónde caerá el bloque al arrastrarlo (tipo MailPro/Topol). */
 const DropLine = () => (
@@ -239,6 +273,8 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
 
   // Menú del botón "Agregar bloque" de la zona final del lienzo.
   const [appendAnchor, setAppendAnchor] = useState<null | HTMLElement>(null);
+  // Menú del "+" de una columna vacía: qué bloque meter y en qué columna.
+  const [columnAdd, setColumnAdd] = useState<{ blockId: string; colIndex: number; anchor: HTMLElement } | null>(null);
   const [draftsAnchor, setDraftsAnchor] = useState<null | HTMLElement>(null);
   const [showHtml, setShowHtml] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -270,7 +306,9 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   // Chequeo previo de entregabilidad (peso, alt, enlaces vacíos, imagen/texto…).
   const issues = useMemo(() => analyzeTemplate(blocks, settings, html), [blocks, settings, html]);
   const bytes = useMemo(() => htmlBytes(html), [html]);
-  const selected = blocks.find((b) => b.id === selectedId) ?? null;
+  // La selección puede apuntar a un bloque ANIDADO dentro de una columna, así que la
+  // búsqueda y las mutaciones recorren el árbol, no solo el primer nivel.
+  const selected = findBlockDeep(blocks, selectedId) ?? null;
 
   const setSetting = <K extends keyof EmailSettings>(key: K, value: EmailSettings[K]) =>
     setSettings((s) => ({ ...s, [key]: value }));
@@ -284,12 +322,21 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
 
   const updateSelected = (patch: Partial<Block>) => {
     if (!selectedId) return;
-    setBlocks((prev) => prev.map((b) => (b.id === selectedId ? { ...b, ...patch } : b)));
+    setBlocks((prev) => patchBlockDeep(prev, selectedId, patch));
   };
 
   const removeBlock = (id: string) => {
-    setBlocks((prev) => prev.filter((b) => b.id !== id));
+    setBlocks((prev) => removeBlockDeep(prev, id));
     if (selectedId === id) setSelectedId(null);
+  };
+
+  /** Agrega un bloque DENTRO de una columna (el "+" del lienzo). */
+  const addToColumn = (columnsId: string, colIndex: number, type: BlockType) => {
+    const child = createBlock(type);
+    setBlocks((prev) => patchBlockDeep(prev, columnsId, (b) => ({
+      cols: (b.cols || []).map((c, i) => (i === colIndex ? [...c, child] : c)),
+    })));
+    setSelectedId(child.id);
   };
 
   const duplicateBlock = (id: string) => {
@@ -795,6 +842,9 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                 <Box
                   onDragOver={(e) => { if (dragSource.current) { e.preventDefault(); setDropIndex(blocks.length); } }}
                   onDrop={(e) => { e.preventDefault(); insertAt(dropIndex ?? blocks.length); }}
+                  // Aire arriba para que la barra de herramientas del PRIMER bloque (que
+                  // flota por encima de él) no la recorte el borde de la hoja.
+                  sx={{ pt: 2.5 }}
                 >
                 {blocks.map((b, index) => (
                   <Fragment key={b.id}>
@@ -822,7 +872,9 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                       className="block-tools"
                       sx={{
                         position: 'absolute',
-                        top: 6,
+                        // Por ENCIMA del bloque, no sobre él: antes (top:6) la barra
+                        // tapaba justo el contenido que se acababa de seleccionar.
+                        top: -16,
                         right: 6,
                         opacity: selectedId === b.id ? 1 : 0,
                         transition: 'opacity .2s',
@@ -855,7 +907,11 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                     <Box sx={{ p: 2 }}>
                       <BlockPreview
                         block={b}
+                        selectedId={selectedId}
                         onEditText={selectedId === b.id ? (patch) => updateSelected(patch) : undefined}
+                        onSelectChild={setSelectedId}
+                        onEditChild={(id, patch) => setBlocks((prev) => patchBlockDeep(prev, id, patch))}
+                        onAddToColumn={(colIndex, anchor) => setColumnAdd({ blockId: b.id, colIndex, anchor })}
                         variables={dbFields.length ? dbFields : VARIABLES}
                         onRequestVariable={() => setVarDialog({ field: (dbFields[0] || VARIABLES[0]), fallback: '' })}
                       />
@@ -896,6 +952,26 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               )}
             </Box>
           </Box>
+
+          {/* Menú del "+" de una columna vacía: los tipos ANIDABLES (nada que ya sea una
+              tabla ancha, que dentro de una celda estrecha se desarma). */}
+          <Menu
+            anchorEl={columnAdd?.anchor ?? null} open={Boolean(columnAdd)}
+            onClose={() => setColumnAdd(null)}
+          >
+            {NESTABLE_TYPES.map((t) => (
+              <MenuItem
+                key={t}
+                onClick={() => {
+                  if (columnAdd) addToColumn(columnAdd.blockId, columnAdd.colIndex, t);
+                  setColumnAdd(null);
+                }}
+              >
+                <Box sx={{ mr: 1, display: 'flex', color: 'primary.main' }}>{BLOCK_ICONS[t]}</Box>
+                {BLOCK_LABELS[t]}
+              </MenuItem>
+            ))}
+          </Menu>
 
           {/* Menú del botón "Agregar bloque" de la zona final: agrega SIEMPRE al final,
               sin tener que arrastrar ni acertarle a la franja de abajo. */}
@@ -1317,9 +1393,20 @@ interface PreviewProps {
   onEditText?: (patch: Partial<Block>) => void;
   variables?: string[];
   onRequestVariable?: () => void;
+  /** Selección actual (para resaltar el hijo activo dentro de una columna). */
+  selectedId?: string | null;
+  /** Selecciona un bloque ANIDADO dentro de una columna. */
+  onSelectChild?: (id: string) => void;
+  /** Edita el texto de un bloque anidado. */
+  onEditChild?: (id: string, patch: Partial<Block>) => void;
+  /** Abre el menú para agregar un bloque a la columna `i` (el "+" del lienzo). */
+  onAddToColumn?: (colIndex: number, anchor: HTMLElement) => void;
 }
 
-const BlockPreview = ({ block: b, onEditText, variables = [], onRequestVariable }: PreviewProps) => {
+const BlockPreview = ({
+  block: b, onEditText, variables = [], onRequestVariable,
+  selectedId, onSelectChild, onEditChild, onAddToColumn,
+}: PreviewProps) => {
   const align = b.align;
   const editable = Boolean(onEditText);
 
@@ -1366,22 +1453,50 @@ const BlockPreview = ({ block: b, onEditText, variables = [], onRequestVariable 
         </Box>
       );
     case 'columns': {
-      const ratio = COLUMN_RATIOS.find((r) => r.value === (b.ratio || '50-50')) || COLUMN_RATIOS[0];
+      const widths = columnWidths(b);
       // Modelo LEGADO (text/textRight sin `cols`): se sigue dibujando para no romper las
       // plantillas guardadas antes de las columnas anidadas.
       const cols: Block[][] = b.cols?.length
         ? b.cols
         : [[{ ...b, type: 'text' as BlockType, cols: undefined }], [{ ...b, type: 'text' as BlockType, text: b.textRight, cols: undefined }]];
       return (
-        <Box sx={{ display: 'grid', gridTemplateColumns: ratio.widths.map((w) => `${w}fr`).join(' '), gap: 1.5 }}>
-          {ratio.widths.map((_, i) => (
+        <Box sx={{ display: 'grid', gridTemplateColumns: widths.map((w) => `${w}fr`).join(' '), gap: 1.5 }}>
+          {widths.map((_, i) => (
             <Box key={i} sx={{ minHeight: 24 }}>
               {(cols[i] || []).map((child) => (
-                <Box key={child.id} sx={{ mb: 1 }}><BlockPreview block={child} /></Box>
+                <Box
+                  key={child.id}
+                  onClick={(e) => { if (onSelectChild) { e.stopPropagation(); onSelectChild(child.id); } }}
+                  sx={{
+                    mb: 1, borderRadius: 1,
+                    outline: selectedId === child.id ? '2px solid #0075be' : '2px solid transparent',
+                    outlineOffset: 2,
+                    '&:hover': onSelectChild ? { outline: '2px dashed rgba(0,117,190,.45)' } : undefined,
+                  }}
+                >
+                  <BlockPreview
+                    block={child}
+                    selectedId={selectedId}
+                    onEditText={selectedId === child.id && onEditChild ? (patch) => onEditChild(child.id, patch) : undefined}
+                    variables={variables}
+                    onRequestVariable={onRequestVariable}
+                  />
+                </Box>
               ))}
+              {/* Columna VACÍA: el "+" es el destino para poner lo que se quiera. Antes
+                  las columnas nacían con texto de relleno que casi siempre se borraba. */}
               {!(cols[i] || []).length && (
-                <Box sx={{ border: '1px dashed #cbd5e1', borderRadius: 1, p: 1, color: '#94a3b8', fontSize: 12, textAlign: 'center' }}>
-                  Columna vacía
+                <Box
+                  onClick={(e) => { if (onAddToColumn) { e.stopPropagation(); onAddToColumn(i, e.currentTarget); } }}
+                  sx={{
+                    border: '2px dashed #cbd5e1', borderRadius: 1.5, minHeight: 84,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: '#94a3b8', cursor: onAddToColumn ? 'pointer' : 'default',
+                    transition: 'border-color .15s, color .15s',
+                    '&:hover': onAddToColumn ? { borderColor: 'primary.main', color: 'primary.main' } : undefined,
+                  }}
+                >
+                  <AddIcon sx={{ fontSize: 30 }} />
                 </Box>
               )}
             </Box>
@@ -1488,6 +1603,9 @@ const BlockEditor = ({
   const isImage = b.type === 'image' || b.type === 'logo';
   const hasText = b.type === 'heading' || b.type === 'text' || b.type === 'button';
   const hasUrl = b.type === 'image' || b.type === 'button' || b.type === 'logo';
+  // Los COMBINADOS salieron de la paleta (el bloque de columnas los cubre mejor), pero su
+  // edición se conserva: una plantilla ya guardada con estos bloques tiene que seguir
+  // siendo editable, no solo renderizable.
   const isCombo = b.type === 'imageText' || b.type === 'textImage';
   const isCta = b.type === 'textButton' || b.type === 'buttonTextRow';
   const isProducts = b.type === 'products';
@@ -1752,73 +1870,78 @@ const BlockEditor = ({
   );
 };
 
-/* --------- Editor de COLUMNAS: proporción + bloques dentro de cada columna --------- */
+/* --------- Editor de COLUMNAS: nº de columnas + distribución de anchos --------- */
+
+/** Miniatura de una distribución (como las tarjetas de layout de un constructor serio). */
+const LayoutThumb = ({ widths, active }: { widths: number[]; active: boolean }) => (
+  <Box
+    sx={{
+      display: 'flex', gap: '3px', p: '5px', borderRadius: 1, height: 42,
+      border: '2px solid', borderColor: active ? 'primary.main' : 'divider',
+      bgcolor: active ? 'rgba(0,117,190,.08)' : 'transparent',
+      cursor: 'pointer', transition: 'border-color .15s, background .15s',
+      '&:hover': { borderColor: 'primary.main' },
+    }}
+  >
+    {widths.map((w, i) => (
+      <Box key={i} sx={{ flex: `${w} 0 0`, borderRadius: '3px', border: '1px dashed', borderColor: active ? 'primary.main' : '#9aa7b8' }} />
+    ))}
+  </Box>
+);
+
 const ColumnsEditor = ({ block: b, onChange }: { block: Block; onChange: (patch: Partial<Block>) => void }) => {
-  const ratio = COLUMN_RATIOS.find((r) => r.value === (b.ratio || '50-50')) || COLUMN_RATIOS[0];
-  // Migración del modelo LEGADO (text/textRight) al de bloques anidados, en el momento
-  // en que el usuario toca las columnas por primera vez.
-  const cols: Block[][] = b.cols?.length
-    ? b.cols
-    : [[{ ...createBlock('text'), text: b.text }], [{ ...createBlock('text'), text: b.textRight }]];
+  const widths = columnWidths(b);
+  const count = widths.length;
+  const cols: Block[][] = b.cols?.length ? b.cols : [[], []];
 
-  const setCols = (next: Block[][]) => onChange({ cols: next });
-
-  const changeRatio = (value: ColumnRatio) => {
-    const target = COLUMN_RATIOS.find((r) => r.value === value)!;
-    const next = target.widths.map((_, i) => cols[i] || []);
-    onChange({ ratio: value, cols: next });
+  /**
+   * Cambiar el NÚMERO de columnas conserva el contenido de las que siguen existiendo.
+   * Al reducir, lo que había en las columnas que desaparecen se MUEVE a la última que
+   * queda, en vez de borrarse en silencio.
+   */
+  const setCount = (n: number) => {
+    const layout = (COLUMN_LAYOUTS[n] || [[100]])[0];
+    const next: Block[][] = layout.map((_, i) => cols[i] || []);
+    if (cols.length > n) {
+      const sobrantes = cols.slice(n).flat();
+      next[n - 1] = [...next[n - 1], ...sobrantes];
+    }
+    onChange({ widths: layout, cols: next });
   };
 
   return (
     <>
       <Divider textAlign="left"><Typography variant="caption" color="text.secondary">Columnas</Typography></Divider>
-      <TextField
-        select label="Proporción" value={b.ratio || '50-50'} size="small" fullWidth
-        onChange={(e) => changeRatio(e.target.value as ColumnRatio)}
-      >
-        {COLUMN_RATIOS.map((r) => <MenuItem key={r.value} value={r.value}>{r.label}</MenuItem>)}
-      </TextField>
 
-      {ratio.widths.map((w, i) => (
-        <Box key={i} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1 }}>
-          <Typography variant="caption" color="text.secondary">Columna {i + 1} ({w}%)</Typography>
-          <Stack spacing={0.75} sx={{ mt: 0.75 }}>
-            {(cols[i] || []).map((child, j) => (
-              <Stack key={child.id} direction="row" spacing={0.5} alignItems="center">
-                <Typography variant="body2" sx={{ flex: 1 }}>{BLOCK_LABELS[child.type]}</Typography>
-                <IconButton
-                  size="small" color="error"
-                  onClick={() => setCols(cols.map((c, ci) => (ci === i ? c.filter((_, cj) => cj !== j) : c)))}
-                >
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
-              </Stack>
-            ))}
-            {(cols[i] || []).map((child, j) => (
-              child.type === 'text' || child.type === 'heading' || child.type === 'button' ? (
-                <TextField
-                  key={`t${child.id}`} size="small" fullWidth multiline minRows={2}
-                  label={`${BLOCK_LABELS[child.type]} ${j + 1}`}
-                  value={richToPlain(blockContentHtml(child.text, child.rich))}
-                  onChange={(e) => setCols(cols.map((c, ci) => (
-                    ci === i ? c.map((cc, cj) => (cj === j ? { ...cc, text: e.target.value, rich: false } : cc)) : c
-                  )))}
-                />
-              ) : null
-            ))}
-            <TextField
-              select size="small" fullWidth value="" label="Agregar bloque"
-              onChange={(e) => {
-                const t = e.target.value as BlockType;
-                if (!t) return;
-                setCols(cols.map((c, ci) => (ci === i ? [...c, createBlock(t)] : c)));
-              }}
-            >
-              {NESTABLE_TYPES.map((t) => <MenuItem key={t} value={t}>{BLOCK_LABELS[t]}</MenuItem>)}
-            </TextField>
-          </Stack>
+      <Box>
+        <Typography variant="body2" color="text.secondary" gutterBottom>
+          Número de columnas: <strong>{count}</strong>
+        </Typography>
+        <Slider
+          value={count} min={1} max={MAX_COLUMNS} step={1} marks
+          valueLabelDisplay="auto" size="small"
+          onChange={(_, v) => setCount(v as number)}
+        />
+      </Box>
+
+      <Box>
+        <Typography variant="body2" color="text.secondary" gutterBottom>Distribución</Typography>
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+          {(COLUMN_LAYOUTS[count] || [[100]]).map((layout) => (
+            <Box key={layout.join('-')} onClick={() => onChange({ widths: layout })}>
+              <LayoutThumb widths={layout} active={layout.join('-') === widths.join('-')} />
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center' }}>
+                {layout.map((w) => `${w}%`).join(' · ')}
+              </Typography>
+            </Box>
+          ))}
         </Box>
-      ))}
+      </Box>
+
+      <Typography variant="caption" color="text.secondary">
+        Usa el <strong>+</strong> de cada columna en el lienzo para poner dentro lo que
+        quieras (texto, imagen, botón…). Haz clic en un elemento para editarlo.
+      </Typography>
     </>
   );
 };

@@ -40,15 +40,38 @@ export interface ProductItem {
   url?: string;
 }
 
-/** Proporciones disponibles para el bloque de columnas. */
+/** Máximo de columnas por fila. Más allá, en móvil cada celda queda inservible y en
+ *  Outlook la tabla se desarma. */
+export const MAX_COLUMNS = 4;
+
+/**
+ * Distribuciones de ancho disponibles POR NÚMERO de columnas. Cada una suma 100.
+ * El usuario elige primero cuántas columnas (1-4) y luego la proporción, que es como
+ * funcionan los constructores de correo serios.
+ */
+export const COLUMN_LAYOUTS: Record<number, number[][]> = {
+  1: [[100]],
+  2: [[50, 50], [33, 67], [67, 33], [25, 75], [75, 25]],
+  3: [[33, 34, 33], [25, 50, 25], [50, 25, 25], [25, 25, 50]],
+  4: [[25, 25, 25, 25]],
+};
+
+/** Proporciones del modelo VIEJO (se conservan para leer plantillas ya guardadas). */
 export type ColumnRatio = '50-50' | '33-67' | '67-33' | '33-33-33';
 
-export const COLUMN_RATIOS: { value: ColumnRatio; label: string; widths: number[] }[] = [
-  { value: '50-50', label: '2 columnas iguales', widths: [50, 50] },
-  { value: '33-67', label: '1/3 + 2/3', widths: [33, 67] },
-  { value: '67-33', label: '2/3 + 1/3', widths: [67, 33] },
-  { value: '33-33-33', label: '3 columnas iguales', widths: [33, 34, 33] },
-];
+const LEGACY_RATIOS: Record<ColumnRatio, number[]> = {
+  '50-50': [50, 50],
+  '33-67': [33, 67],
+  '67-33': [67, 33],
+  '33-33-33': [33, 34, 33],
+};
+
+/** Anchos efectivos de un bloque de columnas: modelo nuevo → legado → 50/50. */
+export const columnWidths = (b: Block): number[] => {
+  if (b.widths?.length) return b.widths;
+  if (b.ratio && LEGACY_RATIOS[b.ratio]) return LEGACY_RATIOS[b.ratio];
+  return [50, 50];
+};
 
 export interface Block {
   id: string;
@@ -85,6 +108,9 @@ export interface Block {
   items?: ProductItem[]; // products: lista de productos
 
   // ── Columnas con bloques anidados ──
+  /** Anchos en % (suman 100). Su LONGITUD es el número de columnas (1-4). */
+  widths?: number[];
+  /** LEGADO: proporción del modelo viejo; `widths` la reemplaza. */
   ratio?: ColumnRatio;
   /** Contenido de cada columna. Un nivel de anidamiento (no hay columnas dentro de
    *  columnas: en correo eso multiplica las tablas y rompe en Outlook). */
@@ -139,12 +165,20 @@ export const BLOCK_LABELS: Record<BlockType, string> = {
   products: 'Productos',
 };
 
-/** Agrupación de la paleta (contenido / combinados / estructura), como Topol/MailPro. */
+/**
+ * Paleta. Los COMBINADOS (imagen+texto, texto+botón…) salieron: eran atajos rígidos que
+ * el bloque de COLUMNAS ahora cubre mejor — se elige la distribución y se pone dentro lo
+ * que se quiera. Se siguen RENDERIZANDO para no romper las plantillas ya guardadas, pero
+ * no se pueden crear nuevos.
+ */
 export const PALETTE_GROUPS: { label: string; types: BlockType[] }[] = [
-  { label: 'Contenido', types: ['heading', 'text', 'image', 'button', 'logo', 'social', 'html'] },
-  { label: 'Combinados', types: ['imageText', 'textImage', 'textButton', 'buttonTextRow', 'products'] },
+  { label: 'Contenido', types: ['heading', 'text', 'image', 'button', 'logo'] },
   { label: 'Estructura', types: ['columns', 'divider', 'spacer'] },
+  { label: 'Avanzado', types: ['social', 'products', 'html'] },
 ];
+
+/** Tipos que ya no se ofrecen en la paleta pero siguen renderizando (plantillas viejas). */
+export const LEGACY_TYPES: BlockType[] = ['imageText', 'textImage', 'textButton', 'buttonTextRow'];
 
 /** Tipos que se pueden anidar DENTRO de una columna (nada que ya sea una tabla ancha). */
 export const NESTABLE_TYPES: BlockType[] = ['heading', 'text', 'image', 'button', 'divider', 'spacer'];
@@ -181,12 +215,10 @@ export const createBlock = (type: BlockType): Block => {
       return { ...b, text: 'Ver más', url: 'https://', align: 'center', color: '#0075be' };
     case 'logo':
       return { ...b, url: '', align: 'center', color: '' };
+    // Nacen VACÍAS: el lienzo muestra un "+" por columna para poner lo que se quiera.
+    // Antes venían con dos bloques de texto que casi siempre había que borrar.
     case 'columns':
-      return {
-        ...b,
-        ratio: '50-50',
-        cols: [[createBlock('text')], [createBlock('text')]],
-      };
+      return { ...b, widths: [50, 50], cols: [[], []] };
     case 'social':
       return {
         ...b,
@@ -345,8 +377,7 @@ function productsHtml(b: Block, st: EmailSettings): string {
  * romper las plantillas guardadas con el modelo viejo.
  */
 function columnsHtml(b: Block, st: EmailSettings): string {
-  const ratio = COLUMN_RATIOS.find((r) => r.value === (b.ratio || '50-50')) || COLUMN_RATIOS[0];
-  const widths = ratio.widths;
+  const widths = columnWidths(b);
   const cols: Block[][] = b.cols?.length
     ? b.cols
     : [[{ ...b, type: 'text', cols: undefined }], [{ ...b, type: 'text', text: b.textRight, cols: undefined }]];

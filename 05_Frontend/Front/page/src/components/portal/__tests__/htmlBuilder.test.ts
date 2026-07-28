@@ -17,7 +17,9 @@ import {
   generateHtml,
   analyzeTemplate,
   DEFAULT_SETTINGS,
-  COLUMN_RATIOS,
+  COLUMN_LAYOUTS,
+  MAX_COLUMNS,
+  columnWidths,
   type Block,
 } from '../htmlBuilder';
 
@@ -166,8 +168,8 @@ describe('generateHtml — el correo resultante', () => {
     expect(generateHtml([b], { ...settings, darkMode: false })).not.toContain('prefers-color-scheme');
   });
 
-  it('las columnas respetan la proporción elegida', () => {
-    const b = { ...createBlock('columns'), ratio: '33-67' as const };
+  it('las columnas respetan la distribución elegida', () => {
+    const b = { ...createBlock('columns'), widths: [33, 67] };
     const out = withBlocks([b]);
     expect(out).toContain('width="33%"');
     expect(out).toContain('width="67%"');
@@ -252,10 +254,34 @@ describe('richToPlain', () => {
   });
 });
 
-describe('COLUMN_RATIOS', () => {
-  it('toda proporción suma 100 (si no, la fila se desarma en el correo)', () => {
-    for (const r of COLUMN_RATIOS) {
-      expect(r.widths.reduce((a, b) => a + b, 0)).toBe(100);
+describe('distribuciones de columnas', () => {
+  it('toda distribución suma 100 (si no, la fila se desarma en el correo)', () => {
+    for (const [n, layouts] of Object.entries(COLUMN_LAYOUTS)) {
+      for (const l of layouts) {
+        expect(l.reduce((a: number, b: number) => a + b, 0)).toBe(100);
+        expect(l).toHaveLength(Number(n));
+      }
     }
+  });
+
+  it('no se ofrecen más de 4 columnas (en móvil cada celda quedaría inservible)', () => {
+    expect(Math.max(...Object.keys(COLUMN_LAYOUTS).map(Number))).toBe(MAX_COLUMNS);
+  });
+
+  it('las columnas nacen VACÍAS, para poner dentro lo que se quiera', () => {
+    const b = createBlock('columns');
+    expect(b.cols).toEqual([[], []]);
+    expect(columnWidths(b)).toEqual([50, 50]);
+  });
+
+  it('lee la proporción del modelo VIEJO (`ratio`) si no hay `widths`', () => {
+    const legacy = { ...createBlock('columns'), widths: undefined, ratio: '33-67' as const };
+    expect(columnWidths(legacy)).toEqual([33, 67]);
+  });
+
+  it('renderiza los anchos elegidos por el usuario', () => {
+    const b = { ...createBlock('columns'), widths: [25, 25, 25, 25] };
+    const out = generateHtml([b], settings);
+    expect((out.match(/width="25%"/g) || []).length).toBe(4);
   });
 });
