@@ -317,6 +317,43 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   logo propio que reemplaza la insignia, y un guard de que la tabla de iconos NO lleva
   `align` — el float que colapsaba el bloque).
 
+### Constructor HTML: logos reales por defecto, oscuro en vista previa y color del texto (ago 2026)
+- **Color de texto en el bloque TEXTO.** `hasColor` era `heading || button`: el generador ya
+  respetaba `b.color` en `text`, solo faltaba exponer el campo. Se agrega, con un botón para
+  **volver a heredar** el color global — sin él, un input de color no admite vacío y el
+  bloque quedaba atado a ese color para siempre.
+- **Cargar deja de ofrecer plantillas de SES.** SES guarda el correo ya armado y solo podía
+  volver como un bloque de HTML crudo, que no es editable de verdad. El diálogo lista solo
+  **diseños editables**. (`Api_V1_Template_Get-template` sigue existiendo para el admin.)
+- **Los LOGOS REALES pasan a ser el render por defecto** y la insignia con la inicial queda
+  como respaldo defensivo (un diseño sin iconos todavía). El estilo "Colores de cada red"
+  ahora tiñe el logo real con el color de marca de cada una; "Un solo color" pierde el
+  "(tu marca)". Campos nuevos: `socialBadge` (con insignia / solo el logo) y `socialGlyph`
+  (color del logo sobre la insignia).
+- **La configuración sale del modal y entra a PROPIEDADES** (estilo, color, fondo, forma,
+  tamaño); se elimina el botón "Usar los logos reales" y `SocialIconPackDialog`.
+- ⚠️ **La subida a S3 pasa al PUBLICADO.** Mientras se configura, los logos se ven como
+  `data:` URI generados al vuelo (`useSocialPreviews`) — que Gmail bloquea, así que **no
+  pueden viajar en el correo**. Al publicar se generan los PNG con los colores elegidos, se
+  suben al bucket del cliente y ahí se arma el HTML. Así tocar un color no deja un archivo
+  huérfano en el bucket por cada ajuste. Si una subida falla, **no se publica nada**: mejor
+  parar que enviar un correo con iconos rotos.
+- ⚠️ **Con logo NO se repinta el fondo del `td`**: la insignia (color y forma) va horneada
+  en el PNG, y volver a pintarla dejaba un halo cuadrado alrededor de la forma redondeada.
+- **Resolución**: los PNG suben a **4× con piso de 160 px** de lado (antes 3× → 102 px, que
+  se veían blandos en cuanto el cliente los agrandaba). Pesan pocos KB.
+- **Modo oscuro en la VISTA PREVIA** (`forceDarkPreview`): convierte la media query
+  `prefers-color-scheme: dark` del propio correo en una regla incondicional. ⚠️ Es la única
+  simulación fiel: dentro de un `iframe`, `prefers-color-scheme` sigue la preferencia del
+  NAVEGADOR y la página padre no puede imponerla. Si "Modo oscuro" no está activo en
+  Ajustes, se avisa de que no hay reglas que previsualizar.
+- ℹ️ **Los logos en modo oscuro**: con insignia se ven perfectos (el contraste vive DENTRO
+  de la imagen). "Solo el logo" con un color oscuro **desaparece** sobre un fondo oscuro —
+  el panel lo advierte.
+- **Cobertura:** `htmlBuilder.test.ts` sube a **98** (+7: fondo y glifo por estilo, sin
+  insignia el logo toma el color, glifo personalizado y hex a medias, sin `bgcolor` cuando
+  no hay insignia, y que el oscuro forzado use las mismas reglas del correo).
+
 ### Constructor HTML: inserción, ajustes globales y guardado editable (ago 2026)
 - **Agregar por CLIC inserta DEBAJO del bloque seleccionado**, no al final del todo (que
   obligaba a arrastrarlo de vuelta por medio correo — justo lo que uno evita al hacer clic

@@ -19,8 +19,16 @@
 
 import type { SocialLinks, SocialShape } from './htmlBuilder';
 
-/** Escala de render respecto al tamaño lógico de la insignia (nitidez en retina). */
-const SCALE = 3;
+/**
+ * Escala de render respecto al tamaño lógico, y piso absoluto de lado en px.
+ *
+ * El correo se ve en pantallas de 2x y 3x, y algunos clientes reescalan las imágenes por
+ * su cuenta, así que se genera con holgura: el archivo pesa unos pocos KB y no hay razón
+ * para quedarse corto. Con 3x y una insignia de 34 px salían PNG de 102 px, que se veían
+ * blandos en cuanto el cliente los agrandaba.
+ */
+const SCALE = 4;
+const MIN_LADO = 160;
 
 export interface IconPackStyle {
   /** Color del logo. */
@@ -77,7 +85,7 @@ export async function renderIconCanvas(
   style: IconPackStyle,
 ): Promise<HTMLCanvasElement> {
   const img = await loadImage(iconSource(network));
-  const s = Math.round(style.size * SCALE);
+  const s = Math.max(MIN_LADO, Math.round(style.size * SCALE));
 
   const canvas = document.createElement('canvas');
   canvas.width = s;

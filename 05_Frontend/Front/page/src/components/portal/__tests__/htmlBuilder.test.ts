@@ -28,6 +28,9 @@ import {
   isHexColor,
   socialMonoColor,
   socialRadius,
+  socialBgFor,
+  socialGlyphFor,
+  forceDarkPreview,
   DEFAULT_SOCIAL_MONO,
   type Block,
 } from '../htmlBuilder';
@@ -633,14 +636,17 @@ describe('forma de las insignias de redes', () => {
       .toContain('border-radius:10px');
   });
 
-  it('el logo PROPIO reemplaza la insignia y respeta la forma', () => {
-    const html = generateHtml([conRedes({
+  it('el logo real reemplaza la insignia y NO se le repinta el fondo', () => {
+    // Se mira SOLO el bloque: el documento completo tiene border-radius por otras razones
+    // (las esquinas del contenedor), así que buscarlo en todo el HTML no probaría nada.
+    const bloque = renderBlock(conRedes({
       socialShape: 'rounded', socialSize: 40, icons: { facebook: 'https://cdn.mio/fb.png' },
-    })], settings);
-    expect(html).toContain('<img src="https://cdn.mio/fb.png"');
-    expect(html).toContain('border-radius:10px');
-    // Con logo propio no se pinta el fondo de color: la imagen ya lo trae.
-    expect(html).not.toContain('bgcolor="#1877F2"');
+    }), settings);
+    expect(bloque).toContain('<img src="https://cdn.mio/fb.png"');
+    // La insignia (color y forma) va HORNEADA en el PNG. Volver a pintarla en el `td`
+    // dejaría un halo cuadrado alrededor de la forma redondeada del logo.
+    expect(bloque).not.toContain('bgcolor="#1877F2"');
+    expect(bloque).not.toContain('border-radius');
   });
 
   it('la alineación NO usa align en la tabla de iconos (sería un float)', () => {
@@ -700,5 +706,59 @@ describe('ajustes globales: color de texto y fuente', () => {
     const html = generateHtml([createBlock('text')], st);
     expect(html).toContain('#ffe0e0');
     expect(html).toContain('#fffff0');
+  });
+});
+
+describe('logos de redes: insignia y color', () => {
+  const conRedes = (extra: Partial<Block> = {}) => ({
+    ...createBlock('social'),
+    links: { facebook: 'https://fb.com/x' },
+    ...extra,
+  } as Block);
+
+  it('con insignia, el logo va del color de glifo y el fondo del de la red', () => {
+    const b = conRedes();
+    expect(socialBgFor(b, '#1877F2')).toBe('#1877F2');
+    expect(socialGlyphFor(b, '#1877F2')).toBe('#ffffff');
+  });
+
+  it('en "un solo color" el fondo es el elegido, no el de cada red', () => {
+    const b = conRedes({ socialStyle: 'mono', socialColor: '#0075be' });
+    expect(socialBgFor(b, '#1877F2')).toBe('#0075be');
+  });
+
+  it('sin insignia, el LOGO toma el color (no hay fondo donde ponerlo)', () => {
+    const b = conRedes({ socialBadge: false });
+    expect(socialGlyphFor(b, '#1877F2')).toBe('#1877F2');
+    const mono = conRedes({ socialBadge: false, socialStyle: 'mono', socialColor: '#111111' });
+    expect(socialGlyphFor(mono, '#1877F2')).toBe('#111111');
+  });
+
+  it('el color del glifo se puede personalizar', () => {
+    expect(socialGlyphFor(conRedes({ socialGlyph: '#ffee00' }), '#1877F2')).toBe('#ffee00');
+    // Un hex a medio escribir no llega: se cae al blanco.
+    expect(socialGlyphFor(conRedes({ socialGlyph: '#ff' }), '#1877F2')).toBe('#ffffff');
+  });
+
+  it('sin insignia el correo NO pinta fondo en la celda', () => {
+    const bloque = renderBlock(conRedes({ socialBadge: false }), settings);
+    expect(bloque).not.toContain('bgcolor=');
+  });
+});
+
+describe('vista previa en modo oscuro', () => {
+  it('fuerza las MISMAS reglas del correo, no un estilo aparte', () => {
+    // prefers-color-scheme dentro de un iframe sigue la preferencia del NAVEGADOR, así que
+    // la única simulación fiel es aplicar la propia media query del correo.
+    const html = generateHtml([createBlock('text')], { ...settings, darkMode: true });
+    expect(html).toContain('@media (prefers-color-scheme: dark)');
+    const oscuro = forceDarkPreview(html);
+    expect(oscuro).not.toContain('prefers-color-scheme');
+    expect(oscuro).toContain('@media all');
+  });
+
+  it('sin modo oscuro activo no hay nada que forzar', () => {
+    const html = generateHtml([createBlock('text')], { ...settings, darkMode: false });
+    expect(forceDarkPreview(html)).toBe(html);
   });
 });

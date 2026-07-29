@@ -62,11 +62,23 @@ export const SOCIAL_NETWORKS: { key: keyof SocialLinks; label: string; color: st
 /**
  * Estilo del bloque de redes:
  *  - `badge` — cada red con SU color de marca (Facebook azul, Instagram rosa…).
- *  - `mono`  — todas del MISMO color, el que elija el cliente (`socialColor`). Es lo que
- *              pide un manual de marca serio: los colores ajenos rompen la paleta.
+ *  - `mono`  — todas del MISMO color, el que elija el cliente (`socialColor`).
  *  - `text`  — LEGADO: enlaces de texto separados por puntos.
  */
 export type SocialStyle = 'badge' | 'mono' | 'text';
+
+/**
+ * Color de FONDO de la insignia de una red según el estilo del bloque.
+ * Con `mono` todas comparten el color elegido; si no, cada una lleva el suyo de marca.
+ */
+export const socialBgFor = (b: Block, color: string): string =>
+  (b.socialStyle === 'mono' ? socialMonoColor(b.socialColor) : color);
+
+/** Color del LOGO. Sobre insignia va el color de glifo (blanco por defecto); suelto, el de la red. */
+export const socialGlyphFor = (b: Block, color: string): string => {
+  if (b.socialBadge === false) return socialBgFor(b, color);
+  return isHexColor(b.socialGlyph) ? String(b.socialGlyph) : '#ffffff';
+};
 
 /** Color único de las insignias cuando el estilo es `mono`. */
 export const DEFAULT_SOCIAL_MONO = '#16233f';
@@ -84,6 +96,18 @@ export const socialRadius = (size: number, shape?: SocialShape): number => {
   if (shape === 'rounded') return Math.max(4, Math.round(size * 0.26));
   return Math.round(size / 2);
 };
+
+/**
+ * Fuerza las reglas de MODO OSCURO para poder previsualizarlas: convierte la media query
+ * `prefers-color-scheme: dark` en una regla incondicional.
+ *
+ * ⚠️ Es la única forma fiel de simularlo: `prefers-color-scheme` dentro de un `iframe`
+ * sigue la preferencia del NAVEGADOR, no algo que la página padre pueda imponer. Al
+ * reescribir la media query se aplican EXACTAMENTE las mismas reglas que aplicaría un
+ * cliente en oscuro, en vez de una aproximación pintada aparte.
+ */
+export const forceDarkPreview = (html: string): string =>
+  html.replace(/@media\s*\(prefers-color-scheme:\s*dark\)/g, '@media all');
 
 export const isHexColor = (v?: string): boolean => /^#[0-9a-fA-F]{6}$/.test(String(v || '').trim());
 
@@ -153,7 +177,15 @@ export interface Block {
   socialShape?: SocialShape;
   /** Tamaño de la insignia en px. */
   socialSize?: number;
-  /** Icono PROPIO por red (URL de una imagen subida por el cliente). Si está, gana. */
+  /** Dibujar la insignia de fondo detrás del logo (default true). */
+  socialBadge?: boolean;
+  /** Color del LOGO cuando va sobre insignia (default blanco). */
+  socialGlyph?: string;
+  /**
+   * URL PÚBLICA del logo por red. La llena el PUBLICADO: los PNG se generan recoloreando
+   * las máscaras del repo y se suben al bucket del cliente en ese momento, no mientras se
+   * configura (así tocar un color no deja un archivo huérfano por cada ajuste).
+   */
   icons?: Partial<Record<keyof SocialLinks, string>>;
 
   /** El contenido de `text` (y `heading`) es HTML EN LÍNEA, no texto plano. Marca por
@@ -425,15 +457,19 @@ function socialRow(b: Block, st: EmailSettings): string {
   const radio = socialRadius(size, b.socialShape);
   const celdas = activos.map((n) => {
     const href = esc(String(links[n.key]));
-    const propio = b.icons?.[n.key];
-    // En `mono` todas comparten el color elegido por el cliente; en `badge`, el de cada marca.
-    const color = style === 'mono' ? socialMonoColor(b.socialColor) : n.color;
-    const contenido = propio
-      ? `<img src="${esc(propio)}" alt="${esc(n.label)}" width="${size}" height="${size}" style="display:block;width:${size}px;height:${size}px;border:0;border-radius:${radio}px;" />`
-      : `<a href="${href}" target="_blank" style="display:block;width:${size}px;height:${size}px;line-height:${size}px;text-align:center;font-family:${st.fontFamily};font-size:${Math.round(size * 0.42)}px;font-weight:bold;color:#ffffff;text-decoration:none;">${esc(n.initial)}</a>`;
-    const bg = propio ? '' : ` bgcolor="${color}"`;
-    const bgStyle = propio ? '' : `background-color:${color};`;
-    return `<td style="padding:0 5px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0"><tr><td${bg} style="${bgStyle}border-radius:${radio}px;" width="${size}" height="${size}" align="center" valign="middle">${propio ? `<a href="${href}" target="_blank" style="display:block;text-decoration:none;">${contenido}</a>` : contenido}</td></tr></table></td>`;
+    // El LOGO real (imagen ya recoloreada) es lo normal; lo pone el publicado. La insignia
+    // con la inicial queda solo como respaldo defensivo para un diseño sin iconos todavía.
+    const logo = b.icons?.[n.key];
+    const color = socialBgFor(b, n.color);
+    const contenido = logo
+      ? `<img src="${esc(logo)}" alt="${esc(n.label)}" width="${size}" height="${size}" style="display:block;width:${size}px;height:${size}px;border:0;" />`
+      : `<a href="${href}" target="_blank" style="display:block;width:${size}px;height:${size}px;line-height:${size}px;text-align:center;font-family:${st.fontFamily};font-size:${Math.round(size * 0.42)}px;font-weight:bold;color:${socialGlyphFor(b, n.color)};text-decoration:none;">${esc(n.initial)}</a>`;
+    // Con logo el fondo ya viene DENTRO del PNG: pintarlo otra vez en el `td` duplicaría
+    // la insignia y se vería un halo cuadrado alrededor de la forma redondeada.
+    const conFondo = !logo && b.socialBadge !== false;
+    const bg = conFondo ? ` bgcolor="${color}"` : '';
+    const bgStyle = conFondo ? `background-color:${color};border-radius:${radio}px;` : '';
+    return `<td style="padding:0 5px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0"><tr><td${bg} style="${bgStyle}" width="${size}" height="${size}" align="center" valign="middle">${logo ? `<a href="${href}" target="_blank" style="display:block;text-decoration:none;">${contenido}</a>` : contenido}</td></tr></table></td>`;
   });
 
   // ⚠️ `align` NO puede ir en esta tabla: por la especificación de HTML,

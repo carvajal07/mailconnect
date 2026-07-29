@@ -68,14 +68,14 @@ import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import FormatClearIcon from '@mui/icons-material/FormatClear';
 import KeyboardIcon from '@mui/icons-material/Keyboard';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import LightModeIcon from '@mui/icons-material/LightMode';
+import DarkModeIcon from '@mui/icons-material/DarkMode';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
 import { formatDateTime } from '../../utils/datetime';
 import { templatesService, sendTestEmail } from '../../services/templatesService';
-import type { TemplateSummary } from '../../services/templatesService';
 import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
@@ -83,8 +83,9 @@ import { allPresets, customPresets, cloneBlocks, type TemplatePreset } from './t
 import { emailDesigns } from '../../services/messageTemplatesService';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 import { ImageLibraryDialog } from './ImageLibraryDialog';
-import { SocialIconPackDialog } from './SocialIconPackDialog';
 import { AlignPicker } from './AlignPicker';
+import { useSocialPreviews, withPreviewIcons, activeNetworks } from './useSocialPreviews';
+import { renderIconFile } from './socialIconPack';
 import {
   BLOCK_LABELS,
   VARIABLES,
@@ -95,7 +96,10 @@ import {
   SOCIAL_NETWORKS,
   DEFAULT_SOCIAL_MONO,
   socialMonoColor,
+  socialBgFor,
+  socialGlyphFor,
   isHexColor,
+  forceDarkPreview,
   videoThumbnail,
   youtubeId,
   columnWidths,
@@ -198,6 +202,8 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [settings, setSettings] = useState<EmailSettings>({ ...DEFAULT_SETTINGS });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<'editor' | 'preview'>('editor');
+  /** Vista previa simulando el MODO OSCURO del cliente de correo. */
+  const [darkPreview, setDarkPreview] = useState(false);
 
   /**
    * Ventana de edición APARTE (overlay a pantalla completa), igual que el Estudio y el
@@ -379,19 +385,11 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [showHtml, setShowHtml] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loadOpen, setLoadOpen] = useState(false);
-  const [loadName, setLoadName] = useState('');
-  const [sesTemplates, setSesTemplates] = useState<TemplateSummary[]>([]);
-  const [loadingSesList, setLoadingSesList] = useState(false);
 
   /** Abre el diálogo de carga y trae la lista de plantillas SES del cliente. */
-  /** Abre el diálogo y trae las DOS fuentes: diseños editables y plantillas de SES. */
-  const openLoadDialog = async () => {
+  /** Abre el diálogo y trae los diseños editables del equipo. */
+  const openLoadDialog = () => {
     setLoadOpen(true);
-    if (!sessionCustomer && !sessionCustomerId) return;
-    setLoadingSesList(true);
-    const res = await templatesService.list(sessionCustomer, sessionCustomerId);
-    setLoadingSesList(false);
-    if (isOk(res) && res.data?.templates) setSesTemplates(res.data.templates);
     void cargarDisenos();
   };
 
@@ -407,7 +405,6 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     setLoadOpen(false);
     notify(`Diseño "${d.name}" cargado. Puedes editarlo bloque a bloque.`, 'success');
   };
-  const [loading, setLoading] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [meta, setMeta] = useState({ templateName: '', subject: '' });
@@ -428,12 +425,17 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
    * función o fuera del constructor. Son las únicas para las que tiene sentido importar
    * HTML crudo.
    */
-  const sesOnly = useMemo(() => {
-    const publicadas = new Set(sharedDesigns.map((d) => d.sesTemplate).filter(Boolean));
-    return sesTemplates.filter((t) => !publicadas.has(t.name));
-  }, [sesTemplates, sharedDesigns]);
 
-  const html = useMemo(() => generateHtml(blocks, settings), [blocks, settings]);
+  /**
+   * Logos de redes recoloreados para VER mientras se edita (data: URI). Los archivos
+   * reales se generan y suben al publicar; aquí solo se pintan.
+   */
+  const socialPreviews = useSocialPreviews(blocks);
+  const blocksVista = useMemo(
+    () => withPreviewIcons(blocks, socialPreviews), [blocks, socialPreviews],
+  );
+
+  const html = useMemo(() => generateHtml(blocksVista, settings), [blocksVista, settings]);
   // Chequeo previo de entregabilidad (peso, alt, enlaces vacíos, imagen/texto…).
   const issues = useMemo(() => analyzeTemplate(blocks, settings, html), [blocks, settings, html]);
   const bytes = useMemo(() => htmlBytes(html), [html]);
@@ -656,25 +658,6 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   };
 
   /* ---------------- Cargar desde SES (get-template) ---------------- */
-  const handleLoadFromSes = async () => {
-    const name = loadName.trim();
-    if (!name) return;
-    setLoading(true);
-    const res = await templatesService.get(sessionUserId, name);
-    setLoading(false);
-    if (isOk(res) && res.template) {
-      const rawHtml = res.template.HtmlPart ?? '';
-      const block = { ...createBlock('html'), text: rawHtml };
-      setBlocks([block]);
-      setSelectedId(block.id);
-      setMeta((m) => ({ ...m, templateName: res.template?.TemplateName || name, subject: res.template?.SubjectPart || '' }));
-      notify('Plantilla cargada como bloque HTML para editar.', 'success');
-      setLoadOpen(false);
-      setLoadName('');
-    } else {
-      notify(res.description || 'No se encontró la plantilla en SES.', 'error');
-    }
-  };
 
   /* ---------------- Publicar (create-template) ---------------- */
   const handleSave = async () => {
@@ -686,13 +669,20 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     }
     if (blocks.length === 0) return notify('Agrega al menos un bloque antes de guardar.', 'warning');
     setSaving(true);
+
+    // Los logos de redes se suben AHORA: mientras se configuraba solo existían como
+    // `data:` URI (que Gmail bloquea). Se hace al publicar y no antes para no dejar un PNG
+    // huérfano en el bucket por cada ajuste de color.
+    const conIconos = await subirIconosDeRedes(blocks);
+    if (!conIconos) { setSaving(false); return; }
+    const htmlFinal = generateHtml(conIconos, settings);
     const res = await templatesService.create({
       userId: sessionUserId,
       customerId: sessionCustomerId,
       channel: 1,
       templateName: meta.templateName,
       subject: meta.subject,
-      htmlBody: html,
+      htmlBody: htmlFinal,
       // Alternativa de texto plano completa (recorre TODO, incluidas las columnas, y
       // lleva el enlace de baja). Antes emitía el HTML crudo de los bloques enriquecidos
       // y se saltaba botones/columnas/productos.
@@ -711,7 +701,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     const guardado = await emailDesigns.save(
       sessionCustomerId,
       meta.templateName,
-      { blocks, settings, sesTemplate: sesName, subject: meta.subject },
+      { blocks: conIconos, settings, sesTemplate: sesName, subject: meta.subject },
       designId ?? sharedDesigns.find((d) => d.name === meta.templateName)?.messageTemplateId,
     );
     setSaving(false);
@@ -724,6 +714,61 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
       notify('Publicada en SES, pero el diseño editable no se pudo guardar: '
         + (guardado.description || 'error') + '. Guárdalo con "Guardar plantilla".', 'warning');
     }
+  };
+
+  /**
+   * Genera los PNG de los logos de redes con los colores configurados y los sube al bucket
+   * del cliente, devolviendo los bloques con las URLs públicas puestas.
+   *
+   * Devuelve `null` si algo falla, para NO publicar un correo cuyos iconos apuntarían a
+   * `data:` URI (que Gmail bloquea) o a nada: es preferible parar y avisar.
+   */
+  const subirIconosDeRedes = async (lista: Block[]): Promise<Block[] | null> => {
+    const tieneRedes = (bs: Block[]): boolean =>
+      bs.some((b) => (b.type === 'social' && activeNetworks(b).length > 0)
+        || (b.cols || []).some((c) => tieneRedes(c)));
+    if (!tieneRedes(lista)) return lista;
+
+    const procesar = async (bs: Block[]): Promise<Block[] | null> => {
+      const out: Block[] = [];
+      for (const b of bs) {
+        let cols = b.cols;
+        if (b.cols?.length) {
+          const hijos: Block[][] = [];
+          for (const c of b.cols) {
+            const r = await procesar(c);
+            if (!r) return null;
+            hijos.push(r);
+          }
+          cols = hijos;
+        }
+        if (b.type !== 'social') { out.push({ ...b, cols }); continue; }
+        const icons = { ...(b.icons || {}) };
+        for (const red of activeNetworks(b)) {
+          // Un icono que el cliente subió a mano se respeta tal cual.
+          if (b.icons?.[red] && !b.icons[red]!.startsWith('data:')) continue;
+          const color = SOCIAL_NETWORKS.find((n) => n.key === red)?.color || '#0075be';
+          try {
+            const archivo = await renderIconFile(red, {
+              glyph: socialGlyphFor(b, color),
+              background: b.socialBadge === false ? '' : socialBgFor(b, color),
+              shape: b.socialShape || 'circle',
+              size: b.socialSize ?? 34,
+            });
+            const url = await uploadImage(archivo);
+            if (!url) throw new Error('la subida no devolvió URL');
+            icons[red] = url;
+          } catch (e) {
+            notify(`No se pudo preparar el icono de ${red}: ${(e as Error).message}. `
+              + 'No se publicó nada.', 'error');
+            return null;
+          }
+        }
+        out.push({ ...b, icons, cols });
+      }
+      return out;
+    };
+    return procesar(lista);
   };
 
   const draftList = useMemo(() => drafts.list(), [draftsVersion]);
@@ -1071,7 +1116,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
             </Stack>
           </Paper>
 
-          <Stack direction="row" justifyContent="center" mb={1.5}>
+          <Stack direction="row" justifyContent="center" alignItems="center" spacing={1.5} mb={1.5} flexWrap="wrap" useFlexGap>
             <ToggleButtonGroup size="small" exclusive value={device} onChange={(_, v) => v && setDevice(v)}>
               <ToggleButton value="desktop">
                 <DesktopWindowsIcon fontSize="small" sx={{ mr: 0.5 }} /> Escritorio
@@ -1080,6 +1125,23 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                 <PhoneAndroidIcon fontSize="small" sx={{ mr: 0.5 }} /> Móvil
               </ToggleButton>
             </ToggleButtonGroup>
+            {/* Simula el modo oscuro del cliente aplicando las MISMAS reglas
+                `prefers-color-scheme` del correo, no una aproximación aparte. */}
+            <ToggleButtonGroup size="small" exclusive value={darkPreview ? 'dark' : 'light'}
+              onChange={(_, v) => v && setDarkPreview(v === 'dark')}>
+              <ToggleButton value="light">
+                <LightModeIcon fontSize="small" sx={{ mr: 0.5 }} /> Claro
+              </ToggleButton>
+              <ToggleButton value="dark">
+                <DarkModeIcon fontSize="small" sx={{ mr: 0.5 }} /> Oscuro
+              </ToggleButton>
+            </ToggleButtonGroup>
+            {darkPreview && !settings.darkMode && (
+              <Typography variant="caption" color="warning.main">
+                Activa "Modo oscuro" en Ajustes: sin esas reglas, cada cliente invierte los
+                colores por su cuenta y no hay nada que previsualizar.
+              </Typography>
+            )}
           </Stack>
           <Paper variant="outlined" sx={{ p: 2, bgcolor: settings.pageBg, display: 'flex', justifyContent: 'center' }}>
             <Box
@@ -1093,7 +1155,11 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                 bgcolor: '#fff',
               }}
             >
-              <iframe title="preview" srcDoc={html} style={{ width: '100%', height: '70vh', border: 0, display: 'block' }} />
+              <iframe
+                title="preview"
+                srcDoc={darkPreview ? forceDarkPreview(html) : html}
+                style={{ width: '100%', height: '70vh', border: 0, display: 'block' }}
+              />
             </Box>
           </Paper>
         </Box>
@@ -1269,7 +1335,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                       bgcolor: b.bgColor || 'transparent',
                     }}>
                       <BlockPreview
-                        block={b}
+                        block={blocksVista[index] ?? b}
                         settings={settings}
                         selectedId={selectedId}
                         onEditText={selectedId === b.id ? (patch) => updateSelected(patch) : undefined}
@@ -1611,21 +1677,20 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         </DialogActions>
       </Dialog>
 
-      {/* Cargar: diseño EDITABLE (preferido) o plantilla de SES (HTML crudo) */}
+      {/* Cargar un diseño EDITABLE. Las plantillas de SES ya no se ofrecen aquí: SES
+          guarda el correo ya armado y solo podía volver como un bloque de HTML crudo, que
+          no es editable de verdad y confundía más de lo que servía. */}
       <Dialog open={loadOpen} onClose={() => setLoadOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Cargar una plantilla</DialogTitle>
+        <DialogTitle>Cargar un diseño</DialogTitle>
         <DialogContent dividers>
-          {/* Los diseños editables van PRIMERO porque son los que se pueden seguir
-              trabajando bloque a bloque. El HTML de SES solo vuelve como un bloque crudo:
-              es lo que se envía, no el modelo con el que se construyó. */}
-          <Typography variant="overline" color="text.secondary">Diseños editables</Typography>
-          {loadingDesigns && <LinearProgress sx={{ my: 1 }} />}
+          {loadingDesigns && <LinearProgress sx={{ mb: 2 }} />}
           {!loadingDesigns && sharedDesigns.length === 0 && (
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Todavía no tienes diseños guardados. Al publicar se guarda uno automáticamente.
+            <Typography variant="body2" color="text.secondary">
+              Todavía no tienes diseños guardados. Al publicar una plantilla se guarda uno
+              automáticamente, y también puedes usar "Guardar plantilla".
             </Typography>
           )}
-          <Stack spacing={1} sx={{ mt: 1, mb: 2 }}>
+          <Stack spacing={1}>
             {sharedDesigns.map((d) => (
               <Paper key={d.id} variant="outlined" sx={{ p: 1.5 }}>
                 <Stack direction="row" alignItems="center" spacing={1}>
@@ -1641,43 +1706,9 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               </Paper>
             ))}
           </Stack>
-
-          <Divider sx={{ my: 2 }} />
-
-          <Typography variant="overline" color="text.secondary">Solo en SES (HTML)</Typography>
-          <TextField
-            select
-            label="Plantilla del cliente en SES"
-            value={loadName}
-            onChange={(e) => setLoadName(e.target.value)}
-            fullWidth
-            size="small"
-            sx={{ mt: 1 }}
-            helperText={loadingSesList ? 'Cargando plantillas…' : undefined}
-          >
-            {loadName && !sesOnly.some((t) => t.name === loadName) && (
-              <MenuItem value={loadName}>{loadName}</MenuItem>
-            )}
-            {sesOnly.length === 0 && !loadName && (
-              <MenuItem value="" disabled>
-                {loadingSesList ? 'Cargando…' : 'Todas tus plantillas de SES tienen su diseño editable'}
-              </MenuItem>
-            )}
-            {sesOnly.map((t) => (
-              <MenuItem key={t.name} value={t.name}>{t.name}</MenuItem>
-            ))}
-          </TextField>
-          <Alert severity="info" sx={{ mt: 1.5 }}>
-            Estas entran como un bloque de <strong>HTML crudo</strong>: SES guarda el correo ya
-            armado, no los bloques con los que se hizo, así que no se puede deshacer a piezas.
-            Sirve para retocar y republicar; para editar cómodo, usa un diseño editable.
-          </Alert>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setLoadOpen(false)} disabled={loading}>Cancelar</Button>
-          <Button variant="outlined" onClick={handleLoadFromSes} disabled={loading || !loadName.trim()}>
-            {loading ? <CircularProgress size={22} /> : 'Cargar el HTML de SES'}
-          </Button>
+          <Button onClick={() => setLoadOpen(false)}>Cerrar</Button>
         </DialogActions>
       </Dialog>
 
@@ -2187,7 +2218,6 @@ const BlockEditor = ({
   /** Red a la que se le está eligiendo un logo propio (bloque de redes sociales). */
   const [iconFor, setIconFor] = useState<keyof SocialLinks | null>(null);
   /** Diálogo del paquete de logos reales (recolorea y sube el set completo). */
-  const [packOpen, setPackOpen] = useState(false);
   const [uploadingItem, setUploadingItem] = useState<number | null>(null);
   const isImage = b.type === 'image' || b.type === 'logo';
   const hasText = b.type === 'heading' || b.type === 'text' || b.type === 'button';
@@ -2207,7 +2237,9 @@ const BlockEditor = ({
     if (url) onChange(isCombo ? { imageUrl: url } : { url });
   };
   const hasAlign = !['divider', 'spacer', 'html', 'products'].includes(b.type);
-  const hasColor = b.type === 'heading' || b.type === 'button';
+  // El TEXTO también acepta color propio (el generador ya lo respetaba: solo faltaba
+  // exponer el campo). Vacío = hereda el "Color de texto" de Ajustes.
+  const hasColor = b.type === 'heading' || b.type === 'text' || b.type === 'button';
 
   /* --- Productos (items) --- */
   const items: ProductItem[] = b.items ?? [];
@@ -2284,20 +2316,18 @@ const BlockEditor = ({
             onChange={(e) => onChange({ socialStyle: e.target.value as SocialStyle })}
           >
             <MenuItem value="badge">Colores de cada red</MenuItem>
-            <MenuItem value="mono">Un solo color (tu marca)</MenuItem>
+            <MenuItem value="mono">Un solo color</MenuItem>
             <MenuItem value="text">Enlaces de texto</MenuItem>
           </TextField>
+
           {(b.socialStyle || 'badge') !== 'text' && (
             <>
-              {/* Un manual de marca serio no admite los colores ajenos de cada red. Se
-                  ofrecen el selector Y el hex escribible: el manual de marca da el código
-                  exacto (#0075BE), y acertarlo con el cuentagotas es imposible. */}
               {b.socialStyle === 'mono' && (
                 <Stack direction="row" spacing={1}>
                   <TextField
                     label="Color" type="color" size="small"
-                    // El input de color EXIGE un #rrggbb válido: mientras se escribe el
-                    // hex a mano ("#01") se le pasa el último válido para que no salte.
+                    // El input EXIGE un #rrggbb válido: mientras se teclea el hex a mano
+                    // ("#01") se le pasa el último válido para que no salte de color.
                     value={socialMonoColor(b.socialColor)}
                     onChange={(e) => onChange({ socialColor: e.target.value })}
                     sx={{ width: 92, flexShrink: 0 }}
@@ -2311,11 +2341,37 @@ const BlockEditor = ({
                   />
                 </Stack>
               )}
+
+              <TextField
+                select label="Fondo" size="small" fullWidth
+                value={b.socialBadge === false ? 'none' : 'badge'}
+                onChange={(e) => onChange({ socialBadge: e.target.value === 'badge' })}
+              >
+                <MenuItem value="badge">Logo sobre insignia</MenuItem>
+                <MenuItem value="none">Solo el logo</MenuItem>
+              </TextField>
+
+              {b.socialBadge === false ? (
+                // Sin insignia el logo se apoya en el fondo del correo: si el destinatario
+                // lee en oscuro y el logo es oscuro, desaparece. La insignia lo evita
+                // porque el contraste vive DENTRO de la propia imagen.
+                <Alert severity="warning" sx={{ py: 0 }}>
+                  Sin insignia, un logo oscuro se pierde si el correo se lee en modo oscuro.
+                </Alert>
+              ) : (
+                <TextField
+                  label="Color del logo" type="color" size="small" fullWidth
+                  value={isHexColor(b.socialGlyph) ? String(b.socialGlyph) : '#ffffff'}
+                  onChange={(e) => onChange({ socialGlyph: e.target.value })}
+                />
+              )}
+
               <Stack direction="row" spacing={1}>
                 <TextField
                   select label="Forma" size="small" fullWidth
                   value={b.socialShape || 'circle'}
                   onChange={(e) => onChange({ socialShape: e.target.value as SocialShape })}
+                  disabled={b.socialBadge === false}
                 >
                   <MenuItem value="circle">Círculo</MenuItem>
                   <MenuItem value="rounded">Cuadrado redondeado</MenuItem>
@@ -2329,16 +2385,12 @@ const BlockEditor = ({
               </Stack>
             </>
           )}
-          <Button
-            size="small" variant="outlined" startIcon={<AutoAwesomeIcon />}
-            onClick={() => setPackOpen(true)}
-          >
-            Usar los logos reales
-          </Button>
+
           <Typography variant="caption" color="text.secondary">
-            Deja vacía la red que no uses. "Usar los logos reales" pone los logos de cada
-            red con los colores que elijas; el botón de imagen de cada fila cambia una sola.
+            Deja vacía la red que no uses. Los logos se generan con estos colores al
+            <strong> publicar</strong> y se suben a tu propio bucket.
           </Typography>
+
           {SOCIAL_NETWORKS.map((n) => {
             const propio = b.icons?.[n.key];
             const forma = b.socialShape === 'square' ? 0
@@ -2346,14 +2398,14 @@ const BlockEditor = ({
             return (
               <Stack key={n.key} direction="row" spacing={1} alignItems="center">
                 <Box sx={{
-                  width: 26, height: 26, borderRadius: forma, color: '#fff', overflow: 'hidden',
-                  bgcolor: propio ? 'transparent'
-                    : b.socialStyle === 'mono' ? socialMonoColor(b.socialColor) : n.color,
+                  width: 26, height: 26, borderRadius: b.socialBadge === false ? 0 : forma,
+                  color: '#fff', overflow: 'hidden', flexShrink: 0,
+                  bgcolor: b.socialBadge === false ? 'transparent' : socialBgFor(b, n.color),
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 11, fontWeight: 700, flexShrink: 0,
+                  fontSize: 11, fontWeight: 700,
                 }}>
                   {propio
-                    ? <Box component="img" src={propio} alt={n.label} sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ? <Box component="img" src={propio} alt={n.label} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                     : n.initial}
                 </Box>
                 <TextField
@@ -2362,13 +2414,13 @@ const BlockEditor = ({
                   onChange={(e) => onChange({ links: { ...b.links, [n.key]: e.target.value } })}
                   fullWidth size="small" placeholder="https://"
                 />
-                <Tooltip title={propio ? `Cambiar el icono de ${n.label}` : `Usar el logo real de ${n.label} (imagen propia)`}>
+                <Tooltip title={`Usar una imagen propia para ${n.label}`}>
                   <IconButton size="small" onClick={() => setIconFor(n.key)}>
-                    <PhotoLibraryIcon fontSize="small" color={propio ? 'primary' : 'inherit'} />
+                    <PhotoLibraryIcon fontSize="small" color={propio && !propio.startsWith('data:') ? 'primary' : 'inherit'} />
                   </IconButton>
                 </Tooltip>
-                {propio && (
-                  <Tooltip title="Volver a la insignia de color">
+                {propio && !propio.startsWith('data:') && (
+                  <Tooltip title="Volver al logo generado">
                     <IconButton size="small" onClick={() => onChange({ icons: { ...b.icons, [n.key]: '' } })}>
                       <FormatClearIcon fontSize="small" />
                     </IconButton>
@@ -2377,26 +2429,11 @@ const BlockEditor = ({
               </Stack>
             );
           })}
-          {/* Los logos REALES tienen que ser IMÁGENES: el correo no admite SVG en línea
-              (Gmail lo elimina) ni `data:` URI, así que el icono se sube al bucket del
-              propio cliente — nunca a un CDN ajeno, que es lo que rompe los correos ya
-              enviados si ese dominio cae. */}
           <ImageLibraryDialog
             open={!!iconFor}
             onClose={() => setIconFor(null)}
             onUpload={onUploadImage}
             onSelect={(url) => { if (iconFor) onChange({ icons: { ...b.icons, [iconFor]: url } }); setIconFor(null); }}
-          />
-          <SocialIconPackDialog
-            open={packOpen}
-            onClose={() => setPackOpen(false)}
-            activas={SOCIAL_NETWORKS
-              .filter((n) => { const v = b.links?.[n.key]; return v && v.trim() && v !== 'https://'; })
-              .map((n) => n.key)}
-            size={b.socialSize ?? 34}
-            shape={b.socialShape}
-            onUpload={onUploadImage}
-            onApply={(icons) => onChange({ icons: { ...b.icons, ...icons } })}
           />
         </>
       )}
@@ -2497,14 +2534,25 @@ const BlockEditor = ({
       )}
 
       {hasColor && (
-        <TextField
-          label={b.type === 'button' ? 'Color de fondo' : 'Color del texto'}
-          type="color"
-          value={b.color || (b.type === 'button' ? '#0075be' : '#16233f')}
-          onChange={(e) => onChange({ color: e.target.value })}
-          fullWidth
-          size="small"
-        />
+        <Stack direction="row" spacing={1} alignItems="center">
+          <TextField
+            label={b.type === 'button' ? 'Color de fondo' : 'Color del texto'}
+            type="color"
+            value={b.color || (b.type === 'button' ? '#0075be' : '#16233f')}
+            onChange={(e) => onChange({ color: e.target.value })}
+            fullWidth
+            size="small"
+          />
+          {/* Sin esto no se puede VOLVER a heredar: un input de color no admite vacío, así
+              que al tocarlo una vez el bloque quedaba atado a ese color para siempre. */}
+          {b.type !== 'button' && b.color && (
+            <Tooltip title="Usar el color de texto de Ajustes">
+              <IconButton size="small" onClick={() => onChange({ color: '' })}>
+                <FormatClearIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
+        </Stack>
       )}
 
       {b.type === 'spacer' && (
