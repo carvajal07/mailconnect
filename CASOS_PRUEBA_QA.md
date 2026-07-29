@@ -296,6 +296,16 @@
 | CP-HTML-61 | 🔴 | **La biblioteca no expone datos privados** | Revisar el listado de "Mis imágenes" | NO aparecen archivos de `database/` ni `document/` (bases y comprobantes) |
 | CP-HTML-62 | 🟡 | Ventana de edición aparte | Botón de pantalla completa (⛶) | El editor ocupa toda la ventana; el menú del portal desaparece; Esc cierra |
 | CP-HTML-63 | 🔴 | **Scroll independiente por panel** | Con un correo largo, hacer scroll en el lienzo | La paleta y las propiedades NO se van de vista; la página no scrollea como un todo |
+| CP-HTML-81 | 🟡 | Color del bloque de TEXTO | Seleccionar un texto → "Color del texto" | El campo existe y aplica; el aspa vuelve a heredar el global |
+| CP-HTML-82 | 🔴 | Logos reales por defecto | Poner enlaces en 3 redes | El lienzo muestra los LOGOS de cada red, no letras |
+| CP-HTML-83 | 🔴 | Colores de cada red sobre el logo real | Estilo "Colores de cada red" | Facebook azul, Instagram rosa, WhatsApp verde… sobre el logo real |
+| CP-HTML-84 | 🟡 | Un solo color | Estilo "Un solo color" + hex de marca | Todos los logos con ese color |
+| CP-HTML-85 | 🟡 | Solo el logo (sin insignia) | Fondo → "Solo el logo" | El logo va suelto y aparece el aviso de modo oscuro |
+| CP-HTML-86 | 🔴 | Los iconos se suben al PUBLICAR | Configurar redes y publicar | Los PNG aparecen en el bucket y el HTML apunta a esas URLs (no a data:) |
+| CP-HTML-87 | 🔴 | Fallo de subida no publica | Simular fallo al subir un icono | Avisa y NO publica nada |
+| CP-HTML-88 | 🟡 | Vista previa en oscuro | Vista previa → "Oscuro" con modo oscuro activo en Ajustes | El correo se ve con las reglas oscuras reales |
+| CP-HTML-89 | 🟢 | Oscuro sin reglas | "Oscuro" con el modo oscuro APAGADO en Ajustes | Avisa de que no hay nada que previsualizar |
+| CP-HTML-90 | 🟡 | Cargar no ofrece SES | Abrir "Cargar" | Solo lista diseños editables |
 | CP-HTML-70 | 🔴 | Insertar debajo del seleccionado | Con 2 bloques, seleccionar el PRIMERO y hacer clic en un tipo de la paleta | El nuevo queda EN MEDIO, no al final |
 | CP-HTML-71 | 🟡 | "Agregar bloque" sigue agregando al final | Usar el botón de la zona final del lienzo con un bloque seleccionado arriba | El nuevo queda al FINAL |
 | CP-HTML-72 | 🔴 | Fondo de página en el editor | Ajustes → cambiar "Fondo de página" | El lienzo cambia de fondo (antes solo se veía en la vista previa) |
