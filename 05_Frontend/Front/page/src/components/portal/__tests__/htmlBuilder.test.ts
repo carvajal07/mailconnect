@@ -31,6 +31,7 @@ import {
   DEFAULT_SOCIAL_MONO,
   type Block,
 } from '../htmlBuilder';
+import { alignDesdeRatio } from '../AlignPicker';
 
 const settings = { ...DEFAULT_SETTINGS };
 
@@ -649,5 +650,22 @@ describe('forma de las insignias de redes', () => {
     const tablaIconos = html.slice(html.indexOf('<td align="left">'));
     expect(tablaIconos).toContain('<td align="left">');
     expect(tablaIconos).not.toContain('<table role="presentation" border="0" cellpadding="0" cellspacing="0" align=');
+  });
+});
+
+describe('selector de alineación de 3 casillas', () => {
+  it('traduce la posición del arrastre a la casilla correcta', () => {
+    expect(alignDesdeRatio(0)).toBe('left');
+    expect(alignDesdeRatio(0.32)).toBe('left');
+    expect(alignDesdeRatio(0.34)).toBe('center');
+    expect(alignDesdeRatio(0.5)).toBe('center');
+    expect(alignDesdeRatio(0.66)).toBe('center');
+    expect(alignDesdeRatio(0.68)).toBe('right');
+    expect(alignDesdeRatio(1)).toBe('right');
+  });
+
+  it('arrastrar por fuera de la fila se queda en el extremo, no se ignora', () => {
+    expect(alignDesdeRatio(-3)).toBe('left');
+    expect(alignDesdeRatio(9)).toBe('right');
   });
 });

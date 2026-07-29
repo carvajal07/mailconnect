@@ -296,6 +296,9 @@
 | CP-HTML-61 | 🔴 | **La biblioteca no expone datos privados** | Revisar el listado de "Mis imágenes" | NO aparecen archivos de `database/` ni `document/` (bases y comprobantes) |
 | CP-HTML-62 | 🟡 | Ventana de edición aparte | Botón de pantalla completa (⛶) | El editor ocupa toda la ventana; el menú del portal desaparece; Esc cierra |
 | CP-HTML-63 | 🔴 | **Scroll independiente por panel** | Con un correo largo, hacer scroll en el lienzo | La paleta y las propiedades NO se van de vista; la página no scrollea como un todo |
+| CP-HTML-67 | 🟡 | Alineación en 3 casillas | Seleccionar un bloque y usar el control de Alineación | Tres casillas; el bloque se dibuja DENTRO de la elegida; clic en otra lo mueve |
+| CP-HTML-68 | 🟢 | La miniatura imita el bloque | Comparar el control en un bloque de imagen, uno de botón y uno de texto | Muestra icono de imagen, píldora azul y renglones respectivamente |
+| CP-HTML-69 | 🟢 | Alineación con teclado | Enfocar el control y usar ←, →, Inicio y Fin | Cambia de casilla; Inicio va a izquierda y Fin a derecha |
 | CP-HTML-64 | 🟡 | Barra del bloque no tapa | Seleccionar un bloque | La barra (arrastrar/subir/bajar/copiar/eliminar) queda por ENCIMA, sin tapar la primera línea |
 | CP-HTML-65 | 🟡 | Plantillas prediseñadas | Abrir "Plantillas" y cargar una de las 5 integradas | Se carga en el lienzo; las imágenes nacen vacías (sin dominios de terceros) |
 | CP-HTML-66 | 🟢 | Móvil | Abrir el constructor en un móvil | Los paneles se apilan y la página vuelve al scroll normal |

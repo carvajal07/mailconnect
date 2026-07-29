@@ -81,6 +81,7 @@ import { emailDesigns } from '../../services/messageTemplatesService';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 import { ImageLibraryDialog } from './ImageLibraryDialog';
 import { SocialIconPackDialog } from './SocialIconPackDialog';
+import { AlignPicker } from './AlignPicker';
 import {
   BLOCK_LABELS,
   VARIABLES,
@@ -2368,12 +2369,10 @@ const BlockEditor = ({
         </Stack>
       )}
 
+      {/* Tres casillas con el bloque DENTRO de la elegida: se ve dónde va a quedar, que es
+          la pregunta real. Un desplegable obliga a leer tres palabras e imaginárselo. */}
       {hasAlign && (
-        <TextField select label="Alineación" value={b.align} onChange={(e) => onChange({ align: e.target.value as Block['align'] })} fullWidth size="small">
-          <MenuItem value="left">Izquierda</MenuItem>
-          <MenuItem value="center">Centro</MenuItem>
-          <MenuItem value="right">Derecha</MenuItem>
-        </TextField>
+        <AlignPicker value={b.align} blockType={b.type} onChange={(v) => onChange({ align: v })} />
       )}
 
       {hasColor && (
