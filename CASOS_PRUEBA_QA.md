@@ -49,6 +49,10 @@
 | CP-SEG-21 | 🟡 | Inactividad | Dejar el portal inactivo > VITE_IDLE_MINUTES | Cierre automático con aviso |
 | CP-SEG-22 | 🔴 | Authorizer deniega token inválido | Llamar una ruta protegida con token adulterado/otra clave | 401/403 (deniega por defecto) |
 | CP-SEG-23 | 🟢 | `verify-code` eliminado | Buscar la ruta/lambda `Verify-code` | No existe; no hay referencias en el front (`authService.verifyCode`) |
+| CP-SEG-35 | 🔴 | **Teléfono solo dígitos** | En el registro, escribir `abc300-123.456` en Teléfono | Queda `300123456`: las letras y los símbolos no entran |
+| CP-SEG-36 | 🔴 | **Teléfono tope de 15** | Pegar 25 dígitos en Teléfono | Se corta en 15 |
+| CP-SEG-37 | 🔴 | **NIT solo dígitos, tope 15** | Mismo ejercicio en el campo NIT | Solo dígitos, máximo 15 |
+| CP-SEG-38 | 🟡 | Mínimos de longitud | Teléfono de 5 dígitos / NIT de 3 → enviar | Avisa "al menos 7 dígitos" / "al menos 5 dígitos"; no llama a la API |
 
 ---
 
@@ -346,6 +350,29 @@
 | CP-RED-05 | 🔴 | Aviso de icono invisible | Poner color de marca oscuro Y color de logo oscuro → "Revisar" | Avisa que los iconos casi no se ven y dice qué hacer |
 | CP-RED-06 | 🟡 | Logo blanco no dispara el aviso | Color de marca oscuro + logo blanco → "Revisar" | NO aparece ese aviso |
 | CP-RED-07 | 🟡 | Alineación de los iconos | Alinear a izquierda / derecha | Se mueven sin que el contenedor del bloque se deforme |
+| CP-BTN-01 | 🔴 | **Botón redondeado en Outlook** | Publicar un correo con un botón (radio 6 px) y abrirlo en **Outlook de escritorio** (Windows, motor Word — no Outlook web) | El botón sale redondeado, con su alto y su ancho correctos |
+| CP-BTN-02 | 🔴 | **El botón NO se duplica** | Mismo correo, mirar el cuerpo en Outlook y en Gmail | Aparece UNA sola vez en cada cliente (los condicionales `[if mso]` / `[if !mso]` se excluyen) |
+| CP-BTN-03 | 🔴 | Alineación a la DERECHA | Botón → Alineación "Derecha" → vista previa y correo recibido | El botón se va a la derecha (antes se quedaba a la izquierda) |
+| CP-BTN-04 | 🟡 | Alineación centro e izquierda | Alternar las tres opciones | Cada una mueve el botón a su posición, en lienzo y en correo |
+| CP-BTN-05 | 🟡 | Ancho completo | Activar "Ancho completo" y abrir en móvil | El botón ocupa todo el ancho del contenido |
+| CP-BTN-06 | 🟡 | Radio grande no deforma | Poner radio 40 px con un botón bajo → abrir en Outlook | La esquina se ve redonda (el radio se acota, no rompe la forma) |
+| CP-PH-01 | 🔴 | **El texto de relleno NO se envía** | Agregar encabezado y texto, NO escribir nada, publicar y enviarse una prueba | El correo no trae "Título principal" ni "Hola {{nombre}}, escribe aquí…" |
+| CP-PH-02 | 🔴 | Placeholder visible en el lienzo | Mirar un bloque de texto recién agregado | Muestra "Escribe aquí tu contenido…" en gris cursiva y se puede hacer clic para editarlo |
+| CP-PH-03 | 🔴 | Aviso de bloque vacío | Dejar un bloque de texto sin contenido → "Revisar" | Avisa "1 bloque(s) de texto sin contenido" |
+| CP-PH-04 | 🟡 | Productos sin relleno | Agregar la grilla de productos y no escribir nada | Los campos muestran placeholder ("Nombre del producto"), y el correo publicado no trae "Producto"/"Descripción breve" |
+| CP-VAR-01 | 🔴 | **Sin base no hay variables inventadas** | Sin base seleccionada, abrir "Insertar variable" | Solo ofrece `unsubscribeUrl` y `preferencesUrl` (grupo "Del sistema") + el aviso de elegir una base |
+| CP-VAR-02 | 🔴 | Con base, sus columnas reales | Elegir una base arriba y abrir el menú | Aparecen los encabezados REALES de esa base bajo "De tu base de datos" |
+| CP-VAR-03 | 🟡 | Las de sistema siempre están | Con y sin base | `unsubscribeUrl`/`preferencesUrl` se ofrecen en los dos casos |
+| CP-ALT-01 | 🔴 | **Texto alternativo editable** | Bloque de imagen → campo "Texto alternativo (alt)" → escribir algo → publicar | El `<img>` lleva ese `alt` en el HTML |
+| CP-ALT-02 | 🔴 | Correo con imágenes bloqueadas | Abrir el correo en Gmail SIN cargar imágenes | Se lee el alt escrito, no un hueco vacío |
+| CP-ALT-03 | 🟡 | Plantilla vieja conserva su alt | Cargar un diseño guardado antes del campo (el alt vivía en el texto del bloque) | El alt anterior se sigue usando; no se pierde |
+| CP-ALT-04 | 🟡 | "Revisar" avisa del alt faltante | Imagen con URL y sin alt → Revisar | Lo reporta como aviso |
+| CP-PRD-01 | 🔴 | **Fotos de productos parejas** | Grilla con una foto vertical y una horizontal | Todas quedan del mismo alto (180 px por defecto), la fila no se ve escalonada |
+| CP-PRD-02 | 🟡 | Alto configurable | Cambiar "Alto de las fotos (px)" a 240 y publicar | El `<img>` sale con ese alto; se acota entre 60 y 400 |
+| CP-NEW-01 | 🟡 | **"Nuevo" con diálogo propio** | Con bloques en el lienzo, pulsar "Nuevo" | Sale el diálogo de la aplicación (con el tema), NO el popup gris del navegador |
+| CP-NEW-02 | 🟡 | Cancelar no vacía | En ese diálogo, pulsar Cancelar | El lienzo queda intacto y el diseño abierto sigue siendo el mismo |
+| CP-TST-01 | 🟢 | Nota de los enlaces del pie | Abrir "Enviarme una prueba" | Explica que "Administrar preferencias" y "Cancelar suscripción" no hacen nada en la prueba |
+| CP-TST-02 | 🟡 | Los enlaces del pie son inertes en la prueba | Enviarse una prueba y pulsar "Cancelar suscripción" en el correo recibido | NO da de baja el correo (sigue recibiendo campañas reales de esa lista) |
 
 ---
 
@@ -448,6 +475,8 @@
 | CP-SEC-25 | 🔴 | Escalada del bloqueo | Tras los 5 min, fallar otra vez, y otra | Escala a 1 h y luego a 24 h |
 | CP-SEC-26 | 🔴 | Bloqueo con clave correcta | Con bloqueo vigente, entrar con la clave CORRECTA | Sigue bloqueado (el bloqueo frena la fuerza bruta que acierta) |
 | CP-SEC-27 | 🟡 | Reset del contador | Login correcto con la cuenta desbloqueada | El contador y la escalera vuelven a cero |
+| CP-SEC-35 | 🔴 | **El bloqueo escalado explica por qué fue inmediato** | Fallar 3 veces (bloqueo de 5 min), esperar a que venza y fallar UNA vez | 429 con *"Como ya se había bloqueado antes…"* + remite a "¿Olvidaste tu contraseña?" |
+| CP-SEC-36 | 🟡 | El primer bloqueo no repite la explicación | En una cuenta **nueva**, fallar 3 veces | Al 2º fallo avisa "queda 1 intento"; el 429 del 3º NO trae la explicación del escalado (ahí sí hubo aviso) |
 | CP-SEC-28 | 🔴 | **Revocación real de tokens** | Loguear, copiar el token, cerrar sesión y usar el token viejo en la API | 401/403 (la sesión está revocada) |
 | CP-SEC-29 | 🔴 | Cambio de clave revoca | Cambiar la contraseña y usar un token emitido antes | Denegado |
 | CP-SEC-30 | 🔴 | **Segunda barrera admin** | Llamar una ruta admin con el context falsificado pero SIN token válido | 403 (se revalida la firma del JWT) |

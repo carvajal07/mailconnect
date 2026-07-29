@@ -10,6 +10,7 @@ import {
   MenuItem,
   Menu,
   ToggleButton,
+  ListSubheader,
   Switch,
   FormControlLabel,
   ToggleButtonGroup,
@@ -81,6 +82,7 @@ import { templatesService, sendTestEmail } from '../../services/templatesService
 import { campaignsService } from '../../services/campaignsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { useConfirm } from '../../hooks/useConfirm';
 import { allPresets, customPresets, cloneBlocks, type TemplatePreset } from './templatePresets';
 import { emailDesigns } from '../../services/messageTemplatesService';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
@@ -90,7 +92,7 @@ import { useSocialPreviews, withPreviewIcons, activeNetworks, previewKey } from 
 import { renderIconFile } from './socialIconPack';
 import {
   BLOCK_LABELS,
-  VARIABLES,
+  PLATFORM_VARIABLES,
   PALETTE_GROUPS,
   DEFAULT_SETTINGS,
   COLUMN_LAYOUTS,
@@ -201,6 +203,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   // customerId (uuid) para create-template: viene de la sesión, no se pide en el formulario.
   const sessionCustomerId = getUser()?.customerId ?? '';
   const { notify, FeedbackSnackbar } = useFeedback();
+  const { confirm, ConfirmDialog } = useConfirm();
 
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [settings, setSettings] = useState<EmailSettings>({ ...DEFAULT_SETTINGS });
@@ -648,8 +651,17 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     notify(`Borrador "${name}" eliminado.`, 'info');
   };
 
-  const handleNew = () => {
-    if (blocks.length && !window.confirm('¿Vaciar el lienzo actual?')) return;
+  const handleNew = async () => {
+    // Antes era `window.confirm`: el popup del navegador, que no se puede estilizar, no
+    // respeta el tema y aparece con el dominio del sitio como título.
+    if (blocks.length && !await confirm({
+      title: 'Empezar un diseño nuevo',
+      message: designName
+        ? `Se va a vaciar el lienzo. El diseño "${designName}" queda guardado; los cambios que no hayas publicado se pierden.`
+        : 'Se va a vaciar el lienzo. Los cambios que no hayas guardado se pierden.',
+      confirmText: 'Vaciar el lienzo',
+      confirmColor: 'warning',
+    })) return;
     // Se sueltan DESPUÉS de confirmar: si se soltaran antes, cancelar el diálogo dejaría
     // el lienzo intacto pero sin saber a qué diseño pertenece, y el siguiente Publicar
     // crearía una plantilla nueva en vez de actualizar la que se estaba editando.
@@ -1354,8 +1366,8 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                         onColumnDragOver={(colIndex) => setColumnHover({ blockId: b.id, colIndex })}
                         onColumnDragLeave={() => setColumnHover(null)}
                         onDropInColumn={(colIndex) => dropInColumn(b.id, colIndex)}
-                        variables={dbFields.length ? dbFields : VARIABLES}
-                        onRequestVariable={() => setVarDialog({ field: (dbFields[0] || VARIABLES[0]), fallback: '' })}
+                        variables={dbFields.length ? dbFields : PLATFORM_VARIABLES}
+                        onRequestVariable={() => setVarDialog({ field: (dbFields[0] || PLATFORM_VARIABLES[0]), fallback: '' })}
                       />
                     </Box>
                   </Box>
@@ -1804,6 +1816,15 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
             fullWidth size="small" label="Correo de destino" value={testEmail}
             onChange={(e) => setTestEmail(e.target.value)} placeholder="tu@empresa.com"
           />
+          {/* Pregunta recurrente: los enlaces del pie NO funcionan en la prueba, y es a
+              propósito. Si funcionaran, probar tu propia plantilla te daría de baja de tu
+              propia lista y dejarías de recibir las campañas reales sin saber por qué. */}
+          <Alert severity="info" sx={{ mt: 2 }}>
+            En la prueba, <strong>"Administrar preferencias"</strong> y{' '}
+            <strong>"Cancelar suscripción"</strong> se ven pero no hacen nada — así probar tu
+            plantilla no te da de baja de tu propia lista. En los envíos reales sí funcionan:
+            el enlace se firma para cada destinatario.
+          </Alert>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setTestOpen(false)}>Cancelar</Button>
@@ -1851,7 +1872,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               value={varDialog?.field ?? ''}
               onChange={(e) => setVarDialog((v) => (v ? { ...v, field: e.target.value } : v))}
             >
-              {(dbFields.length ? dbFields : VARIABLES).map((f) => <MenuItem key={f} value={f}>{f}</MenuItem>)}
+              {(dbFields.length ? dbFields : PLATFORM_VARIABLES).map((f) => <MenuItem key={f} value={f}>{f}</MenuItem>)}
             </TextField>
             <TextField
               fullWidth size="small" label="Si viene vacío, usar…" placeholder="estimado cliente"
@@ -1874,6 +1895,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         </DialogActions>
       </Dialog>
 
+      {ConfirmDialog}
       {FeedbackSnackbar}
     </Box>
   );
@@ -1956,12 +1978,24 @@ const ResizableImage = ({
 /* --------- Render de un bloque en el lienzo (aproximado al email) --------- */
 
 /** Texto del bloque tal como saldrá: HTML en línea saneado, o texto plano escapado. */
-const Rich = ({ b, field = 'text', sx }: { b: Block; field?: 'text' | 'heading'; sx?: object }) => (
-  <Box
-    sx={{ '& a': { color: '#0075be' }, '& ul, & ol': { m: '0 0 0 20px', p: 0 }, ...sx }}
-    dangerouslySetInnerHTML={{ __html: blockContentHtml(field === 'text' ? b.text : b.heading || '', b.rich) }}
-  />
-);
+const Rich = ({ b, field = 'text', sx }: { b: Block; field?: 'text' | 'heading'; sx?: object }) => {
+  const html = blockContentHtml(field === 'text' ? b.text : b.heading || '', b.rich);
+  // Un bloque vacío y NO seleccionado no dibujaría nada: quedaría invisible y sin manera de
+  // hacerle clic para editarlo. Se muestra el mismo texto guía en gris, solo en el lienzo.
+  if (!html.trim()) {
+    return (
+      <Box sx={{ ...sx, color: '#9aa7b8', fontStyle: 'italic' }}>
+        {b.type === 'heading' ? 'Escribe el título…' : 'Escribe aquí tu contenido…'}
+      </Box>
+    );
+  }
+  return (
+    <Box
+      sx={{ '& a': { color: '#0075be' }, '& ul, & ol': { m: '0 0 0 20px', p: 0 }, ...sx }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+};
 
 /** Marcador de imagen sin definir. Antes se pintaba una imagen de via.placeholder.com,
  *  que podía terminar EN EL CORREO REAL; ahora el hueco es evidente en el lienzo y el
@@ -2029,6 +2063,10 @@ const BlockPreview = ({
         value={blockContentHtml(which === 'text' ? b.text : b.heading || '', b.rich)}
         onChange={(html) => onEditText!(which === 'text' ? { text: html, rich: true } : { heading: html, rich: true })}
         style={sx as React.CSSProperties}
+        // Los bloques nacen VACÍOS: antes traían texto de relleno que, si nadie lo editaba,
+        // se enviaba en el correo real. La misma frase va ahora de placeholder — se ve
+        // mientras se diseña y no viaja a la bandeja de nadie.
+        placeholder={b.type === 'heading' ? 'Escribe el título…' : 'Escribe aquí tu contenido…'}
         variables={variables}
         onRequestVariable={onRequestVariable}
         // `editable` ya significa "este bloque está seleccionado": con eso la barra de
@@ -2297,7 +2335,26 @@ const BlockEditor = ({
               Insertar variable
             </Button>
             <Menu anchorEl={varAnchor} open={Boolean(varAnchor)} onClose={() => setVarAnchor(null)}>
-              {(variableFields.length ? variableFields : VARIABLES).map((v) => (
+              {/* Las variables de DATOS salen de los encabezados de la base elegida. Sin
+                  base no se ofrece ninguna: antes había una lista inventada (nombre,
+                  empresa, ciudad) y, si el CSV no traía esas columnas exactas, el correo
+                  salía con "Hola ," sin que nada avisara. */}
+              {variableFields.length > 0 ? [
+                <ListSubheader key="h-base">De tu base de datos</ListSubheader>,
+                ...variableFields.map((v) => (
+                  <MenuItem key={v} onClick={() => { onInsertVariable(v); setVarAnchor(null); }}>
+                    {`{{${v}}}`}
+                  </MenuItem>
+                )),
+              ] : (
+                <MenuItem disabled sx={{ whiteSpace: 'normal', maxWidth: 280 }}>
+                  <Typography variant="body2">
+                    Elige una base de datos arriba para usar sus columnas como variables.
+                  </Typography>
+                </MenuItem>
+              )}
+              <ListSubheader>Del sistema (siempre disponibles)</ListSubheader>
+              {PLATFORM_VARIABLES.map((v) => (
                 <MenuItem key={v} onClick={() => { onInsertVariable(v); setVarAnchor(null); }}>
                   {`{{${v}}}`}
                 </MenuItem>
@@ -2317,6 +2374,7 @@ const BlockEditor = ({
       {b.type === 'html' && (
         <TextField
           label="HTML"
+          placeholder="<table>…</table>  ·  pega aquí el HTML de otra herramienta"
           value={b.text}
           onChange={(e) => onChange({ text: e.target.value })}
           fullWidth
@@ -2522,10 +2580,22 @@ const BlockEditor = ({
 
       {isProducts && (
         <>
-          <TextField select label="Columnas" value={b.columns ?? 3} onChange={(e) => onChange({ columns: parseInt(e.target.value) || 3 })} fullWidth size="small">
-            <MenuItem value={2}>2 columnas</MenuItem>
-            <MenuItem value={3}>3 columnas</MenuItem>
-          </TextField>
+          <Stack direction="row" spacing={1}>
+            <TextField select label="Columnas" value={b.columns ?? 3} onChange={(e) => onChange({ columns: parseInt(e.target.value) || 3 })} fullWidth size="small">
+              <MenuItem value={2}>2 columnas</MenuItem>
+              <MenuItem value={3}>3 columnas</MenuItem>
+            </TextField>
+            {/* Sin un alto tope, cada producto quedaba con el alto de SU imagen: una foto
+                vertical al lado de una horizontal desalineaba los títulos y la fila salía
+                escalonada. Con el alto fijo todas se recortan al centro y quedan parejas. */}
+            <TextField
+              label="Alto de las fotos (px)" type="number" size="small" sx={{ width: 170 }}
+              value={b.productImageHeight ?? 180}
+              onChange={(e) => onChange({
+                productImageHeight: Math.max(60, Math.min(400, parseInt(e.target.value) || 180)),
+              })}
+            />
+          </Stack>
           {items.map((it, i) => (
             <Paper key={i} variant="outlined" sx={{ p: 1.5 }}>
               <Stack spacing={1}>
@@ -2535,8 +2605,8 @@ const BlockEditor = ({
                     <DeleteIcon fontSize="small" />
                   </IconButton>
                 </Stack>
-                <TextField label="Título" size="small" value={it.title} onChange={(e) => updateItem(i, { title: e.target.value })} fullWidth />
-                <TextField label="Texto" size="small" value={it.text} onChange={(e) => updateItem(i, { text: e.target.value })} fullWidth multiline minRows={2} />
+                <TextField label="Título" size="small" value={it.title} onChange={(e) => updateItem(i, { title: e.target.value })} fullWidth placeholder="Nombre del producto" />
+                <TextField label="Texto" size="small" value={it.text} onChange={(e) => updateItem(i, { text: e.target.value })} fullWidth multiline minRows={2} placeholder="Descripción breve" />
                 <TextField label="Imagen (URL)" size="small" value={it.image} onChange={(e) => updateItem(i, { image: e.target.value })} fullWidth />
                 <TextField label="Enlace (opcional)" size="small" value={it.url ?? ''} onChange={(e) => updateItem(i, { url: e.target.value })} fullWidth placeholder="https://" />
                 <Button size="small" variant="outlined" startIcon={<PhotoLibraryIcon />} onClick={() => setLibraryFor(i)} sx={{ mr: 1 }}>
@@ -2616,6 +2686,16 @@ const BlockEditor = ({
       {isImage && (
         <>
           <Divider textAlign="left"><Typography variant="caption" color="text.secondary">Imagen</Typography></Divider>
+          {/* El alt no tenía dónde editarse: se tomaba del campo `text` del bloque, así que
+              en la práctica salía vacío. En correo pesa MÁS que en web — Gmail y Outlook
+              bloquean las imágenes por defecto, así que esto es lo primero que se lee. */}
+          <TextField
+            label="Texto alternativo (alt)"
+            placeholder={b.type === 'logo' ? 'Logo de tu empresa' : 'Describe la imagen en pocas palabras'}
+            value={b.alt ?? ''}
+            onChange={(e) => onChange({ alt: e.target.value })} fullWidth size="small"
+            helperText="Es lo que se lee cuando el correo abre con las imágenes bloqueadas (lo normal en Gmail y Outlook)."
+          />
           <TextField
             label="Al hacer clic, ir a" placeholder="https://…" value={b.imageHref ?? ''}
             onChange={(e) => onChange({ imageHref: e.target.value })} fullWidth size="small"

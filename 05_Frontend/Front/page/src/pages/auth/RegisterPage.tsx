@@ -40,6 +40,11 @@ interface FormData {
   confirmPassword: string;
 }
 
+/** Campos que solo aceptan dígitos (se sanean al escribir Y al pegar). */
+const SOLO_DIGITOS: (keyof FormData)[] = ['phone', 'companyTin'];
+/** Tope de dígitos. 15 cubre el E.164 más largo y cualquier NIT del mundo. */
+const MAX_DIGITOS = 15;
+
 interface FormErrors {
   name?: string;
   email?: string;
@@ -90,6 +95,7 @@ export const RegisterPage = () => {
   const validatePhone = (phone: string): string | undefined => {
     if (!phone) return 'El teléfono es requerido';
     if (!/^[0-9]+$/.test(phone)) return 'El teléfono debe contener solo números';
+    if (phone.length < 7) return 'El teléfono debe tener al menos 7 dígitos';
     return undefined;
   };
 
@@ -102,6 +108,7 @@ export const RegisterPage = () => {
   const validateCompanyTin = (companyTin: string): string | undefined => {
     if (!companyTin) return 'El NIT es requerido';
     if (!/^[0-9]+$/.test(companyTin)) return 'El NIT debe contener solo números';
+    if (companyTin.length < 5) return 'El NIT debe tener al menos 5 dígitos';
     return undefined;
   };
 
@@ -138,7 +145,14 @@ export const RegisterPage = () => {
   const handleChange = (field: keyof FormData) => (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
-    const value = event.target.value;
+    // Teléfono y NIT son NUMÉRICOS: se filtra lo que no sea dígito y se corta en
+    // MAX_DIGITOS. ⚠️ `inputMode:'numeric'` NO alcanza — solo sugiere el teclado en móvil,
+    // en escritorio se pueden escribir letras igual (y pegar texto), así que el campo hay
+    // que sanearlo aquí. El backend guarda el NIT como número y es la llave de los
+    // recursos por cliente, así que una letra ahí rompe más adelante, no en el formulario.
+    const value = SOLO_DIGITOS.includes(field)
+      ? event.target.value.replace(/\D/g, '').slice(0, MAX_DIGITOS)
+      : event.target.value;
     setSubmitError('');
     setFormData(prev => ({ ...prev, [field]: value }));
 
@@ -282,7 +296,10 @@ export const RegisterPage = () => {
               margin="normal"
               required
               placeholder="3001234567"
-              inputProps={{ inputMode: 'numeric' }}            />
+              // `inputMode` solo sugiere el teclado en móvil; el filtrado real está en
+              // handleChange. `maxLength` es la red de seguridad del navegador.
+              inputProps={{ inputMode: 'numeric', maxLength: MAX_DIGITOS, autoComplete: 'tel' }}
+            />
 
             <TextField
               fullWidth
@@ -309,7 +326,8 @@ export const RegisterPage = () => {
               margin="normal"
               required
               placeholder="900123456"
-              inputProps={{ inputMode: 'numeric' }}            />
+              inputProps={{ inputMode: 'numeric', maxLength: MAX_DIGITOS }}
+            />
 
             <TextField
               fullWidth

@@ -110,12 +110,24 @@ def _lock_state(item):
     return lock_until, stage
 
 
-def _lock_message(seconds):
+def _lock_message(seconds, escalado=False):
+    """Mensaje del bloqueo. `escalado` = la cuenta YA se había bloqueado antes, así que este
+    bloqueo llegó con UN solo fallo y sin el aviso previo de "te queda 1 intento".
+
+    ⚠️ Ese caso confundía: el usuario esperaba el aviso y la cuenta se bloqueó de una. No se
+    le dan intentos extra (debilitaría el freno a la fuerza bruta), pero sí se le explica
+    por qué fue inmediato y cómo reiniciar el contador — que es entrar bien una vez."""
     if seconds >= 86400:
-        return 'Cuenta bloqueada por 24 horas por intentos fallidos.'
-    if seconds >= 3600:
-        return 'Cuenta bloqueada por 1 hora por intentos fallidos.'
-    return 'Cuenta bloqueada por 5 minutos por intentos fallidos.'
+        base = 'Cuenta bloqueada por 24 horas por intentos fallidos.'
+    elif seconds >= 3600:
+        base = 'Cuenta bloqueada por 1 hora por intentos fallidos.'
+    else:
+        base = 'Cuenta bloqueada por 5 minutos por intentos fallidos.'
+    if escalado:
+        base += (' Como ya se había bloqueado antes, un solo intento fallido la vuelve a '
+                 'bloquear. Si no recuerdas la contraseña, usa "¿Olvidaste tu contraseña?" '
+                 'en vez de seguir intentando.')
+    return base
 
 
 def _remaining_text(seconds):
@@ -133,7 +145,8 @@ def _apply_lock(user_id, stage):
         Key={'userId': user_id},
         UpdateExpression='SET lockUntil = :u, lockStage = :s, failedLoginAttempts = :z',
         ExpressionAttributeValues={':u': int(time.time()) + duration, ':s': stage + 1, ':z': 0})
-    return True, _lock_message(duration)
+    # stage>0 = ya venía de un bloqueo previo → este llegó sin el aviso de "queda 1 intento".
+    return True, _lock_message(duration, escalado=stage > 0)
 
 
 def _register_failed_attempt(user_id, stage):

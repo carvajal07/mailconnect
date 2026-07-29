@@ -974,3 +974,42 @@ no cambia el contrato existente, solo suma la clave `deliverability`.
 DKIM sin un dominio MAIL FROM propio, así que DMARC ya se alinea por DKIM. Si en el futuro
 se agrega un MAIL FROM personalizado por cliente, ahí sí SPF pasa a ser necesario para la
 alineación y este panel dejaría de ser "recomendado" para ser parte del flujo obligatorio.
+
+---
+
+## 20. Registro numérico, botón en Outlook y textos de relleno (ago 2026)
+
+Tanda de ajustes puntuales. **Casi todo es frontend** (entra con el build, sin nada que
+desplegar en AWS); lo único de backend es un cambio de TEXTO en el 429 de Login.
+
+- [ ] `[J]` **Redesplegar `Api_V1_Security_Login`.** Único cambio: el mensaje del bloqueo
+  **escalado** (cuando la cuenta ya se había bloqueado antes) ahora explica por qué el
+  bloqueo fue inmediato y remite a "¿Olvidaste tu contraseña?". **Sin cambios de IAM, de
+  env, de tabla ni de contrato** — el `statusCode` sigue siendo 429 y el front ya muestra
+  la `description` que venga del backend. Si no se redespliega, el bloqueo sigue
+  funcionando exactamente igual con el mensaje corto de antes.
+- **Sin cambios de infra en el resto:** el constructor HTML, el registro y el chequeo
+  previo son 100% cliente. Entran con el próximo build del frontend.
+
+### Verificación post-deploy
+
+1. **Registro:** en el campo Teléfono escribir `abc300-123.456` → debe quedar
+   `300123456`. Pegar 25 dígitos → debe cortar en **15**. Mismo comportamiento en NIT.
+2. **Bloqueo escalado (Login):** fallar 3 veces (bloqueo de 5 min), esperar a que venza y
+   fallar **una** vez → el 429 debe traer *"Como ya se había bloqueado antes…"*. En una
+   cuenta **nueva**, el segundo fallo debe seguir avisando *"te queda 1 intento"* (el aviso
+   de siempre; ese caso no cambió).
+3. **Botón en Outlook** — es el punto que **exige un cliente real**, no una vista previa de
+   navegador: enviarse una prueba desde el editor y abrirla en **Outlook de escritorio**
+   (el de Windows con motor Word; Outlook web y la app nueva usan otro motor y no
+   reproducen el defecto). El botón debe salir **redondeado**, con su alto y su ancho, y
+   **una sola vez** — si se ve duplicado, el condicional `[if !mso]` no está llegando
+   intacto (algún paso intermedio reescribió los comentarios del HTML).
+4. **Alineación del botón:** poner "Derecha" en el panel → el botón debe irse a la derecha
+   tanto en la vista previa como en el correo recibido (antes se quedaba a la izquierda).
+5. **Bloques vacíos:** agregar un bloque de texto y publicar sin escribir nada → **Revisar**
+   debe avisar "1 bloque(s) de texto sin contenido". Y el correo real **no** debe traer
+   "Título principal" ni "Hola {{nombre}}, escribe aquí…" en ninguna parte.
+6. **Variables:** sin base seleccionada, el menú "Insertar variable" solo debe ofrecer
+   `unsubscribeUrl` y `preferencesUrl` bajo "Del sistema", más el aviso de elegir una base.
+   Con base elegida, aparecen sus columnas reales bajo "De tu base de datos".

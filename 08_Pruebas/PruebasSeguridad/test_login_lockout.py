@@ -158,3 +158,30 @@ def test_login_emite_sid_y_sesion_activa(env):
     ses = boto3.resource('dynamodb', region_name='us-east-1').Table('session') \
         .get_item(Key={'sessionId': claims['sid']}).get('Item')
     assert ses and ses['active'] is True
+
+
+def test_bloqueo_escalado_explica_por_que_fue_inmediato(env):
+    """Con la cuenta ya bloqueada antes (lockStage>0) UN solo fallo la vuelve a bloquear,
+    sin el aviso previo de "te queda 1 intento" — que es lo que confundía. No se dan
+    intentos extra (debilitaría el freno a la fuerza bruta), pero el mensaje sí explica
+    por qué fue inmediato y qué hacer."""
+    login, user_table = env
+    for pwd in ('Errada1x', 'Errada2x', 'Errada3x'):
+        _try(login, pwd)                       # primer ciclo → bloqueo de 5 min
+    _expire_lock(user_table)
+
+    resp = _try(login, 'ErradaNueva')           # UN solo fallo vuelve a bloquear
+    assert resp['statusCode'] == 429
+    assert 'ya se había bloqueado antes' in resp['description']
+    assert 'Olvidaste tu contraseña' in resp['description']
+
+
+def test_el_primer_bloqueo_no_lleva_la_explicacion_del_escalado(env):
+    """En el primer ciclo el usuario SÍ recibió el aviso de "queda 1 intento", así que
+    repetirle la explicación del escalado sería ruido."""
+    login, _ = env
+    for pwd in ('Errada1x', 'Errada2x'):
+        _try(login, pwd)
+    resp = _try(login, 'Errada3x')
+    assert resp['statusCode'] == 429
+    assert 'ya se había bloqueado antes' not in resp['description']
