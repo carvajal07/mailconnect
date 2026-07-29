@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  SOCIAL_NETWORKS, socialBgFor, socialGlyphFor,
+  SOCIAL_NETWORKS, socialBgFor, socialGlyphFor, socialOutlineWidth, socialOutlineColor,
   type Block, type SocialLinks,
 } from './htmlBuilder';
 import { renderIconPreview } from './socialIconPack';
@@ -38,20 +38,28 @@ const socialBlocks = (list: Block[]): Block[] =>
 /** Firma de lo que afecta al DIBUJO de los iconos de un bloque. */
 const styleSignature = (b: Block): string => [
   b.id, b.socialStyle, b.socialColor, b.socialShape, b.socialSize, b.socialBadge, b.socialGlyph,
+  b.socialOutline, b.socialOutlineColor,
   activeNetworks(b).join(','),
 ].join('|');
 
-export const useSocialPreviews = (blocks: Block[]): SocialPreviewMap => {
+/**
+ * @param todasLasRedes dibuja TODAS las redes del catálogo, no solo las que tienen enlace.
+ *   Lo usa el panel de propiedades: ahí la miniatura va al lado del campo donde AÚN no se
+ *   ha escrito el enlace, y mostrar la letra de respaldo justo ahí hacía creer que ese era
+ *   el icono que iba a salir en el correo.
+ */
+export const useSocialPreviews = (blocks: Block[], todasLasRedes = false): SocialPreviewMap => {
   const [map, setMap] = useState<SocialPreviewMap>({});
   const bloques = socialBlocks(blocks);
-  const firma = bloques.map(styleSignature).join('||');
+  const firma = bloques.map(styleSignature).join('||') + (todasLasRedes ? '|todas' : '');
 
   useEffect(() => {
     let cancelado = false;
     (async () => {
       const out: SocialPreviewMap = {};
       for (const b of bloques) {
-        for (const red of activeNetworks(b)) {
+        const redes = todasLasRedes ? SOCIAL_NETWORKS.map((n) => n.key) : activeNetworks(b);
+        for (const red of redes) {
           // Un icono subido a mano gana: no hay nada que recolorear.
           const propio = b.icons?.[red];
           if (propio) { out[previewKey(b.id, red)] = propio; continue; }
@@ -62,6 +70,8 @@ export const useSocialPreviews = (blocks: Block[]): SocialPreviewMap => {
               background: b.socialBadge === false ? '' : socialBgFor(b, color),
               shape: b.socialShape || 'circle',
               size: b.socialSize ?? 34,
+              outline: socialOutlineWidth(b.socialSize ?? 34, b),
+              outlineColor: socialOutlineColor(b),
             });
           } catch { /* sin icono: el generador cae a la insignia de respaldo */ }
         }

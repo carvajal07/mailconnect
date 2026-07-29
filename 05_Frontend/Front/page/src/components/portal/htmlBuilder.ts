@@ -61,11 +61,17 @@ export const SOCIAL_NETWORKS: { key: keyof SocialLinks; label: string; color: st
 
 /**
  * Estilo del bloque de redes:
- *  - `badge` — cada red con SU color de marca (Facebook azul, Instagram rosa…).
- *  - `mono`  — todas del MISMO color, el que elija el cliente (`socialColor`).
+ *  - `mono`  — todas del MISMO color, el que elija el cliente (`socialColor`). Es el
+ *    DEFAULT y el único que se puede elegir hoy.
+ *  - `badge` — LEGADO: cada red con SU color de marca (Facebook azul, Instagram rosa…).
+ *    Se retiró del selector (ago 2026) porque el manual de marca del cliente manda sobre
+ *    el de cada red; se sigue RENDERIZANDO para las plantillas que ya lo tenían guardado.
  *  - `text`  — LEGADO: enlaces de texto separados por puntos.
  */
 export type SocialStyle = 'badge' | 'mono' | 'text';
+
+/** Estilo con el que NACE un bloque de redes nuevo. */
+export const DEFAULT_SOCIAL_STYLE: SocialStyle = 'mono';
 
 /**
  * Color de FONDO de la insignia de una red según el estilo del bloque.
@@ -82,6 +88,26 @@ export const socialGlyphFor = (b: Block, color: string): string => {
 
 /** Color único de las insignias cuando el estilo es `mono`. */
 export const DEFAULT_SOCIAL_MONO = '#16233f';
+
+/** Color del CONTORNO por defecto (claro, para que un logo oscuro no se pierda). */
+export const DEFAULT_SOCIAL_OUTLINE = '#ffffff';
+
+/**
+ * Grosor del contorno de la insignia en px, o 0 si no lleva.
+ *
+ * Para qué sirve: con el color de marca del cliente en oscuro (`#16233f`) sobre un correo
+ * de fondo oscuro —o con el logo oscuro sobre insignia oscura— el icono desaparece. Un
+ * aro claro alrededor lo despega del fondo sin tocar los colores de marca.
+ *
+ * ⚠️ Va HORNEADO en el PNG, igual que la insignia: un `border` de CSS en el `<img>` lo
+ * ignoran varios clientes y en Outlook produce un marco cuadrado alrededor del círculo.
+ */
+export const socialOutlineWidth = (size: number, b: Block): number =>
+  (b.socialOutline ? Math.max(1, Math.round(size * 0.06)) : 0);
+
+/** Color del contorno (cae al blanco si el hex está a medio escribir). */
+export const socialOutlineColor = (b: Block): string =>
+  (isHexColor(b.socialOutlineColor) ? String(b.socialOutlineColor) : DEFAULT_SOCIAL_OUTLINE);
 
 /** Forma de la insignia. `rounded` (cuadrado de esquinas suaves) es el look actual. */
 export type SocialShape = 'circle' | 'rounded' | 'square';
@@ -181,6 +207,10 @@ export interface Block {
   socialBadge?: boolean;
   /** Color del LOGO cuando va sobre insignia (default blanco). */
   socialGlyph?: string;
+  /** Aro alrededor de la insignia: despega un icono oscuro de un fondo oscuro. */
+  socialOutline?: boolean;
+  /** Color del aro (default blanco). */
+  socialOutlineColor?: string;
   /**
    * URL PÚBLICA del logo por red. La llena el PUBLICADO: los PNG se generan recoloreando
    * las máscaras del repo y se suben al bucket del cliente en ese momento, no mientras se
@@ -353,7 +383,7 @@ export const createBlock = (type: BlockType): Block => {
     case 'social':
       // Nace VACÍO: una insignia con enlace 'https://' no lleva a ningún lado y el
       // chequeo previo la marcaría como enlace sin destino.
-      return { ...b, align: 'center', links: {}, socialStyle: 'badge', socialSize: 34 };
+      return { ...b, align: 'center', links: {}, socialStyle: DEFAULT_SOCIAL_STYLE, socialSize: 34 };
     case 'html':
       return { ...b, rich: false, text: '<p style="text-align:center">Tu HTML aquí</p>' };
     case 'imageText':
@@ -947,6 +977,21 @@ const luminance = (hex: string): number | null => {
   return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
 };
 
+/** Redes con enlace de un bloque (las únicas que se dibujan). */
+const activasDelBloque = (b: Block): string[] =>
+  SOCIAL_NETWORKS.filter((n) => {
+    const v = b.links?.[n.key];
+    return v && String(v).trim() && v !== 'https://';
+  }).map((n) => n.key);
+
+/** Consejo concreto según por qué el icono no se ve. */
+const b_detalleRedes = (b: Block): string =>
+  (b.socialBadge === false
+    ? 'Los logos van sueltos sobre el fondo del correo y su color es demasiado parecido a él. '
+      + 'Ponles insignia, o cámbiales el color por uno que contraste.'
+    : 'El color del logo y el de la insignia son casi el mismo, así que el icono se pierde. '
+      + 'Aclara el color del logo (lo normal es blanco) o activa el contorno.');
+
 /** Relación de contraste WCAG entre dos colores (1 = idénticos, 21 = negro sobre blanco). */
 export const contrastRatio = (fg: string, bg: string): number | null => {
   const l1 = luminance(fg);
@@ -1117,6 +1162,32 @@ export function analyzeTemplate(blocks: Block[], settings: EmailSettings, html: 
       level: 'warning',
       title: `${bajoContraste.length} bloque(s) con poco contraste`,
       detail: 'El texto no llega a la relación 4.5:1 de WCAG AA sobre su fondo. Se lee mal en pantallas con brillo bajo y penaliza accesibilidad.',
+    });
+  }
+
+  // ── Iconos de redes que no se van a ver ──
+  // Con el color de marca del cliente en oscuro es muy fácil terminar con un logo oscuro
+  // sobre una insignia oscura (o suelto sobre un fondo oscuro): el icono desaparece y no
+  // hay forma de darse cuenta en el lienzo, porque el correo se ve sobre blanco.
+  const redesInvisibles = all.filter((b) => {
+    if (b.type !== 'social' || (b.socialStyle || 'badge') === 'text') return false;
+    return activasDelBloque(b).some((clave) => {
+      const marca = SOCIAL_NETWORKS.find((n) => n.key === clave)?.color || '#0075be';
+      // Sin insignia el logo se apoya en el fondo del correo; con insignia, en ella.
+      const detras = b.socialBadge === false
+        ? (b.bgColor || settings.emailBg)
+        : socialBgFor(b, marca);
+      const r = contrastRatio(socialGlyphFor(b, marca), detras);
+      // Umbral 3:1 (WCAG AA para elementos GRÁFICOS, no el 4.5 del texto): un icono es una
+      // forma grande y sólida; exigirle el contraste de un párrafo daría falsos avisos.
+      return r !== null && r < 3;
+    });
+  });
+  if (redesInvisibles.length) {
+    issues.push({
+      level: 'warning',
+      title: 'Los iconos de redes casi no se ven sobre su fondo',
+      detail: b_detalleRedes(redesInvisibles[0]),
     });
   }
 

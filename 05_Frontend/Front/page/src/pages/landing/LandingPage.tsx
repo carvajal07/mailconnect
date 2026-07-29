@@ -83,7 +83,7 @@ export const LandingPage = () => {
             <span className="eyebrow">Correo masivo · Comunicaciones omnicanal</span>
             <h1>Envía <span className="accent">correo masivo</span> que sí llega a la bandeja de entrada.</h1>
             <p className="lead">Diseña, segmenta y envía campañas de <strong>email marketing, SMS, WhatsApp y voz</strong> desde una sola plataforma. Con plantillas, combinación de correspondencia y métricas en tiempo real, sobre infraestructura AWS de alta entregabilidad.</p>
-            <div className="price-flag"><b>Desde $8</b><small>por correo · según volumen</small></div>
+            <div className="price-flag"><b>Precio por volumen</b><small>cotización a la medida de tu operación</small></div>
             <div className="hero-actions">
               <Link to="/register" className="btn btn-primary">Prueba gratis · 500 correos
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
@@ -144,7 +144,7 @@ export const LandingPage = () => {
               <span className="ico email"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg></span>
               <h3>Email marketing</h3>
               <p>Campañas y transaccionales con plantillas HTML personalizadas. Newsletters, promociones y automatizaciones.</p>
-              <span className="tagpill">Desde $8 / correo</span>
+              <span className="tagpill">Plantillas HTML</span>
             </div>
             <div className="card">
               <span className="ico sms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg></span>
@@ -253,77 +253,51 @@ export const LandingPage = () => {
       </section>
 
       {/* ================= PRECIOS ================= */}
+      {/* ================= PRECIOS =================
+          Sin cifras a propósito (ago 2026). Las que había (planes de $190.000 / $750.000 /
+          $1.300.000 y una tabla de volumen) NO coincidían con lo que cobra el sistema —la
+          landing decía $19 por correo a 10.000 y el backend cobraba $25—, así que un cliente
+          se registraba con un número y se encontraba otro. Además SMS, WhatsApp y voz tienen
+          costo variable por operador: publicar una tarifa fija ahí amarra el margen. El
+          precio real vive en `pricingRate` y se cotiza por cliente. */}
       <section id="precios" style={{ background: 'var(--bg-alt)' }}>
         <div className="wrap">
           <div className="center">
             <span className="eyebrow">Precios</span>
             <h2>Paga solo por lo que envías</h2>
-            <p className="lead">Compra paquetes de correos y úsalos cuando quieras. Entre más volumen, menor precio por correo.</p>
+            <p className="lead">Modelo <strong>prepago</strong>: recargas tu saldo y se descuenta por envío, sin mensualidad ni permanencia. El precio por mensaje baja con el volumen y cada canal se cotiza según tu operación.</p>
           </div>
+
           <div className="grid g3" style={{ marginTop: 46 }}>
-            <div className="card plan">
-              <h3>Inicial</h3>
-              <div className="vol">10.000 correos</div>
-              <div className="price">$190.000 <small>COP</small></div>
-              <div className="per">≈ $19 por correo</div>
-              <ul>
-                <li><span className="tick">✓</span> Email marketing HTML</li>
-                <li><span className="tick">✓</span> Plantillas y segmentación</li>
-                <li><span className="tick">✓</span> Estadísticas en tiempo real</li>
-                <li><span className="tick">✓</span> Créditos válidos 1 año</li>
-              </ul>
-              <Link to="/register" className="btn btn-ghost">Comprar paquete</Link>
+            <div className="card">
+              <h3>Sin cuota fija</h3>
+              <p>No pagas mensualidad ni contratos de permanencia. Recargas cuando lo necesitas y el saldo no se vence al final del mes.</p>
             </div>
-            <div className="card plan featured">
-              <h3>Profesional</h3>
-              <div className="vol">50.000 correos</div>
-              <div className="price">$750.000 <small>COP</small></div>
-              <div className="per">≈ $15 por correo</div>
-              <ul>
-                <li><span className="tick">✓</span> Todo lo de Inicial</li>
-                <li><span className="tick">✓</span> Depurador de listas</li>
-                <li><span className="tick">✓</span> Combinación de correspondencia</li>
-                <li><span className="tick">✓</span> Sub-cuentas y soporte prioritario</li>
-              </ul>
-              <Link to="/register" className="btn btn-primary">Comprar paquete</Link>
+            <div className="card">
+              <h3>Precio por volumen</h3>
+              <p>Entre más envíos, menor costo por mensaje. Te pasamos la tabla de tramos de tu canal junto con la cotización.</p>
             </div>
-            <div className="card plan">
-              <h3>Corporativo</h3>
-              <div className="vol">100.000 correos</div>
-              <div className="price">$1.300.000 <small>COP</small></div>
-              <div className="per">≈ $13 por correo</div>
-              <ul>
-                <li><span className="tick">✓</span> Todo lo de Profesional</li>
-                <li><span className="tick">✓</span> SMS, WhatsApp y voz</li>
-                <li><span className="tick">✓</span> Dominio y DMARC dedicados</li>
-                <li><span className="tick">✓</span> Acompañamiento comercial</li>
-              </ul>
-              <a href={whatsappUrl('Hola, me interesa el plan Corporativo (100.000 correos) de MailConnect.')} className="btn btn-ghost" target="_blank" rel="noopener noreferrer">Comprar paquete</a>
+            <div className="card">
+              <h3>Lo ves antes de enviar</h3>
+              <p>La plataforma te muestra el costo estimado exacto de cada campaña —con IVA y desglose— antes de confirmar el envío.</p>
             </div>
           </div>
 
-          {/* Tabla de volumen */}
-          <div className="pricetable">
-            <table>
-              <thead><tr><th>Volumen de correos</th><th>Precio por correo</th><th>Total (COP)</th></tr></thead>
-              <tbody>
-                <tr><td>1.000</td><td className="per-cell">$25</td><td>$25.000</td></tr>
-                <tr><td>5.000</td><td className="per-cell">$21</td><td>$105.000</td></tr>
-                <tr><td>10.000</td><td className="per-cell">$19</td><td>$190.000</td></tr>
-                <tr><td>20.000</td><td className="per-cell">$17</td><td>$340.000</td></tr>
-                <tr><td>50.000</td><td className="per-cell">$15</td><td>$750.000</td></tr>
-                <tr><td>100.000</td><td className="per-cell">$13</td><td>$1.300.000</td></tr>
-                <tr><td>500.000</td><td className="per-cell">$10</td><td>$5.000.000</td></tr>
-                <tr><td>1.000.000</td><td className="per-cell">$8</td><td>$8.000.000</td></tr>
-              </tbody>
-            </table>
+          <div className="center" style={{ marginTop: 40 }}>
+            <div className="hero-actions" style={{ justifyContent: 'center' }}>
+              <a href={whatsappUrl('Hola, quiero cotizar el envío masivo con MailConnect. Les cuento mi volumen y canales.')} className="btn btn-primary" target="_blank" rel="noopener noreferrer">
+                Cotizar por WhatsApp
+              </a>
+              <Link to="/register" className="btn btn-ghost">Crear cuenta y probar</Link>
+            </div>
           </div>
+
           <div className="pay">
             <span>Medios de pago:</span>
             <span className="chip">PSE</span><span className="chip">Nequi</span><span className="chip">Tarjeta</span>
-            <span className="chip">+500.000 · cotización a la medida</span>
+            <span className="chip">Transferencia</span>
           </div>
-          <p className="price-note">Precios de referencia en pesos colombianos (COP), tomados de la calculadora interna — ajustables. Email con adjunto personalizado (EAP) desde $12/correo. SMS, WhatsApp y voz se cotizan por separado.</p>
+          <p className="price-note">Cotizamos correo, SMS, WhatsApp y voz por separado, según el volumen mensual y el tipo de campaña. Escríbenos y te pasamos la tabla de tramos que aplica a tu caso.</p>
         </div>
       </section>
 

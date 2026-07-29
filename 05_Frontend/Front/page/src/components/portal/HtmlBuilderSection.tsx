@@ -10,6 +10,8 @@ import {
   MenuItem,
   Menu,
   ToggleButton,
+  Switch,
+  FormControlLabel,
   ToggleButtonGroup,
   Dialog,
   DialogTitle,
@@ -84,7 +86,7 @@ import { emailDesigns } from '../../services/messageTemplatesService';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 import { ImageLibraryDialog } from './ImageLibraryDialog';
 import { AlignPicker } from './AlignPicker';
-import { useSocialPreviews, withPreviewIcons, activeNetworks } from './useSocialPreviews';
+import { useSocialPreviews, withPreviewIcons, activeNetworks, previewKey } from './useSocialPreviews';
 import { renderIconFile } from './socialIconPack';
 import {
   BLOCK_LABELS,
@@ -98,6 +100,8 @@ import {
   socialMonoColor,
   socialBgFor,
   socialGlyphFor,
+  socialOutlineWidth,
+  socialOutlineColor,
   isHexColor,
   forceDarkPreview,
   videoThumbnail,
@@ -754,6 +758,8 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               background: b.socialBadge === false ? '' : socialBgFor(b, color),
               shape: b.socialShape || 'circle',
               size: b.socialSize ?? 34,
+              outline: socialOutlineWidth(b.socialSize ?? 34, b),
+              outlineColor: socialOutlineColor(b),
             });
             const url = await uploadImage(archivo);
             if (!url) throw new Error('la subida no devolvió URL');
@@ -2025,6 +2031,9 @@ const BlockPreview = ({
         style={sx as React.CSSProperties}
         variables={variables}
         onRequestVariable={onRequestVariable}
+        // `editable` ya significa "este bloque está seleccionado": con eso la barra de
+        // formato se ve sin tener que adivinar que hay que hacer clic DENTRO del texto.
+        active
       />
     ) : (
       <Rich b={b} field={which} sx={sx} />
@@ -2217,6 +2226,16 @@ const BlockEditor = ({
   const [libraryFor, setLibraryFor] = useState<'url' | 'imageUrl' | 'videoThumb' | number | null>(null);
   /** Red a la que se le está eligiendo un logo propio (bloque de redes sociales). */
   const [iconFor, setIconFor] = useState<keyof SocialLinks | null>(null);
+  /**
+   * Logos recoloreados del bloque que se está editando, para las miniaturas de abajo.
+   *
+   * ⚠️ Antes esas miniaturas pintaban la LETRA de respaldo (f, ig, in…) porque leían
+   * `b.icons`, que solo se llena al publicar — el lienzo sí mostraba el logo real. El
+   * resultado era que el panel parecía decir "estos son tus iconos" mostrando algo que
+   * nunca sale en el correo. Se genera aquí para el bloque seleccionado (uno solo, así
+   * que es barato) con exactamente los mismos colores que usa el lienzo.
+   */
+  const iconPreviews = useSocialPreviews(b.type === 'social' ? [b] : [], true);
   /** Diálogo del paquete de logos reales (recolorea y sube el set completo). */
   const [uploadingItem, setUploadingItem] = useState<number | null>(null);
   const isImage = b.type === 'image' || b.type === 'logo';
@@ -2315,7 +2334,13 @@ const BlockEditor = ({
             value={b.socialStyle || 'badge'}
             onChange={(e) => onChange({ socialStyle: e.target.value as SocialStyle })}
           >
-            <MenuItem value="badge">Colores de cada red</MenuItem>
+            {/* "Colores de cada red" (badge) se RETIRÓ del selector: el manual de marca del
+                cliente manda sobre el color de cada red, y tener las dos opciones solo
+                confundía. Se sigue renderizando —y se muestra aquí— si la plantilla ya
+                venía guardada con él, para no cambiarle el diseño a nadie por sorpresa. */}
+            {b.socialStyle === 'badge' && (
+              <MenuItem value="badge">Colores de cada red (retirado)</MenuItem>
+            )}
             <MenuItem value="mono">Un solo color</MenuItem>
             <MenuItem value="text">Enlaces de texto</MenuItem>
           </TextField>
@@ -2383,6 +2408,30 @@ const BlockEditor = ({
                   onChange={(e) => onChange({ socialSize: Math.max(20, Math.min(64, parseInt(e.target.value) || 34)) })}
                 />
               </Stack>
+
+              {/* Contorno: la salida para el caso de "insignia oscura sobre fondo oscuro".
+                  Solo aplica con insignia — sin ella no hay forma que contornear. */}
+              {b.socialBadge !== false && (
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <FormControlLabel
+                    sx={{ flexShrink: 0, mr: 0 }}
+                    control={
+                      <Switch
+                        size="small" checked={!!b.socialOutline}
+                        onChange={(e) => onChange({ socialOutline: e.target.checked })}
+                      />
+                    }
+                    label={<Typography variant="body2">Contorno</Typography>}
+                  />
+                  {b.socialOutline && (
+                    <TextField
+                      label="Color del contorno" type="color" size="small" fullWidth
+                      value={socialOutlineColor(b)}
+                      onChange={(e) => onChange({ socialOutlineColor: e.target.value })}
+                    />
+                  )}
+                </Stack>
+              )}
             </>
           )}
 
@@ -2393,6 +2442,8 @@ const BlockEditor = ({
 
           {SOCIAL_NETWORKS.map((n) => {
             const propio = b.icons?.[n.key];
+            // El logo REAL ya recoloreado; el subido a mano gana sobre el generado.
+            const vista = propio || iconPreviews[previewKey(b.id, n.key)];
             const forma = b.socialShape === 'square' ? 0
               : b.socialShape === 'rounded' ? '22%' : '50%';
             return (
@@ -2400,12 +2451,14 @@ const BlockEditor = ({
                 <Box sx={{
                   width: 26, height: 26, borderRadius: b.socialBadge === false ? 0 : forma,
                   color: '#fff', overflow: 'hidden', flexShrink: 0,
-                  bgcolor: b.socialBadge === false ? 'transparent' : socialBgFor(b, n.color),
+                  // Con la vista previa el fondo ya viene DENTRO del PNG (insignia, forma y
+                  // contorno horneados): repintarlo aquí dejaría un halo cuadrado.
+                  bgcolor: vista || b.socialBadge === false ? 'transparent' : socialBgFor(b, n.color),
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 11, fontWeight: 700,
                 }}>
-                  {propio
-                    ? <Box component="img" src={propio} alt={n.label} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                  {vista
+                    ? <Box component="img" src={vista} alt={n.label} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                     : n.initial}
                 </Box>
                 <TextField

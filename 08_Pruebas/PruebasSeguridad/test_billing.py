@@ -89,10 +89,10 @@ def test_suma_por_canal_y_tarifa(billing):
     assert acme['totalSent'] == 5  # 3 EM + 2 SMS
     by = {c['channel']: c for c in acme['byChannel']}
     assert by['EM']['sent'] == 3 and by['EM']['amount'] == 90     # 3 × 30 (tramo EM 1k)
-    assert by['SMS']['sent'] == 2 and by['SMS']['amount'] == 110  # 2 × 55 (tramo SMS 1k)
-    assert acme['subtotal'] == 200
-    assert acme['tax'] == 38   # round(200 × 0.19)
-    assert acme['total'] == 238
+    assert by['SMS']['sent'] == 2 and by['SMS']['amount'] == 410  # 2 × 205 (tramo SMS 1k)
+    assert acme['subtotal'] == 500      # 90 (EM) + 410 (SMS)
+    assert acme['tax'] == 95   # round(500 × 0.19)
+    assert acme['total'] == 595
 
 
 def test_filtro_por_mes(billing):

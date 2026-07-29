@@ -81,6 +81,7 @@
     { "path": "/Cascade/List",             "lambda": "Api_V1_Cascade_List" },
     { "path": "/Assistant/Copilot",        "lambda": "Api_V1_Assistant_Copilot" },
     { "path": "/Notifications/Prefs",      "lambda": "Api_V1_Notifications_Prefs" },
+    { "path": "/Notifications/List",       "lambda": "Api_V1_Notifications_List" },
     { "path": "/Security/Totp",            "lambda": "Api_V1_Security_Totp" },
 
     { "path": "/Email/Send-batch-template",         "lambda": "Api_V1_Email_Prepare-batch-template", "proxy": true },

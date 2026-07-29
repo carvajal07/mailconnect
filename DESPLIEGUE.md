@@ -816,3 +816,92 @@ Lambda NUEVA (el CD la crea) + ruta `/Email/Send-test` **ya en `routes.json`**.
   muestra el error y la subida directa nunca dejó de estar disponible.
 - ℹ️ La lambda solo lista los prefijos **públicos** (`resources/`, `attachment/`). `database/`
   y `document/` quedan fuera por diseño: son bases de contactos y comprobantes.
+
+---
+
+## 16. Centro de notificaciones del portal (ago 2026)
+
+La campanita del portal (avisos in-app abajo a la derecha + panel con contador). Es la
+pata que faltaba del **Bloque H**: aquello ya avisaba por CORREO al owner (saldo bajo,
+reputación, resumen diario) pero **nada** aparecía dentro de la aplicación, y "tienes una
+campaña por aprobar" no existía en ningún canal.
+
+- [ ] `[J]` **Tabla `notification`** (PK `notificationId`) + **GSI `userId-createdAt-index`**
+  (HASH `userId`, RANGE `createdAt`, proyección `ALL`) + **TTL sobre `expiresAt`**.
+  **La crea `Api_V1_Notifications_List` on-demand** (mismo patrón que `assistantRateLimit`),
+  así que no hay paso manual — pero si se prefiere crearla por consola/Terraform, ese es el
+  esquema exacto. On-demand (`PAY_PER_REQUEST`).
+- [ ] `[J]` **Lambda `Api_V1_Notifications_List`** (el CD la crea; rol de convención
+  `Lambda_DynFull`) + ruta **`/Notifications/List`** ya en `routes.json` (authorizer + CORS
+  + mapping template). ⚠️ El mapping template DEBE inyectar **`userId`**: el destinatario de
+  una notificación es un USUARIO, no un tenant. Sin `userId` en el context la lambda
+  responde **403** y la campanita queda vacía (falla segura: nunca muestra las de otro).
+- [ ] `[J]` **IAM de la lambda**: `dynamodb:Query` sobre `notification` **y su índice**
+  (`arn:…:table/notification/index/*` — el ARN del índice es aparte del de la tabla),
+  `UpdateItem`, más `CreateTable`/`DescribeTable`/`UpdateTimeToLive` para la creación
+  on-demand.
+- [ ] `[J]` **IAM de las 4 lambdas que DISPARAN avisos**: `dynamodb:PutItem` sobre
+  `notification` + `Scan` sobre `user` en
+  `Api_V1_Campaign_{Request-approval,Approve,Reject}` y
+  `Api_V1_Email_Prepare-batch-template`. Las que ya tienen `Lambda_DynFull*` no necesitan
+  nada. ℹ️ La escritura es **best-effort**: sin el permiso (o sin la tabla) la aprobación y
+  el envío **siguen funcionando**, solo que no se notifica.
+- [ ] `[J]` (opcional) Envs `NOTIFY_TTL_DAYS` (default `60`, cuánto vive un aviso) y
+  `NOTIFICATIONS_LIMIT` (default `30`, cuántos trae el panel; tope duro 100).
+
+### Verificación post-deploy
+
+1. Con un usuario **operator**, pedir aprobación de una campaña con muestras enviadas.
+2. Entrar con el **owner**: la campanita debe traer el contador en 1 y el aviso
+   "Campaña por aprobar"; al hacer clic debe llevar al tab de aprobaciones.
+3. Aprobarla → el **operator** recibe "Campaña aprobada". Rechazarla en otra campaña →
+   el aviso llega con el **motivo dentro del texto**.
+4. El operator que la solicitó **no** debe recibirse a sí mismo el aviso de "por aprobar",
+   y nadie de otra empresa debe ver nada.
+
+ℹ️ **Sin desplegar nada de esto el portal no se rompe**: `notificationsInbox.list` falla y
+el centro simplemente se queda en cero (no hay pantalla de error).
+
+⚠️ **Sigue pendiente lo del Bloque H** (avisos por CORREO): `Api_V1_Notifications_{Prefs,Scan}`,
+`Api_V1_Email_Preferences` y la regla EventBridge del Scan. El centro in-app es independiente
+—no los necesita— pero el aviso de **saldo bajo** solo llega a la campanita si
+`Prepare-batch` está redesplegado con este cambio.
+
+---
+
+## 17. Tarifas de SMS y Voz a costo+25% (ago 2026)
+
+Las tarifas de SMS y Voz vendían **por debajo del costo de AWS en TODOS los tramos**. Se
+recalibraron contra el costo real (ver `CLAUDE.md` → "Tarifas SMS/Voz a costo+25%").
+
+| Canal | Costo AWS (TRM 3.206) | Antes | Ahora |
+|---|---|---|---|
+| SMS | ≈163 COP/**segmento** | 55 → 10 | **205 → 180** |
+| Voz | ≈305 COP/**minuto** | 150 → 48 | **380 → 335** |
+
+- [ ] `[J]` **Redesplegar las 6 lambdas que tienen las tarifas COPIADAS, juntas**:
+  `Api_V1_Cost_Estimate` · `Api_V1_Email_Prepare-batch-template` · `Api_V1_Billing_Summary` ·
+  `Api_V1_Pricing_List` · `Api_V1_Cascade_Dispatch` · `Api_V1_Cascade_Advance`.
+  ⚠️ Si una queda con las tarifas viejas, **el cliente ve un precio y se le cobra otro** (el
+  front compara el estimado contra el saldo antes de enviar). Una prueba de la suite verifica
+  que las 6 coincidan, pero eso es en el repo — en AWS hay que desplegarlas.
+- [ ] `[J]` **Revisar los overrides de `pricingRate`**: un valor PLANO por cliente (o global
+  con `customerId='*'`) **gana sobre el tramo**. Si alguno quedó en 55 COP/SMS, ese cliente
+  sigue comprando bajo costo. Se ven en el panel admin → **Tarifas**.
+- ℹ️ **Sin cambios de infra, tablas ni IAM.**
+- ℹ️ **WhatsApp NO se tocó**: falta el dato de costo verificado (Meta cobra por conversación/
+  mensaje y varía por país). Sigue en 130 → 65 COP; pendiente comercial.
+
+### Verificación post-deploy
+
+1. Portal → **Muestras** con una campaña de **SMS**: la tarjeta de costo debe mostrar el
+   precio nuevo y los **segmentos calculados del texto** (ya no es un campo para escribir a
+   ojo). Con una emoji en el mensaje, los segmentos deben subir.
+2. Un SMS de más de 160 caracteres debe estimarse a **2 segmentos** y **debitar lo mismo**
+   que dice el estimado (antes se estimaba 2 y se cobraba 1).
+3. Panel admin → **Tarifas** → confirmar que la tabla de tramos de SMS/Voz muestra los
+   valores nuevos y que ningún cliente tiene un override por debajo.
+
+⚠️ **La landing ya no publica precios** (los que tenía no coincidían con el backend: decía
+$19 por correo a 10.000 y el sistema cobra $25). Si se vuelve a publicar una tabla, tomarla
+de `VOLUME_TIERS`, no de la calculadora comercial.

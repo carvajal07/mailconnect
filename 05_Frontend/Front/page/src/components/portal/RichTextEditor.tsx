@@ -9,6 +9,7 @@ import LinkOffIcon from '@mui/icons-material/LinkOff';
 import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
 import FormatListNumberedIcon from '@mui/icons-material/FormatListNumbered';
 import FormatColorTextIcon from '@mui/icons-material/FormatColorText';
+import FormatColorFillIcon from '@mui/icons-material/FormatColorFill';
 import FormatClearIcon from '@mui/icons-material/FormatClear';
 import { sanitizeInlineHtml } from './richText';
 
@@ -34,6 +35,12 @@ interface Props {
   variables?: string[];
   /** Inserta el token de variable ya formado (con respaldo si lo definieron). */
   onRequestVariable?: () => void;
+  /**
+   * El bloque está SELECCIONADO. La barra se muestra también en ese caso, no solo al
+   * enfocar: con "solo al enfocar" había que adivinar que hacía falta hacer clic DENTRO
+   * del texto, y las opciones de formato parecían no existir.
+   */
+  active?: boolean;
 }
 
 const FONT_SIZES = [
@@ -44,12 +51,45 @@ const FONT_SIZES = [
   { label: 'Enorme', px: '28px' },
 ];
 
-export const RichTextEditor = ({ value, onChange, style, placeholder, variables = [], onRequestVariable }: Props) => {
+/**
+ * Fuentes SEGURAS para correo: las que están instaladas en la mayoría de sistemas. Una
+ * fuente web (Google Fonts) no se puede cargar en Gmail/Outlook, así que ofrecer más
+ * variedad solo produciría correos que se ven distintos de como se diseñaron.
+ */
+const FONT_FAMILIES = [
+  { label: 'Arial', value: 'Arial, Helvetica, sans-serif' },
+  { label: 'Verdana', value: 'Verdana, Geneva, sans-serif' },
+  { label: 'Tahoma', value: 'Tahoma, Verdana, sans-serif' },
+  { label: 'Trebuchet MS', value: '"Trebuchet MS", Tahoma, sans-serif' },
+  { label: 'Georgia', value: 'Georgia, "Times New Roman", serif' },
+  { label: 'Times New Roman', value: '"Times New Roman", Times, serif' },
+  { label: 'Courier New', value: '"Courier New", Courier, monospace' },
+];
+
+/** Comandos cuyo estado se refleja en la barra (botón resaltado = ya está aplicado). */
+const TOGGLES = ['bold', 'italic', 'underline', 'strikeThrough'] as const;
+type Toggle = (typeof TOGGLES)[number];
+
+export const RichTextEditor = ({
+  value, onChange, style, placeholder, variables = [], onRequestVariable, active,
+}: Props) => {
   const ref = useRef<HTMLDivElement | null>(null);
   const [focused, setFocused] = useState(false);
   const [linkAnchor, setLinkAnchor] = useState<HTMLElement | null>(null);
   const [linkUrl, setLinkUrl] = useState('');
   const savedRange = useRef<Range | null>(null);
+  /** Qué formato tiene la selección actual, para pintar los botones activos. */
+  const [estado, setEstado] = useState<Record<Toggle, boolean>>({
+    bold: false, italic: false, underline: false, strikeThrough: false,
+  });
+  /**
+   * La barra va ARRIBA del texto salvo que no quepa, y entonces baja.
+   *
+   * ⚠️ Hace falta porque el PRIMER bloque del lienzo está pegado al borde del panel, que
+   * hace su propio scroll con `overflow`: una barra colocada arriba se recortaba y solo se
+   * veía media fila de botones — justo el caso más común, un correo que empieza con texto.
+   */
+  const [abajo, setAbajo] = useState(false);
 
   /** Último HTML que EMITIMOS nosotros. Ver la guarda del efecto de abajo. */
   const lastEmitted = useRef<string | null>(null);
@@ -80,12 +120,40 @@ export const RichTextEditor = ({ value, onChange, style, placeholder, variables 
     onChange(limpio);
   }, [onChange]);
 
+  /** Alto de la barra + el aire que hay que dejarle por encima del bloque. */
+  const ALTO_BARRA = 84;
+
+  useEffect(() => {
+    if (!focused && !active) return;
+    const el = ref.current;
+    if (!el) return;
+    // Se mide contra el contenedor que hace scroll (el panel del lienzo); si no hay,
+    // contra la ventana.
+    let cont: HTMLElement | null = el.parentElement;
+    while (cont && getComputedStyle(cont).overflowY === 'visible') cont = cont.parentElement;
+    const limite = cont ? cont.getBoundingClientRect().top : 0;
+    setAbajo(el.getBoundingClientRect().top - limite < ALTO_BARRA);
+  }, [focused, active, value]);
+
+  /** Lee del documento qué formato tiene la selección (negrita, cursiva…). */
+  const refreshEstado = useCallback(() => {
+    try {
+      setEstado({
+        bold: document.queryCommandState('bold'),
+        italic: document.queryCommandState('italic'),
+        underline: document.queryCommandState('underline'),
+        strikeThrough: document.queryCommandState('strikeThrough'),
+      });
+    } catch { /* queryCommandState no es universal; sin estado la barra sigue sirviendo */ }
+  }, []);
+
   /** Guarda la selección: al tocar un botón de la barra el foco sale del editable. */
   const saveRange = () => {
     const sel = window.getSelection();
     if (sel && sel.rangeCount && ref.current?.contains(sel.anchorNode)) {
       savedRange.current = sel.getRangeAt(0).cloneRange();
     }
+    refreshEstado();
   };
 
   const restoreRange = () => {
@@ -100,6 +168,34 @@ export const RichTextEditor = ({ value, onChange, style, placeholder, variables 
   const exec = (command: string, arg?: string) => {
     restoreRange();
     document.execCommand(command, false, arg);
+    emit();
+    saveRange();
+  };
+
+  /**
+   * Envuelve la selección en un `<span>` con el estilo dado. `execCommand` no tiene
+   * comando para `font-family` ni para el resaltado en todos los navegadores, y su
+   * `fontName` emite `<font face>` (que el saneamiento descarta).
+   *
+   * Sin selección no hace nada: aplicar un estilo a un cursor colapsado dejaría un span
+   * vacío que confunde más de lo que ayuda.
+   */
+  const wrapStyle = (prop: 'fontFamily' | 'backgroundColor', valor: string) => {
+    restoreRange();
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || sel.isCollapsed) return;
+    const range = sel.getRangeAt(0);
+    const span = document.createElement('span');
+    span.style[prop] = valor;
+    try {
+      span.appendChild(range.extractContents());
+      range.insertNode(span);
+      // Deja la selección sobre lo que se acaba de formatear (se puede seguir aplicando).
+      sel.removeAllRanges();
+      const nuevo = document.createRange();
+      nuevo.selectNodeContents(span);
+      sel.addRange(nuevo);
+    } catch { /* selección que cruza nodos de forma no envolvible: se deja como estaba */ }
     emit();
     saveRange();
   };
@@ -126,25 +222,64 @@ export const RichTextEditor = ({ value, onChange, style, placeholder, variables 
     emit();
   };
 
+  /** Botón de formato que se pinta ACTIVO cuando ya está aplicado a la selección. */
+  const Toggle = ({ cmd, title, children }: { cmd: Toggle; title: string; children: React.ReactNode }) => (
+    <Tooltip title={title}>
+      <IconButton
+        size="small" onClick={() => exec(cmd)}
+        sx={{
+          color: estado[cmd] ? 'primary.main' : 'inherit',
+          bgcolor: estado[cmd] ? 'action.selected' : 'transparent',
+        }}
+      >
+        {children}
+      </IconButton>
+    </Tooltip>
+  );
+
   return (
     <Box sx={{ position: 'relative' }}>
-      {focused && (
+      {(focused || active) && (
         <Paper
-          elevation={4}
+          elevation={6}
           // `onMouseDown preventDefault` evita que el clic en la barra saque el foco del
           // editable (y con él, la selección que se va a formatear).
           onMouseDown={(e) => e.preventDefault()}
+          // El clic en la barra no debe llegar al lienzo (deseleccionaría el bloque).
+          onClick={(e) => e.stopPropagation()}
           sx={{
-            position: 'absolute', bottom: '100%', left: 0, mb: 0.5, zIndex: 20,
-            p: 0.5, borderRadius: 1.5, maxWidth: '100%', overflowX: 'auto',
+            position: 'absolute', left: 0, zIndex: 30,
+            // ⚠️ Arriba: la barra de ORDENAR el bloque (arrastrar/subir/bajar/copiar/
+            // eliminar) vive en `top:-34` del contenedor, o sea justo en esta franja; sin
+            // el margen las dos se montaban. Abajo no hay nada con qué chocar.
+            ...(abajo
+              ? { top: '100%', mt: 0.75 }
+              : { bottom: '100%', mb: 4.75 }),
+            // Envuelve a una segunda fila en vez de hacer scroll horizontal: con scroll,
+            // las últimas herramientas (enlace, listas, quitar formato) quedaban fuera de
+            // vista sin ninguna señal de que estaban ahí.
+            p: 0.5, borderRadius: 1.5, maxWidth: '100%', minWidth: 320,
           }}
         >
-          <Stack direction="row" spacing={0.25} alignItems="center">
-            <Tooltip title="Negrita"><IconButton size="small" onClick={() => exec('bold')}><FormatBoldIcon fontSize="small" /></IconButton></Tooltip>
-            <Tooltip title="Cursiva"><IconButton size="small" onClick={() => exec('italic')}><FormatItalicIcon fontSize="small" /></IconButton></Tooltip>
-            <Tooltip title="Subrayado"><IconButton size="small" onClick={() => exec('underline')}><FormatUnderlinedIcon fontSize="small" /></IconButton></Tooltip>
-            <Tooltip title="Tachado"><IconButton size="small" onClick={() => exec('strikeThrough')}><StrikethroughSIcon fontSize="small" /></IconButton></Tooltip>
+          <Stack direction="row" spacing={0.25} alignItems="center" flexWrap="wrap" useFlexGap rowGap={0.25}>
+            <Toggle cmd="bold" title="Negrita"><FormatBoldIcon fontSize="small" /></Toggle>
+            <Toggle cmd="italic" title="Cursiva"><FormatItalicIcon fontSize="small" /></Toggle>
+            <Toggle cmd="underline" title="Subrayado"><FormatUnderlinedIcon fontSize="small" /></Toggle>
+            <Toggle cmd="strikeThrough" title="Tachado"><StrikethroughSIcon fontSize="small" /></Toggle>
             <Divider orientation="vertical" flexItem sx={{ mx: 0.25 }} />
+
+            <Select
+              size="small" value="" displayEmpty variant="standard" disableUnderline
+              onChange={(e) => wrapStyle('fontFamily', String(e.target.value))}
+              sx={{ minWidth: 104, fontSize: 13, px: 0.5 }}
+              renderValue={() => 'Fuente'}
+            >
+              {FONT_FAMILIES.map((f) => (
+                <MenuItem key={f.label} value={f.value} sx={{ fontFamily: f.value || 'inherit' }}>
+                  {f.label}
+                </MenuItem>
+              ))}
+            </Select>
 
             <Select
               size="small" value="" displayEmpty variant="standard" disableUnderline
@@ -175,6 +310,18 @@ export const RichTextEditor = ({ value, onChange, style, placeholder, variables 
                 <input
                   type="color" hidden
                   onChange={(e) => exec('foreColor', e.target.value)}
+                />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Resaltar (fondo del texto)">
+              <IconButton size="small" component="label">
+                <FormatColorFillIcon fontSize="small" />
+                <input
+                  type="color" hidden defaultValue="#fff3a3"
+                  // `hiliteColor`/`backColor` se comportan distinto en cada navegador (y en
+                  // algunos pintan TODO el bloque). Envolver en un span es predecible y es
+                  // exactamente lo que el correo necesita: estilo en línea.
+                  onChange={(e) => wrapStyle('backgroundColor', e.target.value)}
                 />
               </IconButton>
             </Tooltip>
