@@ -905,3 +905,38 @@ recalibraron contra el costo real (ver `CLAUDE.md` → "Tarifas SMS/Voz a costo+
 ⚠️ **La landing ya no publica precios** (los que tenía no coincidían con el backend: decía
 $19 por correo a 10.000 y el sistema cobra $25). Si se vuelve a publicar una tabla, tomarla
 de `VOLUME_TIERS`, no de la calculadora comercial.
+
+---
+
+## 18. SEO y activos públicos de la landing (ago 2026)
+
+Todo lo de esta sección son **archivos estáticos del front**: entran solos con el build,
+no hay nada que crear en AWS. Lo `[J]` es de dominio/hosting.
+
+- [ ] `[J]` **Servir el sitio en `https://www.mailconnect.com.co/`** — el `canonical`,
+  `og:url` y `og:image` apuntan ahí con URL ABSOLUTA (los scrapers no resuelven relativas).
+  Si el dominio productivo termina siendo **sin `www`**, hay que cambiar esas tres URLs en
+  `index.html` y en `sitemap.xml`, o dejar una redirección 301 de uno a otro. Publicar las
+  dos versiones sin canonical las hace competir entre sí en Google.
+- [ ] `[J]` **Redirección de apex a www (o al revés)** y HTTPS forzado.
+- [ ] `[J]` **Rewrite de SPA en el host**: todas las rutas deben servir `index.html`
+  (`/legal/*` ya se enlaza desde el footer y desde el sitemap). Sin eso, entrar directo a
+  `/legal/terminos` devuelve 404 y Google indexa el error.
+- [ ] `[J]` (opcional, cuando el dominio esté en producción) **Google Search Console**:
+  verificar la propiedad y enviar `https://www.mailconnect.com.co/sitemap.xml`.
+- ℹ️ **Vista previa al compartir:** los scrapers (WhatsApp, LinkedIn, Slack) **cachean** la
+  primera respuesta. Si se cambia `og-image.png`, hay que forzar el refresco con el
+  depurador de cada plataforma o cambiarle el nombre al archivo.
+
+### Archivos que agrega el build
+
+`favicon.ico` (16/32/48) · `favicon-32x32.png` · `favicon-16x16.png` ·
+`apple-touch-icon.png` (180) · `icon-512.png` · `og-image.png` (1200×630) ·
+`site.webmanifest` · `robots.txt` · `sitemap.xml`
+
+⚠️ `robots.txt` bloquea `/panel`, `/admin`, `/login`, `/register` y `/reset-password`: son
+páginas con sesión, no hay nada que indexar y listarlas solo le da pistas a quien escanea.
+
+⚠️ **Precios en la landing:** la tabla sale de `src/pages/landing/precios.ts`, que es espejo
+de `VOLUME_TIERS`. `precios.test.ts` compara contra el `lambda_function.py` real y falla si
+divergen — no editar la tabla a mano sin cambiar también las 6 lambdas (ver §17).
