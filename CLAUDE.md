@@ -26,6 +26,60 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Centro de notificaciones del portal — campanita + avisos in-app (ago 2026)
+> El **Bloque H** ya avisaba por CORREO al owner (saldo bajo, reputación, resumen diario),
+> pero **nada** aparecía dentro de la aplicación y **"tienes una campaña por aprobar" no
+> existía en ningún canal**: quien aprueba se enteraba porque el que la preparó le escribía
+> por WhatsApp. Eso rompe el maker-checker justo donde importa.
+
+- **Tabla `notification`** (PK `notificationId`, GSI **`userId-createdAt-index`**, TTL
+  `expiresAt` a `NOTIFY_TTL_DAYS`=60). ⚠️ **El destinatario es un USUARIO, no un tenant**:
+  quien aprueba no es quien preparó, y volcarle a todo el equipo los avisos de todos
+  convierte el panel en ruido que nadie lee. El aislamiento va por el `userId` del token,
+  **nunca del body**.
+- **`Api_V1_Notifications_List`** (`POST /Notifications/List`): listar (recientes primero,
+  vía Query al GSI — sin `Scan`), `action:'read'` y `action:'read-all'`. Marcar una lleva
+  **`ConditionExpression userId = :u`**: sin esa condición, cualquiera con un id podría
+  marcar —o *descubrir*— avisos ajenos. Crea la tabla on-demand (patrón de
+  `assistantRateLimit`) y **sin tabla devuelve lista vacía**, no un error: es una función
+  accesoria y no debe tumbar el portal.
+- **Cuatro disparadores** con el helper COPIADO `_notify_users` / `_tenant_users`
+  (convención del repo, sin imports compartidos), **best-effort** en todos:
+  - **`campaign.approval`** (Request-approval) → solo a **owner/approver**, **excluyendo a
+    quien la solicitó**. A un `operator` este aviso no le sirve de nada; mandárselo es ruido.
+  - **`campaign.approved`** (Approve) y **`campaign.rejected`** (Reject) → a quien la
+    solicitó (`approvalRequestedBy`). ⚠️ El **motivo del rechazo va DENTRO del cuerpo**: sin
+    él, el rechazo se siente arbitrario y obliga a ir a preguntar.
+  - **`balance.low`** (Prepare-batch) → in-app **además** del correo, dentro del **mismo
+    claim de dedup diario**, así que no se duplica ni se desincroniza del correo.
+  - ℹ️ `createdAt` se escribe con **microsegundos**: es la clave de ordenamiento del GSI y
+    dos avisos del mismo segundo tienen que quedar en orden estable.
+- **`NotificationCenter.tsx`** — campanita con contador en la barra + panel + tarjetas
+  abajo a la derecha. Detalles que importan:
+  - **Sondeo cada 60 s, PAUSADO con la pestaña oculta** (+ refresco al volver a ella). No hay
+    websockets en la plataforma y montarlos por esto sería desproporcionado: son avisos de
+    minutos, no un chat. Sin la pausa, cada pestaña olvidada en segundo plano le pega a la
+    API toda la tarde.
+  - ⚠️ **La PRIMERA carga solo siembra la memoria de vistos**: al entrar al portal no tiene
+    sentido que salten de golpe los avisos acumulados de la semana. Solo se asoma lo que
+    llega **estando** dentro (tope `MAX_TOASTS`=3, se retiran solas a los 8 s).
+  - El contenedor de tarjetas lleva `pointerEvents:'none'` (cada tarjeta lo vuelve a
+    habilitar): si no, una esquina invisible bloquearía los clics de la página de atrás.
+  - `link` lleva al tab que corresponde (`aprobaciones`/`muestras`/`saldo`) y marca leído.
+  - **No se monta en impersonación**: la sesión "ver como cliente" es de solo lectura y
+    mostrarle al admin los avisos personales del cliente no aporta nada.
+- **Cobertura:** `test_notifications_inbox.py` (11: lista vacía, 403 sin identidad, orden y
+  conteo de no leídas, no ve las de otro usuario, marcar una, **no puede marcar la de otro**,
+  marcar todas, los 3 disparadores de aprobación con el filtro por rol + la exclusión del
+  solicitante + el aislamiento entre empresas, el motivo dentro del rechazo, y que **sin la
+  tabla la operación del cliente sigue**).
+- ⚠️ `[J]`: tabla `notification` + GSI (la crea la lambda) · lambda
+  `Api_V1_Notifications_List` (el CD la crea) + ruta `/Notifications/List` **ya en
+  routes.json** — el mapping template DEBE inyectar **`userId`** · IAM `dynamodb:Query`
+  sobre la tabla **y su índice** + `UpdateItem` + `CreateTable/DescribeTable/UpdateTimeToLive`;
+  y `PutItem notification` + `Scan user` en las 4 lambdas disparadoras. Detalle en
+  `DESPLIEGUE.md` §16.
+
 ### Constructor de correos HTML: nivel profesional (ago 2026)
 > Cuatro frentes en una tanda. El HTML que salía ya era correcto (doctype XHTML,
 > condicionales MSO, media queries, botones bulletproof); lo que faltaba era **poder de
@@ -1021,6 +1075,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Verify-2fa` | `{ challenge, code }` **público** | 200 `data:{token, ...}` (idéntico a login OK) · 401 código/desafío inválido o vencido · 429 demasiados intentos. `code` = TOTP o código de respaldo (se consume) |
 | `Security/Totp` | `{ action: status\|enroll\|activate\|disable, code? }` (tras Authorizer) | `enroll`→`{secret, otpauthUri}` · `activate`→`{enabled, backupCodes[10]}` · `disable` (exige código) · `status`→`{enabled, pending}`. Gestión del 2FA TOTP del usuario |
 | `Notifications/Prefs` | `{ action: get\|set, prefs? }` (tenant del token; set owner-only) | 200 `data:{notify:{reputation, digest, lowBalance, lowBalanceThreshold}}`. Preferencias de aviso al owner (saldo bajo, reputación, resumen diario) |
+| `Notifications/List` | `{ limit? }` · `{ action:'read', notificationId }` · `{ action:'read-all' }` (**usuario** del token) | 200 `data:{items:[{notificationId, kind, title, body, level, link, read, createdAt}], unread}` · 400 sin id · 403 sin identidad · 404 (la notificación no existe **o no es tuya**). **Centro de notificaciones** del portal (campanita). Aislamiento por `userId`, no por tenant |
 | `Email/Preferences` | **GET/POST público (proxy)** `?t=<token HMAC>` | 200 página HTML del **centro de preferencias** (frecuencia + temas). POST guarda en `{tenant}_preferences`; "ninguna"/sin-temas → da de baja (`{tenant}_unsubscribe`), otra opción re-suscribe |
 | `Campaign/List` | `{ customerId }` | 200 `data:{campaigns[], count}` (orden desc por fecha; incluye `campaignState` y `messageTemplateId` de SMS/WSP) |
 | `Campaign/Update` | `{ campaignId, campaignName?, channelName?, attachmentType?, dataPath?, template?, messageTemplateId?, from? }` | 200 ok · 409 no-Pendiente · 403 otro cliente · 404 no existe. Solo edita campañas en estado `Pendiente`; toma el cliente del context del Authorizer. `messageTemplateId` = referencia a la plantilla SMS/WSP (contenido en vivo al enviar) |

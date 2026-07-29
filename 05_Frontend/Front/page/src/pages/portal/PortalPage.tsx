@@ -18,6 +18,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useNavigate } from 'react-router-dom';
 import { PortalSidebar, DRAWER_WIDTH_FULL, DRAWER_WIDTH_MINI } from '../../components/portal/PortalSidebar';
+import { NotificationCenter } from '../../components/portal/NotificationCenter';
 import { HtmlBuilderSection } from '../../components/portal/HtmlBuilderSection';
 import { MessageTemplatesSection } from '../../components/portal/MessageTemplatesSection';
 import { DocxTemplatesSection } from '../../components/portal/DocxTemplatesSection';
@@ -171,6 +172,10 @@ export const PortalPage = () => {
               Hola, <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>{user.name}</Box>
             </Typography>
           )}
+          {/* Campanita + los avisos nuevos abajo a la derecha. Solo en sesiones reales:
+              en una impersonación de solo lectura, las notificaciones son del CLIENTE, no
+              del admin que está mirando, y marcarlas leídas se las ocultaría al dueño. */}
+          {!impersonating && <NotificationCenter onNavigate={setActiveSection} />}
           <ThemeToggle sx={{ color: 'text.secondary' }} />
           <IconButton onClick={(e) => setAnchorEl(e.currentTarget)} sx={{ ml: 0.5 }} aria-label="Cuenta">
             <Avatar sx={{ width: 32, height: 32, bgcolor: '#0075be', color: '#fff', fontSize: 15 }}>

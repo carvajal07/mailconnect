@@ -816,3 +816,53 @@ Lambda NUEVA (el CD la crea) + ruta `/Email/Send-test` **ya en `routes.json`**.
   muestra el error y la subida directa nunca dejó de estar disponible.
 - ℹ️ La lambda solo lista los prefijos **públicos** (`resources/`, `attachment/`). `database/`
   y `document/` quedan fuera por diseño: son bases de contactos y comprobantes.
+
+---
+
+## 16. Centro de notificaciones del portal (ago 2026)
+
+La campanita del portal (avisos in-app abajo a la derecha + panel con contador). Es la
+pata que faltaba del **Bloque H**: aquello ya avisaba por CORREO al owner (saldo bajo,
+reputación, resumen diario) pero **nada** aparecía dentro de la aplicación, y "tienes una
+campaña por aprobar" no existía en ningún canal.
+
+- [ ] `[J]` **Tabla `notification`** (PK `notificationId`) + **GSI `userId-createdAt-index`**
+  (HASH `userId`, RANGE `createdAt`, proyección `ALL`) + **TTL sobre `expiresAt`**.
+  **La crea `Api_V1_Notifications_List` on-demand** (mismo patrón que `assistantRateLimit`),
+  así que no hay paso manual — pero si se prefiere crearla por consola/Terraform, ese es el
+  esquema exacto. On-demand (`PAY_PER_REQUEST`).
+- [ ] `[J]` **Lambda `Api_V1_Notifications_List`** (el CD la crea; rol de convención
+  `Lambda_DynFull`) + ruta **`/Notifications/List`** ya en `routes.json` (authorizer + CORS
+  + mapping template). ⚠️ El mapping template DEBE inyectar **`userId`**: el destinatario de
+  una notificación es un USUARIO, no un tenant. Sin `userId` en el context la lambda
+  responde **403** y la campanita queda vacía (falla segura: nunca muestra las de otro).
+- [ ] `[J]` **IAM de la lambda**: `dynamodb:Query` sobre `notification` **y su índice**
+  (`arn:…:table/notification/index/*` — el ARN del índice es aparte del de la tabla),
+  `UpdateItem`, más `CreateTable`/`DescribeTable`/`UpdateTimeToLive` para la creación
+  on-demand.
+- [ ] `[J]` **IAM de las 4 lambdas que DISPARAN avisos**: `dynamodb:PutItem` sobre
+  `notification` + `Scan` sobre `user` en
+  `Api_V1_Campaign_{Request-approval,Approve,Reject}` y
+  `Api_V1_Email_Prepare-batch-template`. Las que ya tienen `Lambda_DynFull*` no necesitan
+  nada. ℹ️ La escritura es **best-effort**: sin el permiso (o sin la tabla) la aprobación y
+  el envío **siguen funcionando**, solo que no se notifica.
+- [ ] `[J]` (opcional) Envs `NOTIFY_TTL_DAYS` (default `60`, cuánto vive un aviso) y
+  `NOTIFICATIONS_LIMIT` (default `30`, cuántos trae el panel; tope duro 100).
+
+### Verificación post-deploy
+
+1. Con un usuario **operator**, pedir aprobación de una campaña con muestras enviadas.
+2. Entrar con el **owner**: la campanita debe traer el contador en 1 y el aviso
+   "Campaña por aprobar"; al hacer clic debe llevar al tab de aprobaciones.
+3. Aprobarla → el **operator** recibe "Campaña aprobada". Rechazarla en otra campaña →
+   el aviso llega con el **motivo dentro del texto**.
+4. El operator que la solicitó **no** debe recibirse a sí mismo el aviso de "por aprobar",
+   y nadie de otra empresa debe ver nada.
+
+ℹ️ **Sin desplegar nada de esto el portal no se rompe**: `notificationsInbox.list` falla y
+el centro simplemente se queda en cero (no hay pantalla de error).
+
+⚠️ **Sigue pendiente lo del Bloque H** (avisos por CORREO): `Api_V1_Notifications_{Prefs,Scan}`,
+`Api_V1_Email_Preferences` y la regla EventBridge del Scan. El centro in-app es independiente
+—no los necesita— pero el aviso de **saldo bajo** solo llega a la campanita si
+`Prepare-batch` está redesplegado con este cambio.

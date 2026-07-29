@@ -10,6 +10,8 @@ Transición: approvalStatus pending → rejected (+ motivo). Multi-tenant por el
 En la Fase 2 se endurece para exigir tenantRole owner|approver.
 '''
 import json
+import os
+import time
 import uuid
 from datetime import datetime
 import boto3
@@ -17,6 +19,62 @@ from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource('dynamodb')
 table_campaign = dynamodb.Table('campaign')
+
+# ─────────────────────────── Notificaciones al portal ───────────────────────────
+# Helper COPIADO (convención del repo: las lambdas no comparten imports).
+# Escribe en la tabla `notification`, que alimenta la campanita del portal.
+# Es BEST-EFFORT: una notificación que no se pudo escribir jamás debe tumbar la
+# operación del cliente, que es lo que de verdad importa.
+_notif_table = dynamodb.Table('notification')
+
+NOTIFY_TTL_DAYS = int(os.environ.get('NOTIFY_TTL_DAYS', '60'))
+
+
+def _notify_users(user_ids, kind, title, body, level='info', link='', customer_id=''):
+    """Crea una notificación in-app por cada usuario destinatario."""
+    ahora = datetime.utcnow()
+    expira = int(time.time()) + NOTIFY_TTL_DAYS * 86400
+    for uid in {str(u) for u in (user_ids or []) if u}:
+        try:
+            _notif_table.put_item(Item={
+                'notificationId': str(uuid.uuid4()),
+                'userId': uid,
+                'customerId': str(customer_id or ''),
+                'kind': str(kind),
+                'title': str(title)[:140],
+                'body': str(body)[:500],
+                'level': str(level),
+                'link': str(link or ''),
+                'read': False,
+                # ISO con microsegundos: es la clave de ordenamiento del GSI y dos avisos
+                # del mismo segundo tienen que quedar en orden estable.
+                'createdAt': ahora.strftime('%Y-%m-%dT%H:%M:%S.%f'),
+                'expiresAt': expira,
+            })
+        except Exception as e:
+            print('No se pudo notificar a {}: {}'.format(uid, e))
+
+
+def _tenant_users(customer_id, roles=None):
+    """userIds ACTIVOS del tenant, opcionalmente filtrados por `tenantRole`."""
+    try:
+        resp = dynamodb.Table('user').scan(
+            ProjectionExpression='userId, customerId, active, tenantRole')
+        out = []
+        for u in resp.get('Items', []):
+            if str(u.get('customerId') or '') != str(customer_id):
+                continue
+            if u.get('active') is False:
+                continue
+            if roles and str(u.get('tenantRole') or 'owner') not in roles:
+                continue
+            out.append(str(u.get('userId') or ''))
+        return [u for u in out if u]
+    except Exception as e:
+        print('No se pudieron listar los usuarios del tenant: {}'.format(e))
+        return []
+
+
 _audit_table = dynamodb.Table('adminAudit')
 
 
@@ -112,6 +170,15 @@ def lambda_handler(event, context):
         _audit(event, 'campaign.reject', current.get('campaignName') or campaign_id,
                "Rechazo de la campaña '{}' ({}): {}".format(
                    current.get('campaignName', ''), current.get('channel', ''), reason[:120]))
+
+        # El motivo va DENTRO del aviso: sin él, el usuario tiene que ir a buscarlo y el
+        # rechazo se siente arbitrario.
+        _notify_users(
+            [str(current.get('approvalRequestedBy') or '')], 'campaign.rejected',
+            'Campaña rechazada',
+            "Tu campaña '{}' fue rechazada por {}. Motivo: {}".format(
+                current.get('campaignName', ''), auth.get('user') or 'un aprobador', reason),
+            level='error', link='campanas', customer_id=tenant_customer_id)
         return {'status': True, 'statusCode': 200, 'description': 'Campaña rechazada.'}
     except Exception as e:
         print('Error rechazando la campaña: {}'.format(e))

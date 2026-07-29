@@ -493,6 +493,27 @@
 | CP-PREF-04 | 🔴 | Token inválido | Abrir la página con un token manipulado | Error, no permite guardar nada |
 | CP-PREF-05 | 🟡 | Baja directa | Usar el enlace de "Cancelar suscripción" | Página de confirmación; queda desuscrito |
 
+### 19b. Centro de notificaciones del portal (campanita)
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-CAM-01 | 🔴 | Aviso de campaña por aprobar | Un `operator` solicita la aprobación de una campaña con muestras enviadas | El `owner`/`approver` ve la campanita con contador y el aviso "Campaña por aprobar" |
+| CP-CAM-02 | 🔴 | Solo a quien puede aprobar | Revisar la campanita de otro `operator` del mismo equipo | NO le llega (no puede hacer nada con ese aviso) |
+| CP-CAM-03 | 🔴 | Quien la pide no se avisa a sí mismo | Revisar la campanita del `operator` que la solicitó | NO le llega |
+| CP-CAM-04 | 🔴 | Aislamiento entre empresas | Revisar la campanita de un usuario de OTRA empresa | No ve nada de la primera |
+| CP-CAM-05 | 🔴 | Aviso de aprobada | El `owner` aprueba la campaña | A quien la solicitó le llega "Campaña aprobada" (verde) |
+| CP-CAM-06 | 🔴 | Aviso de rechazada con el motivo | El `owner` rechaza con el motivo "Falta el descargo legal" | El aviso llega en rojo y el **motivo se lee dentro del texto** |
+| CP-CAM-07 | 🔴 | Saldo bajo in-app | Hacer un envío que deje el saldo bajo el umbral | Además del correo, aparece el aviso en la campanita del owner |
+| CP-CAM-08 | 🟡 | Avisos nuevos abajo a la derecha | Dejar el portal abierto y generar un aviso desde otra sesión | En menos de un minuto se asoma la tarjeta abajo a la derecha |
+| CP-CAM-09 | 🟡 | Los nuevos NO saltan al entrar | Con avisos viejos sin leer, entrar al portal | La campanita trae el contador pero **no** se asoman tarjetas de golpe |
+| CP-CAM-10 | 🟡 | La tarjeta se retira sola | Esperar unos segundos tras el aviso | Desaparece sin bloquear la página; se puede cerrar con la × |
+| CP-CAM-11 | 🔴 | Clic lleva al lugar correcto | Hacer clic en "Campaña por aprobar" | Abre el tab de aprobaciones y el aviso queda leído |
+| CP-CAM-12 | 🟡 | Marcar leídas | Abrir el panel y pulsar "Marcar leídas" | El contador desaparece; los avisos siguen visibles en gris |
+| CP-CAM-13 | 🔴 | No se puede marcar la de otro | Llamar `/Notifications/List` con `action:read` y el id de otro usuario | 404; el aviso ajeno sigue sin leer |
+| CP-CAM-14 | 🟡 | Sin notificaciones | Usuario nuevo abre la campanita | Mensaje de estado vacío, sin error |
+| CP-CAM-15 | 🟢 | No molesta en impersonación | Entrar como admin con "Ver como cliente" | La campanita no aparece (la sesión es de solo lectura) |
+| CP-CAM-16 | 🟢 | La aprobación funciona sin la tabla | Sin desplegar la tabla `notification`, solicitar una aprobación | La solicitud se registra igual; solo no se notifica |
+
 ---
 
 ## 20. Higiene, límites de uso y costo del adjunto  ✅
