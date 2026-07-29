@@ -418,6 +418,19 @@
 | CP-DOM-07 | 🟡 | Remitente verificado en el selector | Crear campaña y abrir el selector "De (From)" | Aparecen el dominio de la plataforma, los dominios y los correos verificados |
 | CP-DOM-08 | 🟡 | Eliminar dominio | Borrar un dominio verificado | Se borra el registro y la identidad en SES |
 
+### 15b. Panel SPF / DKIM / DMARC
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-AUT-01 | 🔴 | DKIM verificado en verde | Abrir el detalle de un dominio con DKIM firmando | El chip **DKIM** sale verde con check |
+| CP-AUT-02 | 🟡 | SPF/DMARC sin publicar en gris | Abrir el detalle de un dominio recién creado | Los chips **SPF** y **DMARC** salen grises; debajo aparece el registro TXT recomendado de cada uno, con botón de copiar |
+| CP-AUT-03 | 🟡 | SPF verde al publicarlo | Publicar `v=spf1 include:amazonses.com ~all` y pulsar Actualizar estado | El chip SPF pasa a verde y su bloque de "registro recomendado" desaparece |
+| CP-AUT-04 | 🟡 | DMARC verde al publicarlo | Publicar `_dmarc.<dominio>` con `v=DMARC1;…` y actualizar | El chip DMARC pasa a verde |
+| CP-AUT-05 | 🟢 | Tooltip explica el motivo | Pasar el mouse sobre un chip gris | El tooltip dice si es porque no se ha publicado o porque no se pudo consultar |
+| CP-AUT-06 | 🟢 | Sin el layer de DNS | Con el layer de dnspython no desplegado, ver un dominio | SPF/DMARC se ven grises (no verdes, no rotos); DKIM sigue funcionando normal |
+| CP-AUT-07 | 🟢 | Correos sueltos sin el panel | Abrir el detalle de un remitente tipo correo (no dominio) | No aparece el bloque "Autenticación del correo" |
+| CP-AUT-08 | 🟢 | No es bloqueante | Con SPF y DMARC en gris, intentar enviar una campaña real desde ese dominio verificado | El envío funciona igual (SPF/DMARC son recomendados, no obligatorios) |
+
 ---
 
 ## 16. Seguridad avanzada (2FA · bloqueo · revocación)  ✅

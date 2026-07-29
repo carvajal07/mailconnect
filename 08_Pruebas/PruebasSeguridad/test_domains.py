@@ -196,3 +196,125 @@ def test_from_allowed_remitente(mods):
     tbl.put_item(Item={'domainId': 'D2', 'customerId': 'CU1', 'kind': 'domain',
                        'domain': 'empresa.com', 'status': 'verified'})
     assert cc._from_allowed('CU1', 'otro@empresa.com') is True
+
+
+# ─────────────────────── Panel SPF / DKIM / DMARC (ago 2026) ───────────────────────
+
+def test_dkim_real_desde_ses(mods):
+    """DKIM es un estado APARTE del `status` general (que solo cubre el TXT de propiedad):
+    moto simula `verify_domain_dkim` como firmando (Success) → debe salir 'verified'."""
+    add, lst, _ = mods
+    add.lambda_handler(_auth({'domain': 'empresa.com'}), None)
+    resp = lst.lambda_handler(_auth({}), None)
+    dom = resp['data']['domains'][0]
+    assert dom['deliverability']['dkim']['status'] == 'verified'
+
+
+def test_spf_dmarc_sin_layer_quedan_unknown(mods):
+    """Sin dnspython (no está en este entorno de pruebas) NUNCA se inventa un resultado:
+    SPF/DMARC quedan 'unknown', no 'pending' ni 'verified'."""
+    add, lst, _ = mods
+    add.lambda_handler(_auth({'domain': 'empresa.com'}), None)
+    resp = lst.lambda_handler(_auth({}), None)
+    dom = resp['data']['domains'][0]
+    assert dom['deliverability']['spf']['status'] == 'unknown'
+    assert dom['deliverability']['dmarc']['status'] == 'unknown'
+    # El registro recomendado viaja siempre, aunque no se haya podido verificar — es lo
+    # que el cliente necesita copiar para publicarlo.
+    assert 'amazonses.com' in dom['deliverability']['spf']['record']
+    assert dom['deliverability']['dmarc']['name'] == '_dmarc.empresa.com'
+
+
+def test_spf_verificado_con_el_registro_publicado(mods, monkeypatch):
+    """Con el layer de dnspython disponible y el TXT correcto, sale 'verified'."""
+    add, lst, _ = mods
+    dom_list_mod = lst
+
+    class _Registro:
+        def __init__(self, texto):
+            self.strings = [texto.encode('utf-8')]
+
+    class _ResolverFalso:
+        def resolve(self, name, tipo, lifetime=None):
+            if name == 'empresa.com':
+                return [_Registro('v=spf1 include:amazonses.com ~all')]
+            raise Exception('NXDOMAIN')
+
+    monkeypatch.setattr(dom_list_mod, '_dns_resolver', _ResolverFalso())
+    add.lambda_handler(_auth({'domain': 'empresa.com'}), None)
+    resp = lst.lambda_handler(_auth({}), None)
+    dom = resp['data']['domains'][0]
+    assert dom['deliverability']['spf']['status'] == 'verified'
+    # DMARC no se publicó en este caso → sigue 'pending', no se contagia del SPF.
+    assert dom['deliverability']['dmarc']['status'] == 'pending'
+
+
+def test_dmarc_verificado_con_el_registro_publicado(mods, monkeypatch):
+    add, lst, _ = mods
+    dom_list_mod = lst
+
+    class _Registro:
+        def __init__(self, texto):
+            self.strings = [texto.encode('utf-8')]
+
+    class _ResolverFalso:
+        def resolve(self, name, tipo, lifetime=None):
+            if name == '_dmarc.empresa.com':
+                return [_Registro('v=DMARC1; p=none;')]
+            raise Exception('NXDOMAIN')
+
+    monkeypatch.setattr(dom_list_mod, '_dns_resolver', _ResolverFalso())
+    add.lambda_handler(_auth({'domain': 'empresa.com'}), None)
+    resp = lst.lambda_handler(_auth({}), None)
+    dom = resp['data']['domains'][0]
+    assert dom['deliverability']['dmarc']['status'] == 'verified'
+    assert dom['deliverability']['spf']['status'] == 'pending'
+
+
+def test_un_txt_ajeno_no_pasa_por_spf(mods, monkeypatch):
+    """Un TXT cualquiera (verificación de Google, por ejemplo) no debe contarse como SPF."""
+    add, lst, _ = mods
+    dom_list_mod = lst
+
+    class _Registro:
+        def __init__(self, texto):
+            self.strings = [texto.encode('utf-8')]
+
+    class _ResolverFalso:
+        def resolve(self, name, tipo, lifetime=None):
+            return [_Registro('google-site-verification=abc123')]
+
+    monkeypatch.setattr(dom_list_mod, '_dns_resolver', _ResolverFalso())
+    add.lambda_handler(_auth({'domain': 'empresa.com'}), None)
+    resp = lst.lambda_handler(_auth({}), None)
+    dom = resp['data']['domains'][0]
+    assert dom['deliverability']['spf']['status'] == 'pending'
+    assert dom['deliverability']['dmarc']['status'] == 'pending'
+
+
+def test_los_correos_sueltos_no_llevan_el_panel(mods):
+    """Un CORREO (no dominio) no firma con Easy DKIM: no tiene sentido mostrarle SPF/DKIM/
+    DMARC, así que la clave `deliverability` no se agrega."""
+    add, lst, _ = mods
+    add.lambda_handler(_auth({'domain': 'ventas@empresa.com'}), None)
+    resp = lst.lambda_handler(_auth({}), None)
+    dom = resp['data']['domains'][0]
+    assert 'deliverability' not in dom
+
+
+def test_falla_ses_dkim_no_rompe_el_listado(mods, monkeypatch):
+    """Si `get_identity_dkim_attributes` falla, DKIM queda 'unknown' pero el resto del
+    listado (y el status general) sigue funcionando — nunca se cae toda la respuesta."""
+    add, lst, _ = mods
+    dom_list_mod = lst
+    add.lambda_handler(_auth({'domain': 'empresa.com'}), None)
+
+    def _falla(*a, **kw):
+        raise Exception('SES no disponible')
+    monkeypatch.setattr(dom_list_mod.ses, 'get_identity_dkim_attributes', _falla)
+
+    resp = lst.lambda_handler(_auth({}), None)
+    assert resp['statusCode'] == 200
+    dom = resp['data']['domains'][0]
+    assert dom['deliverability']['dkim']['status'] == 'unknown'
+    assert dom['status'] == 'verified'   # el general no se ve afectado

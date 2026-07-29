@@ -37,7 +37,7 @@ import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import MarkEmailUnreadIcon from '@mui/icons-material/MarkEmailUnread';
 import SendIcon from '@mui/icons-material/Send';
 import { domainsService, senderKindOf } from '../../services/domainsService';
-import type { SenderDomain, DomainStatus, DnsRecord, SenderKind } from '../../services/domainsService';
+import type { SenderDomain, DomainStatus, DnsRecord, SenderKind, Deliverability, MechanismStatus } from '../../services/domainsService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
@@ -61,6 +61,39 @@ const KIND_META: Record<SenderKind, { label: string; icon: React.ReactElement }>
   email: { label: 'Correo', icon: <AlternateEmailIcon fontSize="small" color="action" /> },
 };
 
+/**
+ * Chip SPF/DKIM/DMARC: gris "sin verificar" o verde "verificado", tal como se pidió — el
+ * detalle de POR QUÉ está en gris (aún no se publicó, o no se pudo consultar) va en el
+ * tooltip, no en un tercer color, para no complicar la lectura rápida del estado.
+ */
+const MechanismChip = ({ label, status, motivoPendiente }: {
+  label: string;
+  status: MechanismStatus;
+  /** Texto del tooltip cuando NO está verificado (cambia según la causa). */
+  motivoPendiente: string;
+}) => {
+  const ok = status === 'verified';
+  return (
+    <Tooltip title={ok ? `${label}: verificado.` : motivoPendiente}>
+      <Chip
+        size="small"
+        variant={ok ? 'filled' : 'outlined'}
+        color={ok ? 'success' : 'default'}
+        icon={ok ? <CheckCircleIcon fontSize="small" /> : undefined}
+        label={label}
+        sx={!ok ? { color: 'text.disabled', borderColor: 'divider' } : undefined}
+      />
+    </Tooltip>
+  );
+};
+
+/** Motivo del tooltip cuando el mecanismo no está verificado, según la causa real. */
+const motivoDe = (status: MechanismStatus, sinPublicar: string): string => {
+  if (status === 'unknown') return 'No se pudo consultar todavía. Vuelve a intentar en unos minutos.';
+  if (status === 'failed') return 'SES no pudo confirmarlo. Revisa que el registro esté copiado tal cual.';
+  return sinPublicar;
+};
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const DOMAIN_RE = /^([a-z0-9](-?[a-z0-9])*\.)+[a-z]{2,}$/;
 
@@ -68,6 +101,69 @@ const copy = (text: string, notify: (m: string, s?: 'success' | 'info') => void)
   navigator.clipboard?.writeText(text).then(
     () => notify('Copiado al portapapeles.', 'info'),
     () => {},
+  );
+};
+
+/**
+ * Panel SPF / DKIM / DMARC del dominio: tres chips gris (sin verificar) / verde
+ * (verificado), y el registro a publicar para el que falte.
+ *
+ * ⚠️ DKIM es REAL (lo confirma SES: es la firma que va en cada correo). SPF y DMARC son
+ * RECOMENDADOS, no obligatorios para poder enviar — como el remitente no usa un dominio
+ * MAIL FROM propio, DMARC ya se alinea por DKIM. Se muestran igual porque en otras
+ * plataformas de correo son el check habitual y varios clientes los buscan por costumbre.
+ */
+const AuthMechanismsPanel = ({ domain, deliverability, notify }: {
+  domain: string;
+  deliverability?: Deliverability;
+  notify: (m: string, s?: 'success' | 'info') => void;
+}) => {
+  if (!deliverability) {
+    return (
+      <Alert severity="info" variant="outlined">
+        El estado de SPF/DKIM/DMARC se calcula al pulsar <strong>Actualizar estado</strong>.
+      </Alert>
+    );
+  }
+  const { dkim, spf, dmarc } = deliverability;
+  const faltantes = [
+    spf.status !== 'verified' && { titulo: 'Registro SPF (recomendado)', tipo: 'TXT', nombre: domain, valor: spf.record },
+    dmarc.status !== 'verified' && { titulo: 'Registro DMARC (recomendado)', tipo: 'TXT', nombre: dmarc.name, valor: dmarc.record },
+  ].filter(Boolean) as { titulo: string; tipo: string; nombre: string; valor: string }[];
+
+  return (
+    <Box>
+      <Typography variant="subtitle2" sx={{ mb: 1 }}>Autenticación del correo</Typography>
+      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: faltantes.length ? 1.5 : 0 }}>
+        <MechanismChip label="DKIM" status={dkim.status}
+          motivoPendiente={motivoDe(dkim.status, 'Aún no firma. Verifica los 3 registros CNAME de arriba.')} />
+        <MechanismChip label="SPF" status={spf.status}
+          motivoPendiente={motivoDe(spf.status, 'No es obligatorio para enviar, pero puedes publicarlo abajo.')} />
+        <MechanismChip label="DMARC" status={dmarc.status}
+          motivoPendiente={motivoDe(dmarc.status, 'No es obligatorio para enviar, pero puedes publicarlo abajo.')} />
+      </Stack>
+
+      {faltantes.length > 0 && (
+        <Stack spacing={1}>
+          <Typography variant="caption" color="text.secondary">
+            SPF y DMARC son opcionales: DKIM ya deja tus correos autenticados. Publícalos solo
+            si tu equipo de TI los exige o quieres el check verde en herramientas externas.
+          </Typography>
+          {faltantes.map((f) => (
+            <Box key={f.titulo} sx={{ p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
+              <Typography variant="caption" color="text.secondary">{f.titulo}</Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <Chip size="small" label={f.tipo} sx={{ flexShrink: 0 }} />
+                <Typography variant="body2" sx={{ fontFamily: 'monospace', wordBreak: 'break-all', flex: 1 }}>
+                  {f.nombre} → {f.valor}
+                </Typography>
+                <IconButton size="small" onClick={() => copy(f.valor, notify)}><ContentCopyIcon sx={{ fontSize: 14 }} /></IconButton>
+              </Box>
+            </Box>
+          ))}
+        </Stack>
+      )}
+    </Box>
   );
 };
 
@@ -420,6 +516,8 @@ export const DominiosSection = () => {
                 Algunos proveedores agregan el dominio automáticamente al "Nombre"; si te queda duplicado
                 (…tuempresa.com.tuempresa.com), usa solo la parte antes del dominio.
               </Typography>
+
+              <AuthMechanismsPanel domain={detailView.domain} deliverability={detailView.deliverability} notify={notify} />
             </Stack>
           )}
         </DialogContent>

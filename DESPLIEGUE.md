@@ -940,3 +940,37 @@ páginas con sesión, no hay nada que indexar y listarlas solo le da pistas a qu
 ⚠️ **Precios en la landing:** la tabla sale de `src/pages/landing/precios.ts`, que es espejo
 de `VOLUME_TIERS`. `precios.test.ts` compara contra el `lambda_function.py` real y falla si
 divergen — no editar la tabla a mano sin cambiar también las 6 lambdas (ver §17).
+
+---
+
+## 19. Panel SPF/DKIM/DMARC en Dominios (ago 2026)
+
+`Api_V1_Domain_List` agrega el estado real de autenticación por dominio. Es aditivo —
+no cambia el contrato existente, solo suma la clave `deliverability`.
+
+- [ ] `[J]` **Sin cambios de IAM.** `ses:GetIdentityDkimAttributes` (para DKIM) ya estaba
+  en la lista de permisos de las lambdas de dominio (ver §14 en el histórico de
+  `CLAUDE.md`/routes admin). Verificar que el rol de `Api_V1_Domain_List` lo tenga; si es
+  `Lambda_SES*` genérico, ya lo cubre.
+- [ ] `[J]` (opcional) **Layer de `dnspython`** para que SPF/DMARC se puedan consultar de
+  verdad (mismo layer opcional que usa `Api_V1_Database_Verify` para el chequeo MX). **Sin
+  el layer no rompe nada**: SPF y DMARC quedan en `unknown` (se ven en gris igual, con el
+  tooltip "no se pudo consultar" en vez de "no publicado"); DKIM sigue funcionando porque
+  viene de la API de SES, no de DNS.
+- [ ] `[J]` (opcional) Env `DELIVERABILITY_MAX_DOMAINS` (default `20`).
+
+### Verificación post-deploy
+
+1. Con un dominio ya verificado (DKIM firmando), abrir su detalle: el chip **DKIM** debe
+   salir **verde**.
+2. Publicar el TXT `v=spf1 include:amazonses.com ~all` en un dominio de prueba y, tras
+   unos minutos de propagación, pulsar **Actualizar estado**: el chip **SPF** debe pasar a
+   verde y el bloque de "registro recomendado" para SPF debe desaparecer.
+3. Sin el layer de dnspython desplegado: SPF y DMARC deben verse en gris con el tooltip de
+   "no se pudo consultar" (no deben salir en verde por accidente, ni deben tumbar el resto
+   del listado).
+
+⚠️ **SPF y DMARC no son obligatorios para que el envío funcione** — el remitente usa Easy
+DKIM sin un dominio MAIL FROM propio, así que DMARC ya se alinea por DKIM. Si en el futuro
+se agrega un MAIL FROM personalizado por cliente, ahí sí SPF pasa a ser necesario para la
+alineación y este panel dejaría de ser "recomendado" para ser parte del flujo obligatorio.

@@ -26,6 +26,47 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Dominios: panel SPF/DKIM/DMARC con estado real (ago 2026)
+> El diálogo de detalle de un dominio solo mostraba UN estado ("Verificado"/"Pendiente"),
+> que en realidad es apenas el TXT de **propiedad** del dominio (`_amazonses.<dominio>`).
+> No decía nada de si DKIM quedó firmando, ni si el dominio tenía SPF o DMARC — el cliente
+> no tenía cómo saber si su correo iba a autenticar bien sin mirar una herramienta externa.
+
+- **`Api_V1_Domain_List`** agrega `deliverability` por cada remitente tipo **dominio**
+  (los correos sueltos no firman con Easy DKIM, así que no llevan el panel):
+  - **`dkim`** — REAL, de `ses.get_identity_dkim_attributes` (`Success`→verified). El IAM
+    `ses:GetIdentityDkimAttributes` **ya estaba pedido** para otra cosa; no hace falta
+    permiso nuevo.
+  - **`spf`** / **`dmarc`** — lectura DNS de verdad: TXT del dominio buscando
+    `v=spf1 … amazonses.com`, y `_dmarc.<dominio>` buscando `v=DMARC1`. Mismo patrón
+    **opcional** de `dnspython` que ya usa `Database_Verify` (MX real) — sin el layer, el
+    estado queda en **`unknown`**, nunca se inventa un resultado. A diferencia del check
+    MX, aquí **no hay fallback con `socket`**: resolver TXT no es algo que la stdlib sepa
+    hacer, así que sin el layer simplemente no se puede consultar.
+  - ⚠️ **SPF y DMARC son RECOMENDADOS, no obligatorios para enviar.** El remitente no usa
+    un dominio MAIL FROM propio (el Return-Path sigue en `amazonses.com`), así que DMARC
+    ya se alinea por **DKIM** (el `d=` de la firma coincide con el dominio del cliente) sin
+    necesidad de SPF. Se ofrecen igual porque en otras plataformas de correo es el check
+    habitual y varios clientes lo buscan por costumbre — el front lo dice explícitamente
+    para que nadie entre en pánico pensando que sin ellos no puede enviar.
+  - Tope `DELIVERABILITY_MAX_DOMAINS` (20): son los dominios del PROPIO cliente (normalmente
+    un puñado), pero evita que una cuenta con muchos alargue la respuesta con lookups DNS
+    uno a uno.
+- **Front (`DominiosSection.tsx`):** tres **chips gris/verde** ("Autenticación del correo")
+  en el diálogo de detalle — verde solo si `verified`; `pending`/`failed`/`unknown` van
+  todos en **gris** (tal como se pidió: dos colores, no tres), y el **tooltip** explica la
+  causa real ("aún no se publica" vs "no se pudo consultar" vs "SES no pudo confirmarlo").
+  Cuando SPF o DMARC no están verdes, aparece el **registro recomendado** a publicar (con
+  botón de copiar, mismo patrón que la tabla de registros DNS) — un chip gris sin decir qué
+  publicar no sirve de nada.
+- **Cobertura:** `test_domains.py` sube a **25** (+7: DKIM real desde SES, SPF/DMARC en
+  `unknown` sin el layer, verificado con el registro publicado —cada uno por separado, sin
+  contagiarse—, un TXT ajeno que no cuenta como SPF, los correos sueltos sin el panel, y que
+  un fallo de SES en DKIM no tumbe el resto del listado).
+- ⚠️ `[J]`: **sin cambios de infra.** IAM ya cubierto (`GetIdentityDkimAttributes` en la
+  lista existente). El layer de `dnspython` es **opcional** — sin él, SPF/DMARC se ven en
+  gris con el tooltip "no se pudo consultar" en vez de "no publicado"; DKIM funciona igual.
+
 ### Landing: SEO, precios "desde" y accesibilidad (ago 2026)
 - **SEO en `index.html`** (era `lang="en"` y `<title>page</title>`, o sea invisible para
   Google y horrible al compartir): idioma `es`, título y `description` reales, `canonical`,
@@ -1239,7 +1280,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Blacklist/Add` | `{ email (correo o celular), reason? }` | 201 ok · 400 datos. Crea la tabla si no existe (PK `email`) |
 | `Blacklist/Delete` | `{ email }` | 200 ok · 404 no estaba · 400 datos |
 | `Domain/Add` | `{ identity }` (dominio `empresa.com` o correo `x@empresa.com`; se detecta por `@`) | 201 `data:{domainId, kind, domain, status:'pending', records[]}` · 200 (reenvío de correo pendiente) · 400 · 403 · 409. **Dominio**: `verify_domain_identity + verify_domain_dkim` → 1 TXT + 3 CNAME. **Correo**: `verify_email_identity` → SES envía un enlace al correo (`records:[]`, sin DNS) |
-| `Domain/List` | `{}` | 200 `data:{domains:[{domainId, kind, domain, status, records, createdAt, verifiedAt}], count}`. Refresca el estado desde SES (pending/verified/failed) para dominios **y** correos |
+| `Domain/List` | `{}` | 200 `data:{domains:[{domainId, kind, domain, status, records, deliverability?, createdAt, verifiedAt}], count}`. Refresca el estado desde SES (pending/verified/failed) para dominios **y** correos. `deliverability` (solo `kind:'domain'`): `{dkim:{status}, spf:{status,record}, dmarc:{status,name,record}}` — status ∈ verified\|pending\|failed\|unknown |
 | `Domain/Delete` | `{ domainId }` | 200 ok · 400 · 403 otro cliente · 404. Borra el registro + `delete_identity` en SES (best-effort) |
 | `Pricing/List` | `{ customerId? }` (**admin**) | 200 `data:{customerId, defaults, effective, overrides, currency}` (alcance `*` global o cliente) |
 | `Pricing/Update` | `{ customerId?, channel, fields }` (**admin**) | 200 ok · 400. `channel` ∈ EMAIL·SMS·WHATSAPP·VOICE·COMMON (COMMON escribe taxRate/minCampaign en los 4) |
