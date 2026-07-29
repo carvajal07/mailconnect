@@ -296,6 +296,17 @@
 | CP-HTML-61 | 🔴 | **La biblioteca no expone datos privados** | Revisar el listado de "Mis imágenes" | NO aparecen archivos de `database/` ni `document/` (bases y comprobantes) |
 | CP-HTML-62 | 🟡 | Ventana de edición aparte | Botón de pantalla completa (⛶) | El editor ocupa toda la ventana; el menú del portal desaparece; Esc cierra |
 | CP-HTML-63 | 🔴 | **Scroll independiente por panel** | Con un correo largo, hacer scroll en el lienzo | La paleta y las propiedades NO se van de vista; la página no scrollea como un todo |
+| CP-HTML-70 | 🔴 | Insertar debajo del seleccionado | Con 2 bloques, seleccionar el PRIMERO y hacer clic en un tipo de la paleta | El nuevo queda EN MEDIO, no al final |
+| CP-HTML-71 | 🟡 | "Agregar bloque" sigue agregando al final | Usar el botón de la zona final del lienzo con un bloque seleccionado arriba | El nuevo queda al FINAL |
+| CP-HTML-72 | 🔴 | Fondo de página en el editor | Ajustes → cambiar "Fondo de página" | El lienzo cambia de fondo (antes solo se veía en la vista previa) |
+| CP-HTML-73 | 🔴 | Color de texto global | Ajustes → cambiar "Color de texto" | Encabezados y textos del lienzo Y del correo toman ese color |
+| CP-HTML-74 | 🟡 | Color propio del bloque manda | Fijar un color al bloque y cambiar el global | El bloque conserva el suyo |
+| CP-HTML-75 | 🟡 | Fuente global | Ajustes → cambiar "Fuente" | Se ve en el lienzo y en el HTML publicado |
+| CP-HTML-76 | 🔴 | Publicar guarda las DOS formas | Publicar una plantilla → abrir "Cargar" | Aparece en "Diseños editables" con el chip "publicada" |
+| CP-HTML-77 | 🔴 | Cargar devuelve algo EDITABLE | Abrir un diseño desde "Cargar" | Vuelve por bloques (no un bloque de HTML crudo) |
+| CP-HTML-78 | 🟡 | Republicar no duplica | Abrir un diseño, cambiar algo y Publicar | Actualiza el mismo diseño (chip con su nombre) y versiona |
+| CP-HTML-79 | 🟡 | Solo-en-SES lista lo que no tiene diseño | Revisar la 2ª sección de "Cargar" | Solo plantillas sin diseño editable, con el aviso de HTML crudo |
+| CP-HTML-80 | 🟢 | "Nuevo" cancelado no pierde la identidad | Con un diseño abierto, pulsar Nuevo y CANCELAR el confirm | El chip del diseño sigue ahí; publicar sigue actualizando ese |
 | CP-HTML-67 | 🟡 | Alineación en 3 casillas | Seleccionar un bloque y usar el control de Alineación | Tres casillas; el bloque se dibuja DENTRO de la elegida; clic en otra lo mueve |
 | CP-HTML-68 | 🟢 | La miniatura imita el bloque | Comparar el control en un bloque de imagen, uno de botón y uno de texto | Muestra icono de imagen, píldora azul y renglones respectivamente |
 | CP-HTML-69 | 🟢 | Alineación con teclado | Enfocar el control y usar ←, →, Inicio y Fin | Cambia de casilla; Inicio va a izquierda y Fin a derecha |

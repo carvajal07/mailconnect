@@ -302,7 +302,7 @@ export const createBlock = (type: BlockType): Block => {
   const b = baseBlock(type);
   switch (type) {
     case 'heading':
-      return { ...b, text: 'Título principal', align: 'center', color: '#16233f' };
+      return { ...b, text: 'Título principal', align: 'center' };
     case 'text':
       return { ...b, text: 'Hola {{nombre}}, escribe aquí tu contenido. Haz doble clic para editarlo.' };
     // La imagen nace VACÍA a propósito: antes apuntaba a via.placeholder.com y, si el
@@ -583,7 +583,7 @@ export function renderBlock(b: Block, st: EmailSettings, widthOverride?: number)
   const innerW = widthOverride ?? st.contentWidth - 48; // contenedor menos padding lateral
   switch (b.type) {
     case 'heading':
-      return `<h1 class="mc-h1" style="margin:0;font-family:${st.fontFamily};font-size:${b.fontSize || 26}px;line-height:1.3;color:${b.color || '#16233f'};text-align:${align}">${content(b)}</h1>`;
+      return `<h1 class="mc-h1" style="margin:0;font-family:${st.fontFamily};font-size:${b.fontSize || 26}px;line-height:1.3;color:${b.color || st.textColor};text-align:${align}">${content(b)}</h1>`;
     case 'text':
       return paragraph(b, align, st);
     case 'image':

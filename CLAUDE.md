@@ -317,6 +317,47 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   logo propio que reemplaza la insignia, y un guard de que la tabla de iconos NO lleva
   `align` — el float que colapsaba el bloque).
 
+### Constructor HTML: inserción, ajustes globales y guardado editable (ago 2026)
+- **Agregar por CLIC inserta DEBAJO del bloque seleccionado**, no al final del todo (que
+  obligaba a arrastrarlo de vuelta por medio correo — justo lo que uno evita al hacer clic
+  en vez de arrastrar). Sin selección, al final. ⚠️ El botón **"Agregar bloque"** de la zona
+  final SIEMPRE agrega al final (`addBlock(t, true)`): es lo que dice su nombre. Solo se
+  inserta junto a bloques del nivel SUPERIOR; para meter algo en una columna está su "+".
+- **Defecto — los ajustes globales no se veían en el editor.** Tres causas distintas:
+  1. **Fondo de página**: el backdrop del lienzo era un gris fijo (`#0b1220`/`#eef2f7`).
+     Ahora usa `settings.pageBg`, igual que la vista previa y el correo.
+  2. **Color de texto y fuente**: la hoja tenía `color:'#333333'` clavado y ningún
+     `fontFamily`, y `BlockPreview` caía a `'#16233f'`/`'#333'`. Ahora ambos usan
+     exactamente el mismo fallback que el generador (`st.textColor` / `st.fontFamily`).
+  3. ⚠️ **La causa de fondo del encabezado:** `createBlock('heading')` **horneaba**
+     `color:'#16233f'` en el bloque, así que `b.color` siempre ganaba y el ajuste global
+     **nunca** lo alcanzaba — ni en el lienzo NI en el correo. Ahora nace sin color y
+     hereda; un color puesto a mano en el bloque sigue teniendo prioridad, y las plantillas
+     ya guardadas conservan el suyo (que es el comportamiento correcto).
+- **Guardado en DOS formas, que es lo que faltaba.** SES guarda el HTML ya armado —lo que
+  se ENVÍA— y no se puede deshacer en bloques; el diseño guarda el MODELO, que es lo único
+  que se puede seguir editando. Ahora **publicar escribe las dos** y las deja emparejadas:
+  - `Api_V1_Template_Create-template` devuelve el **nombre FINAL en SES**
+    (`data.templateName`, `{cliente}_{consecutivo}_{nombre}`). Antes no lo devolvía, así que
+    el front habría tenido que adivinar el prefijo para emparejarlos.
+  - El diseño se guarda con `sesTemplate` y `subject` dentro del `designJson`.
+  - **"Cargar de SES" pasa a ser "Cargar"** con dos secciones: **Diseños editables**
+    (se abren bloque a bloque, con chip "publicada") y **Solo en SES**, que lista únicamente
+    las plantillas SIN diseño (creadas antes o fuera del constructor) y avisa de que entran
+    como HTML crudo.
+  - Un **chip con el nombre del diseño abierto** en la barra: republicar actualiza ESE
+    diseño (lo versiona) en vez de crear otro. "Nuevo" lo suelta — pero **después** de
+    confirmar, porque soltarlo antes dejaba el lienzo intacto y sin identidad si el usuario
+    cancelaba.
+- **Cobertura:** `htmlBuilder.test.ts` sube a **91** (+4: encabezado que hereda el color,
+  color propio que gana, texto con color y fuente de los ajustes, fondos en el HTML) y
+  **`test_create_template.py`** (3, nuevas: devuelve el nombre final y la plantilla existe
+  en SES con ese nombre, saneo de acentos/espacios, y que un error no deje un nombre falso).
+- ⚠️ `[J]`: **redesplegar `Api_V1_Template_Create-template`** (agrega `data.templateName` a
+  la respuesta). Sin ese redespliegue el constructor sigue funcionando: cae al nombre que
+  escribió el usuario, así que el emparejamiento con SES puede quedar impreciso hasta que
+  se despliegue. Sin cambios de infra ni de IAM.
+
 ### Alineación en 3 casillas en vez de desplegable (ago 2026)
 - **`AlignPicker.tsx`**: el campo "Alineación" deja de ser una lista (Izquierda/Centro/
   Derecha) y pasa a **tres casillas** con el bloque dibujado DENTRO de la elegida. Se lee de

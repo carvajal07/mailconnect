@@ -669,3 +669,36 @@ describe('selector de alineación de 3 casillas', () => {
     expect(alignDesdeRatio(9)).toBe('right');
   });
 });
+
+describe('ajustes globales: color de texto y fuente', () => {
+  it('el ENCABEZADO hereda el color de texto de los ajustes', () => {
+    // Antes nacía con color '#16233f' clavado en el bloque, así que el ajuste global
+    // "Color de texto" no lo alcanzaba nunca — ni en el lienzo ni en el correo.
+    const b = createBlock('heading');
+    expect(b.color).toBeFalsy();
+    const st = { ...settings, textColor: '#008040' };
+    expect(generateHtml([b], st)).toContain('color:#008040');
+  });
+
+  it('un color propio del bloque sigue ganando sobre el global', () => {
+    const b = { ...createBlock('heading'), color: '#ff0000' };
+    const st = { ...settings, textColor: '#008040' };
+    const html = generateHtml([b], st);
+    expect(html).toContain('color:#ff0000');
+  });
+
+  it('el texto hereda color y fuente de los ajustes', () => {
+    const b = createBlock('text');
+    const st = { ...settings, textColor: '#123456', fontFamily: 'Georgia, serif' };
+    const html = generateHtml([b], st);
+    expect(html).toContain('color:#123456');
+    expect(html).toContain('font-family:Georgia, serif');
+  });
+
+  it('el fondo de página y el del correo llegan al HTML', () => {
+    const st = { ...settings, pageBg: '#ffe0e0', emailBg: '#fffff0' };
+    const html = generateHtml([createBlock('text')], st);
+    expect(html).toContain('#ffe0e0');
+    expect(html).toContain('#fffff0');
+  });
+});

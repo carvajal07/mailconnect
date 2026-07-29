@@ -108,3 +108,21 @@ export const emailDesigns = {
 
   list: (customerId: string) => messageTemplatesService.list(customerId, 'HTML'),
 };
+
+/**
+ * Diseño del constructor tal como se guarda dentro de `designJson`.
+ *
+ * `sesTemplate` enlaza el diseño EDITABLE con la plantilla que se publicó en SES: son dos
+ * cosas distintas a propósito. SES guarda el HTML ya renderizado (lo que se envía) y no
+ * puede volver a bloques; el diseño guarda el MODELO, que es lo único que se puede seguir
+ * editando. Publicar escribe las dos y este campo las mantiene emparejadas.
+ */
+export interface EmailDesignPayload {
+  blocks: unknown[];
+  settings: Record<string, unknown>;
+  description?: string;
+  /** Nombre EXACTO de la plantilla en SES, si este diseño ya se publicó. */
+  sesTemplate?: string;
+  /** Asunto con el que se publicó (para no volver a escribirlo al republicar). */
+  subject?: string;
+}
