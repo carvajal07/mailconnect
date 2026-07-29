@@ -317,6 +317,25 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   logo propio que reemplaza la insignia, y un guard de que la tabla de iconos NO lleva
   `align` — el float que colapsaba el bloque).
 
+### Alineación en 3 casillas en vez de desplegable (ago 2026)
+- **`AlignPicker.tsx`**: el campo "Alineación" deja de ser una lista (Izquierda/Centro/
+  Derecha) y pasa a **tres casillas** con el bloque dibujado DENTRO de la elegida. Se lee de
+  un vistazo dónde va a quedar el elemento, que es la pregunta real; un desplegable obliga a
+  leer tres palabras e imaginarse el resultado.
+- La **miniatura imita el tipo de bloque** (icono de imagen, píldora azul para el botón,
+  renglones para el texto, puntos para redes, ▶ para vídeo): mover "una imagen" es más
+  concreto que mover un punto genérico de slider.
+- Interacción: **clic** en cualquier casilla, **arrastre** de la miniatura entre casillas y
+  **teclado** (←/→, Inicio, Fin). ⚠️ Es un **`radiogroup`, no un `slider`**: son tres
+  opciones NOMBRADAS, no un rango continuo, y un lector de pantalla debe anunciarlas por su
+  nombre. El arrastre se sigue en la FILA, no en la miniatura — siguiéndolo en la miniatura,
+  al salirse de ella el puntero perdería el movimiento.
+- `alignDesdeRatio()` (la traducción de posición→casilla) se exporta aparte para poder
+  probarla sin montar el componente: el repo no tiene `@testing-library/react` y no valía la
+  pena sumar la dependencia por un control. El resto se verificó en el navegador.
+- **Cobertura:** `htmlBuilder.test.ts` sube a **87** (+2: los tres cortes del arrastre y la
+  saturación en los extremos).
+
 ### Logos reales de las redes: paquete recoloreable (ago 2026)
 - **Los PNG del repo (`11_Iconos/`) son MÁSCARAS ALFA** — la silueta del logo en negro
   sólido sobre transparente. Eso es lo que permite **teñirlos a cualquier color** con un
