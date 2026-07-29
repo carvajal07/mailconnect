@@ -32,6 +32,7 @@ import {
   type AttachmentWeight,
 } from '../../services/costService';
 import { isOk } from '../../services/apiClient';
+import { smsInfo } from '../../utils/sms';
 
 /**
  * Estimador de costo interactivo (los 4 canales), pensado para mostrarse ANTES de
@@ -51,6 +52,9 @@ interface Props {
   campaignId?: string;
   /** Saldo disponible del cliente (COP). Si se pasa, se muestra si alcanza para el envío. */
   balance?: number;
+  /** Texto del SMS de la campaña. Con él los segmentos se CALCULAN en vez de pedirlos a
+   *  ojo — que es lo que se cobra, y lo que el usuario no tiene por qué saber contar. */
+  smsBody?: string;
   /** Reporta el resultado del estimado (o null al limpiar) para gates externos. */
   onResult?: (result: EstimateResult | null) => void;
 }
@@ -59,7 +63,7 @@ const CHANNEL_LABEL: Record<Channel, string> = {
   EMAIL: 'Correo', SMS: 'SMS', WHATSAPP: 'WhatsApp', VOICE: 'Voz',
 };
 
-export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMode = 'EM', recipients: initRecipients, lockChannel = false, attachmentDelivery = 'ONFILE', campaignId, balance, onResult }: Props) => {
+export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMode = 'EM', recipients: initRecipients, lockChannel = false, attachmentDelivery = 'ONFILE', campaignId, balance, smsBody, onResult }: Props) => {
   const customerId = getUser()?.customerId ?? '';
 
   const [channel, setChannel] = useState<Channel>(initChannel);
@@ -68,6 +72,9 @@ export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMo
   const [attachmentSizeMB, setAttachmentSizeMB] = useState('');
   const [attachmentType, setAttachmentType] = useState<'pdf' | 'docx'>('pdf');
   const [smsSegments, setSmsSegments] = useState('1');
+  /** Segmentos derivados del texto de la campaña (si se conoce). Manda sobre el manual. */
+  const smsAuto = smsBody ? smsInfo(smsBody) : null;
+  const segmentosEfectivos = smsAuto ? smsAuto.segments : (parseInt(smsSegments, 10) || 1);
   const [voiceMinutes, setVoiceMinutes] = useState('0.5');
 
   const [result, setResult] = useState<EstimateResult | null>(null);
@@ -139,7 +146,7 @@ export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMo
       attachmentSizeMB: withAttachment ? parseFloat(attachmentSizeMB) || 0 : undefined,
       attachmentType: channel === 'EMAIL' && emailMode === 'EAP' ? attachmentType : undefined,
       attachmentDelivery: withAttachment ? attachmentDelivery : undefined,
-      smsSegments: channel === 'SMS' ? parseInt(smsSegments, 10) || 1 : undefined,
+      smsSegments: channel === 'SMS' ? segmentosEfectivos : undefined,
       voiceMinutes: channel === 'VOICE' ? parseFloat(voiceMinutes) || 0.5 : undefined,
     });
     setLoading(false);
@@ -194,7 +201,18 @@ export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMo
           </TextField>
         )}
         {channel === 'SMS' && (
-          <TextField label="Segmentos por SMS" value={smsSegments} size="small" type="number" onChange={(e) => setSmsSegments(e.target.value)} inputProps={{ min: 1 }} />
+          smsAuto ? (
+            // Con el texto de la campaña a la vista, pedir los segmentos a ojo solo
+            // invitaba a equivocarse: el operador cobra por segmento y la cuenta depende
+            // del alfabeto (una emoji baja la capacidad de 160 a 70).
+            <TextField
+              label="Segmentos por SMS" value={String(smsAuto.segments)} size="small"
+              InputProps={{ readOnly: true }}
+              helperText={`${smsAuto.length} caracteres${smsAuto.gsm7 ? '' : ' (con emojis o símbolos especiales)'}`}
+            />
+          ) : (
+            <TextField label="Segmentos por SMS" value={smsSegments} size="small" type="number" onChange={(e) => setSmsSegments(e.target.value)} inputProps={{ min: 1 }} />
+          )
         )}
         {channel === 'VOICE' && (
           <TextField label="Minutos por llamada" value={voiceMinutes} size="small" type="number" onChange={(e) => setVoiceMinutes(e.target.value)} inputProps={{ min: 0.1, step: 0.1 }} />

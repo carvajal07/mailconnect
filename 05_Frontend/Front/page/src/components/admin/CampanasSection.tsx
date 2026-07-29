@@ -49,6 +49,7 @@ import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
 import { usePortalData } from '../../context/PortalDataContext';
 import { formatDateTime } from '../../utils/datetime';
+import { smsInfo, smsSegments } from '../../utils/sms';
 
 type EapDocFormat = 'DOCX' | 'PDF';
 
@@ -780,7 +781,7 @@ export const CampanasSection = () => {
                       label="Texto de la plantilla (solo lectura)"
                       value={smsPreview}
                       InputProps={{ readOnly: true }}
-                      helperText={`~${Math.max(1, Math.ceil(smsPreview.length / 160))} segmento(s). El envío usa SIEMPRE la versión vigente de la plantilla: si la editas en "Plantillas SMS", la campaña reflejará el cambio. En SMS la columna 2 del CSV es el celular (E.164, +57…).`}
+                      helperText={`${smsSegments(smsPreview)} segmento(s) — es lo que se cobra${smsInfo(smsPreview).gsm7 ? '' : ' (lleva emojis o símbolos especiales, así que cabe menos texto por segmento)'}. El envío usa SIEMPRE la versión vigente de la plantilla: si la editas en "Plantillas SMS", la campaña reflejará el cambio. En SMS la columna 2 del CSV es el celular (E.164, +57…).`}
                     />
                   )}
                 </>

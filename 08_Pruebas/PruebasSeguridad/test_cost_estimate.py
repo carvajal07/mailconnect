@@ -69,14 +69,16 @@ def test_email_eap_tramo(cost):
 def test_sms_segmentos(cost):
     uno = cost.lambda_handler({'channel': 'SMS', 'recipients': 1000}, None)['data']
     dos = cost.lambda_handler({'channel': 'SMS', 'recipients': 1000, 'smsSegments': 2}, None)['data']
-    assert uno['subtotal'] == 55000 and dos['subtotal'] == 110000   # 1000×55 ; ×2 segmentos
+    # Tarifas SMS/Voz a COSTO+25% (ago 2026): AWS cobra ~163 COP/segmento en Colombia y no
+    # da descuento por volumen, así que la tarifa vieja (55→10) vendía bajo costo siempre.
+    assert uno['subtotal'] == 205000 and dos['subtotal'] == 410000   # 1000×205 ; ×2 segmentos
 
 
 def test_whatsapp_y_voz(cost):
     wsp = cost.lambda_handler({'channel': 'WHATSAPP', 'recipients': 1000}, None)['data']
     voz = cost.lambda_handler({'channel': 'VOICE', 'recipients': 1000, 'voiceMinutes': 1}, None)['data']
     assert wsp['subtotal'] == 130000      # 1000 × 130 (tramo WhatsApp 1k)
-    assert voz['subtotal'] == 150000      # 1000 × 150/min × 1 min (tramo Voz 1k)
+    assert voz['subtotal'] == 380000      # 1000 × 380/min × 1 min (tramo Voz 1k)
 
 
 def test_precio_baja_con_volumen(cost):

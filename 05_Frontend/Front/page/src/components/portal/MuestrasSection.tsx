@@ -77,7 +77,7 @@ export const MuestrasSection = () => {
   // Saldo del monedero (precargado): gate del "Enviar campaña real" (cobro PREPAGO).
   // `databases` → tamaño de la base (destinatarios reales) para el modal de confirmación.
   // `refreshCampaigns` mantiene sincronizado el estado de aprobación con los otros tabs.
-  const { balance, refreshBalance, databases, refreshCampaigns } = usePortalData();
+  const { balance, refreshBalance, databases, refreshCampaigns, messageTemplates } = usePortalData();
   // Último estimado calculado (lo reporta CostEstimate): permite avisar y bloquear el
   // envío real si el saldo no alcanza (gate del front; el backend igual valida con 402).
   const [estimate, setEstimate] = useState<EstimateResult | null>(null);
@@ -144,6 +144,13 @@ export const MuestrasSection = () => {
   const estimatorChannel =
     selectedChannel === 'SMS' ? 'SMS' : selectedChannel === 'WSP' ? 'WHATSAPP' : selectedChannel === 'VOZ' ? 'VOICE' : 'EMAIL';
   const estimatorMode = (['EM', 'EAU', 'EAP'].includes(selectedChannel) ? selectedChannel : 'EM') as 'EM' | 'EAU' | 'EAP';
+  // Texto del SMS para que el estimador CUENTE los segmentos (que es lo que se cobra) en
+  // vez de pedirlos a ojo. Gana la plantilla VIGENTE, igual que en el envío: el backend
+  // resuelve el contenido en vivo desde `messageTemplateId` y cae al snapshot si no hay.
+  const smsBody = selectedChannel === 'SMS'
+    ? (messageTemplates.items.find((t) => t.messageTemplateId === selectedCampaign?.messageTemplateId)?.body
+       ?? selectedCampaign?.template ?? '')
+    : undefined;
 
   // Tipo de contacto de la muestra según el canal de la campaña: SMS/WhatsApp/Voz reciben
   // CELULAR (E.164), el resto (correo). Define el label, ícono y la validación del input.
@@ -564,7 +571,7 @@ export const MuestrasSection = () => {
             <Chip size="small" color="error" label="Saldo insuficiente para el envío estimado" />
           )}
         </Stack>
-        <CostEstimate channel={estimatorChannel} emailMode={estimatorMode} attachmentDelivery={selectedCampaign?.attachmentType === 'ONLINE' ? 'ONLINE' : 'ONFILE'} campaignId={selectedCampaign?.campaignId} balance={balance.value} onResult={setEstimate} />
+        <CostEstimate channel={estimatorChannel} emailMode={estimatorMode} attachmentDelivery={selectedCampaign?.attachmentType === 'ONLINE' ? 'ONLINE' : 'ONFILE'} campaignId={selectedCampaign?.campaignId} balance={balance.value} smsBody={smsBody} onResult={setEstimate} />
       </Box>
 
       {/* Estado de aprobación de la campaña seleccionada (PERSISTIDO) */}

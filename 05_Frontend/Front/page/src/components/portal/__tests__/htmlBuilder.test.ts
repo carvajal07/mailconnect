@@ -30,6 +30,8 @@ import {
   socialRadius,
   socialBgFor,
   socialGlyphFor,
+  socialOutlineWidth,
+  socialOutlineColor,
   forceDarkPreview,
   DEFAULT_SOCIAL_MONO,
   type Block,
@@ -543,8 +545,20 @@ describe('redes sociales: color de marca y alineación', () => {
     ...extra,
   } as Block);
 
-  it('por defecto cada red lleva SU color', () => {
-    const html = generateHtml([conRedes()], settings);
+  it('un bloque NUEVO nace en "un solo color", no con el color de cada red', () => {
+    // El estilo "Colores de cada red" se retiró del selector (ago 2026): el manual de
+    // marca del cliente manda sobre el azul de Facebook y el rosa de Instagram.
+    const b = conRedes();
+    expect(b.socialStyle).toBe('mono');
+    const html = generateHtml([b], settings);
+    expect(html).not.toContain('#1877F2');
+    expect(html).not.toContain('#E4405F');
+  });
+
+  it('una plantilla GUARDADA con "colores de cada red" se sigue renderizando igual', () => {
+    // El estilo salió del selector, no del generador: quien ya lo tenía guardado no debe
+    // ver cambiar su correo de un despliegue a otro.
+    const html = generateHtml([conRedes({ socialStyle: 'badge' })], settings);
     expect(html).toContain('#1877F2');  // Facebook
     expect(html).toContain('#E4405F');  // Instagram
   });
@@ -717,7 +731,8 @@ describe('logos de redes: insignia y color', () => {
   } as Block);
 
   it('con insignia, el logo va del color de glifo y el fondo del de la red', () => {
-    const b = conRedes();
+    // Estilo LEGADO explícito: el default de un bloque nuevo ya es 'mono'.
+    const b = conRedes({ socialStyle: 'badge' });
     expect(socialBgFor(b, '#1877F2')).toBe('#1877F2');
     expect(socialGlyphFor(b, '#1877F2')).toBe('#ffffff');
   });
@@ -728,7 +743,7 @@ describe('logos de redes: insignia y color', () => {
   });
 
   it('sin insignia, el LOGO toma el color (no hay fondo donde ponerlo)', () => {
-    const b = conRedes({ socialBadge: false });
+    const b = conRedes({ socialBadge: false, socialStyle: 'badge' });
     expect(socialGlyphFor(b, '#1877F2')).toBe('#1877F2');
     const mono = conRedes({ socialBadge: false, socialStyle: 'mono', socialColor: '#111111' });
     expect(socialGlyphFor(mono, '#1877F2')).toBe('#111111');
@@ -760,5 +775,89 @@ describe('vista previa en modo oscuro', () => {
   it('sin modo oscuro activo no hay nada que forzar', () => {
     const html = generateHtml([createBlock('text')], { ...settings, darkMode: false });
     expect(forceDarkPreview(html)).toBe(html);
+  });
+});
+
+describe('iconos de redes que no se verían', () => {
+  const conRedes = (extra: Partial<Block> = {}) => ({
+    ...createBlock('social'),
+    links: { facebook: 'https://fb.com/x' },
+    ...extra,
+  } as Block);
+
+  const tieneAvisoDeIconos = (b: Block, st = settings) =>
+    analyzeTemplate([b], st, generateHtml([b], st)).some((i) => i.title.includes('iconos de redes'));
+
+  it('avisa cuando el logo es casi del mismo color que la insignia', () => {
+    // El caso real: color de marca oscuro + logo oscuro. En el lienzo (sobre blanco) el
+    // bloque se ve, pero el icono en sí es invisible.
+    expect(tieneAvisoDeIconos(conRedes({
+      socialStyle: 'mono', socialColor: '#16233f', socialGlyph: '#1b1b2b',
+    }))).toBe(true);
+  });
+
+  it('el logo blanco sobre insignia oscura NO dispara el aviso', () => {
+    expect(tieneAvisoDeIconos(conRedes({
+      socialStyle: 'mono', socialColor: '#16233f', socialGlyph: '#ffffff',
+    }))).toBe(false);
+  });
+
+  it('sin insignia, se compara contra el fondo del correo', () => {
+    // Logo oscuro suelto sobre un correo oscuro: tampoco se ve.
+    expect(tieneAvisoDeIconos(
+      conRedes({ socialBadge: false, socialStyle: 'mono', socialColor: '#111111' }),
+      { ...settings, emailBg: '#000000' },
+    )).toBe(true);
+  });
+
+  it('un bloque de redes SIN enlaces no se revisa (no se dibuja nada)', () => {
+    expect(tieneAvisoDeIconos({
+      ...createBlock('social'), links: {}, socialStyle: 'mono', socialGlyph: '#16233f',
+    } as Block)).toBe(false);
+  });
+
+  it('el estilo de enlaces de texto no se revisa (no hay insignia)', () => {
+    expect(tieneAvisoDeIconos(conRedes({ socialStyle: 'text', socialGlyph: '#16233f' }))).toBe(false);
+  });
+});
+
+describe('contorno de las insignias', () => {
+  const b = (extra: Partial<Block> = {}) => ({ ...createBlock('social'), ...extra } as Block);
+
+  it('sin activarlo no hay aro', () => {
+    expect(socialOutlineWidth(34, b())).toBe(0);
+  });
+
+  it('activado, el grosor escala con el tamaño de la insignia', () => {
+    expect(socialOutlineWidth(34, b({ socialOutline: true }))).toBeGreaterThan(0);
+    expect(socialOutlineWidth(64, b({ socialOutline: true })))
+      .toBeGreaterThan(socialOutlineWidth(34, b({ socialOutline: true })));
+  });
+
+  it('nunca baja de 1 px: un aro de 0 px no se vería', () => {
+    expect(socialOutlineWidth(20, b({ socialOutline: true }))).toBeGreaterThanOrEqual(1);
+  });
+
+  it('un hex a medio escribir cae al blanco', () => {
+    expect(socialOutlineColor(b({ socialOutline: true, socialOutlineColor: '#ff' }))).toBe('#ffffff');
+    expect(socialOutlineColor(b({ socialOutline: true, socialOutlineColor: '#ff0000' }))).toBe('#ff0000');
+  });
+});
+
+describe('texto enriquecido: resaltado y fuente', () => {
+  it('el resaltado sobrevive al saneamiento y llega al correo', () => {
+    const html = sanitizeInlineHtml('<span style="background-color:#fff3a3">oferta</span>');
+    expect(html).toContain('background-color:#fff3a3');
+  });
+
+  it('la familia de fuente sobrevive al saneamiento', () => {
+    const html = sanitizeInlineHtml('<span style="font-family:Georgia, serif">titular</span>');
+    expect(html).toContain('font-family:Georgia, serif');
+  });
+
+  it('text-align NO pasa: el generador ya envuelve el texto en su propio párrafo', () => {
+    // Meter otra alineación dentro produciría HTML anidado que Outlook rompe; la
+    // alineación se controla desde el bloque.
+    expect(sanitizeInlineHtml('<span style="text-align:center">x</span>')).toBe('x');
   });
 });

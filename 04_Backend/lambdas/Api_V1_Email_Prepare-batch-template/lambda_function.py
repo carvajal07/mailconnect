@@ -224,9 +224,9 @@ VOLUME_TIERS = {
     'EM':       [(1, 30), (2000, 28), (5000, 27), (10000, 25), (20000, 21), (50000, 19), (100000, 14), (200000, 9), (500000, 5), (1000000, 4)],
     'EAU':      [(1, 45), (2000, 42), (5000, 40), (10000, 37), (20000, 31), (50000, 28), (100000, 21), (200000, 14), (500000, 8), (1000000, 6)],
     'EAP':      [(1, 60), (2000, 55), (5000, 50), (10000, 46), (20000, 38), (50000, 33), (100000, 24), (200000, 16), (500000, 10), (1000000, 8)],
-    'SMS':      [(1, 55), (2000, 50), (5000, 45), (10000, 40), (20000, 35), (50000, 28), (100000, 22), (200000, 18), (500000, 14), (1000000, 10)],
+    'SMS':      [(1, 205), (2000, 202), (5000, 199), (10000, 196), (20000, 193), (50000, 190), (100000, 187), (200000, 185), (500000, 183), (1000000, 180)],
     'WHATSAPP': [(1, 130), (2000, 125), (5000, 118), (10000, 110), (20000, 100), (50000, 90), (100000, 82), (200000, 76), (500000, 70), (1000000, 65)],
-    'VOICE':    [(1, 150), (2000, 140), (5000, 130), (10000, 120), (20000, 110), (50000, 95), (100000, 80), (200000, 70), (500000, 60), (1000000, 48)],
+    'VOICE':    [(1, 380), (2000, 375), (5000, 370), (10000, 365), (20000, 360), (50000, 355), (100000, 350), (200000, 345), (500000, 340), (1000000, 335)],
 }
 # channel de la campaña -> (clave de override plano en la tarifa, clave del tramo por volumen).
 CAMPAIGN_TIER = {
@@ -298,7 +298,55 @@ def _load_rate(customer_id, channel):
     return rate
 
 
-def _campaign_unit(rate, channel_name, recipients, document_format=None, delivery='ONFILE'):
+#: Longitud de un SMS según el alfabeto. GSM-7 cabe 160 caracteres en un solo mensaje;
+#: al concatenar, cada parte pierde 7 bits de cabecera y quedan 153. Con un solo carácter
+#: fuera de GSM-7 (una emoji, una "ñ" en algunos operadores) el mensaje entero pasa a
+#: UCS-2 y baja a 70 / 67. AWS cobra POR SEGMENTO, no por mensaje.
+GSM7_SIMPLE, GSM7_CONCAT = 160, 153
+UCS2_SIMPLE, UCS2_CONCAT = 70, 67
+
+#: Alfabeto GSM 03.38 (básico + extendido). Los del extendido ocupan DOS caracteres.
+_GSM7_BASICO = (
+    '@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&\'()*+,-./0123456789:;<=>?'
+    '¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà'
+)
+_GSM7_EXTENDIDO = '^{}\\[~]|€'
+
+
+def _sms_segments(body):
+    """Segmentos que cobra el operador por UN mensaje con este texto.
+
+    ⚠️ Es una APROXIMACIÓN cuando el texto trae `{{variables}}`: aquí se mide la plantilla
+    y al enviar cada destinatario sustituye su dato, que puede ser más largo (un nombre
+    con tilde además fuerza UCS-2 y parte el mensaje mucho antes). Se cobra sobre la
+    plantilla porque el débito ocurre ANTES de resolver los datos de cada fila; la
+    alternativa —conciliar por destinatario después del envío— es otra fase.
+
+    Aun así es MUY superior a lo que había: antes se cobraba SIEMPRE 1 segmento, así que
+    un SMS de 300 caracteres (2 segmentos de costo real) se vendía a mitad de precio.
+    """
+    texto = str(body or '')
+    if not texto:
+        return 1
+    largo, gsm7 = 0, True
+    for ch in texto:
+        if ch in _GSM7_EXTENDIDO:
+            largo += 2
+        elif ch in _GSM7_BASICO:
+            largo += 1
+        else:
+            gsm7 = False
+            break
+    if not gsm7:
+        largo = len(texto)
+    simple, concat = (GSM7_SIMPLE, GSM7_CONCAT) if gsm7 else (UCS2_SIMPLE, UCS2_CONCAT)
+    if largo <= simple:
+        return 1
+    return -(-largo // concat)      # techo de la división
+
+
+def _campaign_unit(rate, channel_name, recipients, document_format=None, delivery='ONFILE',
+                   sms_body=''):
     """Tarifa unitaria por destinatario según el canal y el VOLUMEN (tramo por `recipients`).
     El precio del tramo es "todo incluido" (misma lógica que Cost_Estimate). Réplica —
     mantener en sync. Si pricingRate trae un valor plano para el canal, ese override gana.
@@ -310,21 +358,28 @@ def _campaign_unit(rate, channel_name, recipients, document_format=None, deliver
     unit = _base_unit(rate, override_key, tier_key, recipients)
     if channel_name == 'VOZ':
         unit = unit * rate.get('avgMinutes', 0.5)
+    # SMS: la tarifa es POR SEGMENTO, igual que el costo de AWS. Antes esto no estaba y un
+    # mensaje largo se debitaba como uno corto (se cobraba de menos), mientras que el
+    # estimador que ve el cliente SÍ multiplicaba por segmentos → los dos números no
+    # cuadraban y el gate de saldo decidía con uno distinto del que se cobraba.
+    if channel_name == 'SMS':
+        unit = unit * _sms_segments(sms_body)
     if channel_name in ('EAU', 'EAP') and str(delivery).upper() == 'ONLINE' and ONLINE_FACTOR != 1.0:
         unit = unit * ONLINE_FACTOR
     return unit
 
 
-def _campaign_cost(customer_id, channel_name, recipients, document_format=None, delivery='ONFILE'):
+def _campaign_cost(customer_id, channel_name, recipients, document_format=None,
+                   delivery='ONFILE', sms_body=''):
     """Costo TOTAL (COP entero, con IVA y mínimo por campaña) de enviar `recipients`
     mensajes del canal dado. Misma fórmula que Api_V1_Cost_Estimate para UNA campaña:
     subtotal = max(unit × recipients, minCampaign); total = subtotal + IVA. El unitario es
-    ESCALONADO por volumen (tramo elegido por `recipients`)."""
+    ESCALONADO por volumen (tramo elegido por `recipients`) y, en SMS, por segmentos."""
     channel = CHANNEL_MAP.get(channel_name)
     if not channel or recipients <= 0:
         return 0
     rate = _load_rate(customer_id, channel)
-    unit = _campaign_unit(rate, channel_name, recipients, document_format, delivery)
+    unit = _campaign_unit(rate, channel_name, recipients, document_format, delivery, sms_body)
     subtotal = max(unit * recipients, rate.get('minCampaign', DEFAULT_MIN_CAMPAIGN))
     # IVA: solo si la plataforma lo tiene habilitado (Configuración → Cobrar IVA). Debe
     # leer el MISMO interruptor que Cost_Estimate: el front compara el estimado con el
@@ -1826,7 +1881,10 @@ def preparar_split(st, data, response_campaign, user_id, template_version, temp_
         # Gate de CUOTAS (tope por campaña / tope diario) ANTES de cobrar: si excede,
         # se libera el lock y el handler responde 429 (sin tocar el saldo).
         check_sending_limits(st, recipients_count)
-        cost = _campaign_cost(st.customer_id, channel_name, recipients_count, document_format, delivery_mode)
+        # `st.sms_body` ya está resuelto (en vivo desde la plantilla, o el snapshot) cuando
+        # se llega aquí: hace falta para cobrar los SMS largos por segmento.
+        cost = _campaign_cost(st.customer_id, channel_name, recipients_count, document_format,
+                              delivery_mode, getattr(st, 'sms_body', ''))
         if cost > 0:
             new_balance = reserve_balance(st, cost, data["campaignName"])
             if new_balance is not None:  # None = tabla de saldos no desplegada (rollout)

@@ -239,9 +239,10 @@ def test_advance_escala_al_fallar(monkeypatch):
         assert int(c['stepIndex']) == 1 and c['lastChannel'] == 'SMS' and c['status'] == 'awaiting'
         sms = _drain(urls['SMS'])
         assert len(sms) == 1 and sms[0]['channel'] == 'SMS' and sms[0]['uniqueId'] == contact_id
-        # Debitó el costo unitario de SMS (55 * 1.19 = 65).
+        # Debitó el costo unitario de SMS (205 × 1.19 = 244). La tarifa pasó a costo+25%
+        # en ago 2026: AWS cobra ~163 COP por segmento en Colombia.
         bal = int(res.Table('customerBalance').get_item(Key={'customerId': 'CU1'})['Item']['balance'])
-        assert bal == 100000 - 65
+        assert bal == 100000 - 244
 
 
 def test_advance_confirma_si_entregado(monkeypatch):

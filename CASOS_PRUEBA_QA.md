@@ -326,6 +326,29 @@
 
 ---
 
+### 11b. Formato de texto en el lienzo, redes e iconos
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-TXT-01 | 🔴 | La barra de formato se ve sin buscarla | Seleccionar un bloque de texto en el lienzo | La barra aparece con el bloque SELECCIONADO, sin tener que hacer clic dentro del texto |
+| CP-TXT-02 | 🔴 | No se recorta en el primer bloque | Agregar texto como PRIMER bloque del correo y seleccionarlo | La barra se voltea DEBAJO y se ve completa (antes quedaba cortada por el borde del panel) |
+| CP-TXT-03 | 🟡 | Todas las herramientas visibles | Mirar la barra en un bloque angosto | Envuelve a dos filas; no hay botones escondidos tras un scroll |
+| CP-TXT-04 | 🔴 | Negrita/color sobre una palabra | Seleccionar una palabra → Negrita → color | Solo esa palabra cambia; el resto queda igual |
+| CP-TXT-05 | 🟡 | Botones que reflejan el estado | Poner el cursor dentro de una palabra en negrita | El botón de negrita se ve activo |
+| CP-TXT-06 | 🟡 | Resaltado | Seleccionar texto → botón de resaltar → elegir color | El texto queda con fondo de color y llega así al correo |
+| CP-TXT-07 | 🟡 | Familia de fuente | Seleccionar texto → Fuente → Georgia | Cambia solo lo seleccionado; en "Ver HTML" sale `font-family` en línea |
+| CP-TXT-08 | 🟡 | El cursor no salta | Escribir varias palabras seguidas al final del texto | El cursor se queda donde está (no vuelve al inicio) |
+| CP-TXT-09 | 🟢 | Pegar desde Word | Pegar texto con formato de Word | Entra como texto plano, sin estilos raros |
+| CP-RED-01 | 🔴 | Los iconos son los logos REALES | Agregar bloque de Redes y mirar el panel de propiedades | Las miniaturas muestran el logo de cada red, NO una letra (f, ig) |
+| CP-RED-02 | 🟡 | "Colores de cada red" ya no se ofrece | Abrir el desplegable Estilo | Solo "Un solo color" y "Enlaces de texto" |
+| CP-RED-03 | 🟡 | Plantilla vieja con ese estilo | Cargar un diseño guardado con "Colores de cada red" | Se sigue viendo igual y el estilo aparece marcado "(retirado)" |
+| CP-RED-04 | 🔴 | Contorno para logos oscuros | Activar "Contorno" y elegir un color claro | Aparece un aro alrededor de la insignia, en el lienzo y en el correo publicado |
+| CP-RED-05 | 🔴 | Aviso de icono invisible | Poner color de marca oscuro Y color de logo oscuro → "Revisar" | Avisa que los iconos casi no se ven y dice qué hacer |
+| CP-RED-06 | 🟡 | Logo blanco no dispara el aviso | Color de marca oscuro + logo blanco → "Revisar" | NO aparece ese aviso |
+| CP-RED-07 | 🟡 | Alineación de los iconos | Alinear a izquierda / derecha | Se mueven sin que el contenedor del bloque se deforme |
+
+---
+
 ## 12. Plantillas PDF (básicas · Estudio · Diseñador)  ✅
 
 | ID | Prioridad | Caso | Pasos | Resultado esperado |
@@ -535,6 +558,21 @@
 | CP-PES-04 | 🔴 | **El botón aparece al elegir campaña** | Entrar a Muestras SIN campaña, luego elegir una EAU/EAP | El botón aparece (el estimador se resincroniza con el canal correcto) |
 | CP-PES-05 | 🟡 | Cambiar de campaña limpia el estimado | Elegir otra campaña tras haber medido | Se limpian peso y estimado (no decide sobre la campaña equivocada) |
 | CP-PES-06 | 🟡 | Canal sin adjunto | Campaña EM | El botón no aplica / queda deshabilitado con el motivo |
+
+---
+
+### 20b. Tarifas de SMS y Voz (recalibradas ago 2026)
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-TAR-01 | 🔴 | Segmentos calculados, no declarados | Muestras con una campaña SMS | El campo "Segmentos por SMS" sale calculado del texto y de solo lectura |
+| CP-TAR-02 | 🔴 | Un SMS largo cuesta el doble | Campaña con más de 160 caracteres | El estimado muestra 2 segmentos y el total se duplica |
+| CP-TAR-03 | 🔴 | Una emoji parte el mensaje | Agregar una emoji a un SMS de ~100 caracteres | Pasa de 1 a 2 segmentos (el alfabeto cambia a UCS-2) |
+| CP-TAR-04 | 🔴 | Lo estimado es lo que se cobra | Enviar real una campaña SMS de 2 segmentos y ver Saldo → Movimientos | El débito coincide con el estimado que se mostró antes de enviar |
+| CP-TAR-05 | 🔴 | Tarifas nuevas visibles | Admin → Tarifas → canal SMS y Voz | Muestra los tramos nuevos (SMS 205→180 · Voz 380→335) |
+| CP-TAR-06 | 🟡 | Ningún cliente por debajo del costo | Admin → Tarifas → revisar overrides por cliente | Ningún override de SMS por debajo de ~163 COP ni de Voz por debajo de ~305 COP/min |
+| CP-TAR-07 | 🟡 | Contador del editor SMS | Escribir un SMS con emoji en Plantillas SMS | El contador indica los segmentos reales y avisa que cabe menos texto |
+| CP-PUB-01 | 🟡 | La landing no publica precios | Abrir la landing → sección Precios | Explica el modelo y ofrece cotización; sin cifras que puedan desalinearse del sistema |
 
 ---
 

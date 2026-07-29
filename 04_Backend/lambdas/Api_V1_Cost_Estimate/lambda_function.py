@@ -104,16 +104,32 @@ DEFAULT_RATES = {
 
 # Precio unitario por TRAMO de volumen (COP). Lista (min_destinatarios, precio_unitario).
 # El precio del tramo se elige por el TOTAL de destinatarios del envío y aplica a TODO el
-# envío (no marginal). Debe coincidir con la calculadora comercial (CalculadoraPrecios).
-# ⚠️ SINCRONÍA: si cambian estos tramos, replicarlos en Prepare-batch, Billing_Summary y
-# Pricing_List (no hay import compartido entre lambdas).
+# envío (no marginal).
+#
+# ⚠️ SINCRONÍA: si cambian estos tramos, replicarlos en las 6 lambdas que los tienen
+# COPIADOS (Cost_Estimate, Prepare-batch, Billing_Summary, Pricing_List y las dos de
+# Cascade). No hay import compartido entre lambdas.
+#
+# ⚠️ POR QUÉ LA CURVA DE SMS/VOZ ES CASI PLANA (ago 2026). El correo tiene costo marginal
+# ~0 (SES cuesta ~0,3 COP por correo), así que ahí bajar el precio con el volumen es puro
+# manejo de margen. En SMS y VOZ el costo lo pone AWS y **no da descuento por volumen**:
+# cada SMS cuesta lo mismo el primero que el millonésimo. Una curva agresiva ahí no es un
+# descuento, es vender cada vez más por debajo del costo.
+#
+#   Costo AWS Colombia (TRM 3.206):  SMS ≈ 163 COP/segmento · VOZ ≈ 305 COP/minuto
+#   Precios: arrancan en costo+25% y bajan solo hasta ~costo+10% en el tramo más alto.
+#
+# Las tarifas ANTERIORES (SMS 55→10 · VOZ 150→48) quedaban por debajo del costo en TODOS
+# los tramos: una campaña de 100.000 SMS perdía millones. Si algún día el canal se migra a
+# un aggregator local (más barato que AWS en Colombia), estos números se pueden bajar —
+# antes no.
 VOLUME_TIERS = {
     'EM':       [(1, 30), (2000, 28), (5000, 27), (10000, 25), (20000, 21), (50000, 19), (100000, 14), (200000, 9), (500000, 5), (1000000, 4)],
     'EAU':      [(1, 45), (2000, 42), (5000, 40), (10000, 37), (20000, 31), (50000, 28), (100000, 21), (200000, 14), (500000, 8), (1000000, 6)],
     'EAP':      [(1, 60), (2000, 55), (5000, 50), (10000, 46), (20000, 38), (50000, 33), (100000, 24), (200000, 16), (500000, 10), (1000000, 8)],
-    'SMS':      [(1, 55), (2000, 50), (5000, 45), (10000, 40), (20000, 35), (50000, 28), (100000, 22), (200000, 18), (500000, 14), (1000000, 10)],
+    'SMS':      [(1, 205), (2000, 202), (5000, 199), (10000, 196), (20000, 193), (50000, 190), (100000, 187), (200000, 185), (500000, 183), (1000000, 180)],
     'WHATSAPP': [(1, 130), (2000, 125), (5000, 118), (10000, 110), (20000, 100), (50000, 90), (100000, 82), (200000, 76), (500000, 70), (1000000, 65)],
-    'VOICE':    [(1, 150), (2000, 140), (5000, 130), (10000, 120), (20000, 110), (50000, 95), (100000, 80), (200000, 70), (500000, 60), (1000000, 48)],
+    'VOICE':    [(1, 380), (2000, 375), (5000, 370), (10000, 365), (20000, 360), (50000, 355), (100000, 350), (200000, 345), (500000, 340), (1000000, 335)],
 }
 
 # Modo de entrega del documento (EAU/EAP): ONFILE (adjunto en el correo) vs ONLINE (enlace/

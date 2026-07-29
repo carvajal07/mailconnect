@@ -866,3 +866,42 @@ el centro simplemente se queda en cero (no hay pantalla de error).
 `Api_V1_Email_Preferences` y la regla EventBridge del Scan. El centro in-app es independiente
 —no los necesita— pero el aviso de **saldo bajo** solo llega a la campanita si
 `Prepare-batch` está redesplegado con este cambio.
+
+---
+
+## 17. Tarifas de SMS y Voz a costo+25% (ago 2026)
+
+Las tarifas de SMS y Voz vendían **por debajo del costo de AWS en TODOS los tramos**. Se
+recalibraron contra el costo real (ver `CLAUDE.md` → "Tarifas SMS/Voz a costo+25%").
+
+| Canal | Costo AWS (TRM 3.206) | Antes | Ahora |
+|---|---|---|---|
+| SMS | ≈163 COP/**segmento** | 55 → 10 | **205 → 180** |
+| Voz | ≈305 COP/**minuto** | 150 → 48 | **380 → 335** |
+
+- [ ] `[J]` **Redesplegar las 6 lambdas que tienen las tarifas COPIADAS, juntas**:
+  `Api_V1_Cost_Estimate` · `Api_V1_Email_Prepare-batch-template` · `Api_V1_Billing_Summary` ·
+  `Api_V1_Pricing_List` · `Api_V1_Cascade_Dispatch` · `Api_V1_Cascade_Advance`.
+  ⚠️ Si una queda con las tarifas viejas, **el cliente ve un precio y se le cobra otro** (el
+  front compara el estimado contra el saldo antes de enviar). Una prueba de la suite verifica
+  que las 6 coincidan, pero eso es en el repo — en AWS hay que desplegarlas.
+- [ ] `[J]` **Revisar los overrides de `pricingRate`**: un valor PLANO por cliente (o global
+  con `customerId='*'`) **gana sobre el tramo**. Si alguno quedó en 55 COP/SMS, ese cliente
+  sigue comprando bajo costo. Se ven en el panel admin → **Tarifas**.
+- ℹ️ **Sin cambios de infra, tablas ni IAM.**
+- ℹ️ **WhatsApp NO se tocó**: falta el dato de costo verificado (Meta cobra por conversación/
+  mensaje y varía por país). Sigue en 130 → 65 COP; pendiente comercial.
+
+### Verificación post-deploy
+
+1. Portal → **Muestras** con una campaña de **SMS**: la tarjeta de costo debe mostrar el
+   precio nuevo y los **segmentos calculados del texto** (ya no es un campo para escribir a
+   ojo). Con una emoji en el mensaje, los segmentos deben subir.
+2. Un SMS de más de 160 caracteres debe estimarse a **2 segmentos** y **debitar lo mismo**
+   que dice el estimado (antes se estimaba 2 y se cobraba 1).
+3. Panel admin → **Tarifas** → confirmar que la tabla de tramos de SMS/Voz muestra los
+   valores nuevos y que ningún cliente tiene un override por debajo.
+
+⚠️ **La landing ya no publica precios** (los que tenía no coincidían con el backend: decía
+$19 por correo a 10.000 y el sistema cobra $25). Si se vuelve a publicar una tabla, tomarla
+de `VOLUME_TIERS`, no de la calculadora comercial.

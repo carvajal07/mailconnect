@@ -22,8 +22,18 @@ const INLINE_TAGS = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'A', 
 /** Etiquetas de bloque permitidas (listas y saltos de párrafo). */
 const BLOCK_TAGS = new Set(['UL', 'OL', 'LI', 'P', 'DIV']);
 
-/** Propiedades CSS que sobreviven al saneamiento (el resto se tira). */
-const ALLOWED_STYLES = new Set(['color', 'font-size', 'font-weight', 'font-style', 'text-decoration', 'background-color']);
+/**
+ * Propiedades CSS que sobreviven al saneamiento (el resto se tira).
+ * `font-family` y `background-color` (resaltado) están aquí porque son estilos EN LÍNEA
+ * que todos los clientes de correo respetan. Deliberadamente NO está `text-align`: es una
+ * propiedad de BLOQUE y el generador ya envuelve el contenido en un `<p>` con su propia
+ * alineación — meter otra dentro produciría HTML anidado que Outlook rompe. La alineación
+ * se controla desde el bloque (AlignPicker), no desde el texto.
+ */
+const ALLOWED_STYLES = new Set([
+  'color', 'font-size', 'font-weight', 'font-style', 'text-decoration',
+  'background-color', 'font-family',
+]);
 
 /** Normaliza a las etiquetas semánticas que mejor soportan los clientes de correo. */
 const TAG_ALIAS: Record<string, string> = { B: 'strong', I: 'em', STRIKE: 's' };

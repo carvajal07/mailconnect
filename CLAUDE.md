@@ -26,6 +26,99 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Tarifas SMS/Voz a costo+25% y cobro POR SEGMENTO (ago 2026)
+> Revisión de precios contra el costo REAL de AWS. Las tarifas de SMS y Voz vendían **por
+> debajo del costo en TODOS los tramos**, y el defecto de los segmentos hacía que el
+> estimador y el débito no cuadraran.
+
+- **Costo real (AWS Colombia, TRM 3.206):** SMS **≈163 COP por SEGMENTO** · Voz **≈305
+  COP/minuto**. Las tarifas anteriores (SMS 55→10 · Voz 150→48) quedaban bajo costo en los
+  10 tramos: una campaña de 100.000 SMS perdía millones.
+- ⚠️ **Por qué la curva nueva es casi plana.** En correo el costo marginal es ~0 (SES ≈0,3
+  COP), así que bajar el precio con el volumen es puro manejo de margen. En SMS/Voz el costo
+  lo pone AWS y **no da descuento por volumen**: cada SMS cuesta lo mismo el primero que el
+  millonésimo. Una curva agresiva ahí no es un descuento, es vender cada vez más barato algo
+  que cuesta igual. Las nuevas arrancan en **costo+25%** y bajan solo hasta ~costo+10%:
+  **SMS 205→180** · **Voz 380→335**. Replicadas en las **6** lambdas que las copian.
+- **Defecto — el débito NO cobraba los segmentos.** `Cost_Estimate` multiplicaba por
+  `smsSegments` (lo que VE el cliente) pero `_campaign_unit` de Prepare-batch no (lo que se
+  DEBITA): un SMS de 300 caracteres se estimaba a 2 segmentos y se cobraba 1. Ahora
+  `_sms_segments(body)` implementa la regla real del operador: **GSM-7 160/153** y **UCS-2
+  70/67**, y los del GSM extendido (`€ { } [ ] ~ \ | ^`) ocupan **dos**. ⚠️ Un solo
+  carácter fuera de GSM-7 (una emoji) convierte TODO el mensaje a UCS-2 → 100 caracteres
+  con emoji son **2** segmentos, no 1.
+  - ⚠️ **Es una aproximación con variables:** se mide la PLANTILLA, y al enviar cada
+    destinatario sustituye su dato (un nombre con tilde además fuerza UCS-2). El débito
+    ocurre antes de resolver los datos de cada fila; conciliar por destinatario es otra fase.
+- **`src/utils/sms.ts` (front)** — `smsInfo`/`smsSegments`, RÉPLICA de `_sms_segments`. El
+  contador que había (`length / 160`) decía "1 segmento" para 100 caracteres con emoji. Se
+  usa en el editor de plantillas SMS, en el form de campaña y en el estimador, que ahora
+  **calcula** los segmentos del texto real de la campaña (plantilla vigente → snapshot) en
+  vez de pedirlos a ojo.
+- ℹ️ **WhatsApp NO se tocó**: no hay dato de costo verificado (Meta cobra por conversación/
+  mensaje y varía por país). Queda pendiente comercial.
+- **Landing sin precios.** Los planes ($190.000/$750.000/$1.300.000) y la tabla de volumen
+  **no coincidían con lo que cobra el sistema** (decía $19 por correo a 10.000; el backend
+  cobra $25) → alguien se registraba con un número y se encontraba otro. La sección pasa a
+  explicar el modelo (prepago, precio por volumen, costo visible antes de enviar) + CTA de
+  cotización. También sale el "Desde $8" del hero.
+- **Cobertura:** `test_sms_segmentos_cobro.py` (18: los cortes de GSM-7, la emoji que cambia
+  el alfabeto, el GSM extendido que ocupa doble, que el débito multiplique por segmentos, la
+  **paridad estimador↔débito**, y tres guards — ningún tramo bajo costo en SMS ni en Voz, la
+  curva no puede volverse agresiva, y las 6 lambdas comparten tarifas).
+- ⚠️ `[J]`: **sin cambios de infra**. Redesplegar las 6 lambdas de tarifas
+  (`Cost_Estimate`, `Prepare-batch`, `Billing_Summary`, `Pricing_List`, `Cascade_Dispatch`,
+  `Cascade_Advance`) **juntas**: si una queda con las tarifas viejas, el cliente ve un precio
+  y se le cobra otro. Un `pricingRate` con override PLANO por cliente sigue ganando sobre el
+  tramo — revisar que ninguno haya quedado bajo el costo nuevo.
+
+### Constructor HTML: formato de texto, redes y contraste (ago 2026)
+- **La barra de formato del texto no se encontraba.** Las opciones (negrita, color, enlace…)
+  existían pero la barra solo aparecía **al enfocar** el texto y se dibujaba en la misma
+  franja que la barra de ORDENAR el bloque (`top:-34`), así que quedaba tapada o —en el
+  primer bloque del lienzo— **recortada por el panel que hace scroll**. Ahora: se muestra con
+  el bloque **seleccionado** (no hay que adivinar que toca hacer clic dentro), **se voltea
+  ABAJO** cuando no cabe arriba, y **envuelve a dos filas** en vez de esconder las últimas
+  herramientas en un scroll horizontal invisible.
+- **Herramientas nuevas:** **resaltado** (fondo del texto) y **familia de fuente** (solo
+  fuentes seguras para correo: una fuente web no se puede cargar en Gmail/Outlook). Los
+  botones de negrita/cursiva/subrayado/tachado ahora se **pintan activos** según la selección
+  (`queryCommandState`). ⚠️ `font-family` y `background-color` se agregaron a la lista blanca
+  del saneamiento; **`text-align` NO**: es propiedad de BLOQUE y el generador ya envuelve el
+  contenido en su `<p>` con alineación — anidarlas rompe en Outlook. La alineación se
+  controla desde el bloque (AlignPicker).
+- ⚠️ `execCommand` no tiene comando fiable para fuente ni resaltado (`fontName` emite
+  `<font face>`, que el saneamiento descarta; `hiliteColor` pinta el bloque entero en algunos
+  navegadores) → `wrapStyle` envuelve la selección en un `<span>` con estilo en línea, que es
+  exactamente lo que el correo necesita. **Sin selección no hace nada**: un span vacío
+  confunde más de lo que ayuda.
+- **Estilo "Colores de cada red" RETIRADO** del selector: el manual de marca del cliente
+  manda sobre el azul de Facebook, y tener las dos opciones confundía. Los bloques NUEVOS
+  nacen en `mono` (`DEFAULT_SOCIAL_STYLE`). ⚠️ **Se sigue renderizando** —y la opción reaparece
+  en el desplegable, marcada "(retirado)"— si la plantilla ya venía guardada con él: nadie
+  debe ver cambiar su correo por un despliegue.
+- **Defecto — las miniaturas del panel mostraban la LETRA de respaldo** (`f`, `ig`) en vez
+  del logo. Leían `b.icons`, que solo se llena al PUBLICAR; el lienzo sí mostraba el logo
+  real. El panel parecía decir "estos son tus iconos" mostrando algo que nunca sale en el
+  correo. Ahora genera su propia vista previa (`useSocialPreviews(…, todasLasRedes)`) — y
+  para TODAS las redes, no solo las que ya tienen enlace, porque la miniatura está justo al
+  lado del campo donde aún no se ha escrito.
+- **Contorno de la insignia** (`socialOutline` + `socialOutlineColor`): un aro claro que
+  despega un icono oscuro de un fondo oscuro. ⚠️ Va **horneado en el PNG**, como la insignia:
+  un `border` de CSS en el `<img>` lo ignoran varios clientes y en Outlook deja un marco
+  cuadrado alrededor del círculo. Se dibuja rellenando la forma completa con el color del aro
+  y encima la insignia encogida (nada de `stroke`, que se pinta a caballo del trazo y se
+  recortaría en el borde del lienzo).
+- **Chequeo previo — contraste de los iconos.** "Revisar" no decía nada de un **logo oscuro
+  sobre insignia oscura**: en el lienzo (sobre blanco) el bloque se ve, pero el icono es
+  invisible. Ahora se compara el color del logo contra su fondo (la insignia, o el fondo del
+  correo si va suelto) con umbral **3:1** — el de WCAG para elementos **gráficos**, no el 4.5
+  del texto: un icono es una forma grande y sólida, exigirle el contraste de un párrafo daría
+  falsos avisos.
+- **Cobertura:** `htmlBuilder.test.ts` sube a **111** (+12: los 5 casos del contraste de
+  iconos, 4 del contorno, 3 del saneamiento de resaltado/fuente/`text-align`) y se ajustaron
+  3 pruebas al nuevo default `mono` (+1 nueva que fija que el legado sigue renderizando).
+
 ### Centro de notificaciones del portal — campanita + avisos in-app (ago 2026)
 > El **Bloque H** ya avisaba por CORREO al owner (saldo bajo, reputación, resumen diario),
 > pero **nada** aparecía dentro de la aplicación y **"tienes una campaña por aprobar" no
@@ -2425,6 +2518,39 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
   Requisito de despliegue: los Authorizers necesitan el layer de PyJWT y la env `SECRET_KEY`.
 - **Pruebas:** independientes (cada test crea su propio usuario con email único). Rutas a
   las lambdas calculadas desde la raíz del repo (`Path(__file__).parents[2]`).
+
+### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
+
+> La suite de backend son **725** pruebas (~2 min) y la de frontend 98. Correrlas
+> enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
+> tocar el bloque de vídeo del constructor no puede romper el 2FA.
+
+**Durante el trabajo** — solo lo que cubre lo que se tocó:
+
+```bash
+# Una lambda concreta → su archivo de pruebas
+cd 08_Pruebas/PruebasSeguridad && pytest -q test_notifications_inbox.py
+
+# Varios archivos relacionados
+pytest -q test_sms_channel.py test_prepare_batch.py
+
+# Por palabra clave, cuando el cambio cruza archivos (p. ej. tarifas)
+pytest -q -k "cost or pricing or tax"
+
+# Frontend: un solo archivo
+cd 05_Frontend/Front/page && npx vitest run src/components/portal/__tests__/htmlBuilder.test.ts
+```
+
+**Solo una vez, al CERRAR la tanda** (antes del commit/push): la suite completa
+(`pytest -q` + `npm test` + `npm run build`). Ese es el momento de descubrir que un
+helper compartido rompió algo lejano — no después de cada `Edit`.
+
+⚠️ **Excepciones donde SÍ vale correr todo aunque el cambio se vea pequeño:** tocar un
+helper COPIADO en varias lambdas (`tenant_key`, `_audit`, `_notify_users`, `_campaign_cost`,
+`VOLUME_TIERS`), el mapping template / `routes.json`, el `Authorizer`, o cualquier cosa
+del pipeline de envío. Ahí el radio de impacto no se ve en el diff.
+
+ℹ️ Para saber qué archivo cubre una lambda: `grep -rl "NombreDeLaLambda" 08_Pruebas/`.
 
 ---
 

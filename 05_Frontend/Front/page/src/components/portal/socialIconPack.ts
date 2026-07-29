@@ -39,6 +39,10 @@ export interface IconPackStyle {
   shape?: SocialShape;
   /** Tamaño lógico de la insignia en px. */
   size: number;
+  /** Grosor del aro en px LÓGICOS (0 = sin aro). */
+  outline?: number;
+  /** Color del aro. */
+  outlineColor?: string;
 }
 
 export const DEFAULT_ICON_PACK: IconPackStyle = {
@@ -93,22 +97,42 @@ export async function renderIconCanvas(
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('El navegador no permite generar los iconos (canvas 2d).');
 
-  if (style.background) {
-    ctx.fillStyle = style.background;
+  // El aro se dibuja POR DENTRO del borde del lienzo: si se pintara por fuera quedaría
+  // recortado (el canvas mide exactamente el lado de la insignia).
+  const aro = Math.max(0, Math.round((style.outline || 0) * (s / Math.max(1, style.size))));
+
+  /** Pinta la forma de la insignia encogida `inset` px por lado, con el color actual. */
+  const rellenarForma = (inset: number) => {
+    const lado = s - inset * 2;
+    ctx.save();
+    ctx.translate(inset, inset);
+    ctx.beginPath();
     if (style.shape === 'square') {
-      ctx.fillRect(0, 0, s, s);
+      ctx.rect(0, 0, lado, lado);
     } else if (style.shape === 'circle') {
-      ctx.beginPath();
-      ctx.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.arc(lado / 2, lado / 2, lado / 2, 0, Math.PI * 2);
     } else {
-      roundedPath(ctx, s, s * 0.26);
-      ctx.fill();
+      roundedPath(ctx, lado, lado * 0.26);
     }
+    ctx.fill();
+    ctx.restore();
+  };
+
+  if (style.background) {
+    if (aro > 0) {
+      // Primero el aro (la forma COMPLETA con su color) y encima la insignia encogida:
+      // el resultado es un borde limpio de la misma forma, sin `stroke` (que se dibuja a
+      // caballo del trazo y se recortaría en el borde del lienzo).
+      ctx.fillStyle = style.outlineColor || '#ffffff';
+      rellenarForma(0);
+    }
+    ctx.fillStyle = style.background;
+    rellenarForma(aro);
   }
 
   // Aire alrededor del logo SOLO si va sobre una insignia: suelto se ve mejor a sangre.
-  const margen = style.background ? Math.round(s * 0.22) : 0;
+  // El aro se suma al margen, si no el logo se le montaría encima.
+  const margen = style.background ? Math.round(s * 0.22) + aro : 0;
   const interior = s - margen * 2;
 
   // El teñido va en un canvas aparte: `source-in` sobre el canvas final borraría el fondo.
@@ -139,7 +163,9 @@ export async function renderIconFile(network: keyof SocialLinks, style: IconPack
   if (!blob) throw new Error('No se pudo generar el archivo del icono.');
   // Nombre estable por (red + estilo): re-aplicar el MISMO estilo reescribe el objeto en
   // vez de dejar una copia nueva en el bucket cada vez que se toca el color.
-  const firma = [style.glyph, style.background || 'none', style.shape || 'circle', style.size]
-    .join('-').replace(/[^a-z0-9-]/gi, '');
+  const firma = [
+    style.glyph, style.background || 'none', style.shape || 'circle', style.size,
+    style.outline ? `o${style.outline}${style.outlineColor || ''}` : '',
+  ].join('-').replace(/[^a-z0-9-]/gi, '');
   return new File([blob], `social-${network}-${firma}.png`, { type: 'image/png' });
 }

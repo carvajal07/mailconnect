@@ -34,6 +34,7 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 import { VariableTextEditor } from './VariableTextEditor';
 import type { VariableTextEditorHandle } from './VariableTextEditor';
+import { smsInfo, smsSegments } from '../../utils/sms';
 
 /**
  * Sección de plantillas de mensaje para SMS y WhatsApp (WSP). Un mismo componente
@@ -141,7 +142,10 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
     }
   };
 
-  const segments = Math.max(1, Math.ceil(body.length / 160));
+  // Segmentación REAL (GSM-7 vs UCS-2, y 153/67 al concatenar): es lo que se cobra.
+  // `length / 160` decía "1 segmento" para un mensaje de 100 caracteres con una emoji,
+  // que en realidad son 2 — y el cliente veía la mitad del costo que se le va a debitar.
+  const sms = smsInfo(body);
 
   return (
     <Box>
@@ -189,7 +193,10 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
                   placeholder="Hola {{Nombre}}, tu mensaje aquí…"
                 />
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                  {`${body.length} caracteres · ~${segments} segmento(s). Las variables se insertan como fichas azules en el cursor; el retroceso borra la ficha completa.`}
+                  {`${sms.length} caracteres · ${sms.segments} segmento(s)`}
+                  {!sms.gsm7 && ' · lleva emojis o símbolos especiales, así que cabe menos texto por segmento'}
+                  {`. Quedan ${sms.remaining} caracteres antes del siguiente segmento. `}
+                  {'Las variables se insertan como fichas azules en el cursor; el retroceso borra la ficha completa.'}
                 </Typography>
               </Box>
               <DatabaseFieldPicker compact onInsert={(f) => smsEditor.current?.insertVariable(f)} />
@@ -275,7 +282,7 @@ export const MessageTemplatesSection = ({ channel }: { channel: 'SMS' | 'WSP' })
                 </TableCell>
                 <TableCell>
                   {isSms
-                    ? `~${Math.max(1, Math.ceil((t.body?.length ?? 0) / 160))}`
+                    ? `${smsSegments(t.body ?? '')}`
                     : (t.params && t.params.length ? t.params.join(', ') : '—')}
                 </TableCell>
                 <TableCell align="right">
