@@ -14,6 +14,10 @@ export interface TemplatePreset {
   messageTemplateId?: string;
   /** Versiones anteriores, la más reciente primero. */
   history?: { at: string; designJson: string }[];
+  /** Nombre EXACTO en SES si este diseño ya se publicó (los mantiene emparejados). */
+  sesTemplate?: string;
+  /** Asunto con el que se publicó, para no volver a escribirlo al republicar. */
+  subject?: string;
   id: string;
   name: string;
   description: string;

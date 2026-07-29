@@ -770,6 +770,14 @@ Lambda NUEVA (el CD la crea) + ruta `/Email/Send-test` **ya en `routes.json`**.
   dirección arbitraria es un relay de spam con la reputación de envío de la plataforma,
   que es compartida entre todos los clientes.
 
+### 14a-bis. `Api_V1_Template_Create-template` devuelve el nombre final en SES
+
+- [ ] `[J]` **Redesplegar** la lambda (el CD lo hace solo al hacer push). Ahora la respuesta
+  incluye `data.templateName` con el nombre FINAL `{cliente}_{consecutivo}_{nombre}`.
+- ℹ️ **Sin cambios de infra ni de IAM.** Sin el redespliegue el constructor sigue
+  funcionando: al publicar cae al nombre que escribió el usuario, así que el emparejamiento
+  entre la plantilla de SES y su diseño editable puede quedar impreciso hasta desplegar.
+
 ### 14b. Canal `HTML` en `messageTemplate` (biblioteca de diseños + versionado)
 
 - **Nada que crear**: misma tabla `messageTemplate` y misma ruta `/MessageTemplate/Create`.

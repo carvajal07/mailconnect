@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, useState, useEffect } from 'react';
+import { Fragment, useMemo, useRef, useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -20,6 +20,9 @@ import {
   CircularProgress,
   ListItemText,
   Slider,
+  LinearProgress,
+  Chip,
+  Alert,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
@@ -381,6 +384,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [loadingSesList, setLoadingSesList] = useState(false);
 
   /** Abre el diálogo de carga y trae la lista de plantillas SES del cliente. */
+  /** Abre el diálogo y trae las DOS fuentes: diseños editables y plantillas de SES. */
   const openLoadDialog = async () => {
     setLoadOpen(true);
     if (!sessionCustomer && !sessionCustomerId) return;
@@ -388,6 +392,20 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     const res = await templatesService.list(sessionCustomer, sessionCustomerId);
     setLoadingSesList(false);
     if (isOk(res) && res.data?.templates) setSesTemplates(res.data.templates);
+    void cargarDisenos();
+  };
+
+  /** Carga un diseño editable en el lienzo (bloques + ajustes, tal cual se guardaron). */
+  const loadDesign = (d: TemplatePreset) => {
+    setBlocks(cloneBlocks(d.blocks));
+    setSettings({ ...d.settings });
+    setSelectedId(null);
+    setDesignId(d.messageTemplateId ?? null);
+    setDesignName(d.name);
+    // Republicar debe apuntar a la MISMA plantilla de SES, no crear otra con nombre nuevo.
+    setMeta({ templateName: d.name, subject: d.subject || '' });
+    setLoadOpen(false);
+    notify(`Diseño "${d.name}" cargado. Puedes editarlo bloque a bloque.`, 'success');
   };
   const [loading, setLoading] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -398,6 +416,22 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
   const [presetsVersion, setPresetsVersion] = useState(0);
   const [savePresetOpen, setSavePresetOpen] = useState(false);
   const [presetMeta, setPresetMeta] = useState({ name: '', description: '' });
+  /** Diseño editable que se está trabajando: al republicar se VERSIONA en vez de duplicar. */
+  const [designId, setDesignId] = useState<string | null>(null);
+  const [designName, setDesignName] = useState('');
+  const [loadingDesigns, setLoadingDesigns] = useState(false);
+  /** Diseños editables del equipo (backend). */
+  const [sharedDesigns, setSharedDesigns] = useState<TemplatePreset[]>([]);
+
+  /**
+   * Plantillas que SOLO existen en SES (sin diseño editable): las creadas antes de esta
+   * función o fuera del constructor. Son las únicas para las que tiene sentido importar
+   * HTML crudo.
+   */
+  const sesOnly = useMemo(() => {
+    const publicadas = new Set(sharedDesigns.map((d) => d.sesTemplate).filter(Boolean));
+    return sesTemplates.filter((t) => !publicadas.has(t.name));
+  }, [sesTemplates, sharedDesigns]);
 
   const html = useMemo(() => generateHtml(blocks, settings), [blocks, settings]);
   // Chequeo previo de entregabilidad (peso, alt, enlaces vacíos, imagen/texto…).
@@ -412,9 +446,25 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     setSettings((s) => ({ ...s, [key]: value }));
 
   /* ---------------- Bloques ---------------- */
-  const addBlock = (type: BlockType) => {
+  /**
+   * Agrega un bloque por CLIC (sin arrastrar). Va justo DEBAJO del bloque seleccionado:
+   * al final del todo obligaba a arrastrarlo de vuelta por medio correo, que es lo que
+   * uno acaba de evitar al hacer clic en vez de arrastrar. Sin selección, al final.
+   *
+   * ⚠️ Solo se inserta al lado de un bloque del nivel SUPERIOR: si el seleccionado está
+   * dentro de una columna, `findIndex` no lo encuentra y cae al final — meterlo en la
+   * celda por clic sería ambiguo (¿en la celda o después de las columnas?); para eso está
+   * el "+" de cada celda.
+   */
+  const addBlock = (type: BlockType, alFinal = false) => {
     const b = createBlock(type);
-    setBlocks((prev) => [...prev, b]);
+    setBlocks((prev) => {
+      const i = alFinal || !selectedId ? -1 : prev.findIndex((x) => x.id === selectedId);
+      if (i < 0) return [...prev, b];
+      const next = [...prev];
+      next.splice(i + 1, 0, b);
+      return next;
+    });
     setSelectedId(b.id);
   };
 
@@ -594,6 +644,11 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
 
   const handleNew = () => {
     if (blocks.length && !window.confirm('¿Vaciar el lienzo actual?')) return;
+    // Se sueltan DESPUÉS de confirmar: si se soltaran antes, cancelar el diálogo dejaría
+    // el lienzo intacto pero sin saber a qué diseño pertenece, y el siguiente Publicar
+    // crearía una plantilla nueva en vez de actualizar la que se estaba editando.
+    setDesignId(null);
+    setDesignName('');
     setBlocks([]);
     setSettings({ ...DEFAULT_SETTINGS });
     setSelectedId(null);
@@ -643,18 +698,35 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
       // y se saltaba botones/columnas/productos.
       textBody: plainText,
     });
+    if (!isOk(res)) {
+      setSaving(false);
+      return notify(res.description || 'No se pudo publicar la plantilla.', 'error');
+    }
+
+    // SES guarda el HTML ya renderizado: eso es lo que se ENVÍA, pero no se puede volver a
+    // convertir en bloques. Así que al publicar se guarda además el MODELO editable, con
+    // el nombre de la plantilla SES dentro para dejarlos emparejados. Sin esto, "cargar"
+    // solo podía devolver HTML crudo y el diseño quedaba perdido.
+    const sesName = (res.data as { templateName?: string } | undefined)?.templateName || meta.templateName;
+    const guardado = await emailDesigns.save(
+      sessionCustomerId,
+      meta.templateName,
+      { blocks, settings, sesTemplate: sesName, subject: meta.subject },
+      designId ?? sharedDesigns.find((d) => d.name === meta.templateName)?.messageTemplateId,
+    );
     setSaving(false);
-    if (isOk(res)) {
-      notify('Plantilla publicada correctamente (create-template).', 'success');
-      setSaveOpen(false);
+    setSaveOpen(false);
+    if (isOk(guardado)) {
+      if (guardado.data?.messageTemplateId) setDesignId(guardado.data.messageTemplateId);
+      setDesignName(meta.templateName);
+      notify('Plantilla publicada en SES y guardada como diseño editable.', 'success');
     } else {
-      notify(res.description || 'No se pudo publicar la plantilla.', 'error');
+      notify('Publicada en SES, pero el diseño editable no se pudo guardar: '
+        + (guardado.description || 'error') + '. Guárdalo con "Guardar plantilla".', 'warning');
     }
   };
 
   const draftList = useMemo(() => drafts.list(), [draftsVersion]);
-  /** Diseños compartidos del equipo (backend). Se cargan al abrir la galería. */
-  const [sharedDesigns, setSharedDesigns] = useState<TemplatePreset[]>([]);
 
   const presetList = useMemo(() => {
     const local = allPresets();
@@ -693,6 +765,10 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
     setBlocks(cloneBlocks(p.blocks));
     setSettings({ ...p.settings });
     setSelectedId(null);
+    // Una prediseñada INTEGRADA es un punto de partida, no un diseño guardado: solo se
+    // adopta la identidad cuando viene del backend (tiene id).
+    setDesignId(p.messageTemplateId ?? null);
+    setDesignName(p.messageTemplateId ? p.name : '');
     setPresetsOpen(false);
     notify(`Plantilla "${p.name}" cargada.`, 'success');
   };
@@ -774,38 +850,42 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
       blocks, settings, description: presetMeta.description.trim(),
     }, previo);
     if (isOk(res)) {
+      if (res.data?.messageTemplateId) setDesignId(res.data.messageTemplateId);
+      setDesignName(name);
       notify(`Plantilla "${name}" guardada y compartida con tu equipo.`, 'success');
     } else {
       notify(`Plantilla "${name}" guardada solo en este navegador (no se pudo compartir: ${res.description || 'error'}).`, 'warning');
     }
   };
 
-  useEffect(() => {
-    if (!presetsOpen || !sessionCustomerId) return;
-    let cancelled = false;
-    (async () => {
-      const res = await emailDesigns.list(sessionCustomerId);
-      if (cancelled || !isOk(res)) return;
-      const parsed: TemplatePreset[] = (res.data?.templates ?? []).flatMap((t) => {
-        try {
-          const d = JSON.parse(t.designJson || '{}');
-          if (!d?.blocks?.length) return [];
-          return [{
-            id: `shared:${t.messageTemplateId}`,
-            name: t.name,
-            description: d.description || 'Compartida con el equipo',
-            blocks: d.blocks as Block[],
-            settings: { ...DEFAULT_SETTINGS, ...(d.settings || {}) },
-            custom: true,
-            messageTemplateId: t.messageTemplateId,
-            history: t.designHistory ?? [],
-          } as TemplatePreset];
-        } catch { return []; }
-      });
-      setSharedDesigns(parsed);
-    })();
-    return () => { cancelled = true; };
-  }, [presetsOpen, sessionCustomerId]);
+  /** Trae los diseños editables del equipo (canal HTML de `messageTemplate`). */
+  const cargarDisenos = useCallback(async () => {
+    if (!sessionCustomerId) return;
+    setLoadingDesigns(true);
+    const res = await emailDesigns.list(sessionCustomerId);
+    setLoadingDesigns(false);
+    if (!isOk(res)) return;
+    setSharedDesigns((res.data?.templates ?? []).flatMap((t) => {
+      try {
+        const d = JSON.parse(t.designJson || '{}');
+        if (!d?.blocks?.length) return [];
+        return [{
+          id: `shared:${t.messageTemplateId}`,
+          name: t.name,
+          description: d.description || 'Compartida con el equipo',
+          blocks: d.blocks as Block[],
+          settings: { ...DEFAULT_SETTINGS, ...(d.settings || {}) },
+          custom: true,
+          messageTemplateId: t.messageTemplateId,
+          history: t.designHistory ?? [],
+          sesTemplate: d.sesTemplate,
+          subject: d.subject,
+        } as TemplatePreset];
+      } catch { return []; }
+    }));
+  }, [sessionCustomerId]);
+
+  useEffect(() => { if (presetsOpen) void cargarDisenos(); }, [presetsOpen, cargarDisenos]);
 
   return (
     <Box sx={shellSx}>
@@ -814,6 +894,11 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         sx={{ flexShrink: 0 }}>
         <Stack direction="row" alignItems="center" spacing={1}>
           <Typography variant={fullscreen ? 'h6' : 'h4'}>Plantillas HTML</Typography>
+          {designName && (
+            <Tooltip title="Diseño editable abierto. Al publicar se actualiza este mismo.">
+              <Chip size="small" color="primary" variant="outlined" label={designName} />
+            </Tooltip>
+          )}
           <TextField
             size="small"
             placeholder="Nombre del borrador"
@@ -839,7 +924,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
             Borradores
           </Button>
           <Button size="small" startIcon={<CloudDownloadIcon />} onClick={openLoadDialog}>
-            Cargar de SES
+            Cargar
           </Button>
           <Button size="small" startIcon={<TuneIcon />} onClick={() => setSettingsOpen(true)}>
             Ajustes
@@ -1075,7 +1160,9 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
               display: 'flex',
               justifyContent: 'center',
               alignItems: 'flex-start',
-              bgcolor: (t) => (t.palette.mode === 'dark' ? '#0b1220' : '#eef2f7'),
+              // El FONDO DE PÁGINA de Ajustes, igual que en la vista previa y en el correo.
+              // Antes era un gris fijo, así que el ajuste "no hacía nada" en el editor.
+              bgcolor: settings.pageBg,
             }}
           >
             <Box
@@ -1083,7 +1170,8 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                 width: settings.contentWidth,
                 maxWidth: '100%',
                 bgcolor: settings.emailBg,
-                color: '#333333',
+                color: settings.textColor,
+                fontFamily: settings.fontFamily,
                 borderRadius: settings.rounded ? 2 : 0,
                 boxShadow: '0 8px 30px rgba(16,35,63,.16)',
                 overflow: 'hidden',
@@ -1263,7 +1351,7 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
                 <Typography variant="overline" color="text.secondary">{g.label}</Typography>
               </MenuItem>,
               ...g.types.map((t) => (
-                <MenuItem key={t} onClick={() => { addBlock(t); setAppendAnchor(null); }} sx={{ pl: 3 }}>
+                <MenuItem key={t} onClick={() => { addBlock(t, true); setAppendAnchor(null); }} sx={{ pl: 3 }}>
                   <Box sx={{ mr: 1, display: 'flex', color: 'primary.main' }}>{BLOCK_ICONS[t]}</Box>
                   {BLOCK_LABELS[t]}
                 </MenuItem>
@@ -1523,45 +1611,72 @@ export const HtmlBuilderSection = ({ allowSavePreset = false }: { allowSavePrese
         </DialogActions>
       </Dialog>
 
-      {/* Cargar de SES */}
+      {/* Cargar: diseño EDITABLE (preferido) o plantilla de SES (HTML crudo) */}
       <Dialog open={loadOpen} onClose={() => setLoadOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Cargar plantilla de SES</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <TextField
-              select
-              label="Plantilla del cliente en SES"
-              value={loadName}
-              onChange={(e) => setLoadName(e.target.value)}
-              fullWidth
-              helperText={loadingSesList ? 'Cargando plantillas…' : undefined}
-            >
-              {loadName && !sesTemplates.some((t) => t.name === loadName) && (
-                <MenuItem value={loadName}>{loadName}</MenuItem>
-              )}
-              {sesTemplates.length === 0 && !loadName && (
-                <MenuItem value="" disabled>
-                  {loadingSesList ? 'Cargando…' : 'No hay plantillas del cliente en SES'}
-                </MenuItem>
-              )}
-              {sesTemplates.map((t) => (
-                <MenuItem key={t.name} value={t.name}>
-                  {t.name}
-                </MenuItem>
-              ))}
-            </TextField>
-            <Typography variant="caption" color="text.secondary">
-              La plantilla se importa como un bloque <strong>HTML crudo</strong> para poder editarla
-              y volver a publicarla.
+        <DialogTitle>Cargar una plantilla</DialogTitle>
+        <DialogContent dividers>
+          {/* Los diseños editables van PRIMERO porque son los que se pueden seguir
+              trabajando bloque a bloque. El HTML de SES solo vuelve como un bloque crudo:
+              es lo que se envía, no el modelo con el que se construyó. */}
+          <Typography variant="overline" color="text.secondary">Diseños editables</Typography>
+          {loadingDesigns && <LinearProgress sx={{ my: 1 }} />}
+          {!loadingDesigns && sharedDesigns.length === 0 && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Todavía no tienes diseños guardados. Al publicar se guarda uno automáticamente.
             </Typography>
+          )}
+          <Stack spacing={1} sx={{ mt: 1, mb: 2 }}>
+            {sharedDesigns.map((d) => (
+              <Paper key={d.id} variant="outlined" sx={{ p: 1.5 }}>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography variant="body2" fontWeight={700} noWrap>{d.name}</Typography>
+                    <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
+                      {d.sesTemplate ? `Publicada en SES como ${d.sesTemplate}` : 'Sin publicar en SES'}
+                    </Typography>
+                  </Box>
+                  {d.sesTemplate && <Chip size="small" color="success" variant="outlined" label="publicada" />}
+                  <Button size="small" variant="contained" onClick={() => loadDesign(d)}>Abrir</Button>
+                </Stack>
+              </Paper>
+            ))}
           </Stack>
+
+          <Divider sx={{ my: 2 }} />
+
+          <Typography variant="overline" color="text.secondary">Solo en SES (HTML)</Typography>
+          <TextField
+            select
+            label="Plantilla del cliente en SES"
+            value={loadName}
+            onChange={(e) => setLoadName(e.target.value)}
+            fullWidth
+            size="small"
+            sx={{ mt: 1 }}
+            helperText={loadingSesList ? 'Cargando plantillas…' : undefined}
+          >
+            {loadName && !sesOnly.some((t) => t.name === loadName) && (
+              <MenuItem value={loadName}>{loadName}</MenuItem>
+            )}
+            {sesOnly.length === 0 && !loadName && (
+              <MenuItem value="" disabled>
+                {loadingSesList ? 'Cargando…' : 'Todas tus plantillas de SES tienen su diseño editable'}
+              </MenuItem>
+            )}
+            {sesOnly.map((t) => (
+              <MenuItem key={t.name} value={t.name}>{t.name}</MenuItem>
+            ))}
+          </TextField>
+          <Alert severity="info" sx={{ mt: 1.5 }}>
+            Estas entran como un bloque de <strong>HTML crudo</strong>: SES guarda el correo ya
+            armado, no los bloques con los que se hizo, así que no se puede deshacer a piezas.
+            Sirve para retocar y republicar; para editar cómodo, usa un diseño editable.
+          </Alert>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setLoadOpen(false)} disabled={loading}>
-            Cancelar
-          </Button>
-          <Button variant="contained" onClick={handleLoadFromSes} disabled={loading || !loadName.trim()}>
-            {loading ? <CircularProgress size={22} /> : 'Cargar'}
+          <Button onClick={() => setLoadOpen(false)} disabled={loading}>Cancelar</Button>
+          <Button variant="outlined" onClick={handleLoadFromSes} disabled={loading || !loadName.trim()}>
+            {loading ? <CircularProgress size={22} /> : 'Cargar el HTML de SES'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1886,9 +2001,15 @@ const BlockPreview = ({
 
   switch (b.type) {
     case 'heading':
-      return field('text', { fontSize: b.fontSize || 24, fontWeight: 700, color: b.color || '#16233f', textAlign: align });
+      return field('text', {
+        fontSize: b.fontSize || 24, fontWeight: 700, textAlign: align,
+        fontFamily: st.fontFamily, color: b.color || st.textColor,
+      });
     case 'text':
-      return field('text', { fontSize: b.fontSize || 15, color: b.color || '#333', textAlign: align });
+      return field('text', {
+        fontSize: b.fontSize || 15, textAlign: align,
+        fontFamily: st.fontFamily, color: b.color || st.textColor,
+      });
     case 'image':
     case 'logo':
       return b.url ? (

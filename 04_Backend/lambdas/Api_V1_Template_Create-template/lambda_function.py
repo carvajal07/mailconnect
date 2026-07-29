@@ -157,6 +157,10 @@ def lambda_handler(event, context):
     status = True
     description = "Plantilla creada correctamente"
     statusCode = 201
+    # Nombre FINAL en SES ({cliente}_{consecutivo}_{nombre}). Se devuelve para que el
+    # constructor pueda guardar junto al diseño editable a qué plantilla de SES
+    # corresponde; sin él, el front tendría que adivinar el prefijo para emparejarlos.
+    created_name = ''
 
     try:
         # Obtener datos del evento
@@ -218,6 +222,7 @@ def lambda_handler(event, context):
                     # espacios/acentos/signos en TemplateName (antes → 500 al crear).
                     templateName = '{}_{}_{}'.format(_ses_safe(customerName), consecutive, _ses_safe(templateName))
                     response = create_template(templateName,subject,htmlBody,textBody)
+                    created_name = templateName
                 except Exception as e:
                     status = False
                     statusCode = 500
@@ -249,7 +254,8 @@ def lambda_handler(event, context):
         response = {
             'status':status,
             'statusCode': statusCode,
-            'description':description
+            'description':description,
+            'data': {'templateName': created_name},
         }
 
     return response
