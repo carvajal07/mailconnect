@@ -26,6 +26,48 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Landing: SEO, precios "desde" y accesibilidad (ago 2026)
+- **SEO en `index.html`** (era `lang="en"` y `<title>page</title>`, o sea invisible para
+  Google y horrible al compartir): idioma `es`, título y `description` reales, `canonical`,
+  **Open Graph + Twitter Card** completos y **JSON-LD** con `Organization` + `WebSite` +
+  `SoftwareApplication`. ⚠️ Todo va **estático en el HTML que sirve el host**, no inyectado
+  por React: los rastreadores que no ejecutan JS —y casi todos los previsualizadores de
+  enlaces— solo leen eso. Por lo mismo **NO se agregó `react-helmet-async`**: la landing es
+  la única página pública de conversión, así que una librería de head management sería
+  peso sin beneficio. Vale la pena el día que se indexen varias páginas con meta propias.
+- **Iconos de marca generados** (`scripts` con Pillow, a partir de los colores del logo):
+  `favicon.ico` (16/32/48 dentro), `favicon-32x32`, `favicon-16x16`, `apple-touch-icon`
+  (180), `icon-512` y **`og-image.png` (1200×630)**. ⚠️ El favicon **no** es el logotipo
+  rasterizado: a 16 px el logotipo completo es ilegible, así que se dibuja la marca
+  SIMPLIFICADA (el sobre). Sale `vite.svg`. Se suman `site.webmanifest`, `robots.txt`
+  (bloquea `/panel`, `/admin`, `/login`…) y `sitemap.xml`.
+  ⚠️ `og:image` **debe** ser URL absoluta: una relativa no la resuelve ningún scraper.
+- **Tabla de precios "desde" por canal** (`precios.ts` + `precios.test.ts`). Las cifras
+  viven en **UN** archivo que es espejo de `VOLUME_TIERS`, y la prueba **lee el
+  `lambda_function.py` real** de `Cost_Estimate` y falla si divergen — que es exactamente
+  el defecto que tenía la landing anterior (decía $19 por correo a 10.000 y el backend
+  cobraba $25). Se publican el punto de partida y 3 volúmenes, no la tabla completa: el
+  precio se cierra en la cotización.
+- **Logo REAL de WhatsApp** en la tarjeta del canal (era un bocadillo genérico de contorno)
+  y en el botón del hero, en un componente `WhatsAppGlyph` compartido.
+- **Fuera la prueba gratis de 500 correos** (botón del hero y CTA final): el CTA pasa a
+  "Hablemos de tu próxima campaña" con la cotización como acción principal.
+- **Footer sin enlaces muertos:** "Sobre nosotros" y "Blog" iban a `href="#"` → se quitan
+  hasta que existan las páginas (un enlace que no hace nada cuesta más confianza de lo que
+  aporta el nombre, y Google los cuenta como rotos). "Contacto"/"Soporte" pasan a WhatsApp
+  con mensaje pre-cargado + correo real.
+- **Modal de activación accesible:** cierra con **Escape**, `aria-labelledby`/
+  `aria-describedby` apuntando al `h2` y al `p`, **foco que entra al diálogo** al abrirse,
+  **trampa de Tab** (cicla dentro) y un botón "Cerrar" visible — antes solo se podía cerrar
+  con el ratón, así que quien navega con teclado quedaba tabulando por la landing de atrás.
+- **Barra de formato del texto:** el `<input type="color">` llevaba `hidden`, y **sin caja
+  en el layout el navegador abre su paleta anclada al origen de la página** — allá arriba a
+  la izquierda, lejos del botón. Ahora ocupa el botón entero con `opacity:0`. Además se dio
+  aire a las herramientas (`spacing` 0.25 → 0.75), que quedaban pegadas.
+- **Cobertura:** `precios.test.ts` (26: el "desde" y el tramo alto de los 4 canales contra
+  la lambda, los 3 volúmenes publicados, que el precio no suba con el volumen, y el formato
+  de moneda). Frontend sube a **137**.
+
 ### Tarifas SMS/Voz a costo+25% y cobro POR SEGMENTO (ago 2026)
 > Revisión de precios contra el costo REAL de AWS. Las tarifas de SMS y Voz vendían **por
 > debajo del costo en TODOS los tramos**, y el defecto de los segmentos hacía que el

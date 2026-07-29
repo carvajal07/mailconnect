@@ -576,6 +576,27 @@
 
 ---
 
+### 20c. Landing: SEO, precios y accesibilidad
+
+| ID | Prioridad | Caso | Pasos | Resultado esperado |
+|----|-----------|------|-------|--------------------|
+| CP-SEO-01 | 🔴 | Título e idioma | Ver el código fuente de la landing | `<html lang="es">` y un `<title>` descriptivo (ya no dice "page") |
+| CP-SEO-02 | 🔴 | Vista previa al compartir | Pegar https://www.mailconnect.com.co/ en WhatsApp o LinkedIn | Sale la imagen 1200×630 con la marca, el título y la descripción |
+| CP-SEO-03 | 🟡 | Favicon | Abrir la landing y mirar la pestaña | Icono de marca (ya no el logo de Vite) |
+| CP-SEO-04 | 🟡 | Icono en iOS | "Añadir a pantalla de inicio" desde Safari | Icono de marca a 180 px, sin fondo blanco recortado |
+| CP-SEO-05 | 🟡 | Datos estructurados | Pasar la URL por el validador de resultados enriquecidos de Google | Detecta Organization, WebSite y SoftwareApplication sin errores |
+| CP-SEO-06 | 🟡 | Canonical y robots | Abrir /robots.txt y /sitemap.xml | Existen; robots bloquea /panel, /admin y /login |
+| CP-LAN-01 | 🔴 | Tabla de precios por canal | Landing → Precios | Muestra los 4 canales con "desde" y 3 volúmenes; las cifras coinciden con lo que cobra el sistema |
+| CP-LAN-02 | 🟡 | Letra pequeña de precios | Leer bajo la tabla | Aclara "sin IVA", por unidad, y las condiciones de SMS (segmentos), WhatsApp (Meta) y Voz |
+| CP-LAN-03 | 🟡 | Icono de WhatsApp | Sección Canales | Es el logo real de WhatsApp, no un bocadillo genérico |
+| CP-LAN-04 | 🟡 | Sin promesa de 500 correos | Recorrer toda la landing | No aparece "Prueba gratis · 500 correos" ni el CTA de los 500 gratis |
+| CP-LAN-05 | 🟡 | Footer sin enlaces rotos | Hacer clic en cada enlace del footer | Todos llevan a algún lado (ninguno se queda en la misma página) |
+| CP-A11Y-01 | 🔴 | Cerrar el modal con teclado | Abrir /?activacion=ok y pulsar Escape | El modal se cierra |
+| CP-A11Y-02 | 🟡 | Foco en el modal | Abrir /?activacion=ok y pulsar Tab | El foco arranca DENTRO del modal y cicla ahí, no en la página de atrás |
+| CP-A11Y-03 | 🟡 | Lector de pantalla | Abrir el modal con un lector activo | Anuncia el título y el texto del aviso |
+
+---
+
 ## 21. Cascada omnicanal y series  ✅
 
 | ID | Prioridad | Caso | Pasos | Resultado esperado |

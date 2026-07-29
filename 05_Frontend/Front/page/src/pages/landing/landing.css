@@ -206,6 +206,20 @@
   color:var(--text-muted); font-weight:700; font-size:.9rem; }
 .mc-landing .pay .chip{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-pill); padding:7px 15px; color:var(--text); }
 .mc-landing .price-note{ text-align:center; color:var(--text-muted); font-size:.85rem; margin-top:14px; }
+/* Letra pequeña de la tabla de precios: lo que hay que leer para que el número de arriba
+   no se malinterprete (sin IVA, por unidad, y las condiciones propias de cada canal). */
+.mc-landing .price-fine{ list-style:none; padding:0; margin:18px auto 0; max-width:760px;
+  color:var(--text-muted); font-size:.85rem; line-height:1.6; }
+.mc-landing .price-fine li{ position:relative; padding-left:16px; margin-bottom:6px; }
+.mc-landing .price-fine li::before{ content:'·'; position:absolute; left:4px; font-weight:800;
+  color:var(--brand-strong); }
+
+/* Tabla de precios POR CANAL. La regla de arriba alinea la última columna a la derecha
+   porque en la tabla original esa columna era el "Total"; aquí todas las columnas son
+   precios unitarios y alinearlas distinto se lee como un error. */
+.mc-landing .pricetable--canales td:last-child,
+.mc-landing .pricetable--canales th:last-child{ text-align:left; }
+.mc-landing .pricetable--canales small{ font-size:.75rem; font-weight:600; margin-top:2px; }
 
 /* ---------- CTA ---------- */
 .mc-landing .cta{ background:var(--dark-bg); color:#fff; border-radius:28px; padding:clamp(40px,6vw,72px); text-align:center; box-shadow:var(--shadow); }

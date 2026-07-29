@@ -1,0 +1,12 @@
+# El portal y el panel admin viven detrás de autenticación: no hay nada que indexar ahí,
+# y listarlos solo le da pistas a quien escanea.
+User-agent: *
+Allow: /$
+Allow: /legal/
+Disallow: /panel
+Disallow: /admin
+Disallow: /login
+Disallow: /register
+Disallow: /reset-password
+
+Sitemap: https://www.mailconnect.com.co/sitemap.xml

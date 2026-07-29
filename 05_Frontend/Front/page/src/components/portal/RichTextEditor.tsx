@@ -70,6 +70,35 @@ const FONT_FAMILIES = [
 const TOGGLES = ['bold', 'italic', 'underline', 'strikeThrough'] as const;
 type Toggle = (typeof TOGGLES)[number];
 
+/**
+ * Botón que abre el selector de color NATIVO del sistema.
+ *
+ * ⚠️ El `<input type="color">` NO puede llevar `hidden` ni `display:none`: sin caja en el
+ * layout, el navegador abre su paleta anclada al origen de la página — o sea allá arriba
+ * a la izquierda, lejos del botón que se acaba de pulsar. Se deja ocupando el botón
+ * entero, transparente: la paleta sale justo debajo, que es donde se la espera.
+ */
+const ColorTool = ({ title, inicial, onPick, children }: {
+  title: string;
+  inicial?: string;
+  onPick: (valor: string) => void;
+  children: React.ReactNode;
+}) => (
+  <Tooltip title={title}>
+    <IconButton size="small" component="label" sx={{ position: 'relative' }}>
+      {children}
+      <Box
+        component="input" type="color" defaultValue={inicial}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => onPick(e.target.value)}
+        sx={{
+          position: 'absolute', inset: 0, width: '100%', height: '100%',
+          opacity: 0, border: 0, padding: 0, cursor: 'pointer',
+        }}
+      />
+    </IconButton>
+  </Tooltip>
+);
+
 export const RichTextEditor = ({
   value, onChange, style, placeholder, variables = [], onRequestVariable, active,
 }: Props) => {
@@ -258,20 +287,20 @@ export const RichTextEditor = ({
             // Envuelve a una segunda fila en vez de hacer scroll horizontal: con scroll,
             // las últimas herramientas (enlace, listas, quitar formato) quedaban fuera de
             // vista sin ninguna señal de que estaban ahí.
-            p: 0.5, borderRadius: 1.5, maxWidth: '100%', minWidth: 320,
+            p: 0.75, borderRadius: 1.5, maxWidth: '100%', minWidth: 320,
           }}
         >
-          <Stack direction="row" spacing={0.25} alignItems="center" flexWrap="wrap" useFlexGap rowGap={0.25}>
+          <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap rowGap={0.75}>
             <Toggle cmd="bold" title="Negrita"><FormatBoldIcon fontSize="small" /></Toggle>
             <Toggle cmd="italic" title="Cursiva"><FormatItalicIcon fontSize="small" /></Toggle>
             <Toggle cmd="underline" title="Subrayado"><FormatUnderlinedIcon fontSize="small" /></Toggle>
             <Toggle cmd="strikeThrough" title="Tachado"><StrikethroughSIcon fontSize="small" /></Toggle>
-            <Divider orientation="vertical" flexItem sx={{ mx: 0.25 }} />
+            <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
 
             <Select
               size="small" value="" displayEmpty variant="standard" disableUnderline
               onChange={(e) => wrapStyle('fontFamily', String(e.target.value))}
-              sx={{ minWidth: 104, fontSize: 13, px: 0.5 }}
+              sx={{ minWidth: 104, fontSize: 13, px: 0.75 }}
               renderValue={() => 'Fuente'}
             >
               {FONT_FAMILIES.map((f) => (
@@ -296,7 +325,7 @@ export const RichTextEditor = ({
                 });
                 emit();
               }}
-              sx={{ minWidth: 92, fontSize: 13, px: 0.5 }}
+              sx={{ minWidth: 92, fontSize: 13, px: 0.75 }}
               renderValue={() => 'Tamaño'}
             >
               {FONT_SIZES.map((s) => (
@@ -304,32 +333,21 @@ export const RichTextEditor = ({
               ))}
             </Select>
 
-            <Tooltip title="Color del texto">
-              <IconButton size="small" component="label">
-                <FormatColorTextIcon fontSize="small" />
-                <input
-                  type="color" hidden
-                  onChange={(e) => exec('foreColor', e.target.value)}
-                />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="Resaltar (fondo del texto)">
-              <IconButton size="small" component="label">
-                <FormatColorFillIcon fontSize="small" />
-                <input
-                  type="color" hidden defaultValue="#fff3a3"
-                  // `hiliteColor`/`backColor` se comportan distinto en cada navegador (y en
-                  // algunos pintan TODO el bloque). Envolver en un span es predecible y es
-                  // exactamente lo que el correo necesita: estilo en línea.
-                  onChange={(e) => wrapStyle('backgroundColor', e.target.value)}
-                />
-              </IconButton>
-            </Tooltip>
-            <Divider orientation="vertical" flexItem sx={{ mx: 0.25 }} />
+            <ColorTool title="Color del texto" onPick={(v) => exec('foreColor', v)}>
+              <FormatColorTextIcon fontSize="small" />
+            </ColorTool>
+            {/* `hiliteColor`/`backColor` se comportan distinto en cada navegador (y en
+                algunos pintan TODO el bloque). Envolver en un span es predecible y es
+                exactamente lo que el correo necesita: estilo en línea. */}
+            <ColorTool title="Resaltar (fondo del texto)" inicial="#fff3a3"
+              onPick={(v) => wrapStyle('backgroundColor', v)}>
+              <FormatColorFillIcon fontSize="small" />
+            </ColorTool>
+            <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
 
             <Tooltip title="Viñetas"><IconButton size="small" onClick={() => exec('insertUnorderedList')}><FormatListBulletedIcon fontSize="small" /></IconButton></Tooltip>
             <Tooltip title="Lista numerada"><IconButton size="small" onClick={() => exec('insertOrderedList')}><FormatListNumberedIcon fontSize="small" /></IconButton></Tooltip>
-            <Divider orientation="vertical" flexItem sx={{ mx: 0.25 }} />
+            <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
 
             <Tooltip title="Insertar enlace">
               <IconButton size="small" onClick={(e) => { saveRange(); setLinkAnchor(e.currentTarget); }}>
@@ -341,7 +359,7 @@ export const RichTextEditor = ({
 
             {(variables.length > 0 || onRequestVariable) && (
               <>
-                <Divider orientation="vertical" flexItem sx={{ mx: 0.25 }} />
+                <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
                 <Select
                   size="small" value="" displayEmpty variant="standard" disableUnderline
                   onChange={(e) => {
@@ -349,7 +367,7 @@ export const RichTextEditor = ({
                     if (v === '__custom__') onRequestVariable?.();
                     else if (v) insertVariable(v);
                   }}
-                  sx={{ minWidth: 96, fontSize: 13, px: 0.5 }}
+                  sx={{ minWidth: 96, fontSize: 13, px: 0.75 }}
                   renderValue={() => 'Variable'}
                 >
                   {variables.map((v) => <MenuItem key={v} value={v}>{`{{${v}}}`}</MenuItem>)}

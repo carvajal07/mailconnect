@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { MailConnectLogo } from '../../components/MailConnectLogo';
 import { LandingFloating } from '../../components/LandingFloating';
+import { PRECIOS_CANAL, cop } from './precios';
 import './landing.css';
 
 /* Resultado de la activación de cuenta. La lambda Acount-activation redirige a
@@ -18,26 +19,64 @@ const ActivacionAviso = () => {
   const raw = (params.get('activacion') || '').toLowerCase();
   const info = ACTIVACION_MSG[raw];
   const [open, setOpen] = useState(true);
+  const caja = useRef<HTMLDivElement | null>(null);
+  const abierto = Boolean(info) && open;
+
+  /**
+   * Accesibilidad del diálogo: cerrar con Escape, atrapar el Tab dentro y mover el foco al
+   * abrirse. Sin esto, quien navega con teclado o lector de pantalla queda tabulando por la
+   * landing de atrás mientras el modal la tapa, y solo puede cerrarlo con el ratón.
+   */
+  useEffect(() => {
+    if (!abierto) return;
+    const enfocables = () => Array.from(
+      caja.current?.querySelectorAll<HTMLElement>('a[href], button, [tabindex]:not([tabindex="-1"])') ?? []);
+
+    // El foco entra al diálogo; el `?? caja.current` cubre el caso sin nada enfocable.
+    (enfocables()[0] ?? caja.current)?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setOpen(false); return; }
+      if (e.key !== 'Tab') return;
+      const items = enfocables();
+      if (!items.length) return;
+      const primero = items[0];
+      const ultimo = items[items.length - 1];
+      // Ciclo: del último al primero con Tab, y al revés con Shift+Tab.
+      if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); primero.focus(); }
+      else if (e.shiftKey && document.activeElement === primero) { e.preventDefault(); ultimo.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [abierto]);
+
   if (!info || !open) return null;
   return (
     <div role="dialog" aria-modal="true"
+      aria-labelledby="activacion-titulo" aria-describedby="activacion-texto"
       style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(10,18,32,.55)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
       onClick={() => setOpen(false)}>
-      <div onClick={(e) => e.stopPropagation()}
+      <div ref={caja} tabIndex={-1} onClick={(e) => e.stopPropagation()}
         style={{ background: '#fff', color: '#16233f', maxWidth: 420, width: '100%', borderRadius: 16,
-          padding: '28px 24px', textAlign: 'center', boxShadow: '0 20px 60px rgba(0,0,0,.3)' }}>
-        <div style={{ width: 64, height: 64, margin: '0 auto 12px', borderRadius: '50%',
-          background: info.color, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: '#fff', fontSize: 34, fontWeight: 800 }}>
+          padding: '28px 24px', textAlign: 'center', boxShadow: '0 20px 60px rgba(0,0,0,.3)', outline: 'none' }}>
+        <div aria-hidden="true"
+          style={{ width: 64, height: 64, margin: '0 auto 12px', borderRadius: '50%',
+            background: info.color, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#fff', fontSize: 34, fontWeight: 800 }}>
           {raw === 'ok' ? '✓' : raw === 'expirado' ? '⏱' : '!'}
         </div>
-        <h2 style={{ margin: '0 0 8px', fontSize: 22 }}>{info.titulo}</h2>
-        <p style={{ margin: '0 0 20px', color: '#4b5b7e', lineHeight: 1.5 }}>{info.texto}</p>
+        <h2 id="activacion-titulo" style={{ margin: '0 0 8px', fontSize: 22 }}>{info.titulo}</h2>
+        <p id="activacion-texto" style={{ margin: '0 0 20px', color: '#4b5b7e', lineHeight: 1.5 }}>{info.texto}</p>
         <Link to="/login" style={{ display: 'inline-block', background: 'linear-gradient(135deg,#00c3ff,#0075be)',
           color: '#04121f', fontWeight: 800, textDecoration: 'none', padding: '12px 26px', borderRadius: 10 }}>
           Iniciar sesión
         </Link>
+        <button type="button" onClick={() => setOpen(false)}
+          style={{ display: 'block', margin: '14px auto 0', background: 'none', border: 0,
+            color: '#5b6b86', font: 'inherit', fontSize: 14, cursor: 'pointer', textDecoration: 'underline' }}>
+          Cerrar
+        </button>
       </div>
     </div>
   );
@@ -49,8 +88,19 @@ const ActivacionAviso = () => {
    2) whatsappUrl() arma el enlace con un mensaje pre-cargado (editable). */
 const WHATSAPP_PHONE = '573204586576'; // Número real de MailConnect (57 + 320 458 6576)
 const WHATSAPP_MSG = 'Hola, quiero solicitar una cotización de MailConnect.';
+/** Correo público de contacto (el mismo remitente verificado en SES). */
+const CORREO_CONTACTO = 'comunicaciones@mailconnect.com.co';
 const whatsappUrl = (msg: string = WHATSAPP_MSG) =>
   `https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(msg)}`;
+
+/* Logo oficial de WhatsApp (trazado del glifo de marca). El que había en la tarjeta del
+   canal era un bocadillo genérico de contorno, que no se lee como WhatsApp. */
+const WhatsAppGlyph = ({ size = 24 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M17.47 14.38c-.29-.15-1.7-.84-1.97-.94-.26-.1-.45-.14-.64.15-.19.28-.74.93-.9 1.12-.17.19-.33.21-.62.07-.29-.15-1.22-.45-2.33-1.44-.86-.77-1.44-1.72-1.61-2-.17-.29-.02-.45.13-.59.13-.13.29-.34.44-.51.15-.17.19-.29.29-.48.1-.19.05-.36-.02-.51-.07-.14-.64-1.55-.88-2.13-.23-.56-.47-.48-.64-.49h-.55c-.19 0-.5.07-.76.36-.26.29-1 .98-1 2.38s1.02 2.76 1.17 2.95c.14.19 2.01 3.08 4.88 4.32.68.29 1.21.47 1.63.6.68.22 1.31.19 1.8.11.55-.08 1.7-.69 1.94-1.37.24-.67.24-1.25.17-1.37-.07-.12-.26-.19-.55-.33z" />
+    <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.46 1.32 4.96L2 22l5.25-1.38a9.87 9.87 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2m0 18.15h-.01a8.2 8.2 0 0 1-4.18-1.15l-.3-.18-3.11.82.83-3.04-.2-.31a8.2 8.2 0 0 1-1.26-4.38c0-4.54 3.7-8.23 8.24-8.23a8.18 8.18 0 0 1 5.82 2.42 8.17 8.17 0 0 1 2.41 5.82c0 4.54-3.7 8.23-8.24 8.23" />
+  </svg>
+);
 
 const BARS = [38, 56, 47, 72, 63, 88, 70, 95, 80];
 
@@ -85,17 +135,17 @@ export const LandingPage = () => {
             <p className="lead">Diseña, segmenta y envía campañas de <strong>email marketing, SMS, WhatsApp y voz</strong> desde una sola plataforma. Con plantillas, combinación de correspondencia y métricas en tiempo real, sobre infraestructura AWS de alta entregabilidad.</p>
             <div className="price-flag"><b>Precio por volumen</b><small>cotización a la medida de tu operación</small></div>
             <div className="hero-actions">
-              <Link to="/register" className="btn btn-primary">Prueba gratis · 500 correos
+              <Link to="/register" className="btn btn-primary">Crear cuenta
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
               </Link>
               <a href={whatsappUrl()} className="btn btn-wa" target="_blank" rel="noopener noreferrer">
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 14.4c-.3-.1-1.7-.8-2-.9-.3-.1-.5-.1-.6.2-.2.3-.7.9-.9 1.1-.2.2-.3.2-.6.1-1.7-.9-2.9-1.6-4-3.5-.3-.5.3-.5.8-1.5.1-.2 0-.4 0-.5s-.6-1.5-.9-2.1c-.2-.5-.4-.4-.6-.4H8c-.2 0-.5.1-.7.3-.7.7-1 1.6-1 2.6.1 1.5.9 2.9 1 3.1.2.2 2.1 3.3 5.2 4.6 3 1.2 3 .8 3.6.8.6-.1 1.7-.7 2-1.4.2-.7.2-1.2.1-1.4-.1-.1-.3-.2-.6-.3zM12 2a10 10 0 0 0-8.6 15L2 22l5.2-1.4A10 10 0 1 0 12 2z" /></svg>
+                <WhatsAppGlyph size={17} />
                 Cotizar por WhatsApp
               </a>
             </div>
             <div className="hero-trust">
               <span><span className="tick">✓</span> Sin tarjeta de crédito</span>
-              <span><span className="tick">✓</span> Créditos válidos 1 año</span>
+              <span><span className="tick">✓</span> Saldo prepago sin vencimiento mensual</span>
               <span><span className="tick">✓</span> Soporte en español</span>
             </div>
           </div>
@@ -153,7 +203,7 @@ export const LandingPage = () => {
               <span className="tagpill">Cobertura nacional</span>
             </div>
             <div className="card">
-              <span className="ico wa"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.7a8.5 8.5 0 0 1-.9-3.8A8.38 8.38 0 0 1 12.5 3 8.38 8.38 0 0 1 21 11.5z" /></svg></span>
+              <span className="ico wa"><WhatsAppGlyph /></span>
               <h3>WhatsApp</h3>
               <p>API oficial de WhatsApp Business: plantillas aprobadas, multimedia y respuestas automáticas.</p>
               <span className="tagpill">API oficial</span>
@@ -283,6 +333,46 @@ export const LandingPage = () => {
             </div>
           </div>
 
+          {/* Tabla "desde": precios de referencia por canal, tomados de `precios.ts`, que a
+              su vez es espejo de VOLUME_TIERS del backend. NO es la tabla completa de
+              tramos —esa va en la cotización—: se publican el punto de partida y algunos
+              volúmenes para que se entienda que baja con el volumen. */}
+          <div className="pricetable pricetable--canales" style={{ marginTop: 40 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Canal</th>
+                  <th>Desde</th>
+                  <th>1.000</th>
+                  <th>10.000</th>
+                  <th>100.000</th>
+                </tr>
+              </thead>
+              <tbody>
+                {PRECIOS_CANAL.map((c) => (
+                  <tr key={c.canal}>
+                    <td>
+                      <b>{c.canal}</b>
+                      <small style={{ display: 'block', color: 'var(--text-muted)' }}>{c.unidad}</small>
+                    </td>
+                    <td className="per-cell">{cop(c.desde)}</td>
+                    {c.ejemplos.map((e) => (
+                      <td key={e.volumen}>{cop(e.unitario)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <ul className="price-fine">
+            <li>Valores en pesos colombianos, <b>sin IVA</b>, por unidad enviada. El precio baja por tramos a medida que sube el volumen mensual; arriba solo se muestran tres puntos de referencia.</li>
+            {PRECIOS_CANAL.filter((c) => c.nota).map((c) => (
+              <li key={c.canal}><b>{c.canal}:</b> {c.nota}</li>
+            ))}
+            <li>Correo con adjunto (único o personalizado por destinatario) tiene su propia tarifa; se cotiza aparte.</li>
+          </ul>
+
           <div className="center" style={{ marginTop: 40 }}>
             <div className="hero-actions" style={{ justifyContent: 'center' }}>
               <a href={whatsappUrl('Hola, quiero cotizar el envío masivo con MailConnect. Les cuento mi volumen y canales.')} className="btn btn-primary" target="_blank" rel="noopener noreferrer">
@@ -305,10 +395,10 @@ export const LandingPage = () => {
       <section id="cta">
         <div className="wrap">
           <div className="cta">
-            <h2>Haz tu primer envío hoy</h2>
-            <p>Crea tu cuenta, prueba con 500 correos gratis y lanza tu primera campaña en minutos.</p>
+            <h2>Hablemos de tu próxima campaña</h2>
+            <p>Cuéntanos cuánto envías y por qué canales, y te armamos la cotización con la tabla de tramos que te aplica. Crear la cuenta es gratis y sin tarjeta.</p>
             <div className="cta-actions">
-              <Link to="/register" className="btn btn-light">Crear cuenta gratis</Link>
+              <Link to="/register" className="btn btn-light">Crear cuenta</Link>
               <a href={whatsappUrl('Hola, quiero solicitar una cotización de MailConnect.')} className="btn btn-outline-light" target="_blank" rel="noopener noreferrer">Solicitar cotización</a>
             </div>
           </div>
@@ -327,9 +417,16 @@ export const LandingPage = () => {
               <h4>Producto</h4>
               <a href="#canales">Canales</a><a href="#funciones">Funciones</a><a href="#correspondencia">Correspondencia</a><a href="#precios">Precios</a>
             </div>
+            {/* Solo enlaces que llevan a algún lado. "Sobre nosotros" y "Blog" estaban
+                en href="#": un enlace que no hace nada erosiona la confianza más de lo que
+                aporta el nombre en el menú, y Google los cuenta como enlaces rotos. Vuelven
+                cuando existan las páginas. */}
             <div>
-              <h4>Empresa</h4>
-              <a href="#">Sobre nosotros</a><a href="#">Contacto</a><a href="#">Blog</a><a href="#">Soporte</a>
+              <h4>Contacto</h4>
+              <a href={whatsappUrl('Hola, quiero información sobre MailConnect.')} target="_blank" rel="noopener noreferrer">WhatsApp comercial</a>
+              <a href={`mailto:${CORREO_CONTACTO}`}>{CORREO_CONTACTO}</a>
+              <a href={whatsappUrl('Hola, necesito soporte con mi cuenta de MailConnect.')} target="_blank" rel="noopener noreferrer">Soporte</a>
+              <a href="#precios">Cotizar</a>
             </div>
             <div>
               <h4>Legal</h4>
