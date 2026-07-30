@@ -26,7 +26,8 @@ import RedoIcon from '@mui/icons-material/Redo';
 import AddPhotoAlternateIcon from '@mui/icons-material/AddPhotoAlternate';
 import DataObjectIcon from '@mui/icons-material/DataObject';
 import TableChartIcon from '@mui/icons-material/TableChart';
-import InsertPageBreakIcon from '@mui/icons-material/InsertPageBreak';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import SettingsIcon from '@mui/icons-material/Settings';
 import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
@@ -40,6 +41,11 @@ import { usePortalData } from '../../context/PortalDataContext';
 // Se reutiliza el criterio de URL segura del constructor de correos en vez de duplicarlo.
 import { isSafeHref, escapeText, escapeAttr } from './richText';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
+import {
+  DEFAULT_TABLE, TABLE_MAX_COLS, TABLE_MAX_ROWS, buildTableHtml, readTableConfig,
+  applyTableConfig, joinPages, splitPages,
+} from './pdfDocument';
+import type { TableConfig } from './pdfDocument';
 
 /**
  * Editor de PLANTILLAS PDF tipo "documento" (a lo Word): barra de formato de texto arriba,
@@ -185,12 +191,39 @@ export const PdfTemplatesSection = () => {
   // Al guardar una plantilla PDF se refresca el contexto del portal para que aparezca de
   // inmediato en el selector de "crear campaña" (canal EAP-PDF) sin recargar.
   const { refreshMessageTemplates } = usePortalData();
-  const pageRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * ── Modelo de PÁGINAS ─────────────────────────────────────────────────────────
+   * El documento es una lista de hojas, cada una con su propio `contentEditable`.
+   *
+   * ⚠️ Antes era UNA tira continua con "saltos de página" y unas guías de corte que el
+   * propio editor admitía como aproximadas: en el PDF cada hoja vuelve a empezar con su
+   * margen, y esa franja en blanco no se podía reproducir en una tira. Con hojas de verdad
+   * el lienzo deja de aproximar — lo que se ve es lo que sale.
+   *
+   * ⚠️ El costo del cambio: el texto NO fluye de una hoja a la siguiente. Si el contenido
+   * de una página se desborda, se marca en rojo y se avisa (ver `desbordadas`), en vez de
+   * pasar solo a la hoja siguiente. Es el intercambio correcto para documentos de página
+   * fija (un certificado, un extracto), que es lo que arma este editor.
+   *
+   * El contenido vive en el DOM, no en el estado: un `contentEditable` controlado por React
+   * reescribe el nodo en cada tecla y manda el cursor al principio (mismo problema que ya
+   * apareció en `RichTextEditor`).
+   */
+  const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [pageCount, setPageCount] = useState(1);
+  const [activePage, setActivePage] = useState(0);
+  const [desbordadas, setDesbordadas] = useState<number[]>([]);
+  /** La hoja donde está trabajando el usuario: destino de todo lo que se inserta. */
+  const pageRef = { get current() { return pageRefs.current[activePage] ?? pageRefs.current[0] ?? null; } };
   const [setup, setSetup] = useState<PageSetup>({ ...DEFAULT_SETUP });
   const [setupOpen, setSetupOpen] = useState(false);
-  const [guias, setGuias] = useState<number[]>([]);
-  // Se incrementa al escribir en el lienzo: dispara el recálculo de las guías.
+  // Se incrementa al escribir: dispara el chequeo de desbordes.
   const [guiasTick, setGuiasTick] = useState(0);
+  const [tableOpen, setTableOpen] = useState(false);
+  const [tableCfg, setTableCfg] = useState<TableConfig>({ ...DEFAULT_TABLE });
+  /** Tabla que se está editando (null = insertar una nueva). */
+  const editingTable = useRef<HTMLTableElement | null>(null);
   const [font, setFont] = useState(DEFAULT_FONT);
   const [format, setFormat] = useState('p');
   // Campos y filas de la base elegida: alimentan el menú de variables y la vista previa.
@@ -220,8 +253,11 @@ export const PdfTemplatesSection = () => {
 
   useEffect(() => {
     try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* noop */ }
-    if (pageRef.current && !pageRef.current.innerHTML.trim()) {
-      pageRef.current.innerHTML =
+    // El contenido de arranque va a la PRIMERA hoja explícitamente (no a "la hoja activa"):
+    // en el montaje siempre es la 0, y así el efecto no depende del estado de foco.
+    const primera = pageRefs.current[0];
+    if (primera && !primera.innerHTML.trim()) {
+      primera.innerHTML =
         '<h1>Título del documento</h1><p>Escribe aquí el contenido de tu plantilla. Usa la barra de arriba para dar formato y las herramientas de la izquierda para insertar imágenes, tablas o variables de tu base de datos.</p>';
     }
   }, []);
@@ -244,7 +280,9 @@ export const PdfTemplatesSection = () => {
    * guardándolo aquí, la vista previa y el envío real usan lo mismo.
    */
   const documentHtml = (): string => {
-    const inner = pageRef.current?.innerHTML || '';
+    // Las hojas se unen con el mismo separador `page-break-before:always` que ya emitía el
+    // salto manual → el HTML que recibe el motor es idéntico y el backend NO cambia.
+    const inner = joinPages(pageRefs.current.slice(0, pageCount).map((el) => el?.innerHTML || ''));
     if (!inner.trim()) return '';
     const m = setup.margin;
     const bandas =
@@ -261,7 +299,19 @@ export const PdfTemplatesSection = () => {
    * Sin esto, cada guardado anidaría un div más dentro del anterior.
    */
   const setDocumentHtml = (html: string) => {
-    if (!pageRef.current) return;
+    /** Reparte el contenido en hojas. Una plantilla vieja sin separadores entra como una. */
+    const repartir = (interno: string) => {
+      const hojas = splitPages(interno);
+      setPageCount(hojas.length);
+      setActivePage(0);
+      // El render de las hojas nuevas ocurre en el siguiente ciclo, así que el contenido
+      // se vuelca cuando ya existen los nodos.
+      requestAnimationFrame(() => {
+        hojas.forEach((h, i) => { const el = pageRefs.current[i]; if (el) el.innerHTML = h; });
+        setGuiasTick((n) => n + 1);
+      });
+    };
+
     const cont = document.createElement('div');
     cont.innerHTML = html || '';
     const root = cont.children.length === 1 ? (cont.firstElementChild as HTMLElement | null) : null;
@@ -269,7 +319,7 @@ export const PdfTemplatesSection = () => {
       // Plantilla anterior a la configuración de página: entra tal cual, con los valores
       // por defecto (que son exactamente los que tenía el editor antes).
       setSetup({ ...DEFAULT_SETUP });
-      pageRef.current.innerHTML = html || '';
+      repartir(html || '');
       return;
     }
     const guardada = root.style.fontFamily.replace(/['"]/g, '');
@@ -292,7 +342,7 @@ export const PdfTemplatesSection = () => {
     // Las bandas se editan en el diálogo de página, no en el lienzo: salen del contenido.
     enc?.remove();
     pie?.remove();
-    pageRef.current.innerHTML = root.innerHTML;
+    repartir(root.innerHTML);
   };
 
   /**
@@ -393,61 +443,96 @@ export const PdfTemplatesSection = () => {
     notify('Imagen insertada.', 'success');
   };
 
-  /** Salto de página manual. xhtml2pdf respeta `page-break-before: always`. */
-  const insertPageBreak = () => insertHtml(
-    '<div data-mc-break style="page-break-before:always"></div><p><br></p>');
+  /** Agrega una hoja al final y lleva el foco a ella. */
+  const addPage = () => {
+    const nueva = pageCount;
+    setPageCount(nueva + 1);
+    setActivePage(nueva);
+    requestAnimationFrame(() => pageRefs.current[nueva]?.focus());
+  };
 
   /**
-   * Dónde corta cada página, en píxeles de contenido.
-   *
-   * ⚠️ Es una APROXIMACIÓN, y el editor lo dice: el lienzo es una tira continua (una sola
-   * hoja que crece), mientras que en el PDF cada página vuelve a empezar con su margen
-   * superior. Se calcula cuánto contenido cabe por hoja y se respetan los saltos manuales;
-   * lo que no se reproduce es el espacio en blanco entre hojas. Sin esto no había NINGUNA
-   * forma de saber qué quedaba en la página 2 sin generar la vista previa.
+   * Elimina una hoja. Si tiene contenido pide confirmación: al no haber flujo entre hojas,
+   * lo que se borra no reaparece en ninguna otra.
    */
-  const recomputarGuias = useCallback(() => {
-    const el = pageRef.current;
-    if (!el) return;
+  const removePage = (i: number) => {
+    if (pageCount <= 1) return;
+    const el = pageRefs.current[i];
+    const tieneAlgo = Boolean(el?.textContent?.trim() || el?.querySelector('img, table'));
+    if (tieneAlgo && !window.confirm(`¿Eliminar la página ${i + 1} y todo su contenido?`)) return;
+    // El contenido vive en el DOM, así que hay que correr las hojas siguientes a mano.
+    const restante = pageRefs.current.slice(0, pageCount).map((p) => p?.innerHTML || '');
+    restante.splice(i, 1);
+    setPageCount(pageCount - 1);
+    setActivePage(Math.max(0, i - 1));
+    requestAnimationFrame(() => {
+      restante.forEach((h, k) => { const p = pageRefs.current[k]; if (p) p.innerHTML = h; });
+      setGuiasTick((n) => n + 1);
+    });
+  };
+
+  /**
+   * Qué hojas tienen MÁS contenido del que cabe.
+   *
+   * ⚠️ Es la contrapartida de que el texto no fluya entre hojas: si el usuario escribe de
+   * más, el sobrante se saldría del área imprimible y en el PDF quedaría cortado. Sin este
+   * aviso, el defecto solo se descubriría al generar la vista previa.
+   */
+  const revisarDesbordes = useCallback(() => {
     const hoja = sheetPx(setup);
     const bandaSup = setup.header.trim() ? (BAND_CM + BAND_GAP_CM) * CM : 0;
     const bandaInf = setup.footer.trim() ? (BAND_CM + BAND_GAP_CM) * CM : 0;
-    const altoPagina = hoja.h
+    const util = hoja.h
       - Math.max(setup.margin.top * CM, bandaSup)
       - Math.max(setup.margin.bottom * CM, bandaInf);
-    if (altoPagina <= 40) { setGuias([]); return; }
+    const malas: number[] = [];
+    pageRefs.current.slice(0, pageCount).forEach((el, i) => {
+      if (!el) return;
+      const contenido = el.scrollHeight - (setup.margin.top + setup.margin.bottom) * CM;
+      // 2 px de tolerancia: el redondeo del layout no debe disparar el aviso.
+      if (contenido > util + 2) malas.push(i);
+    });
+    setDesbordadas(malas);
+  }, [setup, pageCount]);
 
-    const arriba = el.getBoundingClientRect().top + setup.margin.top * CM;
-    const manuales = Array.from(el.querySelectorAll('[data-mc-break]'))
-      .map((b) => b.getBoundingClientRect().top - arriba)
-      .filter((y) => y > 1)
-      .sort((a, b) => a - b);
-    const total = el.scrollHeight - (setup.margin.top + setup.margin.bottom) * CM;
-
-    const cortes: number[] = [];
-    let inicio = 0;
-    while (cortes.length < 60) {
-      const auto = inicio + altoPagina;
-      const manual = manuales.find((m) => m > inicio + 1);
-      const corte = manual !== undefined && manual <= auto ? manual : auto;
-      if (corte >= total) break;
-      cortes.push(corte);
-      inicio = corte;
-    }
-    setGuias(cortes);
-  }, [setup]);
-
-  // Se recalcula al escribir (con respiro) y cuando cambia la configuración de página.
+  // Se revisa al escribir (con respiro) y cuando cambia la configuración de página.
   useEffect(() => {
-    const t = setTimeout(recomputarGuias, 250);
+    const t = setTimeout(revisarDesbordes, 250);
     return () => clearTimeout(t);
-  }, [recomputarGuias, guiasTick]);
+  }, [revisarDesbordes, guiasTick]);
 
-  const insertTable = () => insertHtml(
-    '<table style="width:100%;border-collapse:collapse;margin:8px 0;">' +
-    Array.from({ length: 2 }).map(() => '<tr>' + Array.from({ length: 2 }).map(() => '<td style="border:1px solid #cbd5e1;padding:8px;">&nbsp;</td>').join('') + '</tr>').join('') +
-    '</table><p></p>',
-  );
+  /** ¿El cursor está dentro de una tabla? Decide si el botón inserta o edita. */
+  const tablaEnFoco = (): HTMLTableElement | null => {
+    const sel = window.getSelection();
+    const nodo = sel?.anchorNode ?? null;
+    if (!nodo || !pageRef.current?.contains(nodo)) return null;
+    const desde = nodo.nodeType === 1 ? (nodo as Element) : nodo.parentElement;
+    return (desde?.closest('table') as HTMLTableElement | null) ?? null;
+  };
+
+  /** Abre el diálogo de tabla: con los ajustes de la que está bajo el cursor, o los nuevos. */
+  const openTable = () => {
+    saveRange();
+    const actual = tablaEnFoco();
+    editingTable.current = actual;
+    setTableCfg(actual ? readTableConfig(actual) : { ...DEFAULT_TABLE });
+    setTableOpen(true);
+  };
+
+  const applyTable = () => {
+    setTableOpen(false);
+    const destino = editingTable.current;
+    if (destino) {
+      // Editar mantiene lo escrito en las celdas (ver `applyTableConfig`).
+      applyTableConfig(destino, tableCfg);
+      editingTable.current = null;
+      setGuiasTick((n) => n + 1);
+      return;
+    }
+    restoreRange();
+    insertHtml(buildTableHtml(tableCfg));
+    setGuiasTick((n) => n + 1);
+  };
 
   /** Abre el diálogo para nombrar la plantilla (antes usaba window.prompt, feo). */
   const saveTemplate = () => {
@@ -622,11 +707,19 @@ export const PdfTemplatesSection = () => {
               <input type="file" accept="image/*" hidden onChange={(e) => handleUpload(e.target.files?.[0] ?? null)} />
             </Button>
             <Button size="small" variant="outlined" startIcon={<DataObjectIcon />} onClick={(e) => setVarAnchor(e.currentTarget)}>Variable</Button>
-            <Button size="small" variant="outlined" startIcon={<TableChartIcon />} onClick={insertTable}>Tabla</Button>
-            <Button size="small" variant="outlined" startIcon={<InsertPageBreakIcon />} onClick={insertPageBreak}>
-              Salto de página
+            <Button size="small" variant="outlined" startIcon={<TableChartIcon />} onClick={openTable}>
+              Tabla
+            </Button>
+            {/* "Agregar página" en vez de "salto de página": este editor arma documentos de
+                página fija, no un flujo continuo donde uno inserta cortes. */}
+            <Button size="small" variant="outlined" startIcon={<AddIcon />} onClick={addPage}>
+              Agregar página
             </Button>
           </Stack>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+            {pageCount === 1 ? '1 página' : `${pageCount} páginas`}
+            {' · '}con el cursor dentro de una tabla, "Tabla" edita esa.
+          </Typography>
           <Divider sx={{ my: 1.5 }} />
           <Typography variant="overline" color="text.secondary">Hoja</Typography>
           <Button size="small" variant="outlined" fullWidth startIcon={<SettingsIcon />}
@@ -666,25 +759,50 @@ export const PdfTemplatesSection = () => {
               <Box sx={{ width: RULER, height: RULER, bgcolor: '#fff', borderRight: '1px solid #dfe5ee', borderBottom: '1px solid #dfe5ee' }} />
               <HRuler width={dims.w} />
             </Box>
-            <Box sx={{ display: 'flex' }}>
+            {/* Una hoja INDEPENDIENTE por página: lo que se ve es lo que sale. */}
+            {Array.from({ length: pageCount }).map((_, i) => (
+            <Box key={i} sx={{ display: 'flex', mb: i < pageCount - 1 ? 2.5 : 0 }}>
               <VRuler height={dims.h} />
               <Box sx={{ position: 'relative' }}>
+                {/* Cabecera de la hoja: número y, si hay más de una, botón de eliminar. */}
+                <Stack direction="row" alignItems="center" justifyContent="space-between"
+                  sx={{ position: 'absolute', top: -20, left: 0, right: 0, height: 18 }}>
+                  <Typography sx={{ fontSize: 10, color: desbordadas.includes(i) ? '#e5484d' : '#64748b' }}>
+                    Página {i + 1} de {pageCount}
+                    {desbordadas.includes(i) ? ' · el contenido no cabe' : ''}
+                  </Typography>
+                  {pageCount > 1 && (
+                    <Tooltip title={`Eliminar la página ${i + 1}`}>
+                      <IconButton size="small" sx={{ p: 0.25 }} onClick={() => removePage(i)}>
+                        <DeleteOutlineIcon sx={{ fontSize: 14 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                </Stack>
                 <Box
-                  ref={pageRef}
+                  ref={(el: HTMLDivElement | null) => { pageRefs.current[i] = el; }}
                   contentEditable
                   suppressContentEditableWarning
+                  onFocus={() => setActivePage(i)}
                   onInput={() => setGuiasTick((n) => n + 1)}
                   sx={{
                     // Medidas ESPEJO de `wrap_html` (ver el bloque de fidelidad arriba):
                     // márgenes del documento, cuerpo de 12 pt y títulos de 22/18/15 pt. Con
                     // los valores viejos (64 px y 15 px) el texto cabía distinto acá que en
                     // el PDF.
-                    width: dims.w, minHeight: dims.h, boxSizing: 'border-box',
+                    // Alto FIJO (no `minHeight`): la hoja ya no crece, es una página real.
+                    width: dims.w, height: dims.h, boxSizing: 'border-box',
                     pt: `${marginPx.top}px`, pr: `${marginPx.right}px`,
                     pb: `${marginPx.bottom}px`, pl: `${marginPx.left}px`,
                     bgcolor: '#fff', color: '#111', fontFamily: font,
                     fontSize: `${BODY_PT * PT}px`, lineHeight: 1.5,
                     boxShadow: '0 8px 30px rgba(16,35,63,.18)', outline: 'none',
+                    // El desborde se VE (no se recorta) y la hoja se marca en rojo, para
+                    // que el problema no se descubra al generar el PDF.
+                    overflow: 'visible',
+                    ...(desbordadas.includes(i)
+                      ? { boxShadow: '0 8px 30px rgba(16,35,63,.18), 0 0 0 2px #e5484d' }
+                      : null),
                     '& h1': { fontSize: `${HEADING_PT.h1 * PT}px` },
                     '& h2': { fontSize: `${HEADING_PT.h2 * PT}px` },
                     '& h3': { fontSize: `${HEADING_PT.h3 * PT}px` },
@@ -701,30 +819,27 @@ export const PdfTemplatesSection = () => {
                     },
                   }}
                 />
-                {/* Guías de corte. Es una APROXIMACIÓN y se avisa debajo del lienzo: en el
-                    PDF cada hoja vuelve a empezar con su margen, y esa franja en blanco no
-                    se reproduce en una tira continua. */}
-                {guias.map((y, i) => (
-                  <Box key={i} sx={{
-                    position: 'absolute', left: 0, right: 0, top: marginPx.top + y,
-                    borderTop: '1px dashed #94a3b8', pointerEvents: 'none',
-                  }}>
-                    {/* A la IZQUIERDA: en apaisado la hoja es más ancha que la ventana y una
-                        etiqueta anclada a la derecha se sale de la pantalla. */}
-                    <Typography sx={{
-                      position: 'absolute', left: 4, top: 2, fontSize: 10, color: '#64748b',
-                      bgcolor: '#fff', px: 0.5, borderRadius: 0.5,
-                    }}>
-                      Página {i + 2}
-                    </Typography>
-                  </Box>
-                ))}
+                {/* Línea del área imprimible: debajo de ella el contenido ya no cabe. */}
+                {desbordadas.includes(i) && (
+                  <Box sx={{
+                    position: 'absolute', left: 0, right: 0, bottom: 0,
+                    borderTop: '1px dashed #e5484d', pointerEvents: 'none',
+                  }} />
+                )}
               </Box>
             </Box>
-            {guias.length > 0 && (
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, ml: `${RULER}px` }}>
-                {guias.length + 1} páginas aproximadas. El corte exacto lo decide el motor al
-                generar el PDF (no parte tablas ni párrafos por la mitad si puede evitarlo).
+            ))}
+            <Button size="small" startIcon={<AddIcon />} onClick={addPage}
+              sx={{ mt: 1.5, ml: `${RULER}px` }}>
+              Agregar página
+            </Button>
+            {desbordadas.length > 0 && (
+              <Typography variant="caption" sx={{ display: 'block', mt: 1, ml: `${RULER}px`, color: '#e5484d' }}>
+                {desbordadas.length === 1
+                  ? `El contenido de la página ${desbordadas[0] + 1} no cabe en la hoja.`
+                  : `El contenido de ${desbordadas.length} páginas no cabe en la hoja.`}
+                {' '}En el PDF quedaría cortado: agrega una página y pasa allí lo que sobra,
+                o reduce los márgenes desde "Configurar página".
               </Typography>
             )}
           </Box>
@@ -879,6 +994,128 @@ export const PdfTemplatesSection = () => {
 
       {/* Enlace. Antes era `window.prompt`, que además de feo no dejaba corregir el texto
           del enlace ni avisaba de una URL inválida. */}
+      {/* Tabla: inserta una nueva o edita la que está bajo el cursor (conservando lo
+          escrito en las celdas). Todos los estilos salen EN LÍNEA porque xhtml2pdf no
+          aplica selectores CSS de forma fiable — ver `pdfDocument.ts`. */}
+      <Dialog open={tableOpen} onClose={() => setTableOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{editingTable.current ? 'Editar tabla' : 'Insertar tabla'}</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ mt: 0.5 }}>
+            <Stack direction="row" spacing={2}>
+              <TextField label="Filas" type="number" size="small" fullWidth
+                helperText={`Sin contar el encabezado · máx. ${TABLE_MAX_ROWS}`}
+                value={tableCfg.rows}
+                inputProps={{ min: 1, max: TABLE_MAX_ROWS }}
+                onChange={(e) => setTableCfg({ ...tableCfg, rows: Number(e.target.value) })} />
+              <TextField label="Columnas" type="number" size="small" fullWidth
+                helperText={`Máx. ${TABLE_MAX_COLS}`}
+                value={tableCfg.cols}
+                inputProps={{ min: 1, max: TABLE_MAX_COLS }}
+                onChange={(e) => setTableCfg({ ...tableCfg, cols: Number(e.target.value) })} />
+            </Stack>
+
+            <Divider textAlign="left"><Typography variant="caption">Borde</Typography></Divider>
+            <Stack direction="row" spacing={2} alignItems="center">
+              <TextField select label="Estilo" size="small" sx={{ flex: 1 }}
+                value={tableCfg.borderStyle}
+                onChange={(e) => setTableCfg({ ...tableCfg, borderStyle: e.target.value as TableConfig['borderStyle'] })}>
+                <MenuItem value="solid">Continuo</MenuItem>
+                <MenuItem value="dashed">Discontinuo</MenuItem>
+                <MenuItem value="dotted">Punteado</MenuItem>
+                <MenuItem value="none">Sin borde</MenuItem>
+              </TextField>
+              <TextField label="Grosor (px)" type="number" size="small" sx={{ width: 120 }}
+                value={tableCfg.borderWidth} inputProps={{ min: 0, max: 10 }}
+                disabled={tableCfg.borderStyle === 'none'}
+                onChange={(e) => setTableCfg({ ...tableCfg, borderWidth: Number(e.target.value) })} />
+              <Stack alignItems="center" spacing={0.25}>
+                <Typography variant="caption" color="text.secondary">Color</Typography>
+                <input type="color" value={tableCfg.borderColor}
+                  disabled={tableCfg.borderStyle === 'none'}
+                  onChange={(e) => setTableCfg({ ...tableCfg, borderColor: e.target.value })}
+                  style={{ width: 44, height: 32, border: 'none', background: 'none', padding: 0 }} />
+              </Stack>
+            </Stack>
+
+            <Divider textAlign="left"><Typography variant="caption">Relleno</Typography></Divider>
+            <Stack direction="row" spacing={2} alignItems="center">
+              <TextField select label="Fila de encabezado" size="small" sx={{ flex: 1 }}
+                value={tableCfg.header ? 'si' : 'no'}
+                onChange={(e) => setTableCfg({ ...tableCfg, header: e.target.value === 'si' })}>
+                <MenuItem value="si">Sí, la primera fila</MenuItem>
+                <MenuItem value="no">Sin encabezado</MenuItem>
+              </TextField>
+              <Stack alignItems="center" spacing={0.25}>
+                <Typography variant="caption" color="text.secondary">Fondo</Typography>
+                <input type="color" value={tableCfg.headerBg} disabled={!tableCfg.header}
+                  onChange={(e) => setTableCfg({ ...tableCfg, headerBg: e.target.value })}
+                  style={{ width: 44, height: 32, border: 'none', background: 'none', padding: 0 }} />
+              </Stack>
+              <Stack alignItems="center" spacing={0.25}>
+                <Typography variant="caption" color="text.secondary">Texto</Typography>
+                <input type="color" value={tableCfg.headerColor} disabled={!tableCfg.header}
+                  onChange={(e) => setTableCfg({ ...tableCfg, headerColor: e.target.value })}
+                  style={{ width: 44, height: 32, border: 'none', background: 'none', padding: 0 }} />
+              </Stack>
+            </Stack>
+            <Stack direction="row" spacing={2} alignItems="center">
+              <TextField select label="Filas alternas" size="small" sx={{ flex: 1 }}
+                helperText="Colorea una fila sí y otra no (más fácil de leer)"
+                value={tableCfg.zebra ? 'si' : 'no'}
+                onChange={(e) => setTableCfg({ ...tableCfg, zebra: e.target.value === 'si' })}>
+                <MenuItem value="si">Sí</MenuItem>
+                <MenuItem value="no">No</MenuItem>
+              </TextField>
+              <Stack alignItems="center" spacing={0.25}>
+                <Typography variant="caption" color="text.secondary">Color</Typography>
+                <input type="color" value={tableCfg.zebraBg} disabled={!tableCfg.zebra}
+                  onChange={(e) => setTableCfg({ ...tableCfg, zebraBg: e.target.value })}
+                  style={{ width: 44, height: 32, border: 'none', background: 'none', padding: 0 }} />
+              </Stack>
+            </Stack>
+
+            <Divider textAlign="left"><Typography variant="caption">Medidas</Typography></Divider>
+            <Stack direction="row" spacing={2}>
+              <TextField label="Relleno de celda (px)" type="number" size="small" fullWidth
+                value={tableCfg.cellPadding} inputProps={{ min: 0, max: 40 }}
+                onChange={(e) => setTableCfg({ ...tableCfg, cellPadding: Number(e.target.value) })} />
+              <TextField select label="Ancho" size="small" fullWidth value={tableCfg.width}
+                onChange={(e) => setTableCfg({ ...tableCfg, width: e.target.value as TableConfig['width'] })}>
+                <MenuItem value="full">Todo el ancho</MenuItem>
+                <MenuItem value="auto">Según el contenido</MenuItem>
+              </TextField>
+              <TextField select label="Alineación" size="small" fullWidth value={tableCfg.align}
+                disabled={tableCfg.width === 'full'}
+                onChange={(e) => setTableCfg({ ...tableCfg, align: e.target.value as TableConfig['align'] })}>
+                <MenuItem value="left">Izquierda</MenuItem>
+                <MenuItem value="center">Centro</MenuItem>
+                <MenuItem value="right">Derecha</MenuItem>
+              </TextField>
+            </Stack>
+
+            {/* Vista previa en vivo: el MISMO HTML que se va a insertar. */}
+            <Box>
+              <Typography variant="caption" color="text.secondary">Vista previa</Typography>
+              <Box sx={{ mt: 0.5, p: 1.5, bgcolor: '#fff', color: '#111', borderRadius: 1, border: '1px solid #e0e6ef', overflowX: 'auto' }}
+                dangerouslySetInnerHTML={{ __html: buildTableHtml(tableCfg) }} />
+            </Box>
+
+            {editingTable.current && (
+              <Typography variant="caption" color="text.secondary">
+                Al reducir filas o columnas se quitan por el final. El texto que ya
+                escribiste en las celdas que quedan se conserva.
+              </Typography>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setTableOpen(false); editingTable.current = null; }}>Cancelar</Button>
+          <Button variant="contained" onClick={applyTable}>
+            {editingTable.current ? 'Aplicar' : 'Insertar'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={linkOpen} onClose={() => setLinkOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Insertar enlace</DialogTitle>
         <DialogContent>

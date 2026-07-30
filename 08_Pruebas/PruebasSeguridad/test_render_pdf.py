@@ -331,3 +331,77 @@ def _pdf_text(pdf_bytes):
         except Exception:
             out += data
     return out
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Editor por PÁGINAS + tablas configurables (ago 2026)
+#
+# El editor pasó de una tira continua con "saltos de página" a HOJAS discretas, y la
+# tabla dejó de ser un 2x2 clavado. El contrato con el backend NO cambió: las hojas se
+# unen con el mismo `page-break-before:always` que ya emitía el salto manual. Estas
+# pruebas blindan justo eso — si alguien cambiara el separador en el front, el PDF
+# saldría de una sola página y nadie se enteraría hasta ver el documento.
+# ───────────────────────────────────────────────────────────────────────────────
+_CORTE = '<div data-mc-break style="page-break-before:always"></div>'
+
+
+def _celda(extra=''):
+    return 'border:2px solid #0075be;padding:6px;' + extra
+
+
+def test_tres_hojas_del_editor_dan_tres_paginas(mod):
+    import re as _re
+    pytest.importorskip('xhtml2pdf')
+    cuerpo = f'<h1>HOJAUNO</h1>{_CORTE}<h1>HOJADOS</h1>{_CORTE}<h1>HOJATRES</h1>'
+    pdf = mod.html_to_pdf(_doc(cuerpo), 'A4')
+    assert len(_re.findall(rb'/Type\s*/Page[^s]', pdf)) == 3
+    texto = _pdf_text(pdf)
+    # Las tres hojas conservan su contenido (no se pierde ninguna por el camino).
+    for h in (b'HOJAUNO', b'HOJADOS', b'HOJATRES'):
+        assert h in texto
+
+
+def test_una_sola_hoja_sigue_dando_una_pagina(mod):
+    """El caso normal y el de las plantillas guardadas antes de este cambio."""
+    import re as _re
+    pytest.importorskip('xhtml2pdf')
+    pdf = mod.html_to_pdf(_doc('<h1>Unica</h1><p>corto</p>'), 'A4')
+    assert len(_re.findall(rb'/Type\s*/Page[^s]', pdf)) == 1
+
+
+def test_la_numeracion_cuenta_las_hojas_del_editor(mod):
+    """El pie [[pagina]]/[[paginas]] debe reflejar las hojas que armó el usuario."""
+    import re as _re
+    pytest.importorskip('xhtml2pdf')
+    cuerpo = ('<div data-mc-footer>Pag [[pagina]] de [[paginas]]</div>'
+              f'<p>A</p>{_CORTE}<p>B</p>')
+    pdf = mod.html_to_pdf(_doc(cuerpo), 'A4')
+    assert len(_re.findall(rb'/Type\s*/Page[^s]', pdf)) == 2
+    texto = _pdf_text(pdf)
+    assert b'Pag 1 de 2' in texto and b'Pag 2 de 2' in texto
+    assert b'[[pagina]]' not in texto, 'quedó un token sin resolver'
+
+
+def test_tabla_configurada_llega_al_pdf_con_su_contenido(mod):
+    """Tabla del diálogo nuevo: encabezado teñido, cebra y borde propio. Los estilos van
+    EN LÍNEA porque xhtml2pdf no aplica `nth-child` — si la cebra dependiera de un
+    selector, el lienzo la mostraría y el PDF saldría sin ella."""
+    pytest.importorskip('xhtml2pdf')
+    tabla = ('<table style="border-collapse:collapse;width:100%;">'
+             f'<tr><th style="{_celda("background-color:#eef2f7;")}">Concepto</th>'
+             f'<th style="{_celda("background-color:#eef2f7;")}">Valor</th></tr>'
+             f'<tr><td style="{_celda()}">FilaA</td><td style="{_celda()}">100</td></tr>'
+             f'<tr><td style="{_celda("background-color:#f7f9fc;")}">FilaB</td>'
+             f'<td style="{_celda("background-color:#f7f9fc;")}">200</td></tr></table>')
+    texto = _pdf_text(mod.html_to_pdf(_doc(tabla), 'A4'))
+    for celda in (b'Concepto', b'Valor', b'FilaA', b'FilaB', b'200'):
+        assert celda in texto, 'la celda %r no llegó al PDF' % celda
+
+
+def test_tabla_del_ancho_maximo_no_tumba_el_render(mod):
+    """El diálogo permite hasta 12 columnas: deben caber sin reventar el motor."""
+    pytest.importorskip('xhtml2pdf')
+    fila = ''.join('<td style="%s">c%d</td>' % (_celda(), i) for i in range(12))
+    tabla = '<table style="border-collapse:collapse;width:100%%;"><tr>%s</tr></table>' % fila
+    pdf = mod.html_to_pdf(_doc(tabla), 'A4')
+    assert pdf[:5] == b'%PDF-' and len(pdf) > 800

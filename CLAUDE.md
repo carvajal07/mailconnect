@@ -95,6 +95,53 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   Redesplegar las **6 lambdas**. Envs opcionales para no tocar código: `SITE_URL`,
   `EMAIL_ASSETS_URL`, `CONTACT_EMAIL`, `WHATSAPP_URL`, `SOCIAL_{LINKEDIN,FACEBOOK,INSTAGRAM}`.
 
+### Editor PDF básico: PÁGINAS discretas y tablas configurables (ago 2026)
+> Dos peticiones que resultaron ser la misma deuda: el editor arma documentos de **página
+> fija** (un certificado, un extracto) pero estaba modelado como un documento **en flujo**.
+
+- **Adiós al "salto de página", hola "Agregar página".** El salto viene del modelo de Word
+  —un flujo continuo donde uno inserta cortes— y no encajaba: el lienzo era una **tira
+  continua** con unas guías de corte que el propio código admitía como **aproximadas**,
+  porque en el PDF cada hoja vuelve a empezar con su margen y esa franja en blanco no se
+  puede reproducir en una tira. Ahora el documento es una **lista de hojas**, cada una con
+  su `contentEditable`, su numeración ("Página 2 de 3") y su botón de eliminar. **Se acabó
+  la aproximación: lo que se ve es lo que sale.**
+- ⚠️ **El contrato con el backend NO cambió.** `joinPages` une las hojas con el MISMO
+  `page-break-before:always` que ya emitía el salto manual, así que el HTML que recibe el
+  motor es idéntico y no hubo que tocar `Render-pdf` ni el combinador. `splitPages` da la
+  compatibilidad hacia atrás: una plantilla guardada con el modelo viejo se abre repartida
+  en hojas, y una sin saltos entra como una sola.
+- ⚠️ **El costo del cambio, asumido a propósito:** con hojas independientes el texto **no
+  fluye** de una a la siguiente. Si el contenido de una hoja se desborda, se **marca en
+  rojo** (aro en la hoja + línea del área imprimible + aviso que dice qué hacer) en vez de
+  pasar solo a la siguiente. Para documentos de página fija es el intercambio correcto; sin
+  el aviso, el recorte solo se descubriría al generar el PDF.
+- **Una página vacía al final NO genera hoja en blanco** (`joinPages` la descarta), pero una
+  vacía **en medio sí se conserva**: ahí puede ser deliberada.
+- **Tablas configurables.** Eran un **2x2 clavado** con borde fijo. Ahora hay diálogo con
+  filas/columnas (tope 60×12), **borde** (estilo continuo/discontinuo/punteado/sin borde,
+  grosor y color), **fila de encabezado** con su fondo y color de texto, **filas alternas**
+  (cebra) con su color, relleno de celda, ancho y alineación — con **vista previa en vivo**
+  que es el MISMO HTML que se va a insertar.
+- **Editar una tabla YA insertada:** con el cursor dentro, el botón "Tabla" abre el diálogo
+  **con los ajustes de esa tabla** (guardados en `data-mc-table`) y "Aplicar" los cambia
+  **conservando lo escrito en las celdas** — `applyTableConfig` muta el DOM (agrega/quita
+  filas y columnas por el final, convierte `td`↔`th` llevándose el contenido) en vez de
+  regenerar el HTML, porque quien edita una tabla llena no espera perder lo que escribió.
+- ⚠️ **Todos los estilos van EN LÍNEA, celda por celda.** xhtml2pdf tiene soporte muy
+  limitado de selectores: un `tr:nth-child(even)` para la cebra **no se aplica de forma
+  fiable**. Si dependiera de un selector, el lienzo mostraría la cebra y el PDF saldría sin
+  ella. Por eso se hornea fila a fila.
+- **Cobertura:** `pdfDocument.test.ts` (21, lógica pura: forma de la tabla, cebra horneada,
+  topes, leer/inferir la configuración, editar conservando contenido, y el ida y vuelta
+  `splitPages`/`joinPages` con los casos de página vacía) y `test_render_pdf.py` sube a
+  **31** (+5 con render real: 3 hojas → 3 páginas, una hoja → una página, la numeración
+  contando las hojas del editor, la tabla configurada con su contenido dentro del PDF y la
+  tabla de 12 columnas). Frontend **182**, backend **792**. Verificado además **en el
+  navegador**: insertar 4×3 con cebra, editar a 5×4 conservando el texto de la celda, el
+  aviso de desborde y el HTML final con su separador.
+- ⚠️ `[J]`: **sin cambios de backend ni de infra.** Todo entra con el build del frontend.
+
 ### Editor PDF básico: página configurable, membrete con numeración y saltos (ago 2026)
 > Segunda tanda del editor "tipo Word". Se cierran los cuatro pendientes: `@page` estaba
 > **fijo** en A4 vertical con 2 cm, no había forma de repetir un membrete ni de numerar las
@@ -2882,7 +2929,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **787** pruebas (~3 min) y la de frontend 155. Correrlas
+> La suite de backend son **792** pruebas (~3 min) y la de frontend 182. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 
@@ -3323,7 +3370,7 @@ README.md
 ---
 
 ## 7. Referencias rápidas
-- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 502 CP en 22 módulos) y su
+- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 516 CP en 22 módulos) y su
   **planilla de ejecución `CASOS_PRUEBA_QA.xlsx`** (un CP por fila + columnas para marcar
   **Pasó / No pasó**, resultado obtenido, observaciones, quién y cuándo; hoja de Resumen con
   conteos por estado, prioridad y módulo). ⚠️ El **`.md` es la fuente de verdad**: la planilla

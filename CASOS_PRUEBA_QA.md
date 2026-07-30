@@ -444,6 +444,20 @@
 | CP-PDF-11 | 🟡 | Celdas con JSON (multiregistro) | Base con una columna que trae un array JSON | Alimenta la tabla del Estudio por destinatario |
 | CP-PDF-12 | 🟡 | Encabezados con BOM/espacios | Base exportada de Excel (BOM en la 1ª columna) | Las variables igual resuelven (alias saneados) |
 | CP-PDF-13 | 🟢 | Bordes y degradados | Formas con borde discontinuo y relleno degradado | Se ven igual en el lienzo y en el PDF |
+| CP-PDF-14 | 🔴 | **Agregar página** | En Plantillas PDF básicas, clic en "Agregar página" | Aparece una hoja nueva abajo, numerada "Página 2 de 2" |
+| CP-PDF-15 | 🔴 | Cada hoja se edita por separado | Escribir en la página 1 y en la 2 | El texto queda en la hoja donde se escribió; no se mezcla |
+| CP-PDF-16 | 🔴 | **Las páginas llegan al PDF** | Con 2 hojas con contenido, "Vista previa PDF" | El PDF tiene 2 páginas con el contenido de cada hoja |
+| CP-PDF-17 | 🟡 | Eliminar una página | Clic en la papelera de la página 2 | Pide confirmación si tiene contenido; al aceptar desaparece y se renumera |
+| CP-PDF-18 | 🔴 | **Aviso de desborde** | Escribir en una hoja hasta pasar el final | La hoja se marca en rojo y avisa que el contenido no cabe |
+| CP-PDF-19 | 🟡 | Página vacía al final | Agregar una página y no escribir nada; ver el PDF | El PDF NO trae una hoja en blanco al final |
+| CP-PDF-20 | 🟡 | Plantilla vieja con saltos | Cargar una plantilla guardada antes del cambio | Se abre repartida en hojas, sin perder contenido |
+| CP-PDF-21 | 🔴 | **Insertar tabla configurable** | "Tabla" → 4 filas, 3 columnas, encabezado, cebra → Insertar | Se inserta con esa forma, encabezado teñido y filas alternas |
+| CP-PDF-22 | 🔴 | La tabla llega igual al PDF | Vista previa PDF de esa tabla | Bordes, encabezado y cebra se ven como en el lienzo |
+| CP-PDF-23 | 🔴 | **Editar una tabla existente** | Cursor dentro de una tabla con texto y pulsar "Tabla" | El diálogo dice "Editar tabla" con los ajustes de ESA tabla |
+| CP-PDF-24 | 🔴 | Editar sin perder lo escrito | Con texto en las celdas, cambiar de 2x2 a 4x3 y Aplicar | Crece y el texto de las celdas que ya estaban se conserva |
+| CP-PDF-25 | 🟡 | Reducir una tabla | Cambiar de 5x4 a 2x2 | Se quitan filas y columnas por el final; lo demás se conserva |
+| CP-PDF-26 | 🟡 | Borde y colores de la tabla | Estilo punteado, grosor 3, color rojo | La vista previa y el lienzo lo reflejan al instante |
+| CP-PDF-27 | 🟢 | Topes de la tabla | Escribir 999 filas y 99 columnas | Se acota a 60 filas y 12 columnas sin romperse |
 
 ---
 
