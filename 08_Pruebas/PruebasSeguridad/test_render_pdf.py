@@ -405,3 +405,81 @@ def test_tabla_del_ancho_maximo_no_tumba_el_render(mod):
     tabla = '<table style="border-collapse:collapse;width:100%%;"><tr>%s</tr></table>' % fila
     pdf = mod.html_to_pdf(_doc(tabla), 'A4')
     assert pdf[:5] == b'%PDF-' and len(pdf) > 800
+
+
+def _cm_hasta_el_texto(mod, html, margen_sup):
+    """Cm desde el borde superior de la hoja hasta la parte alta de las letras.
+
+    Se lee del content stream: las traslaciones `cm` acumulan la posición del bloque y
+    el `Tm` la del texto dentro de él; el ascendente de la fuente lleva de la línea base
+    a la cima de las letras.
+    """
+    import re as _re
+    doc = ('<div data-mc-doc="1" data-mc-margin="%s 2 2 2" style="font-family:Arial">%s</div>'
+           % (margen_sup, html))
+    pdf = mod.html_to_pdf(doc, 'A4')
+    contenido = _pdf_text(pdf).decode('latin-1', 'ignore')
+    base = 0.0
+    patron = (r'1 0 0 1 (-?[\d.]+) (-?[\d.]+) cm'
+              r'|BT 1 0 0 1 (-?[\d.]+) (-?[\d.]+) Tm[^)]*?/F\d+ (\d+) Tf')
+    for tok in _re.finditer(patron, contenido):
+        if tok.group(2) is not None:
+            base += float(tok.group(2))
+        else:
+            cima = base + float(tok.group(4)) + float(tok.group(5)) * 0.718
+            return (841.89 - cima) / 28.3465     # A4 en pt → cm desde arriba
+    return None
+
+
+@pytest.mark.parametrize('margen', [1.5, 2, 3])
+def test_el_texto_arranca_EXACTAMENTE_en_el_margen(mod, margen):
+    """⚠️ Guard de fidelidad con el lienzo.
+
+    xhtml2pdf NO aplica el `margin-top` del primer bloque al inicio de una página: el
+    texto arranca justo en el margen. El navegador SÍ lo aplica, así que el lienzo del
+    editor anula ese margen (`& > *:first-of-type { margin-top: 0 }`) para no mentir —
+    antes, con 1,5 cm configurados el texto se veía en 2 cm porque el `<h1>` sumaba los
+    suyos por dentro.
+
+    Si el motor cambiara y empezara a respetar ese margen, esta prueba falla y avisa de
+    que hay que quitar la regla del lienzo.
+    """
+    pytest.importorskip('xhtml2pdf')
+    for etiqueta in ('<h1>Titulo</h1>', '<p>Parrafo</p>'):
+        y = _cm_hasta_el_texto(mod, etiqueta, margen)
+        assert y is not None, 'no se pudo medir el texto en el PDF'
+        assert abs(y - margen) < 0.12, (
+            '%s arranca en %.2f cm con margen %s cm: el lienzo y el PDF ya no coinciden'
+            % (etiqueta, y, margen))
+
+
+def test_el_margen_tampoco_se_aplica_en_las_hojas_siguientes(mod):
+    """Cada hoja del editor es independiente, así que la regla debe valer en todas."""
+    pytest.importorskip('xhtml2pdf')
+    import re as _re
+    doc = ('<div data-mc-doc="1" data-mc-margin="2 2 2 2" style="font-family:Arial">'
+           '<h1>UNO</h1>' + _CORTE + '<h1>DOS</h1></div>')
+    pdf = mod.html_to_pdf(doc, 'A4')
+    # Las dos hojas deben colocar su título a la MISMA altura.
+    alturas = []
+    for s in _re.findall(rb'stream\r?\n(.*?)endstream', pdf, _re.S):
+        import zlib as _z
+        import base64 as _b
+        for dec in (_z.decompress, lambda d: _z.decompress(_b.a85decode(d, adobe=True))):
+            try:
+                t = dec(s.strip()).decode('latin-1')
+            except Exception:
+                continue
+            if 'Tj' not in t:
+                break
+            base = 0.0
+            for tok in _re.finditer(r'1 0 0 1 (-?[\d.]+) (-?[\d.]+) cm'
+                                    r'|BT 1 0 0 1 (-?[\d.]+) (-?[\d.]+) Tm', t):
+                if tok.group(2) is not None:
+                    base += float(tok.group(2))
+                else:
+                    alturas.append(round(base + float(tok.group(4)), 1))
+                    break
+            break
+    assert len(alturas) == 2, 'se esperaban dos hojas con texto'
+    assert alturas[0] == alturas[1], 'el título de la hoja 2 no arranca donde el de la 1'

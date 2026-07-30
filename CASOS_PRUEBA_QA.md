@@ -458,6 +458,12 @@
 | CP-PDF-25 | 🟡 | Reducir una tabla | Cambiar de 5x4 a 2x2 | Se quitan filas y columnas por el final; lo demás se conserva |
 | CP-PDF-26 | 🟡 | Borde y colores de la tabla | Estilo punteado, grosor 3, color rojo | La vista previa y el lienzo lo reflejan al instante |
 | CP-PDF-27 | 🟢 | Topes de la tabla | Escribir 999 filas y 99 columnas | Se acota a 60 filas y 12 columnas sin romperse |
+| CP-PDF-28 | 🔴 | **Margen fiel** | Configurar margen superior 1,5 cm y mirar la regla | El texto arranca en 1,5 cm, no en 2 |
+| CP-PDF-29 | 🔴 | El margen coincide con el PDF | Con 1,5 cm, "Vista previa PDF" y medir | El PDF arranca donde lo mostraba el lienzo |
+| CP-PDF-44 | 🔴 | **Diálogo movible** | Abrir "Configurar página" y arrastrarlo por su barra | Se mueve y deja ver el documento; el fondo NO se oscurece |
+| CP-PDF-45 | 🔴 | Cambios en vivo | Con el diálogo a un lado, cambiar márgenes y orientación | El lienzo se actualiza sin cerrar el diálogo |
+| CP-PDF-46 | 🟡 | El diálogo no se pierde | Arrastrarlo al borde y achicar la ventana | Siempre queda visible parte de su barra para volver a agarrarlo |
+| CP-PDF-47 | 🟡 | Cerrar el diálogo | Pulsar la ✕ o Escape | Se cierra conservando los cambios aplicados |
 
 ---
 

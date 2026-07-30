@@ -95,6 +95,36 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   Redesplegar las **6 lambdas**. Envs opcionales para no tocar código: `SITE_URL`,
   `EMAIL_ASSETS_URL`, `CONTACT_EMAIL`, `WHATSAPP_URL`, `SOCIAL_{LINKEDIN,FACEBOOK,INSTAGRAM}`.
 
+### Editor PDF: margen fiel al PDF y diálogos movibles (ago 2026)
+- **Defecto — el margen superior se veía ~0,5 cm más grande de lo configurado.** Con 1,5 cm
+  el texto arrancaba en 2 cm, y con 2 en 2,5. **Medido contra el PDF real** (leyendo las
+  coordenadas del content stream): xhtml2pdf **NO aplica** el `margin-top` del primer bloque
+  al inicio de una página — el texto arranca justo en el margen, en la hoja 1 y en todas.
+  El navegador **sí** lo aplica, así que un `<h1>` sumaba sus 0,52 cm por dentro del lienzo.
+  Ahora el lienzo anula ese margen (`& > *:first-of-type { margin-top:0 }`, y el `margin-bottom`
+  del último). Verificado: 2 cm → texto en 2,00 cm · 1,5 cm → 1,50 cm.
+- **`DraggableDialog` — diálogos que se arrastran y dejan ver el lienzo.** Los diálogos que
+  cambian el aspecto del documento tapaban justo lo que estaban modificando: había que
+  aceptar, mirar y volver a abrir. Aplicado de momento a **"Configurar página"**.
+  - ⚠️ **Sin `react-draggable`** (no es dependencia del repo y no vale sumarla por esto). El
+    arrastre se sigue con eventos de puntero **en el `document`**, no en la barra: siguiéndolo
+    en la barra, al mover rápido el puntero se sale de ella y el diálogo se queda atrás.
+  - ⚠️ **No modal a propósito** (`hideBackdrop` + `disableEnforceFocus` + `disableScrollLock`):
+    con el fondo oscurecido no se vería el lienzo y con el foco atrapado no se podría escribir
+    en él. El contenedor lleva `pointerEvents:'none'` y el panel los recupera. El precio es que
+    un clic fuera no cierra — por eso lleva ✕ y responde a Escape.
+  - ⚠️ **El Paper se estiliza por `slotProps`, NO con un `PaperComponent` propio.** Un
+    componente definido en el cuerpo es una identidad nueva en cada render: MUI desmonta y
+    remonta el panel, eso dispara otro render y el diálogo entra en **bucle infinito**
+    ("Maximum update depth exceeded"). Se reprodujo antes de corregirlo.
+  - La posición se **acota al DIBUJAR**, no solo al arrastrar: si la ventana se achica con el
+    diálogo movido, quedaría fuera de la pantalla y no habría de dónde agarrarlo.
+- **Cobertura:** `test_render_pdf.py` sube a **35** (+4): el texto arranca EXACTAMENTE en el
+  margen para 1,5/2/3 cm en `h1` y `p` (guard: si el motor cambiara y empezara a respetar ese
+  margen, la prueba avisa de que hay que quitar la regla del lienzo) y que vale igual en la
+  hoja 2. Verificado además en el navegador (margen medido y arrastre real del diálogo).
+- ⚠️ `[J]`: **sin cambios de backend ni de infra.**
+
 ### Editor PDF básico: PÁGINAS discretas y tablas configurables (ago 2026)
 > Dos peticiones que resultaron ser la misma deuda: el editor arma documentos de **página
 > fija** (un certificado, un extracto) pero estaba modelado como un documento **en flujo**.
@@ -2929,7 +2959,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **792** pruebas (~3 min) y la de frontend 182. Correrlas
+> La suite de backend son **796** pruebas (~3 min) y la de frontend 182. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 
@@ -3370,7 +3400,7 @@ README.md
 ---
 
 ## 7. Referencias rápidas
-- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 516 CP en 22 módulos) y su
+- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 522 CP en 22 módulos) y su
   **planilla de ejecución `CASOS_PRUEBA_QA.xlsx`** (un CP por fila + columnas para marcar
   **Pasó / No pasó**, resultado obtenido, observaciones, quién y cuándo; hoja de Resumen con
   conteos por estado, prioridad y módulo). ⚠️ El **`.md` es la fuente de verdad**: la planilla
