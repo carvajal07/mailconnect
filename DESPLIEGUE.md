@@ -31,6 +31,30 @@
 
 ---
 
+## ✅ Estado — ago 2026: todo lo pendiente quedó desplegado
+
+Jhon confirma que la consola AWS está al día. Las secciones §1–§6 y §10–§22 de este
+documento quedan como **referencia histórica de lo que se aplicó**, no como trabajo
+pendiente.
+
+⚠️ **Tres cosas de este archivo SIGUEN abiertas** (son posteriores a esa confirmación o
+no son despliegues):
+
+1. **§7 — verificación post-deploy.** Son comprobaciones funcionales, no despliegues.
+   Vale la pena correrlas ahora: es lo que separa "está desplegado" de "está funcionando".
+2. **§23 — correos internos con identidad de marca.** Se subió después. Requiere
+   **desplegar el frontend ANTES o junto con las 6 lambdas** (los assets del correo salen
+   de `public/email/`); si no, los correos salen con las imágenes rotas.
+3. **§24 — envs de activación.** El frontend ya tolera el esquema legado `?activated=1`,
+   así que el aviso YA funciona; pero mientras las envs sigan con el esquema viejo, un
+   enlace **expirado** se ve como error genérico en vez de decir que venció.
+
+⚠️ Excepciones que NO son despliegue y siguen en `PENDIENTES.md`: `SECRET_KEY` a Secrets
+Manager, S3 público a URLs prefirmadas, WAF/usage plan en API Gateway y las fuentes
+cursivas de Inter.
+
+---
+
 ## 0. TL;DR — el orden correcto
 
 > **Estado (jul 2026):** ✅ Mapping template de context desplegado (`API_ID`/`AUTHORIZER_ID`/
@@ -1104,3 +1128,32 @@ armazón común con logo, botón bulletproof y pie con redes.
    mostrar el código junto al asunto.
 5. Hacer clic en cada icono del pie: los cuatro deben abrir el perfil correcto. Si alguno
    cae en un 404, es el punto de "confirmar las URLs" de arriba.
+
+---
+
+## 24. Fix: el aviso de "cuenta activada" no aparecía (ago 2026)
+
+**Síntoma:** el botón "Activar mi cuenta" del correo lleva a la landing, pero no muestra
+ningún aviso de que el registro fue exitoso.
+
+**Causa:** desajuste de nombres de parámetro entre la lambda desplegada y el frontend.
+La landing lee `?activacion=ok|error|expirado`, pero en AWS las envs de la lambda
+`Api_V1_Security_Acount-activation` quedaron con el esquema **legado** `?activated=1|0`
+y **pisan** el default del código. La cuenta SÍ se activaba — solo que en silencio.
+
+- [x] `[C]` La landing acepta ahora **los dos esquemas** (`estadoActivacion`). Con esto
+  funciona sin tocar AWS, y los correos que ya están en bandejas ajenas también.
+- [ ] `[J]` **Corregir las envs en AWS** (el arreglo de fondo). Lo más limpio es
+  **BORRAR las tres** para que mande el default del código y quede una sola fuente de
+  verdad:
+  - `ACTIVATION_SUCCESS_URL`, `ACTIVATION_ERROR_URL`, `ACTIVATION_EXPIRED_URL`
+  - Si se prefieren explícitas: `https://www.mailconnect.com.co/?activacion=ok`,
+    `...=error`, `...=expirado`.
+  - ⚠️ Mientras estén con el esquema viejo, el caso **expirado** se ve como "error"
+    genérico: el legado solo tenía 1 y 0, así que no puede distinguir un enlace vencido de
+    uno inválido. Corregir las envs recupera ese mensaje.
+- [ ] `[J]` Verificar también `APP_BASE_URL` (dominio del portal).
+
+### Cómo confirmar el diagnóstico en 10 segundos
+Abrir a mano `https://www.mailconnect.com.co/?activacion=ok`. Si aparece el aviso verde,
+el frontend está bien y lo único mal son las envs de la lambda.

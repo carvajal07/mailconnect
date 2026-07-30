@@ -14,9 +14,30 @@ const ACTIVACION_MSG: Record<string, { titulo: string; texto: string; color: str
   error: { titulo: 'No se pudo activar', texto: 'El enlace no es válido o ya fue usado. Si tu cuenta ya está activa, inicia sesión normalmente.', color: '#ff5c72' },
 };
 
+/**
+ * Lee el resultado de la activación aceptando DOS esquemas de parámetro.
+ *
+ * ⚠️ El actual es `?activacion=ok|error|expirado`, pero hay despliegues donde las envs
+ * `ACTIVATION_{SUCCESS,ERROR,EXPIRED}_URL` de la lambda quedaron con el esquema LEGADO
+ * `?activated=1|0` y **pisan** el default del código: ahí el aviso no aparecía nunca
+ * (la landing cargaba bien, pero buscaba un parámetro que no venía).
+ *
+ * Se aceptan los dos a propósito, no como parche temporal: los correos de activación YA
+ * ENVIADOS siguen en la bandeja de sus destinatarios y su enlace resuelve el redirect al
+ * hacer clic, así que el esquema viejo puede aparecer durante días después de corregir la
+ * configuración. El nuevo tiene prioridad si vienen ambos.
+ */
+export const estadoActivacion = (params: URLSearchParams): string => {
+  const actual = (params.get('activacion') || '').toLowerCase().trim();
+  if (actual) return actual;
+  const legado = (params.get('activated') || '').toLowerCase().trim();
+  if (!legado) return '';
+  return legado === '1' || legado === 'true' ? 'ok' : 'error';
+};
+
 const ActivacionAviso = () => {
   const [params] = useSearchParams();
-  const raw = (params.get('activacion') || '').toLowerCase();
+  const raw = estadoActivacion(params);
   const info = ACTIVACION_MSG[raw];
   const [open, setOpen] = useState(true);
   const caja = useRef<HTMLDivElement | null>(null);
