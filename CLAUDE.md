@@ -26,6 +26,60 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Editor PDF básico: variables reales, vista previa con datos y fidelidad con la hoja (ago 2026)
+> Los tres defectos del editor "tipo Word" (`PdfTemplatesSection`). Los tres tienen la misma
+> raíz: **el editor no sabía nada de la base de datos ni de lo que el motor puede entregar**,
+> así que mostraba una cosa y el PDF real salía otra.
+
+- **Variables INVENTADAS (el mismo defecto del constructor de correos, pero peor aquí).** El
+  menú ofrecía `nombre · email · empresa · ciudad`, clavados en el código. En el envío real
+  `Combination-EAP-PDF` arma el reemplazo con los **encabezados del CSV** (`row_mapping`): si
+  la base no traía esa columna EXACTA, la variable no resolvía. ⚠️ En un PDF el resultado es
+  un **documento personalizado** —un certificado, un extracto— saliendo con el nombre en
+  blanco, que se ve muchísimo más que en un correo. Ahora se monta `DatabaseFieldPicker` en
+  el panel (grupo **Datos**) y el menú ofrece las **columnas reales**; sin base, un estado
+  vacío que dice qué hacer.
+- **Vista previa con datos REALES.** Había 4 valores inventados y, para cualquier otra
+  variable, `sampleValueFor` devolvía **el nombre de la variable** como si fuera su valor:
+  `{{saldo}}` se previsualizaba como la palabra "saldo", que se lee como contenido de verdad.
+  Ahora usa `previewRows[0]` de la base elegida y lo que no tiene dato viaja como `{{campo}}`
+  para que se VEA sin resolver — mismo criterio del Estudio PDF.
+- **Fidelidad lienzo ↔ PDF.** Tres desajustes, todos por copiar mal las medidas de la lambda:
+  - **Margen**: el lienzo dibujaba `64px` (≈1,7 cm) contra los `2cm` de `@page` → lo que se
+    veía cabiendo en el renglón no cabía en el documento. Ahora `PAGE_MARGIN_CM * CM`.
+  - **Cuerpo y títulos**: 15 px contra `12pt` (=16 px), y 26/21/18 px contra `22/18/15pt`.
+    Ahora se derivan de las constantes con `PT = 96/72`. El lienzo también replica el borde
+    y el `border-collapse` de las tablas, que solo existían en el CSS del PDF.
+  - ⚠️ **La fuente NO llegaba al PDF.** El desplegable hacía dos cosas a medias: teñía el
+    lienzo (estado `font`, que no sale en el `innerHTML`) y hacía `execCommand('fontName')`,
+    que solo etiqueta **lo seleccionado** — con el cursor suelto no marcaba nada. Como
+    `wrap_html` fija `body { font-family: Arial… }`, el lienzo se veía en Times y el PDF
+    salía en Helvetica. Ahora `documentHtml()` envuelve el contenido en
+    `<div data-mc-doc style="font-family:…">` (verificado: xhtml2pdf **sí** hereda la fuente
+    a párrafos, títulos y celdas). `setDocumentHtml()` deshace el envoltorio al cargar, para
+    no anidar uno por cada guardado.
+- **Catálogo de fuentes acotado a lo que el PDF puede entregar.** Se midió renderizando con
+  la lambda real y leyendo los `/BaseFont` del PDF: la lambda **no registra tipografías**
+  (`registerFont`), así que xhtml2pdf solo tiene las base-14. `verdana` y `tahoma` caen a
+  **Helvetica** (idénticas a Arial) y `georgia` a **Times-Roman** (idéntica a Times New
+  Roman): de las 6 que se ofrecían salían **3 resultados**. Quedan las 3 que de verdad se
+  distinguen, etiquetadas por familia. Las plantillas ya guardadas con las otras siguen
+  renderizando igual — esto solo acota lo que se puede elegir de aquí en adelante.
+- **`DatabaseFieldPicker`** gana `onDatabaseChange(db)` (la base COMPLETA, para las
+  `previewRows`) y su selector compacto pasa a `flex: '0 1 210px'`: ⚠️ con `minWidth:210`
+  fijo se desbordaba del panel angosto del editor PDF, y con `flex:'1 1'` se estiraba a toda
+  la fila en el constructor de correos empujando los chips fuera. Encoge, no crece.
+- **Cobertura:** `test_render_pdf.py` sube a **13** (+5): que `wrap_html` conserve las
+  medidas que el lienzo replica (si cambian allá, la prueba manda a actualizar el espejo),
+  el tamaño de hoja, que el envoltorio lleve su fuente al PDF **y que sin él NO llegue**, y
+  un guard del catálogo que **falla si dos fuentes ofrecidas producen el mismo PDF**
+  (comprobado: con la lista vieja falla en `Times New Roman == Georgia`). ⚠️ Los tres últimos
+  van bajo `importorskip('xhtml2pdf')` — sin el paquete se saltan, como la prueba de render
+  real que ya existía. El cableado del editor se verificó **en el navegador**: margen 75,6 px,
+  cuerpo 16 px, h1 29,3 px, el menú sin base, las columnas reales, y el `html` que recibe la
+  lambda con su envoltorio y las variables de la fila real.
+- ⚠️ `[J]`: **sin cambios de backend ni de infra.** Todo entra con el build del frontend.
+
 ### Registro numérico, botón en Outlook y textos de relleno fuera del correo (ago 2026)
 > Tanda de ajustes puntuales. Tres tienen consecuencia real en lo que RECIBE el
 > destinatario (el botón cuadrado en Outlook, el texto de relleno que se enviaba tal cual,
@@ -2704,7 +2758,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **752** pruebas (~2 min) y la de frontend 151. Correrlas
+> La suite de backend son **757** pruebas (~3 min) y la de frontend 155. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 
@@ -3145,7 +3199,7 @@ README.md
 ---
 
 ## 7. Referencias rápidas
-- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 461 CP en 22 módulos) y su
+- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 474 CP en 22 módulos) y su
   **planilla de ejecución `CASOS_PRUEBA_QA.xlsx`** (un CP por fila + columnas para marcar
   **Pasó / No pasó**, resultado obtenido, observaciones, quién y cuándo; hoja de Resumen con
   conteos por estado, prioridad y módulo). ⚠️ El **`.md` es la fuente de verdad**: la planilla

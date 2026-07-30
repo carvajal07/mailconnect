@@ -108,3 +108,75 @@ def test_render_real_produce_pdf(mod):
     pdf = mod.html_to_pdf(html, 'A4')
     assert pdf[:5] == b'%PDF-'
     assert len(pdf) > 400
+
+
+# ---- fidelidad con el LIENZO del editor ----------------------------------
+# `PdfTemplatesSection.tsx` dibuja la hoja copiando estas medidas (margen, cuerpo y
+# títulos). Si cambian aquí y no allá, el editor vuelve a mentir: lo que se ve cabiendo
+# en el renglón no cabe en el PDF. Estas pruebas NO necesitan xhtml2pdf.
+def test_wrap_html_conserva_las_medidas_que_el_editor_replica(mod):
+    out = mod.wrap_html('<p>x</p>', 'A4')
+    assert 'margin: 2cm' in out, 'el lienzo dibuja 2cm de margen (PAGE_MARGIN_CM)'
+    assert 'font-size: 12pt' in out, 'el lienzo usa 12pt de cuerpo (BODY_PT)'
+    for etiqueta, pt in (('h1', 22), ('h2', 18), ('h3', 15)):
+        assert '%s { font-size: %dpt; }' % (etiqueta, pt) in out, \
+            '%s cambió de tamaño; actualizar HEADING_PT en el editor' % etiqueta
+
+
+def test_wrap_html_respeta_el_tamano_de_hoja(mod):
+    assert 'size: A4' in mod.wrap_html('<p>x</p>', 'A4')
+    assert 'size: Letter' in mod.wrap_html('<p>x</p>', 'Carta')
+
+
+def test_el_envoltorio_del_editor_lleva_su_fuente_al_pdf(mod):
+    """El editor envuelve el documento en `<div data-mc-doc style="font-family:…">`.
+
+    ⚠️ Es lo ÚNICO que hace llegar la fuente elegida al PDF: `wrap_html` fija
+    `body { font-family: Arial… }`, así que sin el envoltorio todo sale en Helvetica por
+    más que el lienzo se vea en otra tipografía. Se verifica leyendo los /BaseFont del PDF.
+    """
+    import re
+    pytest.importorskip('xhtml2pdf')
+
+    def fuentes(html):
+        return {m.decode() for m in re.findall(rb'/BaseFont\s*/([A-Za-z0-9\-\+,]+)',
+                                               mod.html_to_pdf(html, 'A4'))}
+
+    envuelto = ('<div data-mc-doc="1" style="font-family:Times New Roman">'
+                '<p>Hola</p><table><tr><td>Celda</td></tr></table></div>')
+    assert any(f.startswith('Times') for f in fuentes(envuelto))
+    # Sin envoltorio queda la fuente del body: el comportamiento viejo.
+    assert not any(f.startswith('Times') for f in fuentes('<p>Hola</p>'))
+
+
+def test_solo_se_ofrecen_fuentes_que_el_pdf_puede_entregar(mod):
+    """Guard del catálogo del editor (`FONTS`).
+
+    xhtml2pdf solo tiene las base-14 del estándar PDF porque la lambda no registra
+    tipografías. Verdana y Tahoma caen a Helvetica (idénticas a Arial) y Georgia cae a
+    Times: ofrecerlas era prometer seis resultados y entregar tres. Si algún día se
+    registran fuentes reales, esta prueba es el recordatorio de ampliar el catálogo.
+    """
+    import re
+    pytest.importorskip('xhtml2pdf')
+    seccion = (REPO_ROOT / '05_Frontend' / 'Front' / 'page' / 'src' / 'components' /
+               'portal' / 'PdfTemplatesSection.tsx').read_text(encoding='utf-8')
+    bloque = re.search(r'const FONTS[^=]*=\s*\[(.*?)\];', seccion, re.S)
+    assert bloque, 'no se encontró el catálogo FONTS del editor'
+    ofrecidas = re.findall(r"value:\s*'([^']+)'", bloque.group(1))
+    assert ofrecidas, 'el catálogo quedó vacío'
+
+    def base_font(nombre):
+        pdf = mod.html_to_pdf('<p style="font-family:%s">x</p>' % nombre, 'A4')
+        return {m.decode().split('-')[0]
+                for m in re.findall(rb'/BaseFont\s*/([A-Za-z0-9\-\+,]+)', pdf)}
+
+    vistas = {}
+    for f in ofrecidas:
+        # Helvetica aparece siempre (es la del body), así que se descuenta salvo que sea
+        # el único resultado — que es justo el caso de Arial.
+        familia = frozenset(base_font(f) - {'Helvetica'}) or frozenset({'Helvetica'})
+        assert familia not in vistas, \
+            '"%s" produce el mismo PDF que "%s" (%s): una de las dos sobra' % (
+                f, vistas[familia], set(familia))
+        vistas[familia] = f

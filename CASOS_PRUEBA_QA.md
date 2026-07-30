@@ -390,6 +390,19 @@
 
 | ID | Prioridad | Caso | Pasos | Resultado esperado |
 |----|-----------|------|-------|--------------------|
+| CP-PDFB-01 | 🔴 | **Variables desde la base real** | Plantillas PDF básicas → panel Datos → elegir una base → botón "Variable" | Ofrece las **columnas reales** de esa base, no `nombre/email/empresa/ciudad` |
+| CP-PDFB-02 | 🔴 | Sin base no ofrece variables inventadas | Abrir "Variable" sin base elegida | Dice "Elige una base de datos abajo…"; no lista ninguna variable |
+| CP-PDFB-03 | 🔴 | **La variable resuelve en el envío real** | Insertar `{{<columna real>}}`, guardar, crear campaña EAP-PDF con esa base y enviar una muestra | El PDF adjunto trae el dato del destinatario, no un hueco ni el token |
+| CP-PDFB-04 | 🔴 | **Vista previa con datos reales** | Con base elegida, insertar 2 variables → "Vista previa PDF" | El PDF muestra los valores de la **primera fila real** de la base |
+| CP-PDFB-05 | 🟡 | Variable sin dato se ve sin resolver | Escribir a mano `{{no_existe}}` → Vista previa | Sale como `{{no_existe}}`, NO como la palabra "no_existe" |
+| CP-PDFB-06 | 🟡 | Base sin filas de muestra | Elegir una base cargada antes de `previewRows` | Avisa que las variables se verán sin resolver |
+| CP-PDFB-07 | 🔴 | **Margen del lienzo = margen del PDF** | Escribir un párrafo largo hasta el borde derecho → Vista previa | El corte de línea coincide; el lienzo usa 2 cm igual que el PDF |
+| CP-PDFB-08 | 🟡 | Tamaños de cuerpo y títulos | Comparar un h1 y un párrafo en el lienzo contra el PDF | Se ven del mismo tamaño relativo (12 pt cuerpo · 22/18/15 pt títulos) |
+| CP-PDFB-09 | 🔴 | **La fuente elegida llega al PDF** | Elegir "Times New Roman · con serifa" y generar la vista previa **sin seleccionar texto** | Todo el documento sale con serifa en el PDF (antes salía en Arial) |
+| CP-PDFB-10 | 🟡 | Fuente al guardar y volver a cargar | Guardar con Times, "Nueva", y cargar la plantilla | Vuelve con Times elegida; el HTML no acumula un envoltorio por cada guardado |
+| CP-PDFB-11 | 🟡 | Catálogo de fuentes honesto | Abrir el desplegable de fuente | Solo 3 opciones, etiquetadas por familia; ya no aparecen Verdana/Tahoma/Georgia (producían el mismo PDF) |
+| CP-PDFB-12 | 🟢 | Plantilla vieja con fuente retirada | Cargar una plantilla guardada con Georgia | Se sigue viendo y renderizando como siempre |
+| CP-PDFB-13 | 🟢 | Panel de datos no se desborda | Elegir una base de nombre largo | El selector queda dentro del panel de herramientas, sin cortarse por fuera |
 | CP-PDF-01 | 🔴 | Editor básico tipo Word | Crear plantilla con títulos, imagen, tabla y variables | Se guarda en `messageTemplate` canal PDF; se comparte con el equipo |
 | CP-PDF-02 | 🔴 | Vista previa PDF (básico) | Botón "Vista previa PDF" | Devuelve el PDF real con las `{{variables}}` sustituidas por valores de muestra |
 | CP-PDF-03 | 🔴 | Estudio PDF (lienzo) | Crear un diseño con texto, formas, tabla y guardar | Se guarda como `sketchJson`; abre a pantalla completa |

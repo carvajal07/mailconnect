@@ -1018,3 +1018,9 @@ desplegar en AWS); lo único de backend es un cambio de TEXTO en el 429 de Login
    aceptar, el enlace debe caer **sobre esa palabra** (si cae en otro lado, se perdió la
    selección al abrir el diálogo). Sin nada seleccionado debe ofrecer el campo "Texto que se
    ve". En **Mi cuenta → Desactivar 2FA**: un único diálogo con el aviso y el campo del código.
+8. **Editor PDF básico contra el motor real.** Elegir una base en el panel **Datos**: el menú
+   "Variable" debe ofrecer sus **columnas reales**. Insertar dos, elegir **Times New Roman**
+   sin seleccionar texto y pulsar **Vista previa PDF**: el documento debe salir **con serifa**
+   (si sale en Arial, el envoltorio `data-mc-doc` no está llegando) y con los **datos de la
+   primera fila** de la base. Una variable que no exista en la base debe verse como
+   `{{campo}}`, no como su nombre suelto.

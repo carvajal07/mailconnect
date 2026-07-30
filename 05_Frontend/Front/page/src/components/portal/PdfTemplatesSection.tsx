@@ -37,6 +37,7 @@ import { useFeedback } from '../../hooks/useFeedback';
 import { usePortalData } from '../../context/PortalDataContext';
 // Se reutiliza el criterio de URL segura del constructor de correos en vez de duplicarlo.
 import { isSafeHref, escapeText, escapeAttr } from './richText';
+import { DatabaseFieldPicker } from './DatabaseFieldPicker';
 
 /**
  * Editor de PLANTILLAS PDF tipo "documento" (a lo Word): barra de formato de texto arriba,
@@ -49,24 +50,71 @@ import { isSafeHref, escapeText, escapeAttr } from './richText';
 const CM = 37.8; // 1 cm ≈ 37.8 px a 96 dpi
 const RULER = 22; // grosor de la regla (px)
 const PAGE_SIZES = { A4: { w: 794, h: 1123 }, Carta: { w: 816, h: 1056 } } as const;
-const FONTS = ['Arial', 'Georgia', 'Times New Roman', 'Courier New', 'Verdana', 'Tahoma'];
-const VARIABLES = ['nombre', 'email', 'empresa', 'ciudad'];
 
-/** Valores de MUESTRA para la vista previa (reemplazan {{campo}}). */
-const SAMPLE_VALUES: Record<string, string> = {
-  nombre: 'Juan Pérez', email: 'juan@ejemplo.com', empresa: 'ACME S.A.S', ciudad: 'Bogotá',
-};
-const sampleValueFor = (name: string) => SAMPLE_VALUES[name.toLowerCase()] ?? name;
+/**
+ * ── Fidelidad lienzo ↔ PDF ────────────────────────────────────────────────────
+ * Estos valores son ESPEJO de los que la lambda `Api_V1_Template_Render-pdf` mete en
+ * `wrap_html`. Si cambian allá, cambian aquí, o el editor vuelve a mentir: antes el lienzo
+ * usaba 64 px de margen (≈1,7 cm) contra los 2 cm del PDF, y 15 px de cuerpo contra 12 pt
+ * (=16 px), así que lo que se veía cabiendo en el renglón no cabía en el documento real.
+ */
+const PAGE_MARGIN_CM = 2;                       // @page { margin: 2cm }
+const PAGE_MARGIN_PX = PAGE_MARGIN_CM * CM;     // 75.6 px
+const PT = 96 / 72;                             // 1 pt = 1.333 px a 96 dpi
+const BODY_PT = 12;                             // body { font-size: 12pt }
+const HEADING_PT = { h1: 22, h2: 18, h3: 15 };  // h1/h2/h3 de wrap_html
 
-/** Detecta las variables {{campo}} presentes en el HTML y les asigna un valor de muestra. */
-const sampleVariables = (html: string): Record<string, string> => {
-  const out: Record<string, string> = {};
+/**
+ * Fuentes que el PDF puede entregar DE VERDAD.
+ *
+ * ⚠️ La lambda no registra ninguna tipografía (`registerFont`), así que xhtml2pdf solo
+ * dispone de las base-14 del estándar PDF. Se comprobó renderizando: `arial`→Helvetica,
+ * `times new roman`/`georgia`→Times-Roman, `courier new`→Courier, y **`verdana` y `tahoma`
+ * caen a Helvetica** (idénticas a Arial). Ofrecer las seis de antes era prometer seis
+ * resultados y entregar tres: quien elegía Tahoma veía el lienzo cambiar y el PDF salía
+ * igual que con Arial, sin que nada lo avisara.
+ *
+ * Las plantillas ya guardadas con Georgia/Verdana/Tahoma siguen renderizando como siempre
+ * (esto solo acota lo que se puede ELEGIR de aquí en adelante).
+ */
+const FONTS: { value: string; label: string }[] = [
+  { value: 'Arial', label: 'Arial · sin serifa' },
+  { value: 'Times New Roman', label: 'Times New Roman · con serifa' },
+  { value: 'Courier New', label: 'Courier New · monoespaciada' },
+];
+const DEFAULT_FONT = FONTS[0].value;
+
+/** Marca del contenedor de documento, para no anidar un envoltorio por cada guardado. */
+const DOC_WRAPPER_ATTR = 'data-mc-doc';
+
+/** Variables {{campo}} presentes en el HTML. */
+const usedVariables = (html: string): string[] => {
+  const out: string[] = [];
   const re = /\{\{\s*([^{}]+?)\s*\}\}/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
     const key = m[1].trim();
-    if (key && !(key in out)) out[key] = sampleValueFor(key);
+    if (key && !out.includes(key)) out.push(key);
   }
+  return out;
+};
+
+/**
+ * Valores para la VISTA PREVIA, tomados de la base elegida (primera fila real).
+ *
+ * ⚠️ Antes había 4 valores inventados y, para cualquier otra variable, se devolvía **el
+ * nombre de la variable** como si fuera su valor: `{{saldo}}` se previsualizaba como la
+ * palabra "saldo", que se lee como contenido de verdad. Ahora lo que no tiene dato se manda
+ * como `{{campo}}` para que se VEA sin resolver — es el mismo criterio del Estudio PDF.
+ */
+const previewVariables = (
+  html: string,
+  columns: string[],
+  row: string[],
+): Record<string, string> => {
+  const out: Record<string, string> = {};
+  columns.forEach((col, i) => { if (col) out[col] = row[i] ?? `{{${col}}}`; });
+  for (const v of usedVariables(html)) if (!(v in out)) out[v] = `{{${v}}}`;
   return out;
 };
 
@@ -102,8 +150,11 @@ export const PdfTemplatesSection = () => {
   const { refreshMessageTemplates } = usePortalData();
   const pageRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<'A4' | 'Carta'>('A4');
-  const [font, setFont] = useState('Arial');
+  const [font, setFont] = useState(DEFAULT_FONT);
   const [format, setFormat] = useState('p');
+  // Campos y filas de la base elegida: alimentan el menú de variables y la vista previa.
+  const [dbFields, setDbFields] = useState<string[]>([]);
+  const [dbRow, setDbRow] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [varAnchor, setVarAnchor] = useState<null | HTMLElement>(null);
   const [loadAnchor, setLoadAnchor] = useState<null | HTMLElement>(null);
@@ -126,9 +177,44 @@ export const PdfTemplatesSection = () => {
     try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* noop */ }
     if (pageRef.current && !pageRef.current.innerHTML.trim()) {
       pageRef.current.innerHTML =
-        '<h1>Título del documento</h1><p>Escribe aquí el contenido de tu plantilla. Usa la barra de arriba para dar formato y las herramientas de la izquierda para insertar imágenes, tablas o variables como {{nombre}}.</p>';
+        '<h1>Título del documento</h1><p>Escribe aquí el contenido de tu plantilla. Usa la barra de arriba para dar formato y las herramientas de la izquierda para insertar imágenes, tablas o variables de tu base de datos.</p>';
     }
   }, []);
+
+  /**
+   * HTML del documento tal como debe viajar al PDF: el contenido del lienzo envuelto en un
+   * `<div>` que lleva la fuente elegida.
+   *
+   * ⚠️ Sin este envoltorio la fuente NO llegaba al PDF. El desplegable hacía dos cosas a
+   * medias: teñía el lienzo entero (estado `font`, que no sale en el `innerHTML`) y hacía
+   * `execCommand('fontName')`, que solo etiqueta **lo que estuviera seleccionado**. Con el
+   * cursor suelto no marcaba nada → el lienzo se veía en Times y el PDF salía en Helvetica,
+   * porque `wrap_html` fija `body { font-family: Arial… }`. Se comprobó que xhtml2pdf sí
+   * hereda `font-family` de un div a párrafos, títulos y celdas de tabla.
+   */
+  const documentHtml = (): string => {
+    const inner = pageRef.current?.innerHTML || '';
+    if (!inner.trim()) return '';
+    return `<div ${DOC_WRAPPER_ATTR}="1" style="font-family:${font}">${inner}</div>`;
+  };
+
+  /**
+   * Carga HTML en el lienzo deshaciendo el envoltorio de arriba (y adoptando su fuente).
+   * Sin esto, cada guardado anidaría un div más dentro del anterior.
+   */
+  const setDocumentHtml = (html: string) => {
+    if (!pageRef.current) return;
+    const cont = document.createElement('div');
+    cont.innerHTML = html || '';
+    const root = cont.children.length === 1 ? (cont.firstElementChild as HTMLElement | null) : null;
+    if (root && root.hasAttribute(DOC_WRAPPER_ATTR)) {
+      const guardada = root.style.fontFamily.replace(/['"]/g, '');
+      if (guardada) setFont(guardada);
+      pageRef.current.innerHTML = root.innerHTML;
+    } else {
+      pageRef.current.innerHTML = html || '';
+    }
+  };
 
   /**
    * Última selección conocida DENTRO del lienzo.
@@ -236,7 +322,7 @@ export const PdfTemplatesSection = () => {
 
   /** Abre el diálogo para nombrar la plantilla (antes usaba window.prompt, feo). */
   const saveTemplate = () => {
-    const html = pageRef.current?.innerHTML || '';
+    const html = documentHtml();
     if (!html.trim()) { notify('El documento está vacío.', 'warning'); return; }
     setNameValue('');
     setNameOpen(true);
@@ -246,7 +332,7 @@ export const PdfTemplatesSection = () => {
   const confirmSave = async () => {
     const clean = nameValue.trim();
     if (!clean) return;
-    const html = pageRef.current?.innerHTML || '';
+    const html = documentHtml();
     setNameOpen(false);
     setSaving(true);
     const res = await messageTemplatesService.create({
@@ -273,27 +359,27 @@ export const PdfTemplatesSection = () => {
     setCloudTemplates(isOk(res) && res.data?.templates ? res.data.templates : []);
   };
   const loadTemplate = (t: MessageTemplate) => {
-    if (pageRef.current) pageRef.current.innerHTML = t.html || '';
+    setDocumentHtml(t.html || '');
     setLoadAnchor(null);
     notify(`Plantilla "${t.name}" cargada.`, 'info');
   };
   const loadDraft = (name: string) => {
     const d = readPdfDrafts();
-    if (pageRef.current) pageRef.current.innerHTML = d[name] || '';
+    setDocumentHtml(d[name] || '');
     setLoadAnchor(null);
     notify(`Plantilla "${name}" cargada (local).`, 'info');
   };
   const newDoc = () => { if (pageRef.current) pageRef.current.innerHTML = '<p><br></p>'; };
-  const showHtml = () => { setHtmlView(pageRef.current?.innerHTML || ''); setHtmlOpen(true); };
+  const showHtml = () => { setHtmlView(documentHtml()); setHtmlOpen(true); };
 
   /** Genera el PDF REAL desde el backend (lambda Render-pdf) con datos de muestra y lo previsualiza. */
   const previewPdf = async () => {
-    const html = pageRef.current?.innerHTML || '';
+    const html = documentHtml();
     if (!html.trim()) { notify('El documento está vacío.', 'warning'); return; }
     setPdfLoading(true);
     const res = await pdfTemplatesService.render({
       html,
-      variables: sampleVariables(html),
+      variables: previewVariables(html, dbFields, dbRow),
       pageSize: size,
       filename: 'plantilla-pdf.pdf',
     });
@@ -308,7 +394,7 @@ export const PdfTemplatesSection = () => {
   };
   const closePdf = () => { setPdfOpen(false); if (pdfUrl) { URL.revokeObjectURL(pdfUrl); setPdfUrl(''); } };
   const download = () => {
-    const blob = new Blob(['<!doctype html><meta charset="utf-8">' + (pageRef.current?.innerHTML || '')], { type: 'text/html' });
+    const blob = new Blob(['<!doctype html><meta charset="utf-8">' + documentHtml()], { type: 'text/html' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'plantilla-pdf.html';
@@ -351,9 +437,16 @@ export const PdfTemplatesSection = () => {
           <MenuItem value="h3">Título 3</MenuItem>
           <MenuItem value="blockquote">Cita</MenuItem>
         </TextField>
-        <TextField select size="small" value={font} onChange={(e) => { setFont(e.target.value); exec('fontName', e.target.value); }} sx={{ width: 150 }}>
-          {FONTS.map((f) => <MenuItem key={f} value={f} sx={{ fontFamily: f }}>{f}</MenuItem>)}
-        </TextField>
+        {/* La fuente es del DOCUMENTO: se aplica al lienzo y viaja al PDF en el envoltorio
+            de `documentHtml()`. Ya no se hace `execCommand('fontName')`, que solo marcaba la
+            selección y dejaba el resto del documento con otra fuente en el PDF. */}
+        <Tooltip title="Fuente de todo el documento">
+          <TextField select size="small" value={font} onChange={(e) => setFont(e.target.value)} sx={{ width: 210 }}>
+            {FONTS.map((f) => (
+              <MenuItem key={f.value} value={f.value} sx={{ fontFamily: f.value }}>{f.label}</MenuItem>
+            ))}
+          </TextField>
+        </Tooltip>
         <TextField select size="small" defaultValue="3" onChange={(e) => exec('fontSize', e.target.value)} sx={{ width: 120 }}>
           <MenuItem value="1">Muy pequeño</MenuItem>
           <MenuItem value="2">Pequeño</MenuItem>
@@ -388,7 +481,9 @@ export const PdfTemplatesSection = () => {
 
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="flex-start">
         {/* Herramientas a la izquierda */}
-        <Paper variant="outlined" sx={{ p: 1.5, width: { md: 190 }, flexShrink: 0 }}>
+        {/* 240 px: el selector de base en modo compacto pide 210 y con los 190 de antes se
+            salía del panel (el nombre del archivo quedaba cortado por fuera del borde). */}
+        <Paper variant="outlined" sx={{ p: 1.5, width: { md: 240 }, flexShrink: 0 }}>
           <Typography variant="overline" color="text.secondary">Insertar</Typography>
           <Stack spacing={1} sx={{ mt: 0.5 }}>
             <Button component="label" size="small" variant="outlined" disabled={uploading} startIcon={uploading ? <CircularProgress size={16} /> : <AddPhotoAlternateIcon />}>
@@ -404,6 +499,26 @@ export const PdfTemplatesSection = () => {
             <MenuItem value="A4">A4</MenuItem>
             <MenuItem value="Carta">Carta</MenuItem>
           </TextField>
+
+          <Divider sx={{ my: 1.5 }} />
+          {/* La base manda dos cosas: qué variables se pueden insertar y con qué datos se
+              previsualiza. Sin ella el menú de variables no tiene nada real que ofrecer. */}
+          <Typography variant="overline" color="text.secondary">Datos</Typography>
+          <Box sx={{ mt: 0.5 }}>
+            <DatabaseFieldPicker
+              compact
+              onInsert={(f) => insertHtml(`{{${f}}}`)}
+              onFieldsChange={setDbFields}
+              onDatabaseChange={(db) => setDbRow(db?.previewRows?.[0] ?? [])}
+            />
+          </Box>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            {dbFields.length
+              ? (dbRow.length
+                ? 'La vista previa usa la primera fila real de esta base.'
+                : 'Esta base no tiene filas de muestra: las variables se verán sin resolver.')
+              : 'Elige una base para insertar sus columnas como variables.'}
+          </Typography>
         </Paper>
 
         {/* Lienzo con reglas (hoja) */}
@@ -420,11 +535,19 @@ export const PdfTemplatesSection = () => {
                 contentEditable
                 suppressContentEditableWarning
                 sx={{
-                  width: dims.w, minHeight: dims.h, boxSizing: 'border-box', p: '64px',
-                  bgcolor: '#fff', color: '#111', fontFamily: font, fontSize: 15, lineHeight: 1.6,
+                  // Medidas ESPEJO de `wrap_html` (ver el bloque de fidelidad arriba): margen
+                  // de 2 cm, cuerpo de 12 pt y títulos de 22/18/15 pt. Con los valores viejos
+                  // (64 px y 15 px) el texto cabía distinto acá que en el PDF.
+                  width: dims.w, minHeight: dims.h, boxSizing: 'border-box', p: `${PAGE_MARGIN_PX}px`,
+                  bgcolor: '#fff', color: '#111', fontFamily: font,
+                  fontSize: `${BODY_PT * PT}px`, lineHeight: 1.5,
                   boxShadow: '0 8px 30px rgba(16,35,63,.18)', outline: 'none',
-                  '& h1': { fontSize: 26 }, '& h2': { fontSize: 21 }, '& h3': { fontSize: 18 },
-                  '& img': { maxWidth: '100%' }, '& blockquote': { borderLeft: '3px solid #cbd5e1', margin: '8px 0', paddingLeft: 2, color: '#555' },
+                  '& h1': { fontSize: `${HEADING_PT.h1 * PT}px` },
+                  '& h2': { fontSize: `${HEADING_PT.h2 * PT}px` },
+                  '& h3': { fontSize: `${HEADING_PT.h3 * PT}px` },
+                  '& table': { borderCollapse: 'collapse', width: '100%' },
+                  '& td, & th': { border: '1px solid #cbd5e1', padding: '6px' },
+                  '& img': { maxWidth: '100%' }, '& blockquote': { borderLeft: '3px solid #cbd5e1', margin: '8px 0', paddingLeft: '10px', color: '#555' },
                 }}
               />
             </Box>
@@ -432,8 +555,19 @@ export const PdfTemplatesSection = () => {
         </Box>
       </Stack>
 
+      {/* Las variables salen de los encabezados REALES de la base elegida. Antes había una
+          lista inventada (nombre/email/empresa/ciudad) y, si el CSV del cliente no traía esa
+          columna exacta, el documento salía con el dato en blanco — y en un PDF
+          personalizado (un certificado, un extracto) eso se ve mucho más que en un correo. */}
       <Menu anchorEl={varAnchor} open={Boolean(varAnchor)} onClose={() => setVarAnchor(null)}>
-        {VARIABLES.map((v) => (
+        {dbFields.length === 0 && (
+          <MenuItem disabled sx={{ whiteSpace: 'normal', maxWidth: 300 }}>
+            <Typography variant="body2">
+              Elige una base de datos abajo para usar sus columnas como variables.
+            </Typography>
+          </MenuItem>
+        )}
+        {dbFields.map((v) => (
           <MenuItem key={v} onClick={() => { insertHtml(`{{${v}}}`); setVarAnchor(null); }}>{`{{${v}}}`}</MenuItem>
         ))}
       </Menu>
