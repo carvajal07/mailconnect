@@ -225,6 +225,10 @@ export const PdfTemplatesSection = () => {
   const [tableCfg, setTableCfg] = useState<TableConfig>({ ...DEFAULT_TABLE });
   /** Tabla que se está editando (null = insertar una nueva). */
   const editingTable = useRef<HTMLTableElement | null>(null);
+  /** Configuración con la que se abrió el diálogo, para poder deshacer al cancelar. */
+  const tableCfgInicial = useRef<TableConfig | null>(null);
+  /** `true` mientras el diálogo está abierto: dispara el aplicado en vivo. */
+  const [editandoTabla, setEditandoTabla] = useState(false);
   const [font, setFont] = useState(DEFAULT_FONT);
   const [format, setFormat] = useState('p');
   // Campos y filas de la base elegida: alimentan el menú de variables y la vista previa.
@@ -516,17 +520,49 @@ export const PdfTemplatesSection = () => {
     saveRange();
     const actual = tablaEnFoco();
     editingTable.current = actual;
-    setTableCfg(actual ? readTableConfig(actual) : { ...DEFAULT_TABLE });
+    const cfg = actual ? readTableConfig(actual) : { ...DEFAULT_TABLE };
+    tableCfgInicial.current = actual ? cfg : null;
+    setTableCfg(cfg);
+    setEditandoTabla(Boolean(actual));
     setTableOpen(true);
+  };
+
+  /**
+   * Aplicado EN VIVO mientras se edita una tabla ya insertada.
+   *
+   * Es lo que le da sentido a que el diálogo se pueda arrastrar: se ve la tabla REAL
+   * —con su contenido— cambiar mientras se tocan los bordes y los colores, en vez de
+   * tener que aceptar, mirar y volver a abrir. Solo aplica al EDITAR: al insertar todavía
+   * no hay tabla en el lienzo, y para eso está la vista previa del propio diálogo.
+   */
+  useEffect(() => {
+    if (!tableOpen || !editandoTabla) return;
+    const destino = editingTable.current;
+    if (destino) applyTableConfig(destino, tableCfg);
+  }, [tableOpen, editandoTabla, tableCfg]);
+
+  /** Cierra el diálogo dejando la tabla como estaba antes de abrirlo. */
+  const cancelTable = () => {
+    const destino = editingTable.current;
+    // ⚠️ Con el aplicado en vivo, cancelar tiene que DESHACER: si no, los cambios que el
+    // usuario estaba probando se quedarían puestos y "Cancelar" no cancelaría nada.
+    if (destino && tableCfgInicial.current) applyTableConfig(destino, tableCfgInicial.current);
+    setTableOpen(false);
+    setEditandoTabla(false);
+    editingTable.current = null;
+    tableCfgInicial.current = null;
+    setGuiasTick((n) => n + 1);
   };
 
   const applyTable = () => {
     setTableOpen(false);
     const destino = editingTable.current;
     if (destino) {
-      // Editar mantiene lo escrito en las celdas (ver `applyTableConfig`).
+      // Al editar ya se aplicó en vivo; solo queda soltar la referencia.
       applyTableConfig(destino, tableCfg);
       editingTable.current = null;
+      tableCfgInicial.current = null;
+      setEditandoTabla(false);
       setGuiasTick((n) => n + 1);
       return;
     }
@@ -1021,9 +1057,20 @@ export const PdfTemplatesSection = () => {
       {/* Tabla: inserta una nueva o edita la que está bajo el cursor (conservando lo
           escrito en las celdas). Todos los estilos salen EN LÍNEA porque xhtml2pdf no
           aplica selectores CSS de forma fiable — ver `pdfDocument.ts`. */}
-      <Dialog open={tableOpen} onClose={() => setTableOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>{editingTable.current ? 'Editar tabla' : 'Insertar tabla'}</DialogTitle>
-        <DialogContent dividers>
+      <DraggableDialog
+        open={tableOpen}
+        onClose={cancelTable}
+        title={editandoTabla ? 'Editar tabla' : 'Insertar tabla'}
+        width={560}
+        actions={(
+          <>
+            <Button onClick={cancelTable}>Cancelar</Button>
+            <Button variant="contained" onClick={applyTable}>
+              {editandoTabla ? 'Aplicar' : 'Insertar'}
+            </Button>
+          </>
+        )}
+      >
           <Stack spacing={2} sx={{ mt: 0.5 }}>
             <Stack direction="row" spacing={2}>
               <TextField label="Filas" type="number" size="small" fullWidth
@@ -1117,28 +1164,27 @@ export const PdfTemplatesSection = () => {
               </TextField>
             </Stack>
 
-            {/* Vista previa en vivo: el MISMO HTML que se va a insertar. */}
-            <Box>
-              <Typography variant="caption" color="text.secondary">Vista previa</Typography>
-              <Box sx={{ mt: 0.5, p: 1.5, bgcolor: '#fff', color: '#111', borderRadius: 1, border: '1px solid #e0e6ef', overflowX: 'auto' }}
-                dangerouslySetInnerHTML={{ __html: buildTableHtml(tableCfg) }} />
-            </Box>
-
-            {editingTable.current && (
-              <Typography variant="caption" color="text.secondary">
-                Al reducir filas o columnas se quitan por el final. El texto que ya
-                escribiste en las celdas que quedan se conserva.
-              </Typography>
+            {/* Vista previa solo al INSERTAR: editando se ve la tabla de verdad en el
+                lienzo, y una miniatura vacía al lado solo distraería. */}
+            {!editandoTabla && (
+              <Box>
+                <Typography variant="caption" color="text.secondary">Vista previa</Typography>
+                <Box sx={{ mt: 0.5, p: 1.5, bgcolor: '#fff', color: '#111', borderRadius: 1, border: '1px solid #e0e6ef', overflowX: 'auto' }}
+                  dangerouslySetInnerHTML={{ __html: buildTableHtml(tableCfg) }} />
+              </Box>
             )}
+
+            <Typography variant="caption" color="text.secondary">
+              {editandoTabla
+                ? 'Los cambios se aplican al instante sobre tu tabla: arrastra esta ventana '
+                  + 'por su barra para verla. Al reducir filas o columnas se quitan por el '
+                  + 'final, conservando el texto de las que quedan. "Cancelar" lo deja todo '
+                  + 'como estaba.'
+                : 'Coloca el cursor dentro de una tabla ya insertada y pulsa "Tabla" para '
+                  + 'volver a editarla sin perder su contenido.'}
+            </Typography>
           </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => { setTableOpen(false); editingTable.current = null; }}>Cancelar</Button>
-          <Button variant="contained" onClick={applyTable}>
-            {editingTable.current ? 'Aplicar' : 'Insertar'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      </DraggableDialog>
 
       <Dialog open={linkOpen} onClose={() => setLinkOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Insertar enlace</DialogTitle>

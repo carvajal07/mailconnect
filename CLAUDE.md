@@ -117,12 +117,27 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
     componente definido en el cuerpo es una identidad nueva en cada render: MUI desmonta y
     remonta el panel, eso dispara otro render y el diálogo entra en **bucle infinito**
     ("Maximum update depth exceeded"). Se reprodujo antes de corregirlo.
-  - La posición se **acota al DIBUJAR**, no solo al arrastrar: si la ventana se achica con el
-    diálogo movido, quedaría fuera de la pantalla y no habría de dónde agarrarlo.
+  - ⚠️ La posición se acota manteniendo el diálogo **ENTERO** dentro de la ventana. El
+    acotado permisivo del primer intento (dejar visible solo la barra) parecía suficiente y
+    no lo era: al bajarlo un poco, **los botones Cancelar/Aplicar quedaban por debajo del
+    borde** y no había forma de pulsarlos. Se acota al DIBUJAR, no solo al arrastrar, para
+    cubrir también el caso de achicar la ventana con el diálogo movido.
+- **Aplicado también al diálogo de TABLA, con edición EN VIVO.** Arrastrar el diálogo solo
+  sirve si el lienzo cambia mientras tanto: al **editar** una tabla ya insertada, los
+  cambios se aplican al instante sobre la tabla REAL (con su contenido), no sobre una
+  miniatura. ⚠️ Eso obliga a que **"Cancelar" DESHAGA**: se guarda la configuración con la
+  que se abrió el diálogo y se reaplica al cancelar — sin eso, los valores que el usuario
+  estaba probando se quedarían puestos y el botón no cancelaría nada. Al **insertar** no
+  hay tabla todavía, así que ahí se conserva la vista previa dentro del diálogo (y se
+  oculta al editar, donde solo distraería).
 - **Cobertura:** `test_render_pdf.py` sube a **35** (+4): el texto arranca EXACTAMENTE en el
   margen para 1,5/2/3 cm en `h1` y `p` (guard: si el motor cambiara y empezara a respetar ese
   margen, la prueba avisa de que hay que quitar la regla del lienzo) y que vale igual en la
-  hoja 2. Verificado además en el navegador (margen medido y arrastre real del diálogo).
+  hoja 2. `pdfDocument.test.ts` sube a **23** (+2) con el invariante del que depende
+  "Cancelar": reaplicar la configuración original devuelve la tabla EXACTAMENTE a como
+  estaba, y el contenido sobrevive a varias ediciones seguidas. Frontend **184**.
+  Verificado además en el navegador: margen medido, arrastre real, edición en vivo y que
+  cancelar restaura la tabla (3 filas → 6 en vivo → 3 al cancelar, conservando el texto).
 - ⚠️ `[J]`: **sin cambios de backend ni de infra.**
 
 ### Editor PDF básico: PÁGINAS discretas y tablas configurables (ago 2026)
