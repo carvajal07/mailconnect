@@ -41,6 +41,7 @@ import { usePortalData } from '../../context/PortalDataContext';
 // Se reutiliza el criterio de URL segura del constructor de correos en vez de duplicarlo.
 import { isSafeHref, escapeText, escapeAttr } from './richText';
 import { DatabaseFieldPicker } from './DatabaseFieldPicker';
+import { DraggableDialog } from './DraggableDialog';
 import {
   DEFAULT_TABLE, TABLE_MAX_COLS, TABLE_MAX_ROWS, buildTableHtml, readTableConfig,
   applyTableConfig, joinPages, splitPages,
@@ -806,6 +807,18 @@ export const PdfTemplatesSection = () => {
                     '& h1': { fontSize: `${HEADING_PT.h1 * PT}px` },
                     '& h2': { fontSize: `${HEADING_PT.h2 * PT}px` },
                     '& h3': { fontSize: `${HEADING_PT.h3 * PT}px` },
+                    /**
+                     * ⚠️ El margen del PRIMER elemento se anula, o el lienzo miente.
+                     *
+                     * Medido contra el PDF real: xhtml2pdf NO aplica el `margin-top` del
+                     * primer bloque al inicio de una página (el texto arranca exactamente
+                     * en el margen, en la hoja 1 y en todas). El navegador sí lo aplica,
+                     * así que un `<h1>` sumaba sus 0,52 cm por dentro: con 1,5 cm
+                     * configurados el texto se veía en 2 cm, y con 2 en 2,5. Igual con el
+                     * último elemento y el margen inferior.
+                     */
+                    '& > *:first-of-type': { marginTop: 0 },
+                    '& > *:last-child': { marginBottom: 0 },
                     '& table': { borderCollapse: 'collapse', width: '100%' },
                     '& td, & th': { border: '1px solid #cbd5e1', padding: '6px' },
                     '& img': { maxWidth: '100%' }, '& blockquote': { borderLeft: '3px solid #cbd5e1', margin: '8px 0', paddingLeft: '10px', color: '#555' },
@@ -916,9 +929,21 @@ export const PdfTemplatesSection = () => {
 
       {/* Configuración de página: hoja, orientación, márgenes y membrete. Todo se guarda
           DENTRO del documento, así que el envío real usa exactamente lo mismo. */}
-      <Dialog open={setupOpen} onClose={() => setSetupOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Configurar página</DialogTitle>
-        <DialogContent dividers>
+      {/* MOVIBLE y sin fondo oscurecido: los cambios de márgenes, orientación y membrete
+          se ven en el lienzo mientras se tocan. Antes el diálogo tapaba justo lo que
+          estaba modificando, así que había que aceptar, mirar y volver a abrir. */}
+      <DraggableDialog
+        open={setupOpen}
+        onClose={() => setSetupOpen(false)}
+        title="Configurar página"
+        width={560}
+        actions={(
+          <>
+            <Button onClick={() => setSetup({ ...DEFAULT_SETUP })}>Restablecer</Button>
+            <Button variant="contained" onClick={() => setSetupOpen(false)}>Listo</Button>
+          </>
+        )}
+      >
           <Stack spacing={2.5} sx={{ mt: 0.5 }}>
             <Stack direction="row" spacing={2}>
               <TextField select size="small" label="Hoja" fullWidth value={setup.size}
@@ -984,13 +1009,12 @@ export const PdfTemplatesSection = () => {
                 ))}
               </Stack>
             </Box>
+            <Typography variant="caption" color="text.secondary">
+              Puedes arrastrar esta ventana por su barra para ver el documento mientras
+              ajustas los valores.
+            </Typography>
           </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setSetup({ ...DEFAULT_SETUP })}>Restablecer</Button>
-          <Button variant="contained" onClick={() => setSetupOpen(false)}>Listo</Button>
-        </DialogActions>
-      </Dialog>
+      </DraggableDialog>
 
       {/* Enlace. Antes era `window.prompt`, que además de feo no dejaba corregir el texto
           del enlace ni avisaba de una URL inválida. */}
