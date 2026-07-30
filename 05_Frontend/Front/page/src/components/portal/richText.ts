@@ -38,7 +38,7 @@ const ALLOWED_STYLES = new Set([
 /** Normaliza a las etiquetas semánticas que mejor soportan los clientes de correo. */
 const TAG_ALIAS: Record<string, string> = { B: 'strong', I: 'em', STRIKE: 's' };
 
-const isSafeHref = (href: string): boolean => {
+export const isSafeHref = (href: string): boolean => {
   const v = href.trim().toLowerCase();
   // `javascript:` y `data:` son los vectores clásicos; se permiten enlaces normales,
   // correo, teléfono y las variables de plantilla ({{unsubscribeUrl}} y compañía).

@@ -26,6 +26,115 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Editor PDF básico: página configurable, membrete con numeración y saltos (ago 2026)
+> Segunda tanda del editor "tipo Word". Se cierran los cuatro pendientes: `@page` estaba
+> **fijo** en A4 vertical con 2 cm, no había forma de repetir un membrete ni de numerar las
+> hojas, no existía el salto de página manual, y el lienzo era una **tira continua** donde no
+> se veía qué quedaba en la página 2.
+
+- **La configuración viaja DENTRO del HTML**, en los `data-*` del envoltorio `data-mc-doc`
+  (`data-mc-size`, `data-mc-orientation`, `data-mc-margin`) más `<div data-mc-header>` /
+  `<div data-mc-footer>`. ⚠️ Es la decisión de diseño clave: en el envío real el combinador
+  (`Combination-EAP-PDF`) recibe la plantilla **por SQS** y no sabe nada de lo que el cliente
+  configuró en el editor — el `pageSize` del mensaje es lo único que le llega. Guardándolo en
+  el propio documento, la vista previa y el envío real usan lo mismo **sin tocar el esquema de
+  `messageTemplate` ni el mensaje de la cola**. Una plantilla vieja sin esos atributos entra
+  con los valores por defecto, que son exactamente los de antes.
+- **Márgenes (4 lados) y orientación.** `@page` pasa a construirse con la configuración del
+  documento (`size: A4 landscape` y `margin` por lado). Dos topes: 10 cm al leer el valor y
+  media hoja menos 1 cm por lado, porque un margen absurdo dejaría el contenido sin ancho útil.
+- **Encabezado y pie con numeración**, mediante los **marcos** (`@frame`) de xhtml2pdf +
+  `-pdf-frame-content`. ⚠️ Los marcos **solo se declaran si hay membrete**: declararlos cambia
+  el modelo de maquetación (el contenido pasa a fluir en un marco explícito) y no hay razón
+  para exponer a ese cambio a los documentos que no los usan — sin membrete se emite el
+  `@page` simple de siempre. Las bandas se **extraen del flujo** (si no, saldrían además en
+  medio de la primera hoja) y se reemiten como contenido de su marco, con la fuente del
+  documento (al salir del envoltorio la perderían).
+- ⚠️ **Los tokens de numeración van en CORCHETES** (`[[pagina]]`, `[[paginas]]`), no en llaves:
+  las llaves son el formato de las variables de la BASE y `render_variables` corre **antes**,
+  así que una columna del CSV llamada "pagina" habría pisado el número de página. El backend
+  los convierte a `<pdf:pagenumber />` / `<pdf:pagecount />`.
+- **Extracción con `html.parser` de la stdlib**, llevando la cuenta de la profundidad — no con
+  un regex, que cerraría en el primer `</div>` y partiría por la mitad un encabezado con divs
+  anidados. BeautifulSoup no está garantizada en el layer de `Render-pdf`. Ante un HTML roto
+  se deja la banda en el flujo (sale una vez, en medio) antes que tumbar el render.
+- **Salto de página manual**: botón que inserta `<div data-mc-break style="page-break-before:
+  always">`, que xhtml2pdf respeta. En el lienzo se dibuja como una línea de corte etiquetada.
+- **Guías de corte en el lienzo.** Se calcula cuánto contenido cabe por hoja (descontando
+  márgenes y bandas) y se marcan los cortes, respetando los saltos manuales. ⚠️ Es una
+  **aproximación y el editor lo dice**: el lienzo es una tira continua, mientras que en el PDF
+  cada hoja vuelve a empezar con su margen — esa franja en blanco no se reproduce, y el motor
+  además evita partir tablas y párrafos. La etiqueta "Página N" va a la **izquierda**: en
+  apaisado la hoja es más ancha que la ventana y a la derecha se sale de la pantalla.
+- **Cobertura:** `test_render_pdf.py` sube a **26** (+13). Sin xhtml2pdf: que sin membrete NO
+  se declaren marcos, orientación y márgenes desde el documento, que el documento mande sobre
+  el `pageSize` del mensaje, el acotado del margen absurdo, la extracción del flujo (una sola
+  vez y fuera del contenido), solo-pie sin marco de encabezado, el encabezado con divs
+  anidados, los tokens de numeración + que una variable `{{pagina}}` NO se confunda con ellos,
+  la fuente heredada por la banda, y que un HTML roto no tumbe el render. Con render real:
+  membrete repetido en TODAS las hojas + numeración correcta, el salto manual, y el apaisado
+  girando la hoja. **Verificado de punta a punta** con el HTML literal que emite el editor
+  pasado por la lambda real: 3 páginas, membrete en las 3, `Pagina 1/2/3 de 3`, salto
+  respetado y sin tokens sin resolver.
+- ⚠️ `[J]`: **redesplegar las DOS lambdas juntas** — `Api_V1_Template_Render-pdf` y
+  `Api_V1_Template_Combination-EAP-PDF` comparten `wrap_html` **copiado**. Si solo se
+  despliega una, la vista previa y el envío real dejan de coincidir. Sin cambios de infra,
+  IAM, rutas ni layers (el motor de página es stdlib).
+
+### Editor PDF básico: variables reales, vista previa con datos y fidelidad con la hoja (ago 2026)
+> Los tres defectos del editor "tipo Word" (`PdfTemplatesSection`). Los tres tienen la misma
+> raíz: **el editor no sabía nada de la base de datos ni de lo que el motor puede entregar**,
+> así que mostraba una cosa y el PDF real salía otra.
+
+- **Variables INVENTADAS (el mismo defecto del constructor de correos, pero peor aquí).** El
+  menú ofrecía `nombre · email · empresa · ciudad`, clavados en el código. En el envío real
+  `Combination-EAP-PDF` arma el reemplazo con los **encabezados del CSV** (`row_mapping`): si
+  la base no traía esa columna EXACTA, la variable no resolvía. ⚠️ En un PDF el resultado es
+  un **documento personalizado** —un certificado, un extracto— saliendo con el nombre en
+  blanco, que se ve muchísimo más que en un correo. Ahora se monta `DatabaseFieldPicker` en
+  el panel (grupo **Datos**) y el menú ofrece las **columnas reales**; sin base, un estado
+  vacío que dice qué hacer.
+- **Vista previa con datos REALES.** Había 4 valores inventados y, para cualquier otra
+  variable, `sampleValueFor` devolvía **el nombre de la variable** como si fuera su valor:
+  `{{saldo}}` se previsualizaba como la palabra "saldo", que se lee como contenido de verdad.
+  Ahora usa `previewRows[0]` de la base elegida y lo que no tiene dato viaja como `{{campo}}`
+  para que se VEA sin resolver — mismo criterio del Estudio PDF.
+- **Fidelidad lienzo ↔ PDF.** Tres desajustes, todos por copiar mal las medidas de la lambda:
+  - **Margen**: el lienzo dibujaba `64px` (≈1,7 cm) contra los `2cm` de `@page` → lo que se
+    veía cabiendo en el renglón no cabía en el documento. Ahora `PAGE_MARGIN_CM * CM`.
+  - **Cuerpo y títulos**: 15 px contra `12pt` (=16 px), y 26/21/18 px contra `22/18/15pt`.
+    Ahora se derivan de las constantes con `PT = 96/72`. El lienzo también replica el borde
+    y el `border-collapse` de las tablas, que solo existían en el CSS del PDF.
+  - ⚠️ **La fuente NO llegaba al PDF.** El desplegable hacía dos cosas a medias: teñía el
+    lienzo (estado `font`, que no sale en el `innerHTML`) y hacía `execCommand('fontName')`,
+    que solo etiqueta **lo seleccionado** — con el cursor suelto no marcaba nada. Como
+    `wrap_html` fija `body { font-family: Arial… }`, el lienzo se veía en Times y el PDF
+    salía en Helvetica. Ahora `documentHtml()` envuelve el contenido en
+    `<div data-mc-doc style="font-family:…">` (verificado: xhtml2pdf **sí** hereda la fuente
+    a párrafos, títulos y celdas). `setDocumentHtml()` deshace el envoltorio al cargar, para
+    no anidar uno por cada guardado.
+- **Catálogo de fuentes acotado a lo que el PDF puede entregar.** Se midió renderizando con
+  la lambda real y leyendo los `/BaseFont` del PDF: la lambda **no registra tipografías**
+  (`registerFont`), así que xhtml2pdf solo tiene las base-14. `verdana` y `tahoma` caen a
+  **Helvetica** (idénticas a Arial) y `georgia` a **Times-Roman** (idéntica a Times New
+  Roman): de las 6 que se ofrecían salían **3 resultados**. Quedan las 3 que de verdad se
+  distinguen, etiquetadas por familia. Las plantillas ya guardadas con las otras siguen
+  renderizando igual — esto solo acota lo que se puede elegir de aquí en adelante.
+- **`DatabaseFieldPicker`** gana `onDatabaseChange(db)` (la base COMPLETA, para las
+  `previewRows`) y su selector compacto pasa a `flex: '0 1 210px'`: ⚠️ con `minWidth:210`
+  fijo se desbordaba del panel angosto del editor PDF, y con `flex:'1 1'` se estiraba a toda
+  la fila en el constructor de correos empujando los chips fuera. Encoge, no crece.
+- **Cobertura:** `test_render_pdf.py` sube a **13** (+5): que `wrap_html` conserve las
+  medidas que el lienzo replica (si cambian allá, la prueba manda a actualizar el espejo),
+  el tamaño de hoja, que el envoltorio lleve su fuente al PDF **y que sin él NO llegue**, y
+  un guard del catálogo que **falla si dos fuentes ofrecidas producen el mismo PDF**
+  (comprobado: con la lista vieja falla en `Times New Roman == Georgia`). ⚠️ Los tres últimos
+  van bajo `importorskip('xhtml2pdf')` — sin el paquete se saltan, como la prueba de render
+  real que ya existía. El cableado del editor se verificó **en el navegador**: margen 75,6 px,
+  cuerpo 16 px, h1 29,3 px, el menú sin base, las columnas reales, y el `html` que recibe la
+  lambda con su envoltorio y las variables de la fila real.
+- ⚠️ `[J]`: **sin cambios de backend ni de infra.** Todo entra con el build del frontend.
+
 ### Registro numérico, botón en Outlook y textos de relleno fuera del correo (ago 2026)
 > Tanda de ajustes puntuales. Tres tienen consecuencia real en lo que RECIBE el
 > destinatario (el botón cuadrado en Outlook, el texto de relleno que se enviaba tal cual,
@@ -90,6 +199,22 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
 - **"Nuevo" usa el diálogo propio** (`useConfirm`) en vez de `window.confirm`, que no se
   puede estilizar, ignora el tema y aparece con el dominio del sitio como título. El mensaje
   distingue si hay un diseño abierto (queda guardado) de un lienzo sin identidad.
+- **Se acabaron los `window.prompt`/`window.confirm` del portal** (quedaban dos):
+  - **Enlace del editor de Plantillas PDF.** ⚠️ Abrir un `Dialog` de MUI **mueve el foco y
+    la selección del `contentEditable` se pierde**, así que `createLink` no tendría sobre qué
+    aplicarse: hay que **guardar el `Range`** antes de abrir y restaurarlo al aceptar (mismo
+    patrón de `RichTextEditor`). ⚠️ Y no basta `!sel.isCollapsed`: al hacer clic en un `<h1>`
+    a la derecha de donde termina su texto la selección existe pero vale `"\n"` — el diálogo
+    anunciaba "se va a enlazar el texto seleccionado" y después el enlace no se aplicaba (el
+    clic parecía no responder). `seleccionDelLienzo()` trata el blanco como "sin selección" y,
+    en ese caso, **inserta el enlace completo** con el texto que escriba el usuario (o la URL)
+    en vez de no hacer nada. La URL se valida con **`isSafeHref`**, que se **exportó** de
+    `richText.ts` para no duplicar el criterio entre los dos editores.
+  - **Código para desactivar el 2FA.** Eran **dos** diálogos encadenados para una sola acción
+    (aviso `useConfirm` → `window.prompt` del navegador). Ahora es **uno**, con el aviso dentro.
+    Un código errado **no cierra** el diálogo (el TOTP rota cada 30 s; cerrarlo obligaría a
+    empezar de nuevo) y **no lleva `maxLength:6`**, porque un código de **respaldo** es más
+    largo y con el tope no se podría pegar completo.
 - **Prueba de envío: los enlaces del pie NO funcionan, y es a propósito.** Se agregó un
   `Alert` que lo dice en el diálogo. Si funcionaran, probar tu propia plantilla te daría de
   **baja de tu propia lista** y dejarías de recibir las campañas reales sin saber por qué.
@@ -97,9 +222,15 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   la tabla en `[if !mso]`, `arcsize` en % acotado a 50, margen por alineación en los tres
   valores, alt propio que gana y respaldo al legado, alto de productos en el `<img>`, bloques
   nacidos vacíos, el aviso del chequeo previo, y que `PLATFORM_VARIABLES` no traiga variables
-  de datos). Frontend sube a **151**. `test_login_lockout.py` +2 (el 429 escalado explica el
-  motivo; el primer bloqueo NO repite la explicación porque ahí sí hubo aviso) → backend
+  de datos) y a **129** con los 4 de `isSafeHref` (esquemas válidos, ancla y variable,
+  `javascript:`/`data:` incluso con mayúsculas o espacios delante, y que sin esquema NO se
+  asuma https). Frontend sube a **155**. `test_login_lockout.py` +2 (el 429 escalado explica
+  el motivo; el primer bloqueo NO repite la explicación porque ahí sí hubo aviso) → backend
   **752**.
+  ⚠️ Los dos diálogos nuevos NO tienen prueba unitaria: el repo no trae
+  `@testing-library/react` y montar un `contentEditable` con selección real en jsdom no
+  reproduce el defecto que se está arreglando. Se verificaron **en el navegador** (los dos
+  caminos del enlace, el rechazo de `javascript:`, y el diálogo del 2FA con código errado).
 - ⚠️ `[J]`: **redesplegar `Api_V1_Security_Login`** (solo cambia el texto del 429; sin el
   redespliegue el bloqueo sigue funcionando igual, con el mensaje corto de antes). Sin
   cambios de infra, IAM ni rutas.
@@ -2682,7 +2813,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **752** pruebas (~2 min) y la de frontend 151. Correrlas
+> La suite de backend son **770** pruebas (~3 min) y la de frontend 155. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 
@@ -3123,7 +3254,7 @@ README.md
 ---
 
 ## 7. Referencias rápidas
-- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 451 CP en 22 módulos) y su
+- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 490 CP en 22 módulos) y su
   **planilla de ejecución `CASOS_PRUEBA_QA.xlsx`** (un CP por fila + columnas para marcar
   **Pasó / No pasó**, resultado obtenido, observaciones, quién y cuándo; hoja de Resumen con
   conteos por estado, prioridad y módulo). ⚠️ El **`.md` es la fuente de verdad**: la planilla

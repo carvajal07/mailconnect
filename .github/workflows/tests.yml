@@ -48,7 +48,12 @@ jobs:
       - name: Configurar Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # ⚠️ NO bajar de 22: con Node 20 vitest ni siquiera arranca ("Test Files: no
+          # tests" + `TypeError: webidl.util.markAsUncloneable is not a function` al cargar
+          # jsdom). No es un fallo de las pruebas — son las dependencias, que piden más:
+          # `undici` >=22.19.0 y `jsdom` 30 ^22.22.2. El repo llevaba varios merges con
+          # el CI del frontend en rojo por esto.
+          node-version: '22'
           cache: npm
           cache-dependency-path: 05_Frontend/Front/page/package-lock.json
 

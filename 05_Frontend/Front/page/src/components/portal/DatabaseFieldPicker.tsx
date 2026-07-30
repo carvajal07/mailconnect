@@ -28,14 +28,18 @@ import { isOk } from '../../services/apiClient';
  *   WSP/DOCX lo agregan a la lista de parámetros). Si no se pasa, el clic copia `{{campo}}`
  *   al portapapeles.
  * - `onFieldsChange(fields)`: notifica los campos de la base elegida (para menús externos).
+ * - `onDatabaseChange(db)`: notifica la base COMPLETA. Hace falta cuando el consumidor
+ *   necesita algo más que los nombres de columna — típicamente `previewRows`, para
+ *   previsualizar con datos REALES en vez de valores inventados.
  */
 interface Props {
   onInsert?: (field: string) => void;
   onFieldsChange?: (fields: string[]) => void;
+  onDatabaseChange?: (db: DatabaseFile | null) => void;
   compact?: boolean;
 }
 
-export const DatabaseFieldPicker = ({ onInsert, onFieldsChange, compact }: Props) => {
+export const DatabaseFieldPicker = ({ onInsert, onFieldsChange, onDatabaseChange, compact }: Props) => {
   const user = getUser();
   const customerId = user?.customerId ?? '';
   const customer = user?.customer ?? '';
@@ -66,6 +70,11 @@ export const DatabaseFieldPicker = ({ onInsert, onFieldsChange, compact }: Props
     notifyFields(fields);
   }, [fields, notifyFields]);
 
+  const notifyDatabase = useCallback(onDatabaseChange ?? (() => {}), [onDatabaseChange]);
+  useEffect(() => {
+    notifyDatabase(selected ?? null);
+  }, [selected, notifyDatabase]);
+
   const handleField = (field: string) => {
     if (onInsert) onInsert(field);
     else navigator.clipboard?.writeText(`{{${field}}}`).catch(() => { /* sin portapapeles: no pasa nada */ });
@@ -79,7 +88,12 @@ export const DatabaseFieldPicker = ({ onInsert, onFieldsChange, compact }: Props
       value={selectedId}
       onChange={(e) => setSelectedId(e.target.value)}
       fullWidth={!compact}
-      sx={compact ? { minWidth: 210 } : undefined}
+      // Compacto: PIDE 210 px, puede ENCOGER pero no crecer (`flex: 0 1`).
+      // - Sin encoger (`minWidth:210` fijo) se desbordaba en un anfitrión angosto, como el
+      //   panel de herramientas del editor PDF: el nombre del archivo salía del borde.
+      // - Con crecer (`flex: 1 1`) se estiraba a todo lo ancho en el constructor de correos
+      //   y empujaba los chips de campos fuera de la fila.
+      sx={compact ? { flex: '0 1 210px', minWidth: 0 } : undefined}
       helperText={compact ? undefined : (
         databases.length === 0
           ? (loading ? 'Cargando bases…' : 'No tienes bases cargadas. Súbelas en "Bases de datos".')

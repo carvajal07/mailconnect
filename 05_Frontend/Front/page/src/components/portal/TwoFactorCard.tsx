@@ -8,7 +8,6 @@ import QRCode from 'qrcode';
 import { totpService } from '../../services/totpService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
-import { useConfirm } from '../../hooks/useConfirm';
 
 /**
  * Tarjeta de SEGUNDO FACTOR (2FA TOTP) en "Mi cuenta" (Bloque I). Enrolamiento con QR
@@ -17,7 +16,6 @@ import { useConfirm } from '../../hooks/useConfirm';
  */
 export const TwoFactorCard = () => {
   const { notify, FeedbackSnackbar } = useFeedback();
-  const { confirm, ConfirmDialog } = useConfirm();
 
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(false);
@@ -31,6 +29,10 @@ export const TwoFactorCard = () => {
 
   // Códigos de respaldo (tras activar).
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
+
+  // Desactivación (aviso + código en el MISMO diálogo).
+  const [disableOpen, setDisableOpen] = useState(false);
+  const [disableCode, setDisableCode] = useState('');
 
   const loadStatus = () => {
     setLoading(true);
@@ -74,23 +76,28 @@ export const TwoFactorCard = () => {
     notify('Segundo factor activado.', 'success');
   };
 
-  const disable = async () => {
-    const ok = await confirm({
-      title: 'Desactivar segundo factor',
-      message: 'Para desactivar el 2FA ingresa un código de tu app de autenticación (o uno de respaldo). '
-        + 'Tu cuenta quedará protegida solo con la contraseña.',
-      confirmText: 'Continuar',
-    });
-    if (!ok) return;
-    const entered = window.prompt('Código de tu app de autenticación (o un código de respaldo):');
+  /**
+   * Desactivar el 2FA en UN solo diálogo.
+   *
+   * Antes eran dos seguidos para una sola acción: un aviso de confirmación y detrás el
+   * `window.prompt` del navegador pidiendo el código. El aviso ahora vive DENTRO del mismo
+   * diálogo que pide el código, que es donde tiene sentido leerlo.
+   */
+  const disable = () => { setDisableCode(''); setDisableOpen(true); };
+
+  const confirmDisable = async () => {
+    const entered = disableCode.trim();
     if (!entered) return;
     setBusy(true);
-    const res = await totpService.disable(entered.trim());
+    const res = await totpService.disable(entered);
     setBusy(false);
     if (isOk(res)) {
+      setDisableOpen(false);
       setEnabled(false);
       notify('Segundo factor desactivado.', 'success');
     } else {
+      // El diálogo se queda ABIERTO: un código errado es lo normal (el TOTP rota cada 30 s)
+      // y cerrarlo obligaría a empezar de nuevo.
       notify(res.description || 'No se pudo desactivar. ¿El código es correcto?', 'error');
     }
   };
@@ -178,8 +185,36 @@ export const TwoFactorCard = () => {
         </DialogActions>
       </Dialog>
 
+      {/* Desactivar: el aviso y el código, juntos (antes eran dos diálogos encadenados) */}
+      <Dialog open={disableOpen} onClose={() => setDisableOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Desactivar segundo factor</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            Tu cuenta quedará protegida <strong>solo con la contraseña</strong>.
+          </Alert>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Para confirmar que eres tú, ingresa un código de tu app de autenticación (o uno de
+            respaldo).
+          </Typography>
+          <TextField
+            autoFocus fullWidth label="Código de verificación" placeholder="123456"
+            value={disableCode} onChange={(e) => setDisableCode(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && disableCode.trim() && !busy) confirmDisable(); }}
+            // Sin `maxLength` de 6: un código de RESPALDO es más largo que un TOTP y con el
+            // tope no se podría pegar completo.
+            inputProps={{ autoComplete: 'one-time-code' }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDisableOpen(false)}>Cancelar</Button>
+          <Button variant="contained" color="error" onClick={confirmDisable}
+            disabled={busy || !disableCode.trim()}>
+            {busy ? <CircularProgress size={20} color="inherit" /> : 'Desactivar'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {FeedbackSnackbar}
-      {ConfirmDialog}
     </Paper>
   );
 };

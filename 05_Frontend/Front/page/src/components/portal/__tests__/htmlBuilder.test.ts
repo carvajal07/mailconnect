@@ -11,6 +11,7 @@ import {
   variableToken,
   usedVariables,
   richToPlain,
+  isSafeHref,
 } from '../richText';
 import {
   createBlock,
@@ -975,5 +976,33 @@ describe('variables ofrecidas sin base de datos', () => {
     expect(PLATFORM_VARIABLES).not.toContain('nombre');
     expect(PLATFORM_VARIABLES).not.toContain('empresa');
     expect(PLATFORM_VARIABLES).not.toContain('ciudad');
+  });
+});
+
+describe('isSafeHref (criterio de URL compartido)', () => {
+  // Se exportó para que el editor de Plantillas PDF valide su diálogo de enlace con el
+  // MISMO criterio que el constructor de correos, en vez de duplicar la lista.
+  it('acepta los esquemas de un enlace normal', () => {
+    expect(isSafeHref('https://empresa.com/a?b=1')).toBe(true);
+    expect(isSafeHref('http://empresa.com')).toBe(true);
+    expect(isSafeHref('mailto:hola@empresa.com')).toBe(true);
+    expect(isSafeHref('tel:+573001234567')).toBe(true);
+  });
+
+  it('acepta anclas y variables de plantilla', () => {
+    expect(isSafeHref('#seccion')).toBe(true);
+    expect(isSafeHref('{{unsubscribeUrl}}')).toBe(true);
+  });
+
+  it('rechaza los vectores clásicos', () => {
+    expect(isSafeHref('javascript:alert(1)')).toBe(false);
+    expect(isSafeHref('JavaScript:alert(1)')).toBe(false);   // no se escapa por mayúsculas
+    expect(isSafeHref('  javascript:alert(1)')).toBe(false); // ni por espacios delante
+    expect(isSafeHref('data:text/html;base64,PHNjcmlwdD4=')).toBe(false);
+  });
+
+  it('rechaza lo que no es un enlace', () => {
+    expect(isSafeHref('')).toBe(false);
+    expect(isSafeHref('empresa.com')).toBe(false);  // sin esquema no se asume https
   });
 });

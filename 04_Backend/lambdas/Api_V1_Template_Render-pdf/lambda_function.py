@@ -42,6 +42,7 @@ import tempfile
 import urllib.request
 import uuid
 from datetime import datetime
+from html.parser import HTMLParser
 
 import boto3
 from botocore.client import Config
@@ -104,11 +105,273 @@ def _safe_filename(name, default='plantilla.pdf'):
 # ---------------------------------------------------------------------------
 # Render HTML → PDF (idéntico al del combinador del envío real).
 # ---------------------------------------------------------------------------
-_PAGE_CSS = {
-    'A4': '@page { size: A4; margin: 2cm; }',
-    'CARTA': '@page { size: Letter; margin: 2cm; }',
-    'LETTER': '@page { size: Letter; margin: 2cm; }',
+# ---------------------------------------------------------------------------
+# Configuración de PÁGINA del documento (tamaño, orientación, márgenes,
+# encabezado y pie con número de página).
+#
+# ⚠️ La configuración viaja DENTRO del propio HTML, en los `data-*` del envoltorio
+# `data-mc-doc` que emite el editor, y no como parámetros del endpoint. Es a
+# propósito: en el envío real el combinador (`Combination-EAP-PDF`) recibe la
+# plantilla por SQS y NO conoce nada de lo que el cliente configuró en el editor.
+# Guardándolo en el documento, la vista previa y el envío real usan lo mismo sin
+# tocar el esquema de `messageTemplate` ni el mensaje de la cola.
+# ---------------------------------------------------------------------------
+PAGE_DIMS_CM = {          # (ancho, alto) en VERTICAL
+    'A4': (21.0, 29.7),
+    'CARTA': (21.59, 27.94),
+    'LETTER': (21.59, 27.94),
 }
+DEFAULT_MARGIN_CM = 2.0
+BAND_CM = 1.0             # alto de la banda de encabezado / pie
+BAND_GAP_CM = 0.3         # aire entre la banda y el contenido
+
+
+def _cm(valor):
+    """Número en cm sin el `.0` sobrante: 2.0 → "2", 1.5 → "1.5"."""
+    return ('%g' % round(float(valor), 3))
+
+
+def _clamp(valor, minimo, maximo):
+    return max(minimo, min(maximo, valor))
+
+
+def _parse_margins(raw):
+    """`data-mc-margin` en cm, formato CSS: "2" · "2 3" · "2 3 2 3" (arriba der abajo izq)."""
+    partes = []
+    for tok in str(raw or '').replace(',', ' ').split():
+        try:
+            partes.append(_clamp(float(tok), 0.0, 10.0))
+        except ValueError:
+            pass
+    if not partes:
+        return (DEFAULT_MARGIN_CM,) * 4
+    if len(partes) == 1:
+        return (partes[0],) * 4
+    if len(partes) == 2:
+        return (partes[0], partes[1], partes[0], partes[1])
+    if len(partes) == 3:
+        return (partes[0], partes[1], partes[2], partes[1])
+    return tuple(partes[:4])
+
+
+def _doc_attrs(html):
+    """Lee los `data-*` de la etiqueta de apertura del envoltorio `data-mc-doc`.
+
+    Solo se mira ESA etiqueta (una sola, con un regex acotado a `<div ...>`), no el
+    documento completo: parsear HTML con expresiones regulares es frágil, pero leer
+    los atributos de una etiqueta de apertura conocida no lo es."""
+    m = re.search(r'<div[^>]*\bdata-mc-doc\b[^>]*>', html or '', re.I)
+    if not m:
+        return {}
+    tag = m.group(0)
+    return {k.lower(): v for k, v in re.findall(
+        r'(data-mc-[a-z-]+)\s*=\s*"([^"]*)"', tag, re.I)}
+
+
+def _doc_font(html):
+    """Tipografía del envoltorio del documento, para poder repetirla en las bandas."""
+    tag = re.search(r'<div[^>]*\bdata-mc-doc\b[^>]*>', html or '', re.I)
+    if not tag:
+        return ''
+    fuente = re.search(r'font-family\s*:\s*([^;"\']+)', tag.group(0), re.I)
+    return fuente.group(1).strip() if fuente else ''
+
+
+class _MarkedExtractor(HTMLParser):
+    """Encuentra el elemento que lleva `attr` y devuelve su contenido y sus límites.
+
+    Se usa `html.parser` de la stdlib (no BeautifulSoup, que no está garantizada en el
+    layer) llevando la cuenta de la profundidad, para cerrar en la etiqueta correcta
+    aunque el encabezado tenga divs anidados dentro."""
+
+    def __init__(self, attr):
+        HTMLParser.__init__(self, convert_charrefs=False)
+        self.attr = attr.lower()
+        self.inicio = None
+        self.fin = None
+        self._profundidad = 0
+        self._dentro = False
+        self._contenido_desde = None
+
+    def handle_starttag(self, tag, attrs):
+        if self._dentro:
+            if tag == self._tag:
+                self._profundidad += 1
+            return
+        if self.inicio is not None:
+            return
+        if any(k.lower() == self.attr for k, _ in attrs):
+            self._dentro = True
+            self._tag = tag
+            self._profundidad = 1
+            self.inicio = self.getpos()
+            self._contenido_desde = None
+
+    def handle_endtag(self, tag):
+        if not self._dentro or tag != self._tag:
+            return
+        self._profundidad -= 1
+        if self._profundidad == 0:
+            self._dentro = False
+            self.fin = self.getpos()
+
+
+def _offset(html, pos):
+    """(línea, columna) de HTMLParser → índice absoluto en la cadena."""
+    linea, col = pos
+    idx = 0
+    for _ in range(linea - 1):
+        idx = html.index('\n', idx) + 1
+    return idx + col
+
+
+def _extract_marked(html, attr):
+    """Saca del HTML el elemento marcado con `attr`. Devuelve (contenido, resto).
+
+    El encabezado y el pie se EXTRAEN del flujo: xhtml2pdf los coloca en su marco
+    estático por `-pdf-frame-content`, así que deben emitirse una sola vez y no
+    quedar además en medio del contenido."""
+    if not html or attr not in html.lower():
+        return '', html
+    try:
+        p = _MarkedExtractor(attr)
+        p.feed(html)
+        p.close()
+        if p.inicio is None or p.fin is None:
+            return '', html
+        ini = _offset(html, p.inicio)
+        cierre = html.find('>', _offset(html, p.fin))
+        if cierre < 0:
+            return '', html
+        bloque = html[ini:cierre + 1]
+        interno = bloque[bloque.index('>') + 1:bloque.rindex('<')]
+        return interno, html[:ini] + html[cierre + 1:]
+    except Exception as e:
+        # Ante un HTML raro se prefiere dejarlo en el flujo (el encabezado saldría una vez,
+        # en medio del documento) antes que tumbar el render entero.
+        print('No se pudo extraer {}: {}'.format(attr, e))
+        return '', html
+
+
+def _page_tokens(html):
+    """`[[pagina]]`/`[[paginas]]` → las etiquetas de numeración de xhtml2pdf.
+
+    ⚠️ Se usan corchetes y NO `{{…}}` a propósito: las llaves son el formato de las
+    variables de la BASE DE DATOS y `render_variables` corre ANTES que esto, así que
+    una columna del CSV llamada "pagina" habría pisado el número de página."""
+    out = str(html or '')
+    out = re.sub(r'\[\[\s*paginas\s*\]\]', '<pdf:pagecount />', out, flags=re.I)
+    out = re.sub(r'\[\[\s*pagina\s*\]\]', '<pdf:pagenumber />', out, flags=re.I)
+    return out
+
+
+def page_setup(html, page_size='A4'):
+    """Configuración efectiva del documento: lo que diga el HTML manda sobre el parámetro."""
+    attrs = _doc_attrs(html)
+    tamano = str(attrs.get('data-mc-size') or page_size or 'A4').upper()
+    if tamano not in PAGE_DIMS_CM:
+        tamano = 'A4'
+    apaisado = str(attrs.get('data-mc-orientation', '')).lower() == 'landscape'
+    ancho, alto = PAGE_DIMS_CM[tamano]
+    if apaisado:
+        ancho, alto = alto, ancho
+    mt, mr, mb, ml = _parse_margins(attrs.get('data-mc-margin'))
+    # Un margen absurdo dejaría el contenido sin ancho útil: se acota a la mitad de la hoja.
+    ml = _clamp(ml, 0.0, ancho / 2 - 1)
+    mr = _clamp(mr, 0.0, ancho / 2 - 1)
+    mt = _clamp(mt, 0.0, alto / 2 - 1)
+    mb = _clamp(mb, 0.0, alto / 2 - 1)
+    return {
+        'size': 'Letter' if tamano in ('CARTA', 'LETTER') else 'A4',
+        'landscape': apaisado,
+        'width': ancho, 'height': alto,
+        'margins': (mt, mr, mb, ml),
+    }
+
+
+def _page_css(cfg, con_encabezado, con_pie):
+    """CSS de `@page`. Con encabezado o pie se usan MARCOS (`@frame`) de xhtml2pdf.
+
+    ⚠️ Sin encabezado ni pie se emite el `@page` simple de siempre: declarar marcos
+    cambia el modelo de maquetación (el contenido pasa a fluir en un marco explícito),
+    y no hay razón para exponer a ese cambio a los documentos que no los usan."""
+    mt, mr, mb, ml = cfg['margins']
+    orient = ' landscape' if cfg['landscape'] else ''
+    borde = '@page {{ size: {}{}; margin: {}cm {}cm {}cm {}cm;'.format(
+        cfg['size'], orient, _cm(mt), _cm(mr), _cm(mb), _cm(ml))
+    if not con_encabezado and not con_pie:
+        return borde + ' }'
+
+    # El encabezado y el pie viven DENTRO del margen. Si el margen no da para la banda,
+    # el contenido se corre hacia adentro en vez de que la banda se monte sobre el texto.
+    alto_sup = (BAND_CM + BAND_GAP_CM) if con_encabezado else 0.0
+    alto_inf = (BAND_CM + BAND_GAP_CM) if con_pie else 0.0
+    contenido_top = max(mt, alto_sup)
+    contenido_bot = max(mb, alto_inf)
+    ancho_util = cfg['width'] - ml - mr
+    alto_util = cfg['height'] - contenido_top - contenido_bot
+
+    partes = [borde]
+    if con_encabezado:
+        partes.append(
+            ' @frame mc_header_frame {{ -pdf-frame-content: mc_header;'
+            ' left: {}cm; width: {}cm; top: {}cm; height: {}cm; }}'.format(
+                _cm(ml), _cm(ancho_util),
+                _cm(max(0.2, contenido_top - BAND_CM - BAND_GAP_CM)), _cm(BAND_CM)))
+    partes.append(
+        ' @frame mc_content_frame {{ left: {}cm; width: {}cm; top: {}cm; height: {}cm; }}'.format(
+            _cm(ml), _cm(ancho_util), _cm(contenido_top), _cm(alto_util)))
+    if con_pie:
+        partes.append(
+            ' @frame mc_footer_frame {{ -pdf-frame-content: mc_footer;'
+            ' left: {}cm; width: {}cm; top: {}cm; height: {}cm; }}'.format(
+                _cm(ml), _cm(ancho_util),
+                _cm(cfg['height'] - contenido_bot + BAND_GAP_CM), _cm(BAND_CM)))
+    partes.append(' }')
+    # ⚠️ Sin `.format()` final: a esta altura la cadena ya trae las llaves LITERALES del
+    # CSS, y `str.format` sobre ellas lanza ValueError.
+    return ''.join(partes)
+
+
+def wrap_html(inner, page_size='A4'):
+    """Envuelve el HTML del editor en un documento con marco de página.
+
+    Lee del propio HTML el tamaño, la orientación, los márgenes y —si los hay— el
+    encabezado y el pie, que se extraen del flujo y se emiten como contenido de sus
+    marcos estáticos para que se repitan en TODAS las hojas.
+    """
+    inner = inner or ''
+    encabezado, inner = _extract_marked(inner, 'data-mc-header')
+    pie, inner = _extract_marked(inner, 'data-mc-footer')
+    encabezado, pie = encabezado.strip(), pie.strip()
+    cfg = page_setup(inner, page_size)
+    page = _page_css(cfg, bool(encabezado), bool(pie))
+
+    # Las bandas salen del envoltorio al extraerse, así que perderían su tipografía: se les
+    # vuelve a poner la del documento para que el membrete no quede en otra fuente.
+    fuente = _doc_font(inner)
+    estilo_banda = ' style="font-family:{}"'.format(fuente) if fuente else ''
+
+    bandas = ''
+    if encabezado:
+        bandas += '<div id="mc_header" class="mc-band"{}>{}</div>'.format(
+            estilo_banda, _page_tokens(encabezado))
+    if pie:
+        bandas += '<div id="mc_footer" class="mc-band"{}>{}</div>'.format(
+            estilo_banda, _page_tokens(pie))
+
+    return (
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+        + page +
+        ' body { font-family: Arial, Helvetica, sans-serif; font-size: 12pt; color: #111; line-height: 1.5; }'
+        ' h1 { font-size: 22pt; } h2 { font-size: 18pt; } h3 { font-size: 15pt; }'
+        ' img { max-width: 100%; }'
+        ' table { border-collapse: collapse; width: 100%; }'
+        ' td, th { border: 1px solid #cbd5e1; padding: 6px; }'
+        ' blockquote { border-left: 3px solid #cbd5e1; margin: 8px 0; padding-left: 10px; color: #555; }'
+        ' .mc-band { font-size: 9pt; color: #555; }'
+        '</style></head><body>' + bandas + inner + '</body></html>'
+    )
 
 
 def render_variables(html, mapping):
@@ -135,20 +398,6 @@ def row_mapping(headers, row):
     return mapping
 
 
-def wrap_html(inner, page_size='A4'):
-    """Envuelve el HTML del editor en un documento con marco de página (tamaño + CSS base)."""
-    page = _PAGE_CSS.get(str(page_size or 'A4').upper(), _PAGE_CSS['A4'])
-    return (
-        '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
-        + page +
-        ' body { font-family: Arial, Helvetica, sans-serif; font-size: 12pt; color: #111; line-height: 1.5; }'
-        ' h1 { font-size: 22pt; } h2 { font-size: 18pt; } h3 { font-size: 15pt; }'
-        ' img { max-width: 100%; }'
-        ' table { border-collapse: collapse; width: 100%; }'
-        ' td, th { border: 1px solid #cbd5e1; padding: 6px; }'
-        ' blockquote { border-left: 3px solid #cbd5e1; margin: 8px 0; padding-left: 10px; color: #555; }'
-        '</style></head><body>' + (inner or '') + '</body></html>'
-    )
 
 
 def _link_callback(uri, rel):

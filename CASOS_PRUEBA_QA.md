@@ -373,6 +373,16 @@
 | CP-NEW-02 | 🟡 | Cancelar no vacía | En ese diálogo, pulsar Cancelar | El lienzo queda intacto y el diseño abierto sigue siendo el mismo |
 | CP-TST-01 | 🟢 | Nota de los enlaces del pie | Abrir "Enviarme una prueba" | Explica que "Administrar preferencias" y "Cancelar suscripción" no hacen nada en la prueba |
 | CP-TST-02 | 🟡 | Los enlaces del pie son inertes en la prueba | Enviarse una prueba y pulsar "Cancelar suscripción" en el correo recibido | NO da de baja el correo (sigue recibiendo campañas reales de esa lista) |
+| CP-LNK-01 | 🟡 | **Enlace sin popup del navegador** | Plantillas PDF básicas → seleccionar una palabra → botón de enlace | Sale el diálogo de la aplicación, NO el popup gris del navegador |
+| CP-LNK-02 | 🔴 | **La selección sobrevive al diálogo** | Con una palabra seleccionada, poner `https://empresa.com` → Insertar | El enlace envuelve **esa palabra** (el diálogo anuncia cuál antes de aceptar) |
+| CP-LNK-03 | 🔴 | Sin selección inserta el enlace completo | Poner el cursor al final de un párrafo (sin seleccionar) → enlace → URL + "Texto que se ve" | Inserta el enlace con ese texto; si se deja vacío, muestra la URL |
+| CP-LNK-04 | 🟡 | Clic a la derecha del título no engaña | Hacer clic en un `<h1>` pasado el final de su texto → enlace | Ofrece el campo "Texto que se ve" (no dice que va a enlazar una selección que no existe) |
+| CP-LNK-05 | 🔴 | URL insegura rechazada | Escribir `javascript:alert(1)` → Insertar | Avisa que no es válida y NO inserta nada |
+| CP-LNK-06 | 🟡 | Esquemas aceptados | Probar `https://`, `mailto:` y `tel:` | Los tres insertan el enlace |
+| CP-2FA-08 | 🟡 | **Desactivar 2FA en un solo diálogo** | Mi cuenta → Desactivar 2FA | Un único diálogo con el aviso Y el campo del código (antes eran dos seguidos, el 2º del navegador) |
+| CP-2FA-09 | 🟡 | Código errado no cierra el diálogo | En ese diálogo poner `000000` → Desactivar | Avisa del error y el diálogo **sigue abierto** con el campo listo (el TOTP rota cada 30 s) |
+| CP-2FA-10 | 🟡 | Cabe un código de respaldo | Pegar un código de respaldo completo (más largo que 6 dígitos) | Entra completo, no se corta |
+| CP-2FA-11 | 🟢 | Botón deshabilitado sin código | Abrir el diálogo y no escribir nada | "Desactivar" está deshabilitado |
 
 ---
 
@@ -380,6 +390,35 @@
 
 | ID | Prioridad | Caso | Pasos | Resultado esperado |
 |----|-----------|------|-------|--------------------|
+| CP-PDFB-01 | 🔴 | **Variables desde la base real** | Plantillas PDF básicas → panel Datos → elegir una base → botón "Variable" | Ofrece las **columnas reales** de esa base, no `nombre/email/empresa/ciudad` |
+| CP-PDFB-02 | 🔴 | Sin base no ofrece variables inventadas | Abrir "Variable" sin base elegida | Dice "Elige una base de datos abajo…"; no lista ninguna variable |
+| CP-PDFB-03 | 🔴 | **La variable resuelve en el envío real** | Insertar `{{<columna real>}}`, guardar, crear campaña EAP-PDF con esa base y enviar una muestra | El PDF adjunto trae el dato del destinatario, no un hueco ni el token |
+| CP-PDFB-04 | 🔴 | **Vista previa con datos reales** | Con base elegida, insertar 2 variables → "Vista previa PDF" | El PDF muestra los valores de la **primera fila real** de la base |
+| CP-PDFB-05 | 🟡 | Variable sin dato se ve sin resolver | Escribir a mano `{{no_existe}}` → Vista previa | Sale como `{{no_existe}}`, NO como la palabra "no_existe" |
+| CP-PDFB-06 | 🟡 | Base sin filas de muestra | Elegir una base cargada antes de `previewRows` | Avisa que las variables se verán sin resolver |
+| CP-PDFB-07 | 🔴 | **Margen del lienzo = margen del PDF** | Escribir un párrafo largo hasta el borde derecho → Vista previa | El corte de línea coincide; el lienzo usa 2 cm igual que el PDF |
+| CP-PDFB-08 | 🟡 | Tamaños de cuerpo y títulos | Comparar un h1 y un párrafo en el lienzo contra el PDF | Se ven del mismo tamaño relativo (12 pt cuerpo · 22/18/15 pt títulos) |
+| CP-PDFB-09 | 🔴 | **La fuente elegida llega al PDF** | Elegir "Times New Roman · con serifa" y generar la vista previa **sin seleccionar texto** | Todo el documento sale con serifa en el PDF (antes salía en Arial) |
+| CP-PDFB-10 | 🟡 | Fuente al guardar y volver a cargar | Guardar con Times, "Nueva", y cargar la plantilla | Vuelve con Times elegida; el HTML no acumula un envoltorio por cada guardado |
+| CP-PDFB-11 | 🟡 | Catálogo de fuentes honesto | Abrir el desplegable de fuente | Solo 3 opciones, etiquetadas por familia; ya no aparecen Verdana/Tahoma/Georgia (producían el mismo PDF) |
+| CP-PDFB-12 | 🟢 | Plantilla vieja con fuente retirada | Cargar una plantilla guardada con Georgia | Se sigue viendo y renderizando como siempre |
+| CP-PDFB-13 | 🟢 | Panel de datos no se desborda | Elegir una base de nombre largo | El selector queda dentro del panel de herramientas, sin cortarse por fuera |
+| CP-PDFP-01 | 🔴 | **Encabezado en TODAS las hojas** | Configurar página → Encabezado "ACME" → escribir contenido de 3 hojas → Vista previa PDF | "ACME" aparece en las 3 páginas |
+| CP-PDFP-02 | 🔴 | **Numeración del pie** | Pie = `Página [[pagina]] de [[paginas]]` (botones) → Vista previa | Sale "Página 1 de 3", "Página 2 de 3", "Página 3 de 3" |
+| CP-PDFP-03 | 🔴 | **El membrete llega al ENVÍO REAL** | Guardar esa plantilla, usarla en campaña EAP-PDF y enviar muestra | El PDF adjunto trae membrete y numeración igual que la vista previa |
+| CP-PDFP-04 | 🟡 | El membrete no se duplica | Vista previa con encabezado y pie | No aparecen además en medio del contenido de la primera hoja |
+| CP-PDFP-05 | 🟡 | Variables de la base en el membrete | Encabezado = `Extracto de {{Nombre}}` con base elegida | Resuelve al dato del destinatario en cada PDF |
+| CP-PDFP-06 | 🔴 | **Columna llamada "pagina" no rompe la numeración** | Base con una columna `pagina` + pie con `[[pagina]]` | El pie sigue numerando; no se sustituye por el dato de la columna |
+| CP-PDFP-07 | 🔴 | **Orientación horizontal** | Configurar página → Horizontal → Vista previa | El PDF sale apaisado; el lienzo también se ve apaisado |
+| CP-PDFP-08 | 🔴 | Márgenes por lado | Poner arriba 3 e izquierda 1,5 → Vista previa | El PDF respeta esos márgenes y el lienzo los dibuja igual |
+| CP-PDFP-09 | 🟡 | Margen absurdo se acota | Escribir 99 en un margen | Se acota (no deja el contenido sin ancho); el PDF sigue generándose |
+| CP-PDFP-10 | 🔴 | **Salto de página manual** | Botón "Salto de página" a mitad del texto → Vista previa | Lo que sigue arranca en hoja nueva |
+| CP-PDFP-11 | 🟡 | El salto se ve en el lienzo | Insertarlo | Aparece una línea de corte con la etiqueta "salto de página" |
+| CP-PDFP-12 | 🟡 | **Guías de corte** | Escribir contenido que pase de una hoja | Aparecen líneas punteadas con "Página 2", "Página 3"… y el aviso de que es aproximado |
+| CP-PDFP-13 | 🟢 | Guías en apaisado | Con hoja horizontal, mirar las guías | La etiqueta "Página N" se ve (a la izquierda), no queda fuera de pantalla |
+| CP-PDFP-14 | 🔴 | **Plantilla vieja sin configuración** | Cargar una guardada antes de esta función | Se ve y renderiza igual que antes: A4 vertical, 2 cm, sin membrete |
+| CP-PDFP-15 | 🟡 | La configuración sobrevive al guardado | Configurar, guardar, "Nueva" y volver a cargar | Vuelve con la misma hoja, orientación, márgenes y membrete |
+| CP-PDFP-16 | 🟢 | Restablecer | Botón "Restablecer" del diálogo | Vuelve a A4 vertical, 2 cm y sin membrete |
 | CP-PDF-01 | 🔴 | Editor básico tipo Word | Crear plantilla con títulos, imagen, tabla y variables | Se guarda en `messageTemplate` canal PDF; se comparte con el equipo |
 | CP-PDF-02 | 🔴 | Vista previa PDF (básico) | Botón "Vista previa PDF" | Devuelve el PDF real con las `{{variables}}` sustituidas por valores de muestra |
 | CP-PDF-03 | 🔴 | Estudio PDF (lienzo) | Crear un diseño con texto, formas, tabla y guardar | Se guarda como `sketchJson`; abre a pantalla completa |
