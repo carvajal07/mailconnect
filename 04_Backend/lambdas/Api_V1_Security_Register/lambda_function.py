@@ -44,6 +44,212 @@ DEFAULT_DISABLED_FEATURES = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Armazón de los correos INTERNOS de la plataforma (activación, códigos, avisos).
+#
+# ⚠️ Está COPIADO en cada lambda que envía correo, siguiendo la convención del repo
+# (igual que `tenant_key` o `_audit`): no hay imports compartidos entre lambdas. Si se
+# toca aquí, hay que replicarlo en TODAS — la lista está en `DESPLIEGUE.md`.
+#
+# Por qué tablas y no `<div>`: los correos anteriores usaban `<div style="max-width:600px">`,
+# y **Outlook de escritorio ignora `max-width`** (motor de Word) → el correo se desparramaba
+# a todo el ancho de la ventana. La maquetación de correo se hace con tablas y una
+# "ghost table" condicional para Outlook.
+# ---------------------------------------------------------------------------
+MAIL_INK = '#16233f'        # navy de la marca
+MAIL_BLUE = '#0075be'       # azul de acción
+MAIL_CYAN = '#00c3ff'
+MAIL_MUTED = '#5b6b86'
+MAIL_BORDER = '#e4ebf3'
+MAIL_BG = '#f4f7fb'
+
+MAIL_SITE = os.environ.get('SITE_URL', 'https://www.mailconnect.com.co')
+# Los assets se sirven junto al sitio (se despliegan con el frontend).
+MAIL_ASSETS = os.environ.get('EMAIL_ASSETS_URL', MAIL_SITE + '/email')
+MAIL_CONTACT = os.environ.get('CONTACT_EMAIL', 'comunicaciones@mailconnect.com.co')
+MAIL_WHATSAPP = os.environ.get('WHATSAPP_URL', 'https://wa.me/573204586576')
+
+# ⚠️ CONFIRMAR los perfiles reales antes de desplegar. Una red con URL vacía simplemente
+# NO se dibuja, así que borrar la línea la quita del pie sin tocar nada más.
+MAIL_SOCIAL = [
+    ('linkedin', 'LinkedIn', os.environ.get('SOCIAL_LINKEDIN', 'https://www.linkedin.com/company/mailconnect')),
+    ('facebook', 'Facebook', os.environ.get('SOCIAL_FACEBOOK', 'https://www.facebook.com/mailconnect')),
+    ('instagram', 'Instagram', os.environ.get('SOCIAL_INSTAGRAM', 'https://www.instagram.com/mailconnect')),
+    ('whatsapp', 'WhatsApp', MAIL_WHATSAPP),
+]
+
+
+def _mail_esc(texto):
+    return (str(texto or '').replace('&', '&amp;').replace('<', '&lt;')
+            .replace('>', '&gt;').replace('"', '&quot;'))
+
+
+def mail_button(etiqueta, url):
+    """Botón BULLETPROOF.
+
+    ⚠️ Outlook de escritorio usa el motor de Word, que ignora `border-radius` (el botón
+    sale cuadrado) y el `padding` del `<a>` (se encoge al texto, sin alto ni ancho). Se
+    emite VML dentro de `[if mso]` y la versión con tabla dentro de `[if !mso]`, así cada
+    motor ve UNA sola versión y no se duplica en ninguno.
+    """
+    etiqueta, url = _mail_esc(etiqueta), _mail_esc(url)
+    alto, ancho = 46, max(180, len(etiqueta) * 10 + 56)
+    vml = (
+        '<!--[if mso]>'
+        '<v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"'
+        ' href="{url}" style="width:{w}px;height:{h}px;v-text-anchor:middle;" arcsize="18%"'
+        ' fillcolor="{blue}" stroke="f"><w:anchorlock/>'
+        '<center style="color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">'
+        '{txt}</center></v:roundrect>'
+        '<![endif]-->'
+    ).format(url=url, w=ancho, h=alto, blue=MAIL_BLUE, txt=etiqueta)
+    estandar = (
+        '<table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin:0 auto;">'
+        '<tr><td align="center" bgcolor="{blue}" style="border-radius:8px;">'
+        '<a href="{url}" target="_blank" style="display:inline-block;padding:14px 28px;'
+        'font-family:Arial,sans-serif;font-size:15px;font-weight:bold;line-height:1.2;'
+        'color:#ffffff;text-decoration:none;border-radius:8px;">{txt}</a>'
+        '</td></tr></table>'
+    ).format(url=url, blue=MAIL_BLUE, txt=etiqueta)
+    return ('<div style="text-align:center;margin:28px 0;">' + vml
+            + '<!--[if !mso]><!-->' + estandar + '<!--<![endif]--></div>')
+
+
+def mail_code(codigo):
+    """Bloque del código de un solo uso: lo que el destinatario viene a copiar."""
+    return (
+        '<table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin:24px auto;">'
+        '<tr><td align="center" bgcolor="#eef7fd" style="border-radius:10px;padding:18px 32px;'
+        'border:1px solid {border};">'
+        '<div style="font-family:Arial,sans-serif;font-size:34px;font-weight:bold;'
+        'letter-spacing:8px;color:{blue};">{code}</div></td></tr></table>'
+    ).format(code=_mail_esc(codigo), blue=MAIL_BLUE, border=MAIL_BORDER)
+
+
+def mail_rows(pares):
+    """Filas etiqueta/valor (resumen diario, reputación, saldo)."""
+    filas = ''.join(
+        '<tr><td style="padding:9px 0;border-bottom:1px solid {b};font-family:Arial,sans-serif;'
+        'font-size:14px;color:{m};">{k}</td>'
+        '<td style="padding:9px 0;border-bottom:1px solid {b};text-align:right;'
+        'font-family:Arial,sans-serif;font-size:14px;font-weight:bold;color:{c};">{v}</td></tr>'.format(
+            b=MAIL_BORDER, m=MAIL_MUTED, k=_mail_esc(k), v=_mail_esc(v),
+            c=(color or MAIL_INK))
+        for k, v, color in pares)
+    return ('<table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0"'
+            ' style="margin:8px 0 4px;">' + filas + '</table>')
+
+
+def _mail_social():
+    iconos = ''.join(
+        '<a href="{url}" target="_blank" style="text-decoration:none;display:inline-block;margin:0 6px;">'
+        '<img src="{assets}/red-{slug}.png" width="22" height="22" alt="{nom}"'
+        ' style="display:inline-block;border:0;" /></a>'.format(
+            url=_mail_esc(url), assets=MAIL_ASSETS, slug=slug, nom=nombre)
+        for slug, nombre, url in MAIL_SOCIAL if str(url or '').strip())
+    if not iconos:
+        return ''
+    return '<div style="margin:0 0 14px;">' + iconos + '</div>'
+
+
+def brand_email(titulo, contenido, cta=None, nota='', preheader=''):
+    """Correo interno con la identidad de la plataforma.
+
+    `contenido` es HTML ya compuesto (párrafos, código, filas). `cta` es (texto, url).
+    `nota` es la letra chica de por qué se recibe este correo.
+    """
+    # El preheader es lo que la bandeja muestra JUNTO al asunto; sin él, Gmail muestra el
+    # primer texto que encuentre (normalmente el enlace del logo, que no dice nada).
+    pre = ('<div style="display:none;font-size:1px;color:#f4f7fb;line-height:1px;'
+           'max-height:0;max-width:0;opacity:0;overflow:hidden;">' + _mail_esc(preheader)
+           + '&#8199;&#65279;&#847; ' * 20 + '</div>') if preheader else ''
+
+    boton = mail_button(cta[0], cta[1]) if cta else ''
+    pie_nota = ('<p style="margin:0 0 10px;font-family:Arial,sans-serif;font-size:12px;'
+                'line-height:1.6;color:#9aa7bd;">' + nota + '</p>') if nota else ''
+
+    # `<style>` aparte del .format() porque lleva llaves literales de CSS.
+    estilos = (
+        '<style type="text/css">'
+        '@media only screen and (max-width:620px){'
+        '  .mc-card{width:100% !important;}'
+        '  .mc-pad{padding-left:22px !important;padding-right:22px !important;}'
+        '}'
+        '</style>'
+    )
+
+    cabeza = (
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"'
+        ' "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">'
+        '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+        '<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />'
+        '<meta name="viewport" content="width=device-width, initial-scale=1" />'
+        '<title>' + _mail_esc(titulo) + '</title>' + estilos + '</head>'
+    )
+
+    cuerpo = (
+        '<body style="margin:0;padding:0;background-color:{bg};">' + pre +
+        '<table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0"'
+        ' style="background-color:{bg};"><tr><td align="center" style="padding:28px 12px;">'
+        # Ghost table: Outlook no respeta max-width, así que allí el ancho se fija aquí.
+        '<!--[if mso]><table role="presentation" width="600" border="0" cellpadding="0"'
+        ' cellspacing="0"><tr><td><![endif]-->'
+        '<table role="presentation" class="mc-card" width="600" border="0" cellpadding="0"'
+        ' cellspacing="0" style="width:600px;max-width:600px;background-color:#ffffff;'
+        'border:1px solid {border};border-radius:14px;">'
+
+        # Encabezado con el logotipo
+        '<tr><td class="mc-pad" align="center" style="padding:30px 36px 8px;">'
+        '<a href="{site}" target="_blank" style="text-decoration:none;">'
+        '<img src="{assets}/logo.png" width="180" alt="MailConnect"'
+        ' style="display:block;border:0;width:180px;max-width:180px;height:auto;" /></a>'
+        '</td></tr>'
+        # Filete de marca
+        '<tr><td style="padding:14px 36px 0;">'
+        '<table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0">'
+        '<tr><td height="3" bgcolor="{cyan}" style="height:3px;line-height:3px;font-size:0;'
+        'border-radius:2px;">&nbsp;</td></tr></table></td></tr>'
+
+        # Contenido
+        '<tr><td class="mc-pad" style="padding:26px 36px 6px;">'
+        '<h1 style="margin:0 0 14px;font-family:Arial,sans-serif;font-size:22px;'
+        'line-height:1.3;color:{ink};">{titulo}</h1>{contenido}</td></tr>'
+        '<tr><td class="mc-pad" style="padding:0 36px;">{boton}</td></tr>'
+
+        # Pie
+        '<tr><td class="mc-pad" align="center" style="padding:26px 36px 30px;">'
+        '<table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0">'
+        '<tr><td height="1" bgcolor="{border}" style="height:1px;line-height:1px;font-size:0;">'
+        '&nbsp;</td></tr></table>'
+        '<div style="padding-top:20px;">{redes}'
+        '<p style="margin:0 0 8px;font-family:Arial,sans-serif;font-size:13px;color:{muted};">'
+        '<a href="{site}" target="_blank" style="color:{blue};text-decoration:none;">'
+        'mailconnect.com.co</a>'
+        ' &nbsp;·&nbsp; <a href="mailto:{correo}" style="color:{blue};text-decoration:none;">'
+        '{correo}</a></p>'
+        '{nota}'
+        '<p style="margin:0;font-family:Arial,sans-serif;font-size:11px;color:#b3bdcc;">'
+        'MailConnect · Comunicaciones masivas omnicanal · Colombia</p>'
+        '</div></td></tr>'
+
+        '</table>'
+        '<!--[if mso]></td></tr></table><![endif]-->'
+        '</td></tr></table></body></html>'
+    ).format(bg=MAIL_BG, border=MAIL_BORDER, ink=MAIL_INK, blue=MAIL_BLUE, cyan=MAIL_CYAN,
+             muted=MAIL_MUTED, site=MAIL_SITE, assets=MAIL_ASSETS, correo=MAIL_CONTACT,
+             titulo=_mail_esc(titulo), contenido=contenido, boton=boton,
+             redes=_mail_social(), nota=pie_nota)
+
+    return cabeza + cuerpo
+
+
+def mail_p(texto, color=None, size=15):
+    """Párrafo del cuerpo, con la tipografía del correo."""
+    return ('<p style="margin:0 0 14px;font-family:Arial,sans-serif;font-size:{s}px;'
+            'line-height:1.65;color:{c};">{t}</p>').format(
+                s=size, c=(color or MAIL_INK), t=texto)
+
+
 def _hash_password(password, salt):
     """PBKDF2-HMAC-SHA256 (stdlib, sin dependencias/layer). Formato auto-descriptivo
     'pbkdf2$<iter>$<hex>'. Reemplaza el SHA-256 de una sola pasada (débil ante GPU)."""
@@ -239,23 +445,18 @@ def send_activation_email(email, name, activation_key):
     base = str(_platform_cfg('ACTIVATION_URL') or ACTIVATION_URL)
     link = "{base}?qs={key}".format(base=base, key=activation_key)
     subject = "Activa tu cuenta de MailConnect"
-    html_body = """
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#16233f">
-      <h2 style="color:#0075be">Bienvenido a MailConnect, {name}</h2>
-      <p>Gracias por registrarte. Para activar tu cuenta haz clic en el siguiente botón:</p>
-      <p style="text-align:center;margin:28px 0">
-        <a href="{link}" style="background:#0075be;color:#fff;text-decoration:none;
-           padding:14px 28px;border-radius:8px;font-weight:bold;display:inline-block">
-           Activar mi cuenta
-        </a>
-      </p>
-      <p>O copia y pega este enlace en tu navegador:<br>
-        <a href="{link}">{link}</a>
-      </p>
-      <p style="color:#5b6b86;font-size:13px">El enlace expira en 24 horas.
-         Si no creaste esta cuenta, ignora este mensaje.</p>
-    </div>
-    """.format(name=name, link=link)
+    html_body = brand_email(
+        'Bienvenido a MailConnect, {}'.format(_mail_esc(name)),
+        mail_p('Gracias por registrarte. Para empezar a enviar, activa tu cuenta con el '
+               'botón de abajo.')
+        # El enlace en texto va DESPUÉS del botón: quien abre el correo busca el botón, y
+        # la URL cruda antes de él solo hace ruido.
+        + mail_p('¿El botón no funciona? Copia este enlace en tu navegador:<br />'
+                 '<a href="{l}" style="color:#0075be;word-break:break-all;">{l}</a>'.format(
+                     l=_mail_esc(link)), color='#5b6b86', size=13),
+        cta=('Activar mi cuenta', link),
+        nota='El enlace expira en 24 horas. Si no creaste esta cuenta, ignora este mensaje.',
+        preheader='Activa tu cuenta para empezar a enviar.')
 
     text_body = "Activa tu cuenta de MailConnect en este enlace: {link} (expira en 24 horas).".format(link=link)
 

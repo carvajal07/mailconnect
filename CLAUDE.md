@@ -26,6 +26,53 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Correos internos: identidad de marca, logo y pie con redes (ago 2026)
+> Los 8 correos que la PLATAFORMA envía (no los del cliente) eran fragmentos HTML sueltos
+> sin marca. Los dos de soporte eran directamente `<p>` pelados con un `<a>` sin estilo.
+
+- **Inventario (8 correos en 6 lambdas):** activación (`Register`), código de un solo uso
+  (`Create-otp`), restablecer contraseña (`Recovery-password`), reputación en riesgo y
+  resumen diario (`Notifications_Scan`), saldo bajo (`Prepare-batch`), y reenviar activación
+  + forzar reseteo (`Admin_User-support`).
+- ⚠️ **Maquetación con TABLAS, no `<div>`.** Todos usaban `<div style="max-width:600px">` y
+  **Outlook de escritorio IGNORA `max-width`** (motor de Word): el correo se desparramaba a
+  todo el ancho de la ventana. Ahora hay tabla de 600 px + **ghost table** en el condicional
+  MSO, que es como se fija el ancho en Outlook.
+- **Botón bulletproof** con el mismo VML del constructor de correos (Word ignora
+  `border-radius` y el `padding` del `<a>`). Una sola versión por motor, sin duplicarse.
+- **Documento HTML completo**: doctype XHTML, `<head>`, charset y viewport. Antes eran
+  fragmentos; Gmail los tolera, pero es lo que hace que un cliente estricto los muestre mal.
+- **Preheader** (el texto que la bandeja muestra junto al asunto). En los correos de código
+  lleva **el código**: se lee sin abrir el correo, que es justo lo que uno quiere.
+- **Logo + pie con LinkedIn, Facebook, Instagram y WhatsApp.** Los assets viven en
+  `public/email/` (`logo.png` + `red-*.png`) y se sirven desde el sitio. ⚠️ El logotipo se
+  **rasterizó** del SVG con Chromium: en correo **no sirve el SVG** (Gmail no lo renderiza)
+  ni un `data:` URI (Gmail los bloquea). Los iconos son las máscaras alfa de
+  `public/social-icons/` teñidas con Pillow al gris de marca.
+- ⚠️ **Las URLs de los perfiles están DERIVADAS de la marca** (`linkedin.com/company/
+  mailconnect`, etc.), pendientes de confirmar. Viven en la constante `MAIL_SOCIAL`; una red
+  con URL vacía **no se dibuja**, así que quitarla es borrar su línea.
+- ⚠️ **Dónde vive el HTML — decisión.** Queda **inline en el código**, copiado en las 6
+  lambdas (convención del repo, como `tenant_key` o `_audit`). Se descartó S3 y SES
+  Templates para los transaccionales: sacar el HTML del artefacto le agrega un modo de fallo
+  en ejecución a un correo que **no puede fallar** (un restablecimiento de contraseña que no
+  sale porque S3 tosió es peor que un diseño viejo). Si molesta la duplicación, el arreglo
+  correcto es un **layer compartido**, no externalizar. SES Templates solo tendría sentido
+  para que mercadeo edite los 3 avisos no críticos sin tocar código — y ⚠️ ahí hay una
+  trampa: es la MISMA cuenta SES de las plantillas de los clientes, y `Admin_Templates`
+  lista y permite **borrar** todas; alguien borrando `mc_activacion` deja el registro sin
+  correo.
+- **Cobertura:** `test_correos_internos.py` (17): documento completo, tablas + ghost table,
+  logo con `alt`, las 4 redes, una red sin URL que no se dibuja, botón con una sola versión
+  por motor, preheader oculto, escapado del contenido que viene de datos, y **dos guards**:
+  que las 6 copias del armazón produzcan HTML IDÉNTICO (si alguien cambia una sola, los
+  correos dejan de verse iguales) y que ninguna lambda nueva envíe correo sin entrar al
+  inventario.
+- ⚠️ `[J]`: **desplegar el frontend ANTES o junto con las lambdas** — los assets salen de
+  `public/email/` y hasta ese despliegue las imágenes saldrían rotas (degradan al `alt`).
+  Redesplegar las **6 lambdas**. Envs opcionales para no tocar código: `SITE_URL`,
+  `EMAIL_ASSETS_URL`, `CONTACT_EMAIL`, `WHATSAPP_URL`, `SOCIAL_{LINKEDIN,FACEBOOK,INSTAGRAM}`.
+
 ### Editor PDF básico: página configurable, membrete con numeración y saltos (ago 2026)
 > Segunda tanda del editor "tipo Word". Se cierran los cuatro pendientes: `@page` estaba
 > **fijo** en A4 vertical con 2 cm, no había forma de repetir un membrete ni de numerar las
@@ -2813,7 +2860,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **770** pruebas (~3 min) y la de frontend 155. Correrlas
+> La suite de backend son **787** pruebas (~3 min) y la de frontend 155. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 
@@ -3254,7 +3301,7 @@ README.md
 ---
 
 ## 7. Referencias rápidas
-- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 490 CP en 22 módulos) y su
+- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 502 CP en 22 módulos) y su
   **planilla de ejecución `CASOS_PRUEBA_QA.xlsx`** (un CP por fila + columnas para marcar
   **Pasó / No pasó**, resultado obtenido, observaciones, quién y cuándo; hoja de Resumen con
   conteos por estado, prioridad y módulo). ⚠️ El **`.md` es la fuente de verdad**: la planilla

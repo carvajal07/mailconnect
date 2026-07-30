@@ -1065,3 +1065,42 @@ ni el mensaje de la cola.
 
 ---
 
+
+---
+
+## 23. Correos internos con identidad de marca (ago 2026)
+
+Los 8 correos que envía la plataforma (activación, códigos, avisos al owner) pasan a un
+armazón común con logo, botón bulletproof y pie con redes.
+
+- [ ] `[J]` ⚠️ **Desplegar el FRONTEND antes o junto con las lambdas.** Los assets del
+  correo (`logo.png` y `red-*.png`) viven en `05_Frontend/.../public/email/` y se sirven
+  desde `https://www.mailconnect.com.co/email/`. Si las lambdas salen primero, los correos
+  se envían con las imágenes rotas (degradan al texto `alt`, pero se ve mal).
+- [ ] `[J]` **Redesplegar las 6 lambdas** que envían correo interno:
+  `Api_V1_Security_{Register,Create-otp,Recovery-password}`, `Api_V1_Notifications_Scan`,
+  `Api_V1_Email_Prepare-batch-template`, `Api_V1_Admin_User-support`.
+  ⚠️ El armazón está **copiado** en las seis: si una queda atrás, sus correos se ven
+  distintos a los demás. La prueba `test_las_seis_comparten_el_armazon` lo detecta en CI,
+  pero no puede detectar un despliegue parcial.
+- [ ] `[J]` **Confirmar las URLs de los perfiles de redes.** Están derivadas de la marca
+  (`linkedin.com/company/mailconnect`, `facebook.com/mailconnect`,
+  `instagram.com/mailconnect`) y **no están verificadas**. Se cambian con las envs
+  `SOCIAL_LINKEDIN` / `SOCIAL_FACEBOOK` / `SOCIAL_INSTAGRAM` sin tocar código; una red con
+  valor vacío desaparece del pie.
+- **Envs opcionales** (todas con default): `SITE_URL`, `EMAIL_ASSETS_URL`, `CONTACT_EMAIL`,
+  `WHATSAPP_URL`. **Sin cambios de IAM, rutas, tablas ni layers.**
+
+### Verificación post-deploy
+
+1. Registrar una cuenta de prueba: el correo debe llegar con el logotipo, el botón azul
+   redondeado y el pie con las 4 redes.
+2. **Abrirlo en Outlook de escritorio de Windows** (motor Word) — es el único que reproduce
+   los dos defectos que esto corrige: el correo debe quedar **acotado a 600 px** (antes se
+   desparramaba a todo el ancho) y el botón **redondeado y de su tamaño**, una sola vez.
+3. Con las imágenes bloqueadas (lo normal en Gmail y Outlook): debe leerse "MailConnect"
+   donde va el logotipo y el nombre de cada red — no huecos vacíos.
+4. Pedir un código de recuperación: en la bandeja, **antes de abrir**, el preheader debe
+   mostrar el código junto al asunto.
+5. Hacer clic en cada icono del pie: los cuatro deben abrir el perfil correcto. Si alguno
+   cae en un 404, es el punto de "confirmar las URLs" de arriba.

@@ -53,6 +53,18 @@
 | CP-SEG-36 | 🔴 | **Teléfono tope de 15** | Pegar 25 dígitos en Teléfono | Se corta en 15 |
 | CP-SEG-37 | 🔴 | **NIT solo dígitos, tope 15** | Mismo ejercicio en el campo NIT | Solo dígitos, máximo 15 |
 | CP-SEG-38 | 🟡 | Mínimos de longitud | Teléfono de 5 dígitos / NIT de 3 → enviar | Avisa "al menos 7 dígitos" / "al menos 5 dígitos"; no llama a la API |
+| CP-COR-01 | 🔴 | **Correo de activación con marca** | Registrar una cuenta y abrir el correo | Llega con logotipo, filete de marca, botón azul redondeado y pie con las 4 redes |
+| CP-COR-02 | 🔴 | **Ancho correcto en Outlook** | Abrir ese correo en Outlook de escritorio de Windows | Queda acotado a 600 px (antes se desparramaba a todo el ancho de la ventana) |
+| CP-COR-03 | 🔴 | **Botón redondeado en Outlook** | Mismo correo, mirar el botón | Redondeado, con su alto y ancho, y aparece UNA sola vez |
+| CP-COR-04 | 🔴 | Con las imágenes bloqueadas | Abrir en Gmail sin cargar imágenes | Se lee "MailConnect" donde va el logo y el nombre de cada red; no hay huecos |
+| CP-COR-05 | 🔴 | **Preheader con el código** | Pedir un código de recuperación y mirar la bandeja SIN abrir | Junto al asunto se ve el código |
+| CP-COR-06 | 🟡 | Los 4 iconos del pie funcionan | Clic en LinkedIn, Facebook, Instagram y WhatsApp | Cada uno abre el perfil correcto (si da 404, falta confirmar la URL) |
+| CP-COR-07 | 🟡 | Correo de código de un solo uso | Solicitar un OTP | El código se ve grande, en su recuadro, fácil de copiar |
+| CP-COR-08 | 🟡 | Resumen diario | Con el resumen activo, esperar el cron | Tabla de métricas con valores coloreados y botón "Ver en el portal" |
+| CP-COR-09 | 🟡 | Aviso de saldo bajo | Dejar el saldo bajo el umbral tras un envío | Correo con saldo actual y umbral en la tabla, y botón "Recargar saldo" |
+| CP-COR-10 | 🟡 | Correos de soporte | Desde el panel admin, "Reenviar activación" y "Forzar reseteo" | Los dos llegan con la misma identidad que el resto (antes eran texto pelado) |
+| CP-COR-11 | 🟢 | Consistencia entre los 8 | Comparar los correos entre sí | Todos comparten cabecera, tipografía y pie |
+| CP-COR-12 | 🟡 | Nombre con caracteres raros | Registrar con nombre `<b>Ana</b>` | Se muestra literal, sin interpretarse como HTML |
 
 ---
 
