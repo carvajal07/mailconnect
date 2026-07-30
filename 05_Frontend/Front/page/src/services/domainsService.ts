@@ -33,6 +33,23 @@ export interface DnsRecord {
   purpose?: string;
 }
 
+/**
+ * Estado de un mecanismo de autenticación (SPF/DKIM/DMARC). `unknown` es distinto de
+ * `pending`: `pending` significa "se consultó y el registro no está publicado";
+ * `unknown` significa "no se pudo consultar" (sin el layer de DNS, o SES no respondió) —
+ * en la UI las dos se ven grises, pero el motivo que se explica en el tooltip cambia.
+ */
+export type MechanismStatus = 'verified' | 'pending' | 'failed' | 'unknown';
+
+export interface Deliverability {
+  /** Real: si SES ya firma los correos de este dominio con DKIM. */
+  dkim: { status: MechanismStatus };
+  /** Recomendado, NO obligatorio para enviar (ver DominiosSection). */
+  spf: { status: MechanismStatus; record: string };
+  /** Recomendado, NO obligatorio para enviar. */
+  dmarc: { status: MechanismStatus; name: string; record: string };
+}
+
 export interface SenderDomain {
   domainId: string;
   /** 'domain' | 'email'. El backend lo devuelve; para filas legacy se autodetecta por '@'. */
@@ -41,6 +58,8 @@ export interface SenderDomain {
   domain: string;
   status: DomainStatus;
   records: DnsRecord[];
+  /** Solo para `kind:'domain'` — un correo suelto no firma con Easy DKIM. */
+  deliverability?: Deliverability;
   createdAt?: string;
   verifiedAt?: string;
 }

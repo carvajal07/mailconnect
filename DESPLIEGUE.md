@@ -940,3 +940,76 @@ páginas con sesión, no hay nada que indexar y listarlas solo le da pistas a qu
 ⚠️ **Precios en la landing:** la tabla sale de `src/pages/landing/precios.ts`, que es espejo
 de `VOLUME_TIERS`. `precios.test.ts` compara contra el `lambda_function.py` real y falla si
 divergen — no editar la tabla a mano sin cambiar también las 6 lambdas (ver §17).
+
+---
+
+## 19. Panel SPF/DKIM/DMARC en Dominios (ago 2026)
+
+`Api_V1_Domain_List` agrega el estado real de autenticación por dominio. Es aditivo —
+no cambia el contrato existente, solo suma la clave `deliverability`.
+
+- [ ] `[J]` **Sin cambios de IAM.** `ses:GetIdentityDkimAttributes` (para DKIM) ya estaba
+  en la lista de permisos de las lambdas de dominio (ver §14 en el histórico de
+  `CLAUDE.md`/routes admin). Verificar que el rol de `Api_V1_Domain_List` lo tenga; si es
+  `Lambda_SES*` genérico, ya lo cubre.
+- [ ] `[J]` (opcional) **Layer de `dnspython`** para que SPF/DMARC se puedan consultar de
+  verdad (mismo layer opcional que usa `Api_V1_Database_Verify` para el chequeo MX). **Sin
+  el layer no rompe nada**: SPF y DMARC quedan en `unknown` (se ven en gris igual, con el
+  tooltip "no se pudo consultar" en vez de "no publicado"); DKIM sigue funcionando porque
+  viene de la API de SES, no de DNS.
+- [ ] `[J]` (opcional) Env `DELIVERABILITY_MAX_DOMAINS` (default `20`).
+
+### Verificación post-deploy
+
+1. Con un dominio ya verificado (DKIM firmando), abrir su detalle: el chip **DKIM** debe
+   salir **verde**.
+2. Publicar el TXT `v=spf1 include:amazonses.com ~all` en un dominio de prueba y, tras
+   unos minutos de propagación, pulsar **Actualizar estado**: el chip **SPF** debe pasar a
+   verde y el bloque de "registro recomendado" para SPF debe desaparecer.
+3. Sin el layer de dnspython desplegado: SPF y DMARC deben verse en gris con el tooltip de
+   "no se pudo consultar" (no deben salir en verde por accidente, ni deben tumbar el resto
+   del listado).
+
+⚠️ **SPF y DMARC no son obligatorios para que el envío funcione** — el remitente usa Easy
+DKIM sin un dominio MAIL FROM propio, así que DMARC ya se alinea por DKIM. Si en el futuro
+se agrega un MAIL FROM personalizado por cliente, ahí sí SPF pasa a ser necesario para la
+alineación y este panel dejaría de ser "recomendado" para ser parte del flujo obligatorio.
+
+---
+
+## 20. Registro numérico, botón en Outlook y textos de relleno (ago 2026)
+
+Tanda de ajustes puntuales. **Casi todo es frontend** (entra con el build, sin nada que
+desplegar en AWS); lo único de backend es un cambio de TEXTO en el 429 de Login.
+
+- [ ] `[J]` **Redesplegar `Api_V1_Security_Login`.** Único cambio: el mensaje del bloqueo
+  **escalado** (cuando la cuenta ya se había bloqueado antes) ahora explica por qué el
+  bloqueo fue inmediato y remite a "¿Olvidaste tu contraseña?". **Sin cambios de IAM, de
+  env, de tabla ni de contrato** — el `statusCode` sigue siendo 429 y el front ya muestra
+  la `description` que venga del backend. Si no se redespliega, el bloqueo sigue
+  funcionando exactamente igual con el mensaje corto de antes.
+- **Sin cambios de infra en el resto:** el constructor HTML, el registro y el chequeo
+  previo son 100% cliente. Entran con el próximo build del frontend.
+
+### Verificación post-deploy
+
+1. **Registro:** en el campo Teléfono escribir `abc300-123.456` → debe quedar
+   `300123456`. Pegar 25 dígitos → debe cortar en **15**. Mismo comportamiento en NIT.
+2. **Bloqueo escalado (Login):** fallar 3 veces (bloqueo de 5 min), esperar a que venza y
+   fallar **una** vez → el 429 debe traer *"Como ya se había bloqueado antes…"*. En una
+   cuenta **nueva**, el segundo fallo debe seguir avisando *"te queda 1 intento"* (el aviso
+   de siempre; ese caso no cambió).
+3. **Botón en Outlook** — es el punto que **exige un cliente real**, no una vista previa de
+   navegador: enviarse una prueba desde el editor y abrirla en **Outlook de escritorio**
+   (el de Windows con motor Word; Outlook web y la app nueva usan otro motor y no
+   reproducen el defecto). El botón debe salir **redondeado**, con su alto y su ancho, y
+   **una sola vez** — si se ve duplicado, el condicional `[if !mso]` no está llegando
+   intacto (algún paso intermedio reescribió los comentarios del HTML).
+4. **Alineación del botón:** poner "Derecha" en el panel → el botón debe irse a la derecha
+   tanto en la vista previa como en el correo recibido (antes se quedaba a la izquierda).
+5. **Bloques vacíos:** agregar un bloque de texto y publicar sin escribir nada → **Revisar**
+   debe avisar "1 bloque(s) de texto sin contenido". Y el correo real **no** debe traer
+   "Título principal" ni "Hola {{nombre}}, escribe aquí…" en ninguna parte.
+6. **Variables:** sin base seleccionada, el menú "Insertar variable" solo debe ofrecer
+   `unsubscribeUrl` y `preferencesUrl` bajo "Del sistema", más el aviso de elegir una base.
+   Con base elegida, aparecen sus columnas reales bajo "De tu base de datos".

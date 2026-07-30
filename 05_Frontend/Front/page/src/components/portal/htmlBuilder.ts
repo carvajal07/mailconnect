@@ -254,6 +254,17 @@ export interface Block {
   imageWidth?: number;   // ancho en px (por defecto, el del contenedor)
   imageHref?: string;    // hace la imagen CLICABLE
   imageRadius?: number;  // esquinas redondeadas
+  /**
+   * Texto ALTERNATIVO de la imagen. Antes se tomaba del campo `text` del bloque, que no
+   * tenía dónde editarse: el alt quedaba vacío en la práctica.
+   *
+   * ⚠️ En correo el alt importa MÁS que en web: Gmail y Outlook bloquean las imágenes por
+   * defecto, así que lo primero que ve el destinatario es este texto. Sin alt, un correo
+   * hecho a base de imágenes llega en blanco.
+   */
+  alt?: string;
+  /** Alto tope (px) de las fotos de la grilla de productos, para que la fila quede pareja. */
+  productImageHeight?: number;
 
   // Combos (imageText/textImage) y grilla de productos:
   imageUrl?: string; // combos: src de la imagen
@@ -344,8 +355,20 @@ export const LEGACY_TYPES: BlockType[] = ['imageText', 'textImage', 'textButton'
 /** Tipos que se pueden anidar DENTRO de una columna (nada que ya sea una tabla ancha). */
 export const NESTABLE_TYPES: BlockType[] = ['heading', 'text', 'image', 'button', 'divider', 'spacer'];
 
-/** Variables de personalización que el motor de envío reemplaza por destinatario. */
-export const VARIABLES = ['nombre', 'email', 'empresa', 'ciudad'];
+/**
+ * Variables que la PLATAFORMA garantiza, independientes de la base de datos: el motor de
+ * envío las llena por destinatario firmando un token único para cada uno.
+ *
+ * ⚠️ Acá NO va ninguna variable de datos ('nombre', 'empresa', 'ciudad'…). Antes esa lista
+ * existía como respaldo cuando no había base seleccionada, y era INVENTADA: si el CSV del
+ * cliente no traía una columna con ese nombre exacto, `{{nombre}}` se sustituía por vacío
+ * y el correo salía con "Hola ," sin que nada avisara. Las variables de datos SIEMPRE se
+ * leen de los encabezados de la base elegida.
+ */
+export const PLATFORM_VARIABLES = ['unsubscribeUrl', 'preferencesUrl'];
+
+/** @deprecated Alias del listado de plataforma; ver PLATFORM_VARIABLES. */
+export const VARIABLES = PLATFORM_VARIABLES;
 
 const baseBlock = (type: BlockType): Block => ({
   id: nextId(),
@@ -363,15 +386,20 @@ const baseBlock = (type: BlockType): Block => ({
 export const createBlock = (type: BlockType): Block => {
   const b = baseBlock(type);
   switch (type) {
+    // ⚠️ Encabezado y texto nacen VACÍOS, no con texto de relleno. Antes traían
+    // "Título principal" y "Hola {{nombre}}, escribe aquí tu contenido…", y si el cliente
+    // no los editaba ESO se enviaba en el correo real — el relleno de un editor no tiene
+    // nada que hacer en la bandeja de un destinatario. Ahora el lienzo muestra la misma
+    // frase como PLACEHOLDER (se ve, no se envía) y el chequeo previo avisa si quedó vacío.
     case 'heading':
-      return { ...b, text: 'Título principal', align: 'center' };
+      return { ...b, text: '', align: 'center' };
     case 'text':
-      return { ...b, text: 'Hola {{nombre}}, escribe aquí tu contenido. Haz doble clic para editarlo.' };
+      return { ...b, text: '' };
     // La imagen nace VACÍA a propósito: antes apuntaba a via.placeholder.com y, si el
     // cliente no la cambiaba, salía un correo real con la imagen de un tercero (dominio
     // ajeno, con caídas). Vacía, el lienzo muestra un marcador y el chequeo previo avisa.
     case 'image':
-      return { ...b, url: '', text: 'Describe la imagen', align: 'center' };
+      return { ...b, url: '', alt: '', align: 'center' };
     case 'button':
       return { ...b, text: 'Ver más', url: 'https://', align: 'center', color: '#0075be' };
     case 'logo':
@@ -385,7 +413,7 @@ export const createBlock = (type: BlockType): Block => {
       // chequeo previo la marcaría como enlace sin destino.
       return { ...b, align: 'center', links: {}, socialStyle: DEFAULT_SOCIAL_STYLE, socialSize: 34 };
     case 'html':
-      return { ...b, rich: false, text: '<p style="text-align:center">Tu HTML aquí</p>' };
+      return { ...b, rich: false, text: '' };
     case 'imageText':
     case 'textImage':
       return {
@@ -417,10 +445,12 @@ export const createBlock = (type: BlockType): Block => {
   }
 };
 
+// Los productos también nacen vacíos: "Producto / Descripción breve" en un correo real
+// es un descuido, no un contenido.
 const defaultProduct = (): ProductItem => ({
   image: '',
-  title: 'Producto',
-  text: 'Descripción breve',
+  title: '',
+  text: '',
   url: '',
 });
 
@@ -436,8 +466,19 @@ function paragraph(b: Block, align: string, st: EmailSettings, size?: number): s
   return `<p style="margin:0;font-family:${st.fontFamily};font-size:${fs}px;line-height:1.6;color:${b.color && b.type === 'text' ? b.color : st.textColor};text-align:${align}">${content(b)}</p>`;
 }
 
-/** Botón bulletproof: fondo en el <td> (bgcolor + border-radius) y padding en el <a>,
- *  con mso-padding-alt para que Outlook respete el alto. */
+/**
+ * Botón BULLETPROOF, con una rama aparte para Outlook.
+ *
+ * ⚠️ Outlook de escritorio renderiza con el motor de **Word**, que ignora dos cosas
+ * imprescindibles del botón: `border-radius` (sale cuadrado) y el `padding` del `<a>` (el
+ * botón se encoge al tamaño del texto, sin alto ni ancho). El truco `mso-padding-alt` +
+ * `&nbsp;` que había solo disimulaba el ancho; la esquina seguía cuadrada y el alto mal.
+ *
+ * La solución estándar es **VML**: dentro de un condicional `[if mso]` se dibuja un
+ * `v:roundrect` con `arcsize` (el radio en %) y medidas explícitas, y el resto de clientes
+ * ve la versión con `<table>` + `border-radius` en el condicional `[if !mso]`. Cada motor
+ * recibe solo su versión, así que no se duplica el botón en ninguno.
+ */
 function buttonHtml(b: Block, st: EmailSettings): string {
   const bg = b.color || st.linkColor;
   const alignAttr = b.align || 'left';
@@ -447,17 +488,56 @@ function buttonHtml(b: Block, st: EmailSettings): string {
   const px = b.buttonPadX ?? 26;
   // Ancho completo: en móvil es lo que más convierte (el dedo no tiene que apuntar).
   const full = b.buttonFullWidth;
+  const etiqueta = richToPlain(content(b)) || esc(b.text);
+  const href = esc(b.url);
+
+  // ⚠️ `margin` por alineación: 'right' caía al mismo `margin:0` que 'left', así que el
+  // botón alineado a la derecha se quedaba a la izquierda — el control existía pero no
+  // hacía nada en ese valor.
+  const margen = alignAttr === 'center' ? '0 auto'
+    : alignAttr === 'right' ? '0 0 0 auto'
+    : '0';
+
+  // ── Versión VML para Outlook ──────────────────────────────────────────────────
+  // `arcsize` es el radio en PORCENTAJE del lado más corto, no en px: Word no entiende px
+  // aquí. El alto se deriva del texto + relleno vertical, que es lo que el motor no calcula
+  // solo. El ancho fijo solo se impone en "ancho completo"; si no, se deja que VML lo ajuste
+  // al texto (`o:anchorlock` + centrado) para no cortar etiquetas largas.
+  const alto = Math.round(fs * 1.2 + py * 2);
+  // `arcsize` se acota a 50%: por encima de la mitad del alto VML deja de dibujar la
+  // esquina y el botón sale deforme.
+  const arcsize = Math.min(50, Math.round((radius / Math.max(alto, 1)) * 100));
+  // Ancho: en "ancho completo" se impone 100%; si no, se estima del texto + relleno, porque
+  // Word no ajusta el ancho de un roundrect al contenido por su cuenta.
+  const anchoEstimado = Math.round(etiqueta.length * fs * 0.62 + px * 2);
+  const medidas = full
+    ? `width:100%;height:${alto}px;`
+    : `width:${anchoEstimado}px;height:${alto}px;`;
+  const vml = `<!--[if mso]>
+      <div style="text-align:${alignAttr};">
+      <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+        href="${href}" style="${medidas}v-text-anchor:middle;" arcsize="${arcsize}%"
+        fillcolor="${bg}" stroke="f">
+        <w:anchorlock/>
+        <center style="color:#ffffff;font-family:${st.fontFamily};font-size:${fs}px;font-weight:bold;">${etiqueta}</center>
+      </v:roundrect>
+      </div>
+      <![endif]-->`;
+
+  // ── Versión estándar (todo lo que no es Outlook de escritorio) ────────────────
   const tableAttrs = full
-    ? 'width="100%" style="width:100%;"'
-    : `style="margin:${alignAttr === 'center' ? '0 auto' : '0'}"`;
+    ? `width="100%" style="width:100%;margin:${margen};"`
+    : `style="margin:${margen};"`;
   const anchorDisplay = full ? 'display:block;' : 'display:inline-block;';
-  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" ${tableAttrs}><tr>
+  const estandar = `<table role="presentation" border="0" cellpadding="0" cellspacing="0" ${tableAttrs}><tr>
         <td align="center" bgcolor="${bg}" style="border-radius:${radius}px;">
-          <a href="${esc(b.url)}" target="_blank" style="${anchorDisplay}padding:${py}px ${px}px;font-family:${st.fontFamily};font-size:${fs}px;font-weight:bold;line-height:1;color:#ffffff;text-decoration:none;border-radius:${radius}px;mso-padding-alt:0;">
-            <!--[if mso]>&nbsp;&nbsp;<![endif]-->${richToPlain(content(b)) || esc(b.text)}<!--[if mso]>&nbsp;&nbsp;<![endif]-->
+          <a href="${href}" target="_blank" style="${anchorDisplay}padding:${py}px ${px}px;font-family:${st.fontFamily};font-size:${fs}px;font-weight:bold;line-height:1.2;color:#ffffff;text-decoration:none;border-radius:${radius}px;">
+            ${etiqueta}
           </a>
         </td>
       </tr></table>`;
+
+  return `${vml}<!--[if !mso]><!-->${estandar}<!--<![endif]-->`;
 }
 
 function socialRow(b: Block, st: EmailSettings): string {
@@ -602,8 +682,18 @@ function productsHtml(b: Block, st: EmailSettings): string {
   if (!items.length) return '';
   const cols = Math.min(Math.max(b.columns || 3, 1), 4);
   const w = Math.floor(100 / cols);
+  // Alto TOPE de las fotos de la grilla. Sin él, cada producto quedaba con el alto de su
+  // propia imagen: una foto vertical al lado de una horizontal desalineaba los títulos y la
+  // fila se veía escalonada. Con `height` fijo + `object-fit:cover` todas ocupan lo mismo y
+  // se recortan al centro.
+  // ⚠️ `object-fit` NO existe en Outlook de escritorio (motor de Word): allí la imagen se
+  // deforma al alto dado. Es el menor de dos males frente a una grilla desalineada, y en
+  // Gmail/Apple Mail/móvil —de donde viene la mayoría de las aperturas— se ve correcto.
+  const alto = b.productImageHeight ?? 180;
+  const imgStyle = `width:100%;max-width:100%;height:${alto}px;object-fit:cover;`
+    + 'display:block;border:0;border-radius:8px;';
   const cell = (it: ProductItem): string => `<td class="mc-col" width="${w}%" valign="top" style="padding:8px;">
-        ${it.image ? `<img src="${esc(it.image)}" alt="${esc(it.title || '')}" width="100%" style="width:100%;max-width:100%;height:auto;display:block;border:0;border-radius:8px;" />` : ''}
+        ${it.image ? `<img src="${esc(it.image)}" alt="${esc(it.title || '')}" width="100%" height="${alto}" style="${imgStyle}" />` : ''}
         ${it.title ? `<p style="margin:12px 0 4px;font-family:${st.fontFamily};font-size:16px;font-weight:bold;line-height:1.3;color:#16233f;text-align:center;">${esc(it.title)}</p>` : ''}
         ${it.text ? `<p style="margin:0;font-family:${st.fontFamily};font-size:13px;line-height:1.5;color:${st.textColor};text-align:center;">${esc(it.text)}</p>` : ''}
         ${it.url ? `<p style="margin:8px 0 0;text-align:center;"><a href="${esc(it.url)}" target="_blank" style="color:${st.linkColor};font-family:${st.fontFamily};font-size:13px;font-weight:bold;text-decoration:none;">Ver m&aacute;s &rsaquo;</a></p>` : ''}
@@ -653,9 +743,12 @@ export function renderBlock(b: Block, st: EmailSettings, widthOverride?: number)
     case 'text':
       return paragraph(b, align, st);
     case 'image':
-      return imageHtml(b.url, richToPlain(content(b)) || 'imagen', align, b.imageWidth || innerW, b.imageHref, b.imageRadius);
+      // `alt` es el campo nuevo; `text` es de dónde salía antes (plantillas guardadas). Se
+      // usa un chequeo por valor VACÍO, no `??`: un bloque creado hoy trae `alt:''`, así que
+      // con `??` una plantilla vieja con el alt en `text` lo habría perdido.
+      return imageHtml(b.url, b.alt?.trim() || richToPlain(content(b)), align, b.imageWidth || innerW, b.imageHref, b.imageRadius);
     case 'logo':
-      return imageHtml(b.url, 'logo', align, b.imageWidth || 180, b.imageHref, b.imageRadius);
+      return imageHtml(b.url, b.alt?.trim() || 'logo', align, b.imageWidth || 180, b.imageHref, b.imageRadius);
     case 'button':
       return buttonHtml(b, st);
     case 'columns':
@@ -1042,7 +1135,10 @@ export function analyzeTemplate(blocks: Block[], settings: EmailSettings, html: 
     });
   }
 
-  const sinAlt = imgBlocks.filter((b) => b.url && b.type === 'image' && !richToPlain(b.text || '').trim());
+  // `alt` es el campo propio (nuevo); `text` es de donde salía el alt en las plantillas
+  // guardadas antes de que existiera ese campo.
+  const sinAlt = imgBlocks.filter((b) => b.url && b.type === 'image'
+    && !String(b.alt ?? '').trim() && !richToPlain(b.text || '').trim());
   if (sinAlt.length) {
     issues.push({
       level: 'warning',
@@ -1197,6 +1293,23 @@ export function analyzeTemplate(blocks: Block[], settings: EmailSettings, html: 
       level: 'warning',
       title: `${chicos.length} bloque(s) con texto menor a 14 px`,
       detail: 'En móvil se vuelve ilegible y iOS lo reescala por su cuenta, lo que suele romper la maquetación.',
+    });
+  }
+
+  // ── Bloques de contenido que quedaron VACÍOS ──
+  // Los bloques nacen sin texto de relleno (antes traían "Título principal" y compañía, que
+  // se enviaba tal cual si nadie lo editaba). El costo de eso es que ahora se puede publicar
+  // un bloque en blanco sin darse cuenta: en el correo sale un hueco. Aquí se avisa.
+  const bloquesVacios = all.filter((b) => {
+    if (b.type === 'heading' || b.type === 'text') return !richToPlain(content(b)).trim();
+    if (b.type === 'html') return !String(b.text || '').trim();
+    return false;
+  });
+  if (bloquesVacios.length) {
+    issues.push({
+      level: 'warning',
+      title: `${bloquesVacios.length} bloque(s) de texto sin contenido`,
+      detail: 'Van a salir como un espacio en blanco en el correo. Escríbelos o quítalos del lienzo.',
     });
   }
 

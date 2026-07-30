@@ -26,6 +26,125 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Registro numérico, botón en Outlook y textos de relleno fuera del correo (ago 2026)
+> Tanda de ajustes puntuales. Tres tienen consecuencia real en lo que RECIBE el
+> destinatario (el botón cuadrado en Outlook, el texto de relleno que se enviaba tal cual,
+> las variables inventadas), y el resto son de ergonomía del formulario y del editor.
+
+- **Registro: teléfono y NIT SOLO dígitos, tope 15** (`RegisterPage`). `inputMode:'numeric'`
+  no alcanza: solo **sugiere** el teclado en móvil — en escritorio se escriben letras igual
+  y se pega texto sin problema. El filtrado real va en `handleChange`
+  (`replace(/\D/g,'').slice(0, 15)`), con `maxLength` como red del navegador y mínimos
+  (teléfono ≥7, NIT ≥5). ⚠️ El NIT es la **llave de los recursos por cliente**
+  (`tenant_key`): una letra ahí no rompe el formulario, rompe más adelante.
+- **Login — el bloqueo escalado ahora explica por qué fue inmediato.** Se reprodujo el
+  caso: en una cuenta nueva el aviso *"te queda 1 intento"* SÍ sale (fallo 2 de 3). Lo que
+  confunde es el **segundo** ciclo: con `lockStage > 0` **un solo** fallo vuelve a bloquear,
+  sin aviso previo, y solo un ingreso correcto reinicia la escalera. ⚠️ **No se dieron
+  intentos extra** — sería debilitar el freno a la fuerza bruta justo con la cuenta que ya
+  demostró estar bajo intentos fallidos. El 429 ahora dice que ya se había bloqueado antes y
+  remite a "¿Olvidaste tu contraseña?" en vez de seguir adivinando.
+- **Botón: `align:'right'` no hacía nada + BULLETPROOF de verdad en Outlook.** Dos defectos
+  en el mismo bloque:
+  - El margen se calculaba `center ? '0 auto' : '0'`, así que **'right' caía en el mismo
+    caso que 'left'**: el control existía en el panel y no movía el botón.
+  - Outlook de escritorio renderiza con el **motor de Word**, que ignora `border-radius`
+    (botón cuadrado) **y el `padding` del `<a>`** (el botón se encoge al texto, sin alto ni
+    ancho). El truco `mso-padding-alt` + `&nbsp;` que había solo disimulaba el ancho. Ahora
+    se emite **VML** (`v:roundrect` con `arcsize`, `w:anchorlock`) dentro de `[if mso]` y la
+    versión con tabla + `border-radius` dentro de `[if !mso]><!-->`: cada motor ve **una
+    sola** versión, no se duplica el botón en ninguno.
+  - ⚠️ `arcsize` es el radio en **PORCENTAJE** del lado corto, no en px (Word no acepta px
+    ahí), y se acota a **50%**: por encima VML deja de dibujar la esquina y el botón sale
+    deforme. El alto se deriva de `fontSize*1.2 + padY*2` y el ancho se **estima** del texto
+    (`largo * fs * 0.62 + padX*2`) porque Word no ajusta un `roundrect` a su contenido.
+- **Los textos de relleno pasan a PLACEHOLDER.** Encabezado, texto, HTML crudo y los ítems
+  de productos nacían con contenido ("Título principal", "Hola {{nombre}}, escribe aquí…",
+  "Producto"/"Descripción breve"). Si el cliente no los editaba, **eso se enviaba en el
+  correo real** — el relleno de un editor no tiene nada que hacer en la bandeja de un
+  destinatario. Ahora nacen vacíos y la misma frase se ve como **placeholder** (en el lienzo
+  y en los campos del panel). Como el costo de eso es poder publicar un bloque en blanco sin
+  notarlo, el **chequeo previo** suma un aviso de "N bloque(s) de texto sin contenido".
+  ⚠️ En el lienzo el bloque vacío dibuja el texto guía en gris: sin él quedaría invisible y
+  **sin dónde hacer clic** para editarlo.
+- **Variables: se eliminó la lista INVENTADA.** Sin base seleccionada el menú ofrecía
+  `nombre · email · empresa · ciudad`, que no existen en ninguna parte: si el CSV del cliente
+  no traía una columna con ese nombre EXACTO, `{{nombre}}` se sustituía por vacío y el correo
+  salía con "Hola ," **sin que nada avisara**. Ahora el menú se parte en dos grupos: **"De tu
+  base de datos"** (los encabezados reales de la base elegida) y **"Del sistema"**
+  (`PLATFORM_VARIABLES` = `unsubscribeUrl`/`preferencesUrl`, las únicas que la plataforma
+  garantiza porque las firma por destinatario). Sin base, el grupo de datos es un estado
+  vacío que dice qué hacer. `VARIABLES` queda como alias `@deprecated`.
+- **Texto alternativo (`alt`) editable en imagen y logo.** El campo se leía de `b.text`, que
+  **no tenía dónde editarse** → en la práctica el alt salía vacío. ⚠️ En correo pesa MÁS que
+  en web: Gmail y Outlook **bloquean las imágenes por defecto**, así que el alt es lo primero
+  que se lee y un correo hecho a base de imágenes llega en blanco sin él. El render usa
+  `b.alt?.trim() || <lo de text>` (no `??`: un bloque creado hoy trae `alt:''`, y con `??`
+  una plantilla vieja habría perdido el alt que tenía guardado en `text`).
+- **Alto uniforme de las fotos de productos** (`productImageHeight`, default 180 px). Sin
+  tope cada celda tomaba el alto de SU imagen: una foto vertical al lado de una horizontal
+  desalineaba los títulos y la fila salía escalonada. ⚠️ `object-fit` **no existe en Outlook
+  de escritorio**: allí la imagen se deforma al alto dado. Es el menor de dos males frente a
+  una grilla desalineada, y en Gmail/Apple Mail/móvil —de donde viene la mayoría de las
+  aperturas— se ve correcto.
+- **"Nuevo" usa el diálogo propio** (`useConfirm`) en vez de `window.confirm`, que no se
+  puede estilizar, ignora el tema y aparece con el dominio del sitio como título. El mensaje
+  distingue si hay un diseño abierto (queda guardado) de un lienzo sin identidad.
+- **Prueba de envío: los enlaces del pie NO funcionan, y es a propósito.** Se agregó un
+  `Alert` que lo dice en el diálogo. Si funcionaran, probar tu propia plantilla te daría de
+  **baja de tu propia lista** y dejarías de recibir las campañas reales sin saber por qué.
+- **Cobertura:** `htmlBuilder.test.ts` sube a **125** (+14: VML solo en el condicional MSO y
+  la tabla en `[if !mso]`, `arcsize` en % acotado a 50, margen por alineación en los tres
+  valores, alt propio que gana y respaldo al legado, alto de productos en el `<img>`, bloques
+  nacidos vacíos, el aviso del chequeo previo, y que `PLATFORM_VARIABLES` no traiga variables
+  de datos). Frontend sube a **151**. `test_login_lockout.py` +2 (el 429 escalado explica el
+  motivo; el primer bloqueo NO repite la explicación porque ahí sí hubo aviso) → backend
+  **752**.
+- ⚠️ `[J]`: **redesplegar `Api_V1_Security_Login`** (solo cambia el texto del 429; sin el
+  redespliegue el bloqueo sigue funcionando igual, con el mensaje corto de antes). Sin
+  cambios de infra, IAM ni rutas.
+
+### Dominios: panel SPF/DKIM/DMARC con estado real (ago 2026)
+> El diálogo de detalle de un dominio solo mostraba UN estado ("Verificado"/"Pendiente"),
+> que en realidad es apenas el TXT de **propiedad** del dominio (`_amazonses.<dominio>`).
+> No decía nada de si DKIM quedó firmando, ni si el dominio tenía SPF o DMARC — el cliente
+> no tenía cómo saber si su correo iba a autenticar bien sin mirar una herramienta externa.
+
+- **`Api_V1_Domain_List`** agrega `deliverability` por cada remitente tipo **dominio**
+  (los correos sueltos no firman con Easy DKIM, así que no llevan el panel):
+  - **`dkim`** — REAL, de `ses.get_identity_dkim_attributes` (`Success`→verified). El IAM
+    `ses:GetIdentityDkimAttributes` **ya estaba pedido** para otra cosa; no hace falta
+    permiso nuevo.
+  - **`spf`** / **`dmarc`** — lectura DNS de verdad: TXT del dominio buscando
+    `v=spf1 … amazonses.com`, y `_dmarc.<dominio>` buscando `v=DMARC1`. Mismo patrón
+    **opcional** de `dnspython` que ya usa `Database_Verify` (MX real) — sin el layer, el
+    estado queda en **`unknown`**, nunca se inventa un resultado. A diferencia del check
+    MX, aquí **no hay fallback con `socket`**: resolver TXT no es algo que la stdlib sepa
+    hacer, así que sin el layer simplemente no se puede consultar.
+  - ⚠️ **SPF y DMARC son RECOMENDADOS, no obligatorios para enviar.** El remitente no usa
+    un dominio MAIL FROM propio (el Return-Path sigue en `amazonses.com`), así que DMARC
+    ya se alinea por **DKIM** (el `d=` de la firma coincide con el dominio del cliente) sin
+    necesidad de SPF. Se ofrecen igual porque en otras plataformas de correo es el check
+    habitual y varios clientes lo buscan por costumbre — el front lo dice explícitamente
+    para que nadie entre en pánico pensando que sin ellos no puede enviar.
+  - Tope `DELIVERABILITY_MAX_DOMAINS` (20): son los dominios del PROPIO cliente (normalmente
+    un puñado), pero evita que una cuenta con muchos alargue la respuesta con lookups DNS
+    uno a uno.
+- **Front (`DominiosSection.tsx`):** tres **chips gris/verde** ("Autenticación del correo")
+  en el diálogo de detalle — verde solo si `verified`; `pending`/`failed`/`unknown` van
+  todos en **gris** (tal como se pidió: dos colores, no tres), y el **tooltip** explica la
+  causa real ("aún no se publica" vs "no se pudo consultar" vs "SES no pudo confirmarlo").
+  Cuando SPF o DMARC no están verdes, aparece el **registro recomendado** a publicar (con
+  botón de copiar, mismo patrón que la tabla de registros DNS) — un chip gris sin decir qué
+  publicar no sirve de nada.
+- **Cobertura:** `test_domains.py` sube a **25** (+7: DKIM real desde SES, SPF/DMARC en
+  `unknown` sin el layer, verificado con el registro publicado —cada uno por separado, sin
+  contagiarse—, un TXT ajeno que no cuenta como SPF, los correos sueltos sin el panel, y que
+  un fallo de SES en DKIM no tumbe el resto del listado).
+- ⚠️ `[J]`: **sin cambios de infra.** IAM ya cubierto (`GetIdentityDkimAttributes` en la
+  lista existente). El layer de `dnspython` es **opcional** — sin él, SPF/DMARC se ven en
+  gris con el tooltip "no se pudo consultar" en vez de "no publicado"; DKIM funciona igual.
+
 ### Landing: SEO, precios "desde" y accesibilidad (ago 2026)
 - **SEO en `index.html`** (era `lang="en"` y `<title>page</title>`, o sea invisible para
   Google y horrible al compartir): idioma `es`, título y `description` reales, `canonical`,
@@ -1239,7 +1358,7 @@ El frontend (`authService.ts`) lee `statusCode`/`status` del cuerpo, no del HTTP
 | `Blacklist/Add` | `{ email (correo o celular), reason? }` | 201 ok · 400 datos. Crea la tabla si no existe (PK `email`) |
 | `Blacklist/Delete` | `{ email }` | 200 ok · 404 no estaba · 400 datos |
 | `Domain/Add` | `{ identity }` (dominio `empresa.com` o correo `x@empresa.com`; se detecta por `@`) | 201 `data:{domainId, kind, domain, status:'pending', records[]}` · 200 (reenvío de correo pendiente) · 400 · 403 · 409. **Dominio**: `verify_domain_identity + verify_domain_dkim` → 1 TXT + 3 CNAME. **Correo**: `verify_email_identity` → SES envía un enlace al correo (`records:[]`, sin DNS) |
-| `Domain/List` | `{}` | 200 `data:{domains:[{domainId, kind, domain, status, records, createdAt, verifiedAt}], count}`. Refresca el estado desde SES (pending/verified/failed) para dominios **y** correos |
+| `Domain/List` | `{}` | 200 `data:{domains:[{domainId, kind, domain, status, records, deliverability?, createdAt, verifiedAt}], count}`. Refresca el estado desde SES (pending/verified/failed) para dominios **y** correos. `deliverability` (solo `kind:'domain'`): `{dkim:{status}, spf:{status,record}, dmarc:{status,name,record}}` — status ∈ verified\|pending\|failed\|unknown |
 | `Domain/Delete` | `{ domainId }` | 200 ok · 400 · 403 otro cliente · 404. Borra el registro + `delete_identity` en SES (best-effort) |
 | `Pricing/List` | `{ customerId? }` (**admin**) | 200 `data:{customerId, defaults, effective, overrides, currency}` (alcance `*` global o cliente) |
 | `Pricing/Update` | `{ customerId?, channel, fields }` (**admin**) | 200 ok · 400. `channel` ∈ EMAIL·SMS·WHATSAPP·VOICE·COMMON (COMMON escribe taxRate/minCampaign en los 4) |
@@ -2563,7 +2682,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **725** pruebas (~2 min) y la de frontend 98. Correrlas
+> La suite de backend son **752** pruebas (~2 min) y la de frontend 151. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 
@@ -3004,7 +3123,7 @@ README.md
 ---
 
 ## 7. Referencias rápidas
-- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 336 CP en 22 módulos) y su
+- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 451 CP en 22 módulos) y su
   **planilla de ejecución `CASOS_PRUEBA_QA.xlsx`** (un CP por fila + columnas para marcar
   **Pasó / No pasó**, resultado obtenido, observaciones, quién y cuándo; hoja de Resumen con
   conteos por estado, prioridad y módulo). ⚠️ El **`.md` es la fuente de verdad**: la planilla

@@ -30,6 +30,7 @@ import {
   socialRadius,
   socialBgFor,
   socialGlyphFor,
+  PLATFORM_VARIABLES,
   socialOutlineWidth,
   socialOutlineColor,
   forceDarkPreview,
@@ -859,5 +860,120 @@ describe('texto enriquecido: resaltado y fuente', () => {
     // Meter otra alineación dentro produciría HTML anidado que Outlook rompe; la
     // alineación se controla desde el bloque.
     expect(sanitizeInlineHtml('<span style="text-align:center">x</span>')).toBe('x');
+  });
+});
+
+describe('botón: alineación y compatibilidad con Outlook', () => {
+  const boton = (extra: Partial<Block> = {}) =>
+    ({ ...createBlock('button'), text: 'Comprar', url: 'https://tienda.co', ...extra } as Block);
+
+  it('alineado a la DERECHA se va a la derecha (antes caía a la izquierda)', () => {
+    // `right` compartía el `margin:0` de `left`, así que el control existía pero no movía
+    // el botón: quedaba pegado a la izquierda igual que en 'left'.
+    const html = renderBlock(boton({ align: 'right' }), settings);
+    expect(html).toContain('margin:0 0 0 auto');
+  });
+
+  it('centrado y a la izquierda siguen funcionando', () => {
+    expect(renderBlock(boton({ align: 'center' }), settings)).toContain('margin:0 auto');
+    expect(renderBlock(boton({ align: 'left' }), settings)).toContain('margin:0;');
+  });
+
+  it('emite la versión VML para Outlook con esquinas y alto', () => {
+    // Outlook usa el motor de Word: ignora border-radius y el padding del <a>. Sin VML el
+    // botón sale cuadrado y del tamaño del texto.
+    const html = renderBlock(boton({ buttonRadius: 8 }), settings);
+    expect(html).toContain('v:roundrect');
+    expect(html).toContain('arcsize=');
+    expect(html).toMatch(/height:\d+px/);
+  });
+
+  it('cada motor recibe SOLO su versión (no se duplica el botón)', () => {
+    const html = renderBlock(boton(), settings);
+    expect(html).toContain('<!--[if mso]>');
+    expect(html).toContain('<!--[if !mso]><!-->');
+    // La versión estándar va dentro del condicional de "no Outlook".
+    expect(html.indexOf('<!--[if !mso]><!-->')).toBeLessThan(html.indexOf('<table role="presentation"'));
+  });
+
+  it('el arcsize nunca pasa de 50% (VML deforma el botón por encima)', () => {
+    const html = renderBlock(boton({ buttonRadius: 999 }), settings);
+    const m = html.match(/arcsize="(\d+)%"/);
+    expect(Number(m?.[1])).toBeLessThanOrEqual(50);
+  });
+});
+
+describe('bloques que nacen vacíos en vez de con texto de relleno', () => {
+  it('encabezado y texto nacen SIN contenido', () => {
+    // Antes traían "Título principal" / "Hola {{nombre}}, escribe aquí…" y eso se ENVIABA
+    // si nadie los editaba.
+    expect(createBlock('heading').text).toBe('');
+    expect(createBlock('text').text).toBe('');
+    expect(createBlock('html').text).toBe('');
+  });
+
+  it('los productos nacen sin título ni descripción de relleno', () => {
+    const items = createBlock('products').items || [];
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.every((it) => !it.title && !it.text)).toBe(true);
+  });
+
+  it('el chequeo previo avisa del bloque de texto vacío', () => {
+    const b = createBlock('text');
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(issues.some((i) => i.title.includes('sin contenido'))).toBe(true);
+  });
+});
+
+describe('texto alternativo de la imagen', () => {
+  const img = (extra: Partial<Block> = {}) =>
+    ({ ...createBlock('image'), url: 'https://cdn/x.png', ...extra } as Block);
+
+  it('el campo `alt` llega al correo', () => {
+    expect(renderBlock(img({ alt: 'Promoción de julio' }), settings)).toContain('alt="Promoción de julio"');
+  });
+
+  it('una plantilla GUARDADA sigue tomando el alt del campo `text` legado', () => {
+    // Antes del campo propio, el alt salía de `text`: esas plantillas no deben perderlo.
+    const html = renderBlock({ ...img(), text: 'Alt viejo', rich: false } as Block, settings);
+    expect(html).toContain('alt="Alt viejo"');
+  });
+
+  it('el chequeo previo avisa de la imagen sin alt', () => {
+    const b = img({ alt: '', text: '' });
+    const issues = analyzeTemplate([b], settings, generateHtml([b], settings));
+    expect(issues.some((i) => i.title.includes('sin texto alternativo'))).toBe(true);
+  });
+});
+
+describe('grilla de productos: alto parejo de las fotos', () => {
+  const grid = (extra: Partial<Block> = {}) => ({
+    ...createBlock('products'),
+    items: [{ image: 'https://cdn/a.png', title: 'A', text: '', url: '' },
+            { image: 'https://cdn/b.png', title: 'B', text: '', url: '' }],
+    ...extra,
+  } as Block);
+
+  it('impone un alto por defecto para que la fila quede alineada', () => {
+    const html = renderBlock(grid(), settings);
+    expect(html).toContain('height:180px');
+    expect(html).toContain('object-fit:cover');
+  });
+
+  it('el alto es configurable', () => {
+    expect(renderBlock(grid({ productImageHeight: 240 }), settings)).toContain('height:240px');
+  });
+});
+
+describe('variables ofrecidas sin base de datos', () => {
+  it('solo se ofrecen las que la plataforma garantiza', () => {
+    // Antes había una lista INVENTADA (nombre, empresa, ciudad) como respaldo: si el CSV
+    // del cliente no traía esa columna exacta, `{{nombre}}` se sustituía por vacío y el
+    // correo salía con "Hola ," sin que nada avisara.
+    expect(PLATFORM_VARIABLES).toContain('unsubscribeUrl');
+    expect(PLATFORM_VARIABLES).toContain('preferencesUrl');
+    expect(PLATFORM_VARIABLES).not.toContain('nombre');
+    expect(PLATFORM_VARIABLES).not.toContain('empresa');
+    expect(PLATFORM_VARIABLES).not.toContain('ciudad');
   });
 });
