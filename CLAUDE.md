@@ -26,6 +26,28 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+> ## ✅ Estado del despliegue (ago 2026) — LEER ANTES DE TOCAR UN `[J]`
+>
+> **La consola AWS está al día.** Los `⚠️ [J]` que aparecen a lo largo de este archivo son
+> el registro de **qué necesitó cada feature cuando se construyó**, no trabajo pendiente:
+> ya se aplicaron. Los Bloques 0 y 2 de `PENDIENTES.md` están **cerrados**, así que las 6
+> features que estaban construidas pero apagadas (programar envíos, PDF básico + envío
+> EAP-PDF, motor del Estudio/Diseñador, cascada omnicanal, equipo del cliente y la lambda
+> del Copiloto) están **vivas**.
+>
+> ⚠️ **Lo único que sigue abierto y sí es acción:**
+> - **`DESPLIEGUE.md` §23** — los correos internos con marca: hay que **desplegar el
+>   frontend antes o junto con las 6 lambdas** (los assets salen de `public/email/`).
+> - **`DESPLIEGUE.md` §24** — las envs `ACTIVATION_*` siguen con el esquema legado
+>   `?activated=1`. El aviso ya funciona (el frontend tolera los dos), pero un enlace
+>   **expirado** se ve como error genérico hasta corregirlas.
+> - **`DESPLIEGUE.md` §7** — la verificación post-deploy, que nunca se corrió.
+> - Cuatro `[J]` de `PENDIENTES.md` que **no son despliegues** sino cambios de
+>   infraestructura nuevos: Secrets Manager, S3 público → prefirmadas, WAF/usage plan y
+>   las fuentes cursivas de Inter.
+>
+> El **piloto E2E con un cliente real** es ahora el único bloqueante del MVP.
+
 ### Correos internos: identidad de marca, logo y pie con redes (ago 2026)
 > Los 8 correos que la PLATAFORMA envía (no los del cliente) eran fragmentos HTML sueltos
 > sin marca. Los dos de soporte eran directamente `<p>` pelados con un `<a>` sin estilo.

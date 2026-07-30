@@ -31,6 +31,30 @@
 
 ---
 
+## ✅ Estado — ago 2026: todo lo pendiente quedó desplegado
+
+Jhon confirma que la consola AWS está al día. Las secciones §1–§6 y §10–§22 de este
+documento quedan como **referencia histórica de lo que se aplicó**, no como trabajo
+pendiente.
+
+⚠️ **Tres cosas de este archivo SIGUEN abiertas** (son posteriores a esa confirmación o
+no son despliegues):
+
+1. **§7 — verificación post-deploy.** Son comprobaciones funcionales, no despliegues.
+   Vale la pena correrlas ahora: es lo que separa "está desplegado" de "está funcionando".
+2. **§23 — correos internos con identidad de marca.** Se subió después. Requiere
+   **desplegar el frontend ANTES o junto con las 6 lambdas** (los assets del correo salen
+   de `public/email/`); si no, los correos salen con las imágenes rotas.
+3. **§24 — envs de activación.** El frontend ya tolera el esquema legado `?activated=1`,
+   así que el aviso YA funciona; pero mientras las envs sigan con el esquema viejo, un
+   enlace **expirado** se ve como error genérico en vez de decir que venció.
+
+⚠️ Excepciones que NO son despliegue y siguen en `PENDIENTES.md`: `SECRET_KEY` a Secrets
+Manager, S3 público a URLs prefirmadas, WAF/usage plan en API Gateway y las fuentes
+cursivas de Inter.
+
+---
+
 ## 0. TL;DR — el orden correcto
 
 > **Estado (jul 2026):** ✅ Mapping template de context desplegado (`API_ID`/`AUTHORIZER_ID`/

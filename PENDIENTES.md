@@ -9,6 +9,29 @@
 
 ---
 
+## ✅ Estado del despliegue — ago 2026
+
+**Ya no hay features construidas esperando consola.** Jhon confirma que todo el `[J]` de
+despliegue quedó aplicado: los **Bloques 0 y 2 están CERRADOS**, así que las 6
+funcionalidades que estaban listas pero apagadas (programar envíos, PDF básico + envío
+EAP-PDF, motor del Estudio/Diseñador, cascada omnicanal, equipo del cliente y la lambda
+del Copiloto) están **vivas para los clientes**.
+
+⚠️ **Quedan 4 `[J]` abiertos, y ninguno es "desplegar algo que ya existe"** — son cambios
+de infraestructura NUEVOS, por eso no se marcaron:
+
+| Pendiente | Por qué sigue abierto |
+|---|---|
+| `SECRET_KEY` y llaves Wompi a **Secrets Manager** | Es una MIGRACIÓN de dónde vive el secreto, no un despliegue. Hoy son env vars. |
+| **S3 público** → prefirmadas o CloudFront+OAC | Cambia el modelo de acceso a `attachment/` y `resources/`; hay que migrar las URLs ya emitidas. |
+| **WAF / usage plan** en API Gateway | Infraestructura nueva (Bloque 1.2). El rate-limit de aplicación ya está y sí funciona. |
+| Fuentes **Inter cursiva** para el motor PDF | Requiere conseguir los `.ttf`; sin ellos la cursiva cae a Helvetica-Oblique. |
+
+Y el **piloto E2E con un cliente real** (Bloque 2.7) pasa a ser **el único bloqueante del
+MVP**: ya no hay nada de infraestructura detrás de él.
+
+---
+
 ## BLOQUE 0 — Hecho en esta tanda (jul 2026) + su despliegue
 
 Código YA implementado y probado (suite completo en verde). Lo único abierto de este
@@ -41,23 +64,23 @@ bloque son los pasos `[J]` de despliegue.
 
 **Despliegue de esta tanda (hacer JUNTO):**
 
-- [ ] `[J]` Redesplegar `Api_V1_Security_{Login,Logout,Change-password,Refresh-token}`,
+- [x] `[J]` ✅ Redesplegar `Api_V1_Security_{Login,Logout,Change-password,Refresh-token}`,
       `Authorizer` y `Authorizer2`.
-- [ ] `[J]` IAM: permiso `dynamodb:GetItem` sobre la tabla **`session`** en los roles de
+- [x] `[J]` ✅ IAM: permiso `dynamodb:GetItem` sobre la tabla **`session`** en los roles de
       `Authorizer`, `Authorizer2` y `Refresh-token`; `dynamodb:UpdateItem` sobre `user`
       en Login (contador de bloqueo) y `Scan`/`UpdateItem` sobre `session` en
       Change-password (revocación).
-- [ ] `[J]` Redesplegar las 21 lambdas admin y **configurar la env `SECRET_KEY`** en
+- [x] `[J]` ✅ Redesplegar las 21 lambdas admin y **configurar la env `SECRET_KEY`** en
       TODAS (la misma del Login). Sin la env, el gate cae al modo "solo context"
       (compatibilidad de rollout) y la segunda barrera queda inactiva.
-- [ ] `[J]` Correr `deploy-api.yml` (el mapping template ahora inyecta `authToken`).
+- [x] `[J]` ✅ Correr `deploy-api.yml` (el mapping template ahora inyecta `authToken`).
       Orden seguro: primero API (template), luego lambdas — o el mismo push; la ventana
       intermedia falla CERRADA (403 admin), nunca escala.
-- [ ] `[J]` **Aviso de corte:** al desplegar, TODOS los tokens vigentes quedan inválidos
+- [x] `[J]` ✅ **Aviso de corte:** al desplegar, TODOS los tokens vigentes quedan inválidos
       (no traen `sid`) → los usuarios deben volver a iniciar sesión una vez.
-- [ ] `[J]` Bajar el **TTL del cache del Authorizer** en API Gateway a 60–300 s: la
+- [x] `[J]` ✅ Bajar el **TTL del cache del Authorizer** en API Gateway a 60–300 s: la
       revocación es efectiva cuando expira ese cache.
-- [ ] `[J]` Redesplegar `Api_V1_Template_Render-engine` (traductor + motor con los fixes
+- [x] `[J]` ✅ Redesplegar `Api_V1_Template_Render-engine` (traductor + motor con los fixes
       de paridad). Si aún no existe, ver Bloque 2.
 
 ---
@@ -107,25 +130,32 @@ bloque son los pasos `[J]` de despliegue.
 
 ## BLOQUE 2 — Despliegues que desbloquean features YA construidas
 
-El front está terminado y el backend probado; solo falta la consola AWS
-(detalle exacto en `DESPLIEGUE.md` §3b–§3e):
+✅ **CERRADO (ago 2026)** — Jhon confirma que todo quedó desplegado en la consola AWS.
+Las 6 features construidas están ahora VIVAS para los clientes (detalle de lo que se
+aplicó en `DESPLIEGUE.md` §3b–§3e).
 
-1. [ ] `[J]` **Programar envíos**: tabla `scheduledSend`, rol
+1. [x] `[J]` ✅ **Programar envíos**: tabla `scheduledSend`, rol
        `MailConnectSchedulerInvokeRole`, lambdas+rutas `Schedule_{Create,Fire,List,Cancel}`.
-2. [ ] `[J]` **PDF nivel básico + envío EAP-PDF**: layer xhtml2pdf, `Template_Render-pdf`,
+2. [x] `[J]` ✅ **PDF nivel básico + envío EAP-PDF**: layer xhtml2pdf, `Template_Render-pdf`,
        `Template_Combination-EAP-PDF` + cola + trigger, redeploy `Send-batch-template-EAP`.
-3. [ ] `[J]` **Motor estándar (Estudio/Diseñador)**: `Api_V1_Template_Render-engine` +
+3. [x] `[J]` ✅ **Motor estándar (Estudio/Diseñador)**: `Api_V1_Template_Render-engine` +
        ruta `/Template/Render-engine` + layer (reportlab, Pillow, qrcode, python-barcode)
        + IAM (`GetItem messageTemplate`, S3 PutObject). **Verificar el GSI
        `customerId-index` en `messageTemplate`** (sin él, List falla y el lanzador del
        Estudio queda vacío).
-4. [ ] `[J]` **Cascada omnicanal**: tablas `cascadeRun`/`cascadeContact` (+GSIs), cron
+4. [x] `[J]` ✅ **Cascada omnicanal**: tablas `cascadeRun`/`cascadeContact` (+GSIs), cron
        `rate(10 min)` → `Cascade_Advance`, rutas `/Cascade/{Dispatch,List}`, IAM.
-5. [ ] `[J]` **Equipo del cliente**: `User_{Create,List,Delete}` + rutas + mapping
+5. [x] `[J]` ✅ **Equipo del cliente**: `User_{Create,List,Delete}` + rutas + mapping
        `tenantRole` + env `MAX_TEAM_USERS`.
-6. [ ] `[J]` **Copiloto IA**: lambda `Assistant_Copilot` + ruta + IAM Bedrock. `[C]`
+6. [x] `[J]` ✅ **Copiloto IA**: lambda `Assistant_Copilot` + ruta + IAM Bedrock. `[C]`
        re-habilitar el tab (`PortalSidebar` + `case` en `PortalPage`) cuando producto lo pida.
 7. [ ] `[P]` **Piloto E2E con cliente real** (gate final del MVP, `PLAN_MVP.md` Fase 1).
+       ⚠️ Sigue ABIERTO: es una validación de negocio con un cliente, no un despliegue.
+       Ahora es el único bloqueante del MVP — ya no hay excusa de infraestructura.
+
+> ⚠️ El `[C]` de re-habilitar el tab del **Copiloto IA** (`PortalSidebar` + `case` en
+> `PortalPage`) sigue abierto **a propósito**: la lambda está desplegada y viva, pero el
+> tab se ocultó por decisión de producto. Volver a mostrarlo es una línea, cuando se pida.
 
 ---
 
