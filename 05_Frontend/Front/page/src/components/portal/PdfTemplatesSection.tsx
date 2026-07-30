@@ -35,6 +35,8 @@ import { messageTemplatesService } from '../../services/messageTemplatesService'
 import type { MessageTemplate } from '../../services/messageTemplatesService';
 import { useFeedback } from '../../hooks/useFeedback';
 import { usePortalData } from '../../context/PortalDataContext';
+// Se reutiliza el criterio de URL segura del constructor de correos en vez de duplicarlo.
+import { isSafeHref, escapeText, escapeAttr } from './richText';
 
 /**
  * Editor de PLANTILLAS PDF tipo "documento" (a lo Word): barra de formato de texto arriba,
@@ -113,6 +115,9 @@ export const PdfTemplatesSection = () => {
   const [saving, setSaving] = useState(false);
   const [nameOpen, setNameOpen] = useState(false);
   const [nameValue, setNameValue] = useState('');
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState('https://');
+  const [linkText, setLinkText] = useState('');
   const [cloudTemplates, setCloudTemplates] = useState<MessageTemplate[]>([]);
   const [cloudLoading, setCloudLoading] = useState(false);
   const dims = PAGE_SIZES[size];
@@ -125,13 +130,89 @@ export const PdfTemplatesSection = () => {
     }
   }, []);
 
+  /**
+   * Última selección conocida DENTRO del lienzo.
+   *
+   * ⚠️ Hace falta para el diálogo de enlace: al abrir un `Dialog` de MUI el foco se va al
+   * diálogo y la selección del `contentEditable` se pierde, así que `createLink` no tendría
+   * sobre qué aplicarse. Guardando el `Range` antes de abrir y restaurándolo al aceptar, el
+   * enlace cae sobre el texto que el usuario había seleccionado. Mismo patrón que
+   * `RichTextEditor`.
+   */
+  const savedRange = useRef<Range | null>(null);
+
+  const saveRange = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount && pageRef.current?.contains(sel.anchorNode)) {
+      savedRange.current = sel.getRangeAt(0).cloneRange();
+    }
+  };
+
+  const restoreRange = () => {
+    const sel = window.getSelection();
+    if (savedRange.current && sel) {
+      sel.removeAllRanges();
+      sel.addRange(savedRange.current);
+    }
+    pageRef.current?.focus();
+  };
+
   /** Ejecuta un comando de edición sobre la selección actual del lienzo. */
   const exec = (cmd: string, value?: string) => {
     pageRef.current?.focus();
     try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* noop */ }
     document.execCommand(cmd, false, value);
+    saveRange();
   };
-  const insertHtml = (html: string) => { pageRef.current?.focus(); document.execCommand('insertHTML', false, html); };
+  const insertHtml = (html: string) => {
+    pageRef.current?.focus();
+    document.execCommand('insertHTML', false, html);
+    saveRange();
+  };
+
+  /**
+   * ¿Hay texto REAL seleccionado en el lienzo?
+   *
+   * ⚠️ No basta con `!sel.isCollapsed`: al hacer clic en un `<h1>` a la derecha de donde
+   * termina su texto, la selección existe pero vale `"\n"`. Con esa comprobación el diálogo
+   * anunciaba "se va a enlazar el texto seleccionado" y después `createLink` no hacía nada
+   * — el clic parecía no responder. Un espacio en blanco se trata como "sin selección".
+   */
+  const seleccionDelLienzo = (): string => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !pageRef.current?.contains(sel.anchorNode)) return '';
+    return sel.toString().trim();
+  };
+
+  /** Abre el diálogo del enlace, recordando antes qué había seleccionado. */
+  const openLink = () => {
+    saveRange();
+    setLinkText(seleccionDelLienzo());
+    setLinkUrl('https://');
+    setLinkOpen(true);
+  };
+
+  const applyLink = () => {
+    const url = linkUrl.trim();
+    // Se valida con el MISMO criterio del constructor de correos (`isSafeHref`): http(s),
+    // mailto, tel, ancla o una variable de plantilla. `javascript:` y `data:` quedan fuera.
+    if (!isSafeHref(url)) {
+      notify('Ese enlace no es válido. Usa http://, https://, mailto: o tel:.', 'warning');
+      return;
+    }
+    setLinkOpen(false);
+    restoreRange();
+    if (seleccionDelLienzo()) {
+      document.execCommand('createLink', false, url);
+    } else {
+      // Sin texto seleccionado `createLink` no hace NADA (queda el cursor y ningún enlace).
+      // Se inserta el enlace completo usando el texto que el usuario escribió, o la propia
+      // URL si lo dejó vacío — más útil que un clic que aparenta no responder.
+      const etiqueta = escapeText(linkText.trim() || url);
+      document.execCommand('insertHTML', false, `<a href="${escapeAttr(url)}">${etiqueta}</a>`);
+    }
+    saveRange();
+  };
 
   const handleUpload = async (file: File | null) => {
     if (!file) return;
@@ -298,7 +379,7 @@ export const PdfTemplatesSection = () => {
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
         <TB title="Lista con viñetas" icon={<FormatListBulletedIcon fontSize="small" />} onClick={() => exec('insertUnorderedList')} />
         <TB title="Lista numerada" icon={<FormatListNumberedIcon fontSize="small" />} onClick={() => exec('insertOrderedList')} />
-        <TB title="Insertar enlace" icon={<LinkIcon fontSize="small" />} onClick={() => { const u = window.prompt('URL del enlace:', 'https://'); if (u) exec('createLink', u); }} />
+        <TB title="Insertar enlace" icon={<LinkIcon fontSize="small" />} onClick={openLink} />
         <TB title="Quitar formato" icon={<FormatClearIcon fontSize="small" />} onClick={() => exec('removeFormat')} />
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
         <TB title="Deshacer" icon={<UndoIcon fontSize="small" />} onClick={() => exec('undo')} />
@@ -405,6 +486,41 @@ export const PdfTemplatesSection = () => {
         <DialogActions>
           <Button onClick={() => setNameOpen(false)}>Cancelar</Button>
           <Button variant="contained" disabled={!nameValue.trim()} onClick={confirmSave}>Guardar</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Enlace. Antes era `window.prompt`, que además de feo no dejaba corregir el texto
+          del enlace ni avisaba de una URL inválida. */}
+      <Dialog open={linkOpen} onClose={() => setLinkOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Insertar enlace</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              autoFocus fullWidth label="Dirección (URL)" placeholder="https://…"
+              value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') applyLink(); }}
+              helperText="Acepta http://, https://, mailto: y tel:"
+            />
+            {/* Solo tiene sentido cuando NO hay texto seleccionado: si lo hay, el enlace se
+                aplica sobre esa selección y este campo no participa. */}
+            {!linkText && (
+              <TextField
+                fullWidth label="Texto que se ve (opcional)" placeholder="Ver el documento"
+                value={linkText} onChange={(e) => setLinkText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') applyLink(); }}
+                helperText="Si lo dejas vacío se muestra la dirección completa."
+              />
+            )}
+            {linkText && (
+              <Typography variant="body2" color="text.secondary">
+                Se va a enlazar el texto seleccionado: <strong>{linkText}</strong>
+              </Typography>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setLinkOpen(false)}>Cancelar</Button>
+          <Button variant="contained" disabled={!linkUrl.trim()} onClick={applyLink}>Insertar</Button>
         </DialogActions>
       </Dialog>
 

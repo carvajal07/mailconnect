@@ -1013,3 +1013,8 @@ desplegar en AWS); lo único de backend es un cambio de TEXTO en el 429 de Login
 6. **Variables:** sin base seleccionada, el menú "Insertar variable" solo debe ofrecer
    `unsubscribeUrl` y `preferencesUrl` bajo "Del sistema", más el aviso de elegir una base.
    Con base elegida, aparecen sus columnas reales bajo "De tu base de datos".
+7. **Diálogos propios (sin popups del navegador).** En **Plantillas PDF básicas**, seleccionar
+   una palabra y pulsar el botón de enlace: debe salir el diálogo de la aplicación y, al
+   aceptar, el enlace debe caer **sobre esa palabra** (si cae en otro lado, se perdió la
+   selección al abrir el diálogo). Sin nada seleccionado debe ofrecer el campo "Texto que se
+   ve". En **Mi cuenta → Desactivar 2FA**: un único diálogo con el aviso y el campo del código.

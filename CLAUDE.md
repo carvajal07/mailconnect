@@ -90,6 +90,22 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
 - **"Nuevo" usa el diálogo propio** (`useConfirm`) en vez de `window.confirm`, que no se
   puede estilizar, ignora el tema y aparece con el dominio del sitio como título. El mensaje
   distingue si hay un diseño abierto (queda guardado) de un lienzo sin identidad.
+- **Se acabaron los `window.prompt`/`window.confirm` del portal** (quedaban dos):
+  - **Enlace del editor de Plantillas PDF.** ⚠️ Abrir un `Dialog` de MUI **mueve el foco y
+    la selección del `contentEditable` se pierde**, así que `createLink` no tendría sobre qué
+    aplicarse: hay que **guardar el `Range`** antes de abrir y restaurarlo al aceptar (mismo
+    patrón de `RichTextEditor`). ⚠️ Y no basta `!sel.isCollapsed`: al hacer clic en un `<h1>`
+    a la derecha de donde termina su texto la selección existe pero vale `"\n"` — el diálogo
+    anunciaba "se va a enlazar el texto seleccionado" y después el enlace no se aplicaba (el
+    clic parecía no responder). `seleccionDelLienzo()` trata el blanco como "sin selección" y,
+    en ese caso, **inserta el enlace completo** con el texto que escriba el usuario (o la URL)
+    en vez de no hacer nada. La URL se valida con **`isSafeHref`**, que se **exportó** de
+    `richText.ts` para no duplicar el criterio entre los dos editores.
+  - **Código para desactivar el 2FA.** Eran **dos** diálogos encadenados para una sola acción
+    (aviso `useConfirm` → `window.prompt` del navegador). Ahora es **uno**, con el aviso dentro.
+    Un código errado **no cierra** el diálogo (el TOTP rota cada 30 s; cerrarlo obligaría a
+    empezar de nuevo) y **no lleva `maxLength:6`**, porque un código de **respaldo** es más
+    largo y con el tope no se podría pegar completo.
 - **Prueba de envío: los enlaces del pie NO funcionan, y es a propósito.** Se agregó un
   `Alert` que lo dice en el diálogo. Si funcionaran, probar tu propia plantilla te daría de
   **baja de tu propia lista** y dejarías de recibir las campañas reales sin saber por qué.
@@ -97,9 +113,15 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   la tabla en `[if !mso]`, `arcsize` en % acotado a 50, margen por alineación en los tres
   valores, alt propio que gana y respaldo al legado, alto de productos en el `<img>`, bloques
   nacidos vacíos, el aviso del chequeo previo, y que `PLATFORM_VARIABLES` no traiga variables
-  de datos). Frontend sube a **151**. `test_login_lockout.py` +2 (el 429 escalado explica el
-  motivo; el primer bloqueo NO repite la explicación porque ahí sí hubo aviso) → backend
+  de datos) y a **129** con los 4 de `isSafeHref` (esquemas válidos, ancla y variable,
+  `javascript:`/`data:` incluso con mayúsculas o espacios delante, y que sin esquema NO se
+  asuma https). Frontend sube a **155**. `test_login_lockout.py` +2 (el 429 escalado explica
+  el motivo; el primer bloqueo NO repite la explicación porque ahí sí hubo aviso) → backend
   **752**.
+  ⚠️ Los dos diálogos nuevos NO tienen prueba unitaria: el repo no trae
+  `@testing-library/react` y montar un `contentEditable` con selección real en jsdom no
+  reproduce el defecto que se está arreglando. Se verificaron **en el navegador** (los dos
+  caminos del enlace, el rechazo de `javascript:`, y el diálogo del 2FA con código errado).
 - ⚠️ `[J]`: **redesplegar `Api_V1_Security_Login`** (solo cambia el texto del 429; sin el
   redespliegue el bloqueo sigue funcionando igual, con el mensaje corto de antes). Sin
   cambios de infra, IAM ni rutas.
@@ -3123,7 +3145,7 @@ README.md
 ---
 
 ## 7. Referencias rápidas
-- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 451 CP en 22 módulos) y su
+- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 461 CP en 22 módulos) y su
   **planilla de ejecución `CASOS_PRUEBA_QA.xlsx`** (un CP por fila + columnas para marcar
   **Pasó / No pasó**, resultado obtenido, observaciones, quién y cuándo; hoja de Resumen con
   conteos por estado, prioridad y módulo). ⚠️ El **`.md` es la fuente de verdad**: la planilla

@@ -373,6 +373,16 @@
 | CP-NEW-02 | 🟡 | Cancelar no vacía | En ese diálogo, pulsar Cancelar | El lienzo queda intacto y el diseño abierto sigue siendo el mismo |
 | CP-TST-01 | 🟢 | Nota de los enlaces del pie | Abrir "Enviarme una prueba" | Explica que "Administrar preferencias" y "Cancelar suscripción" no hacen nada en la prueba |
 | CP-TST-02 | 🟡 | Los enlaces del pie son inertes en la prueba | Enviarse una prueba y pulsar "Cancelar suscripción" en el correo recibido | NO da de baja el correo (sigue recibiendo campañas reales de esa lista) |
+| CP-LNK-01 | 🟡 | **Enlace sin popup del navegador** | Plantillas PDF básicas → seleccionar una palabra → botón de enlace | Sale el diálogo de la aplicación, NO el popup gris del navegador |
+| CP-LNK-02 | 🔴 | **La selección sobrevive al diálogo** | Con una palabra seleccionada, poner `https://empresa.com` → Insertar | El enlace envuelve **esa palabra** (el diálogo anuncia cuál antes de aceptar) |
+| CP-LNK-03 | 🔴 | Sin selección inserta el enlace completo | Poner el cursor al final de un párrafo (sin seleccionar) → enlace → URL + "Texto que se ve" | Inserta el enlace con ese texto; si se deja vacío, muestra la URL |
+| CP-LNK-04 | 🟡 | Clic a la derecha del título no engaña | Hacer clic en un `<h1>` pasado el final de su texto → enlace | Ofrece el campo "Texto que se ve" (no dice que va a enlazar una selección que no existe) |
+| CP-LNK-05 | 🔴 | URL insegura rechazada | Escribir `javascript:alert(1)` → Insertar | Avisa que no es válida y NO inserta nada |
+| CP-LNK-06 | 🟡 | Esquemas aceptados | Probar `https://`, `mailto:` y `tel:` | Los tres insertan el enlace |
+| CP-2FA-08 | 🟡 | **Desactivar 2FA en un solo diálogo** | Mi cuenta → Desactivar 2FA | Un único diálogo con el aviso Y el campo del código (antes eran dos seguidos, el 2º del navegador) |
+| CP-2FA-09 | 🟡 | Código errado no cierra el diálogo | En ese diálogo poner `000000` → Desactivar | Avisa del error y el diálogo **sigue abierto** con el campo listo (el TOTP rota cada 30 s) |
+| CP-2FA-10 | 🟡 | Cabe un código de respaldo | Pegar un código de respaldo completo (más largo que 6 dígitos) | Entra completo, no se corta |
+| CP-2FA-11 | 🟢 | Botón deshabilitado sin código | Abrir el diálogo y no escribir nada | "Desactivar" está deshabilitado |
 
 ---
 
