@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Box, Paper, Stack, Typography, Button, IconButton, Tooltip, Divider, MenuItem,
   TextField, Menu, Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress,
@@ -26,6 +26,8 @@ import RedoIcon from '@mui/icons-material/Redo';
 import AddPhotoAlternateIcon from '@mui/icons-material/AddPhotoAlternate';
 import DataObjectIcon from '@mui/icons-material/DataObject';
 import TableChartIcon from '@mui/icons-material/TableChart';
+import InsertPageBreakIcon from '@mui/icons-material/InsertPageBreak';
+import SettingsIcon from '@mui/icons-material/Settings';
 import type { ReactNode } from 'react';
 import { getUser } from '../../services/authService';
 import { campaignsService } from '../../services/campaignsService';
@@ -58,11 +60,46 @@ const PAGE_SIZES = { A4: { w: 794, h: 1123 }, Carta: { w: 816, h: 1056 } } as co
  * usaba 64 px de margen (≈1,7 cm) contra los 2 cm del PDF, y 15 px de cuerpo contra 12 pt
  * (=16 px), así que lo que se veía cabiendo en el renglón no cabía en el documento real.
  */
-const PAGE_MARGIN_CM = 2;                       // @page { margin: 2cm }
-const PAGE_MARGIN_PX = PAGE_MARGIN_CM * CM;     // 75.6 px
+const PAGE_MARGIN_CM = 2;                       // margen por defecto de @page
 const PT = 96 / 72;                             // 1 pt = 1.333 px a 96 dpi
 const BODY_PT = 12;                             // body { font-size: 12pt }
 const HEADING_PT = { h1: 22, h2: 18, h3: 15 };  // h1/h2/h3 de wrap_html
+/** Alto de la banda de encabezado/pie + su aire: espejo de BAND_CM/BAND_GAP_CM. */
+const BAND_CM = 1;
+const BAND_GAP_CM = 0.3;
+
+/** Configuración de página del documento. Viaja en los `data-*` del envoltorio. */
+interface PageSetup {
+  size: 'A4' | 'Carta';
+  landscape: boolean;
+  margin: { top: number; right: number; bottom: number; left: number }; // cm
+  header: string;
+  footer: string;
+}
+const DEFAULT_SETUP: PageSetup = {
+  size: 'A4',
+  landscape: false,
+  margin: { top: PAGE_MARGIN_CM, right: PAGE_MARGIN_CM, bottom: PAGE_MARGIN_CM, left: PAGE_MARGIN_CM },
+  header: '',
+  footer: '',
+};
+
+/** Medidas de la hoja en px, ya con la orientación aplicada. */
+const sheetPx = (s: PageSetup) => {
+  const { w, h } = PAGE_SIZES[s.size];
+  return s.landscape ? { w: h, h: w } : { w, h };
+};
+
+/**
+ * Tokens de numeración. ⚠️ Van en CORCHETES y no en `{{…}}` a propósito: las llaves son
+ * el formato de las variables de la BASE DE DATOS y en el envío real la sustitución de
+ * datos corre ANTES, así que una columna del CSV llamada "pagina" habría pisado el número
+ * de página. El backend los convierte a las etiquetas de xhtml2pdf.
+ */
+const PAGE_TOKENS = [
+  { token: '[[pagina]]', label: 'Número de página' },
+  { token: '[[paginas]]', label: 'Total de páginas' },
+];
 
 /**
  * Fuentes que el PDF puede entregar DE VERDAD.
@@ -149,7 +186,11 @@ export const PdfTemplatesSection = () => {
   // inmediato en el selector de "crear campaña" (canal EAP-PDF) sin recargar.
   const { refreshMessageTemplates } = usePortalData();
   const pageRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState<'A4' | 'Carta'>('A4');
+  const [setup, setSetup] = useState<PageSetup>({ ...DEFAULT_SETUP });
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [guias, setGuias] = useState<number[]>([]);
+  // Se incrementa al escribir en el lienzo: dispara el recálculo de las guías.
+  const [guiasTick, setGuiasTick] = useState(0);
   const [font, setFont] = useState(DEFAULT_FONT);
   const [format, setFormat] = useState('p');
   // Campos y filas de la base elegida: alimentan el menú de variables y la vista previa.
@@ -171,7 +212,11 @@ export const PdfTemplatesSection = () => {
   const [linkText, setLinkText] = useState('');
   const [cloudTemplates, setCloudTemplates] = useState<MessageTemplate[]>([]);
   const [cloudLoading, setCloudLoading] = useState(false);
-  const dims = PAGE_SIZES[size];
+  const dims = sheetPx(setup);
+  const marginPx = {
+    top: setup.margin.top * CM, right: setup.margin.right * CM,
+    bottom: setup.margin.bottom * CM, left: setup.margin.left * CM,
+  };
 
   useEffect(() => {
     try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* noop */ }
@@ -191,15 +236,28 @@ export const PdfTemplatesSection = () => {
    * cursor suelto no marcaba nada → el lienzo se veía en Times y el PDF salía en Helvetica,
    * porque `wrap_html` fija `body { font-family: Arial… }`. Se comprobó que xhtml2pdf sí
    * hereda `font-family` de un div a párrafos, títulos y celdas de tabla.
+   *
+   * El envoltorio lleva además la CONFIGURACIÓN DE PÁGINA en `data-*` (tamaño,
+   * orientación, márgenes) y, si los hay, el encabezado y el pie. ⚠️ Va dentro del
+   * documento y no como parámetro del endpoint porque en el envío real el combinador
+   * recibe la plantilla por SQS y no conoce nada de lo que se configuró en el editor:
+   * guardándolo aquí, la vista previa y el envío real usan lo mismo.
    */
   const documentHtml = (): string => {
     const inner = pageRef.current?.innerHTML || '';
     if (!inner.trim()) return '';
-    return `<div ${DOC_WRAPPER_ATTR}="1" style="font-family:${font}">${inner}</div>`;
+    const m = setup.margin;
+    const bandas =
+      (setup.header.trim() ? `<div data-mc-header>${escapeText(setup.header)}</div>` : '') +
+      (setup.footer.trim() ? `<div data-mc-footer>${escapeText(setup.footer)}</div>` : '');
+    return `<div ${DOC_WRAPPER_ATTR}="1" data-mc-size="${setup.size}"`
+      + ` data-mc-orientation="${setup.landscape ? 'landscape' : 'portrait'}"`
+      + ` data-mc-margin="${m.top} ${m.right} ${m.bottom} ${m.left}"`
+      + ` style="font-family:${font}">${bandas}${inner}</div>`;
   };
 
   /**
-   * Carga HTML en el lienzo deshaciendo el envoltorio de arriba (y adoptando su fuente).
+   * Carga HTML en el lienzo deshaciendo el envoltorio (fuente + configuración de página).
    * Sin esto, cada guardado anidaría un div más dentro del anterior.
    */
   const setDocumentHtml = (html: string) => {
@@ -207,13 +265,34 @@ export const PdfTemplatesSection = () => {
     const cont = document.createElement('div');
     cont.innerHTML = html || '';
     const root = cont.children.length === 1 ? (cont.firstElementChild as HTMLElement | null) : null;
-    if (root && root.hasAttribute(DOC_WRAPPER_ATTR)) {
-      const guardada = root.style.fontFamily.replace(/['"]/g, '');
-      if (guardada) setFont(guardada);
-      pageRef.current.innerHTML = root.innerHTML;
-    } else {
+    if (!root || !root.hasAttribute(DOC_WRAPPER_ATTR)) {
+      // Plantilla anterior a la configuración de página: entra tal cual, con los valores
+      // por defecto (que son exactamente los que tenía el editor antes).
+      setSetup({ ...DEFAULT_SETUP });
       pageRef.current.innerHTML = html || '';
+      return;
     }
+    const guardada = root.style.fontFamily.replace(/['"]/g, '');
+    if (guardada) setFont(guardada);
+
+    const enc = root.querySelector('[data-mc-header]');
+    const pie = root.querySelector('[data-mc-footer]');
+    const partes = (root.getAttribute('data-mc-margin') || '').trim().split(/[\s,]+/)
+      .map((n) => Number(n)).filter((n) => Number.isFinite(n));
+    const [t, r, b, l] = partes.length === 4
+      ? partes
+      : [PAGE_MARGIN_CM, PAGE_MARGIN_CM, PAGE_MARGIN_CM, PAGE_MARGIN_CM];
+    setSetup({
+      size: root.getAttribute('data-mc-size') === 'Carta' ? 'Carta' : 'A4',
+      landscape: root.getAttribute('data-mc-orientation') === 'landscape',
+      margin: { top: t, right: r, bottom: b, left: l },
+      header: enc?.textContent ?? '',
+      footer: pie?.textContent ?? '',
+    });
+    // Las bandas se editan en el diálogo de página, no en el lienzo: salen del contenido.
+    enc?.remove();
+    pie?.remove();
+    pageRef.current.innerHTML = root.innerHTML;
   };
 
   /**
@@ -314,6 +393,56 @@ export const PdfTemplatesSection = () => {
     notify('Imagen insertada.', 'success');
   };
 
+  /** Salto de página manual. xhtml2pdf respeta `page-break-before: always`. */
+  const insertPageBreak = () => insertHtml(
+    '<div data-mc-break style="page-break-before:always"></div><p><br></p>');
+
+  /**
+   * Dónde corta cada página, en píxeles de contenido.
+   *
+   * ⚠️ Es una APROXIMACIÓN, y el editor lo dice: el lienzo es una tira continua (una sola
+   * hoja que crece), mientras que en el PDF cada página vuelve a empezar con su margen
+   * superior. Se calcula cuánto contenido cabe por hoja y se respetan los saltos manuales;
+   * lo que no se reproduce es el espacio en blanco entre hojas. Sin esto no había NINGUNA
+   * forma de saber qué quedaba en la página 2 sin generar la vista previa.
+   */
+  const recomputarGuias = useCallback(() => {
+    const el = pageRef.current;
+    if (!el) return;
+    const hoja = sheetPx(setup);
+    const bandaSup = setup.header.trim() ? (BAND_CM + BAND_GAP_CM) * CM : 0;
+    const bandaInf = setup.footer.trim() ? (BAND_CM + BAND_GAP_CM) * CM : 0;
+    const altoPagina = hoja.h
+      - Math.max(setup.margin.top * CM, bandaSup)
+      - Math.max(setup.margin.bottom * CM, bandaInf);
+    if (altoPagina <= 40) { setGuias([]); return; }
+
+    const arriba = el.getBoundingClientRect().top + setup.margin.top * CM;
+    const manuales = Array.from(el.querySelectorAll('[data-mc-break]'))
+      .map((b) => b.getBoundingClientRect().top - arriba)
+      .filter((y) => y > 1)
+      .sort((a, b) => a - b);
+    const total = el.scrollHeight - (setup.margin.top + setup.margin.bottom) * CM;
+
+    const cortes: number[] = [];
+    let inicio = 0;
+    while (cortes.length < 60) {
+      const auto = inicio + altoPagina;
+      const manual = manuales.find((m) => m > inicio + 1);
+      const corte = manual !== undefined && manual <= auto ? manual : auto;
+      if (corte >= total) break;
+      cortes.push(corte);
+      inicio = corte;
+    }
+    setGuias(cortes);
+  }, [setup]);
+
+  // Se recalcula al escribir (con respiro) y cuando cambia la configuración de página.
+  useEffect(() => {
+    const t = setTimeout(recomputarGuias, 250);
+    return () => clearTimeout(t);
+  }, [recomputarGuias, guiasTick]);
+
   const insertTable = () => insertHtml(
     '<table style="width:100%;border-collapse:collapse;margin:8px 0;">' +
     Array.from({ length: 2 }).map(() => '<tr>' + Array.from({ length: 2 }).map(() => '<td style="border:1px solid #cbd5e1;padding:8px;">&nbsp;</td>').join('') + '</tr>').join('') +
@@ -380,7 +509,9 @@ export const PdfTemplatesSection = () => {
     const res = await pdfTemplatesService.render({
       html,
       variables: previewVariables(html, dbFields, dbRow),
-      pageSize: size,
+      // Redundante: la configuración va DENTRO del html y manda sobre esto. Se envía
+      // igual como respaldo por si la lambda todavía no tiene el motor de página.
+      pageSize: setup.size,
       filename: 'plantilla-pdf.pdf',
     });
     setPdfLoading(false);
@@ -492,13 +623,20 @@ export const PdfTemplatesSection = () => {
             </Button>
             <Button size="small" variant="outlined" startIcon={<DataObjectIcon />} onClick={(e) => setVarAnchor(e.currentTarget)}>Variable</Button>
             <Button size="small" variant="outlined" startIcon={<TableChartIcon />} onClick={insertTable}>Tabla</Button>
+            <Button size="small" variant="outlined" startIcon={<InsertPageBreakIcon />} onClick={insertPageBreak}>
+              Salto de página
+            </Button>
           </Stack>
           <Divider sx={{ my: 1.5 }} />
           <Typography variant="overline" color="text.secondary">Hoja</Typography>
-          <TextField select size="small" fullWidth value={size} onChange={(e) => setSize(e.target.value as 'A4' | 'Carta')} sx={{ mt: 0.5 }}>
-            <MenuItem value="A4">A4</MenuItem>
-            <MenuItem value="Carta">Carta</MenuItem>
-          </TextField>
+          <Button size="small" variant="outlined" fullWidth startIcon={<SettingsIcon />}
+            onClick={() => setSetupOpen(true)} sx={{ mt: 0.5 }}>
+            Configurar página
+          </Button>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+            {setup.size} {setup.landscape ? 'horizontal' : 'vertical'}
+            {(setup.header.trim() || setup.footer.trim()) ? ' · con membrete' : ''}
+          </Typography>
 
           <Divider sx={{ my: 1.5 }} />
           {/* La base manda dos cosas: qué variables se pueden insertar y con qué datos se
@@ -530,27 +668,65 @@ export const PdfTemplatesSection = () => {
             </Box>
             <Box sx={{ display: 'flex' }}>
               <VRuler height={dims.h} />
-              <Box
-                ref={pageRef}
-                contentEditable
-                suppressContentEditableWarning
-                sx={{
-                  // Medidas ESPEJO de `wrap_html` (ver el bloque de fidelidad arriba): margen
-                  // de 2 cm, cuerpo de 12 pt y títulos de 22/18/15 pt. Con los valores viejos
-                  // (64 px y 15 px) el texto cabía distinto acá que en el PDF.
-                  width: dims.w, minHeight: dims.h, boxSizing: 'border-box', p: `${PAGE_MARGIN_PX}px`,
-                  bgcolor: '#fff', color: '#111', fontFamily: font,
-                  fontSize: `${BODY_PT * PT}px`, lineHeight: 1.5,
-                  boxShadow: '0 8px 30px rgba(16,35,63,.18)', outline: 'none',
-                  '& h1': { fontSize: `${HEADING_PT.h1 * PT}px` },
-                  '& h2': { fontSize: `${HEADING_PT.h2 * PT}px` },
-                  '& h3': { fontSize: `${HEADING_PT.h3 * PT}px` },
-                  '& table': { borderCollapse: 'collapse', width: '100%' },
-                  '& td, & th': { border: '1px solid #cbd5e1', padding: '6px' },
-                  '& img': { maxWidth: '100%' }, '& blockquote': { borderLeft: '3px solid #cbd5e1', margin: '8px 0', paddingLeft: '10px', color: '#555' },
-                }}
-              />
+              <Box sx={{ position: 'relative' }}>
+                <Box
+                  ref={pageRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onInput={() => setGuiasTick((n) => n + 1)}
+                  sx={{
+                    // Medidas ESPEJO de `wrap_html` (ver el bloque de fidelidad arriba):
+                    // márgenes del documento, cuerpo de 12 pt y títulos de 22/18/15 pt. Con
+                    // los valores viejos (64 px y 15 px) el texto cabía distinto acá que en
+                    // el PDF.
+                    width: dims.w, minHeight: dims.h, boxSizing: 'border-box',
+                    pt: `${marginPx.top}px`, pr: `${marginPx.right}px`,
+                    pb: `${marginPx.bottom}px`, pl: `${marginPx.left}px`,
+                    bgcolor: '#fff', color: '#111', fontFamily: font,
+                    fontSize: `${BODY_PT * PT}px`, lineHeight: 1.5,
+                    boxShadow: '0 8px 30px rgba(16,35,63,.18)', outline: 'none',
+                    '& h1': { fontSize: `${HEADING_PT.h1 * PT}px` },
+                    '& h2': { fontSize: `${HEADING_PT.h2 * PT}px` },
+                    '& h3': { fontSize: `${HEADING_PT.h3 * PT}px` },
+                    '& table': { borderCollapse: 'collapse', width: '100%' },
+                    '& td, & th': { border: '1px solid #cbd5e1', padding: '6px' },
+                    '& img': { maxWidth: '100%' }, '& blockquote': { borderLeft: '3px solid #cbd5e1', margin: '8px 0', paddingLeft: '10px', color: '#555' },
+                    // El salto de página se ve como lo que es: una línea de corte.
+                    '& [data-mc-break]': {
+                      height: 0, borderTop: '2px dashed #0075be', position: 'relative',
+                      margin: '14px 0', '&::after': {
+                        content: '"salto de página"', position: 'absolute', right: 0, top: 2,
+                        fontSize: 10, color: '#0075be', background: '#fff', padding: '0 4px',
+                      },
+                    },
+                  }}
+                />
+                {/* Guías de corte. Es una APROXIMACIÓN y se avisa debajo del lienzo: en el
+                    PDF cada hoja vuelve a empezar con su margen, y esa franja en blanco no
+                    se reproduce en una tira continua. */}
+                {guias.map((y, i) => (
+                  <Box key={i} sx={{
+                    position: 'absolute', left: 0, right: 0, top: marginPx.top + y,
+                    borderTop: '1px dashed #94a3b8', pointerEvents: 'none',
+                  }}>
+                    {/* A la IZQUIERDA: en apaisado la hoja es más ancha que la ventana y una
+                        etiqueta anclada a la derecha se sale de la pantalla. */}
+                    <Typography sx={{
+                      position: 'absolute', left: 4, top: 2, fontSize: 10, color: '#64748b',
+                      bgcolor: '#fff', px: 0.5, borderRadius: 0.5,
+                    }}>
+                      Página {i + 2}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
             </Box>
+            {guias.length > 0 && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, ml: `${RULER}px` }}>
+                {guias.length + 1} páginas aproximadas. El corte exacto lo decide el motor al
+                generar el PDF (no parte tablas ni párrafos por la mitad si puede evitarlo).
+              </Typography>
+            )}
           </Box>
         </Box>
       </Stack>
@@ -620,6 +796,84 @@ export const PdfTemplatesSection = () => {
         <DialogActions>
           <Button onClick={() => setNameOpen(false)}>Cancelar</Button>
           <Button variant="contained" disabled={!nameValue.trim()} onClick={confirmSave}>Guardar</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Configuración de página: hoja, orientación, márgenes y membrete. Todo se guarda
+          DENTRO del documento, así que el envío real usa exactamente lo mismo. */}
+      <Dialog open={setupOpen} onClose={() => setSetupOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Configurar página</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2.5} sx={{ mt: 0.5 }}>
+            <Stack direction="row" spacing={2}>
+              <TextField select size="small" label="Hoja" fullWidth value={setup.size}
+                onChange={(e) => setSetup((s) => ({ ...s, size: e.target.value as 'A4' | 'Carta' }))}>
+                <MenuItem value="A4">A4 (21 × 29,7 cm)</MenuItem>
+                <MenuItem value="Carta">Carta (21,6 × 27,9 cm)</MenuItem>
+              </TextField>
+              <TextField select size="small" label="Orientación" fullWidth
+                value={setup.landscape ? 'landscape' : 'portrait'}
+                onChange={(e) => setSetup((s) => ({ ...s, landscape: e.target.value === 'landscape' }))}>
+                <MenuItem value="portrait">Vertical</MenuItem>
+                <MenuItem value="landscape">Horizontal</MenuItem>
+              </TextField>
+            </Stack>
+
+            <Box>
+              <Typography variant="subtitle2" gutterBottom>Márgenes (cm)</Typography>
+              <Stack direction="row" spacing={1.5}>
+                {(['top', 'right', 'bottom', 'left'] as const).map((lado) => (
+                  <TextField
+                    key={lado} size="small" type="number" fullWidth
+                    label={{ top: 'Arriba', right: 'Derecha', bottom: 'Abajo', left: 'Izquierda' }[lado]}
+                    value={setup.margin[lado]}
+                    inputProps={{ min: 0, max: 10, step: 0.5 }}
+                    onChange={(e) => {
+                      // El backend acota igual; aquí se evita que el lienzo se vuelva
+                      // inservible mientras se escribe.
+                      const v = Math.max(0, Math.min(10, Number(e.target.value) || 0));
+                      setSetup((s) => ({ ...s, margin: { ...s.margin, [lado]: v } }));
+                    }}
+                  />
+                ))}
+              </Stack>
+            </Box>
+
+            <Box>
+              <Typography variant="subtitle2" gutterBottom>Membrete</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                Se repiten en TODAS las hojas. Admiten variables de tu base
+                (<code>{'{{Nombre}}'}</code>) y los botones de numeración.
+              </Typography>
+              <Stack spacing={1.5}>
+                {(['header', 'footer'] as const).map((banda) => (
+                  <Box key={banda}>
+                    <TextField
+                      size="small" fullWidth
+                      label={banda === 'header' ? 'Encabezado' : 'Pie de página'}
+                      placeholder={banda === 'header'
+                        ? 'ACME S.A.S · Extracto de cuenta'
+                        : 'Página [[pagina]] de [[paginas]]'}
+                      value={setup[banda]}
+                      onChange={(e) => setSetup((s) => ({ ...s, [banda]: e.target.value }))}
+                    />
+                    <Stack direction="row" spacing={1} sx={{ mt: 0.75 }}>
+                      {PAGE_TOKENS.map((t) => (
+                        <Button key={t.token} size="small" variant="text"
+                          onClick={() => setSetup((s) => ({ ...s, [banda]: `${s[banda]}${t.token}` }))}>
+                          + {t.label}
+                        </Button>
+                      ))}
+                    </Stack>
+                  </Box>
+                ))}
+              </Stack>
+            </Box>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSetup({ ...DEFAULT_SETUP })}>Restablecer</Button>
+          <Button variant="contained" onClick={() => setSetupOpen(false)}>Listo</Button>
         </DialogActions>
       </Dialog>
 

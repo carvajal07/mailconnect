@@ -1024,3 +1024,44 @@ desplegar en AWS); lo único de backend es un cambio de TEXTO en el 429 de Login
    (si sale en Arial, el envoltorio `data-mc-doc` no está llegando) y con los **datos de la
    primera fila** de la base. Una variable que no exista en la base debe verse como
    `{{campo}}`, no como su nombre suelto.
+
+
+---
+
+## 21. Página configurable del editor PDF (ago 2026)
+
+Márgenes, orientación, encabezado/pie con numeración y salto de página. La configuración
+viaja **dentro del HTML** de la plantilla, así que no cambia el esquema de `messageTemplate`
+ni el mensaje de la cola.
+
+- [ ] `[J]` **Redesplegar LAS DOS lambdas, juntas**: `Api_V1_Template_Render-pdf` (vista
+  previa) y `Api_V1_Template_Combination-EAP-PDF` (envío real). ⚠️ Comparten `wrap_html`
+  **copiado**, que es donde vive el motor de página. Si solo se despliega una, la vista
+  previa y el PDF que recibe el destinatario dejan de coincidir — exactamente el problema
+  que esta tanda vino a cerrar.
+- **Sin cambios de infra, IAM, rutas ni layers.** El motor de página usa solo la stdlib
+  (`html.parser`, `re`); no suma dependencias al layer.
+- **Compatibilidad:** una plantilla guardada antes de esto no trae los `data-*` y se
+  renderiza con los valores por defecto, que son los de siempre (A4 vertical, 2 cm, sin
+  membrete) — y sin membrete no se declaran marcos, así que su maquetación no cambia.
+
+### Verificación post-deploy
+
+1. **Membrete:** configurar encabezado "ACME" y pie `Página [[pagina]] de [[paginas]]`,
+   escribir contenido que ocupe 3 hojas y generar la vista previa: el encabezado debe salir
+   en **las 3** y el pie numerar 1, 2 y 3 de 3.
+2. **El mismo membrete en el ENVÍO REAL:** guardar esa plantilla, usarla en una campaña
+   EAP-PDF y enviarse una muestra. El PDF adjunto debe traer el membrete y la numeración
+   igual que la vista previa. Si la vista previa los trae y el adjunto no, falta desplegar
+   el combinador.
+3. **Orientación y márgenes:** poner horizontal con margen izquierdo 1,5 cm → el PDF debe
+   salir apaisado y con ese margen.
+4. **Salto de página:** botón "Salto de página" a mitad del texto → lo que sigue arranca en
+   hoja nueva.
+5. **Variable llamada "pagina":** con una base que tenga una columna `pagina`, el pie debe
+   seguir numerando (los corchetes no se confunden con las llaves de datos).
+6. **Plantilla vieja:** cargar una guardada antes de esta tanda → debe verse y renderizar
+   igual que antes, con A4 vertical y 2 cm.
+
+---
+

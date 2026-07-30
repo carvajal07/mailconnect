@@ -403,6 +403,22 @@
 | CP-PDFB-11 | 🟡 | Catálogo de fuentes honesto | Abrir el desplegable de fuente | Solo 3 opciones, etiquetadas por familia; ya no aparecen Verdana/Tahoma/Georgia (producían el mismo PDF) |
 | CP-PDFB-12 | 🟢 | Plantilla vieja con fuente retirada | Cargar una plantilla guardada con Georgia | Se sigue viendo y renderizando como siempre |
 | CP-PDFB-13 | 🟢 | Panel de datos no se desborda | Elegir una base de nombre largo | El selector queda dentro del panel de herramientas, sin cortarse por fuera |
+| CP-PDFP-01 | 🔴 | **Encabezado en TODAS las hojas** | Configurar página → Encabezado "ACME" → escribir contenido de 3 hojas → Vista previa PDF | "ACME" aparece en las 3 páginas |
+| CP-PDFP-02 | 🔴 | **Numeración del pie** | Pie = `Página [[pagina]] de [[paginas]]` (botones) → Vista previa | Sale "Página 1 de 3", "Página 2 de 3", "Página 3 de 3" |
+| CP-PDFP-03 | 🔴 | **El membrete llega al ENVÍO REAL** | Guardar esa plantilla, usarla en campaña EAP-PDF y enviar muestra | El PDF adjunto trae membrete y numeración igual que la vista previa |
+| CP-PDFP-04 | 🟡 | El membrete no se duplica | Vista previa con encabezado y pie | No aparecen además en medio del contenido de la primera hoja |
+| CP-PDFP-05 | 🟡 | Variables de la base en el membrete | Encabezado = `Extracto de {{Nombre}}` con base elegida | Resuelve al dato del destinatario en cada PDF |
+| CP-PDFP-06 | 🔴 | **Columna llamada "pagina" no rompe la numeración** | Base con una columna `pagina` + pie con `[[pagina]]` | El pie sigue numerando; no se sustituye por el dato de la columna |
+| CP-PDFP-07 | 🔴 | **Orientación horizontal** | Configurar página → Horizontal → Vista previa | El PDF sale apaisado; el lienzo también se ve apaisado |
+| CP-PDFP-08 | 🔴 | Márgenes por lado | Poner arriba 3 e izquierda 1,5 → Vista previa | El PDF respeta esos márgenes y el lienzo los dibuja igual |
+| CP-PDFP-09 | 🟡 | Margen absurdo se acota | Escribir 99 en un margen | Se acota (no deja el contenido sin ancho); el PDF sigue generándose |
+| CP-PDFP-10 | 🔴 | **Salto de página manual** | Botón "Salto de página" a mitad del texto → Vista previa | Lo que sigue arranca en hoja nueva |
+| CP-PDFP-11 | 🟡 | El salto se ve en el lienzo | Insertarlo | Aparece una línea de corte con la etiqueta "salto de página" |
+| CP-PDFP-12 | 🟡 | **Guías de corte** | Escribir contenido que pase de una hoja | Aparecen líneas punteadas con "Página 2", "Página 3"… y el aviso de que es aproximado |
+| CP-PDFP-13 | 🟢 | Guías en apaisado | Con hoja horizontal, mirar las guías | La etiqueta "Página N" se ve (a la izquierda), no queda fuera de pantalla |
+| CP-PDFP-14 | 🔴 | **Plantilla vieja sin configuración** | Cargar una guardada antes de esta función | Se ve y renderiza igual que antes: A4 vertical, 2 cm, sin membrete |
+| CP-PDFP-15 | 🟡 | La configuración sobrevive al guardado | Configurar, guardar, "Nueva" y volver a cargar | Vuelve con la misma hoja, orientación, márgenes y membrete |
+| CP-PDFP-16 | 🟢 | Restablecer | Botón "Restablecer" del diálogo | Vuelve a A4 vertical, 2 cm y sin membrete |
 | CP-PDF-01 | 🔴 | Editor básico tipo Word | Crear plantilla con títulos, imagen, tabla y variables | Se guarda en `messageTemplate` canal PDF; se comparte con el equipo |
 | CP-PDF-02 | 🔴 | Vista previa PDF (básico) | Botón "Vista previa PDF" | Devuelve el PDF real con las `{{variables}}` sustituidas por valores de muestra |
 | CP-PDF-03 | 🔴 | Estudio PDF (lienzo) | Crear un diseño con texto, formas, tabla y guardar | Se guarda como `sketchJson`; abre a pantalla completa |

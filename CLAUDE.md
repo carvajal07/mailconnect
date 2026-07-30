@@ -26,6 +26,61 @@
 
 _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y backend de seguridad._
 
+### Editor PDF básico: página configurable, membrete con numeración y saltos (ago 2026)
+> Segunda tanda del editor "tipo Word". Se cierran los cuatro pendientes: `@page` estaba
+> **fijo** en A4 vertical con 2 cm, no había forma de repetir un membrete ni de numerar las
+> hojas, no existía el salto de página manual, y el lienzo era una **tira continua** donde no
+> se veía qué quedaba en la página 2.
+
+- **La configuración viaja DENTRO del HTML**, en los `data-*` del envoltorio `data-mc-doc`
+  (`data-mc-size`, `data-mc-orientation`, `data-mc-margin`) más `<div data-mc-header>` /
+  `<div data-mc-footer>`. ⚠️ Es la decisión de diseño clave: en el envío real el combinador
+  (`Combination-EAP-PDF`) recibe la plantilla **por SQS** y no sabe nada de lo que el cliente
+  configuró en el editor — el `pageSize` del mensaje es lo único que le llega. Guardándolo en
+  el propio documento, la vista previa y el envío real usan lo mismo **sin tocar el esquema de
+  `messageTemplate` ni el mensaje de la cola**. Una plantilla vieja sin esos atributos entra
+  con los valores por defecto, que son exactamente los de antes.
+- **Márgenes (4 lados) y orientación.** `@page` pasa a construirse con la configuración del
+  documento (`size: A4 landscape` y `margin` por lado). Dos topes: 10 cm al leer el valor y
+  media hoja menos 1 cm por lado, porque un margen absurdo dejaría el contenido sin ancho útil.
+- **Encabezado y pie con numeración**, mediante los **marcos** (`@frame`) de xhtml2pdf +
+  `-pdf-frame-content`. ⚠️ Los marcos **solo se declaran si hay membrete**: declararlos cambia
+  el modelo de maquetación (el contenido pasa a fluir en un marco explícito) y no hay razón
+  para exponer a ese cambio a los documentos que no los usan — sin membrete se emite el
+  `@page` simple de siempre. Las bandas se **extraen del flujo** (si no, saldrían además en
+  medio de la primera hoja) y se reemiten como contenido de su marco, con la fuente del
+  documento (al salir del envoltorio la perderían).
+- ⚠️ **Los tokens de numeración van en CORCHETES** (`[[pagina]]`, `[[paginas]]`), no en llaves:
+  las llaves son el formato de las variables de la BASE y `render_variables` corre **antes**,
+  así que una columna del CSV llamada "pagina" habría pisado el número de página. El backend
+  los convierte a `<pdf:pagenumber />` / `<pdf:pagecount />`.
+- **Extracción con `html.parser` de la stdlib**, llevando la cuenta de la profundidad — no con
+  un regex, que cerraría en el primer `</div>` y partiría por la mitad un encabezado con divs
+  anidados. BeautifulSoup no está garantizada en el layer de `Render-pdf`. Ante un HTML roto
+  se deja la banda en el flujo (sale una vez, en medio) antes que tumbar el render.
+- **Salto de página manual**: botón que inserta `<div data-mc-break style="page-break-before:
+  always">`, que xhtml2pdf respeta. En el lienzo se dibuja como una línea de corte etiquetada.
+- **Guías de corte en el lienzo.** Se calcula cuánto contenido cabe por hoja (descontando
+  márgenes y bandas) y se marcan los cortes, respetando los saltos manuales. ⚠️ Es una
+  **aproximación y el editor lo dice**: el lienzo es una tira continua, mientras que en el PDF
+  cada hoja vuelve a empezar con su margen — esa franja en blanco no se reproduce, y el motor
+  además evita partir tablas y párrafos. La etiqueta "Página N" va a la **izquierda**: en
+  apaisado la hoja es más ancha que la ventana y a la derecha se sale de la pantalla.
+- **Cobertura:** `test_render_pdf.py` sube a **26** (+13). Sin xhtml2pdf: que sin membrete NO
+  se declaren marcos, orientación y márgenes desde el documento, que el documento mande sobre
+  el `pageSize` del mensaje, el acotado del margen absurdo, la extracción del flujo (una sola
+  vez y fuera del contenido), solo-pie sin marco de encabezado, el encabezado con divs
+  anidados, los tokens de numeración + que una variable `{{pagina}}` NO se confunda con ellos,
+  la fuente heredada por la banda, y que un HTML roto no tumbe el render. Con render real:
+  membrete repetido en TODAS las hojas + numeración correcta, el salto manual, y el apaisado
+  girando la hoja. **Verificado de punta a punta** con el HTML literal que emite el editor
+  pasado por la lambda real: 3 páginas, membrete en las 3, `Pagina 1/2/3 de 3`, salto
+  respetado y sin tokens sin resolver.
+- ⚠️ `[J]`: **redesplegar las DOS lambdas juntas** — `Api_V1_Template_Render-pdf` y
+  `Api_V1_Template_Combination-EAP-PDF` comparten `wrap_html` **copiado**. Si solo se
+  despliega una, la vista previa y el envío real dejan de coincidir. Sin cambios de infra,
+  IAM, rutas ni layers (el motor de página es stdlib).
+
 ### Editor PDF básico: variables reales, vista previa con datos y fidelidad con la hoja (ago 2026)
 > Los tres defectos del editor "tipo Word" (`PdfTemplatesSection`). Los tres tienen la misma
 > raíz: **el editor no sabía nada de la base de datos ni de lo que el motor puede entregar**,
@@ -2758,7 +2813,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **757** pruebas (~3 min) y la de frontend 155. Correrlas
+> La suite de backend son **770** pruebas (~3 min) y la de frontend 155. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 
@@ -3199,7 +3254,7 @@ README.md
 ---
 
 ## 7. Referencias rápidas
-- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 474 CP en 22 módulos) y su
+- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 490 CP en 22 módulos) y su
   **planilla de ejecución `CASOS_PRUEBA_QA.xlsx`** (un CP por fila + columnas para marcar
   **Pasó / No pasó**, resultado obtenido, observaciones, quién y cuándo; hoja de Resumen con
   conteos por estado, prioridad y módulo). ⚠️ El **`.md` es la fuente de verdad**: la planilla
