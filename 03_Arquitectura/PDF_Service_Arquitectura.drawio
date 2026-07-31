@@ -1,0 +1,236 @@
+<mxfile host="app.diagrams.net" agent="Claude">
+  <diagram name="PDF Service - Arquitectura propuesta" id="pdf-svc-v2">
+    <mxGraphModel dx="2225" dy="1378" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" parent="1" vertex="1" value="Servicio de generación de PDF — Arquitectura propuesta" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=23;fontStyle=1;fontColor=#16233f;">
+          <mxGeometry x="400" y="14" width="800" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" vertex="1" value="Dimensionada con mediciones reales del motor &lt;b&gt;pdf_engine&lt;/b&gt; (ReportLab) · 1M documentos/día · 186 ms y 19,9 KB por documento (mezcla de referencia) · ~$440/mes · sin EC2, sin ASG, sin EFS" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#475569;">
+          <mxGeometry x="300" y="50" width="1000" height="24" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════ CONSUMIDORES ══════════════ -->
+        <mxCell id="box-cons" parent="1" vertex="1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#94a3b8;dashed=1;verticalAlign=top;">
+          <mxGeometry x="40" y="120" width="185" height="450" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl-cons" parent="1" vertex="1" value="CONSUMIDORES" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontColor=#475569;">
+          <mxGeometry x="50" y="128" width="165" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="cons-portal" parent="1" vertex="1" value="&lt;b&gt;Portal MailConnect&lt;/b&gt;&lt;br&gt;Estudio · Diseñador&lt;br&gt;Editor básico" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#cbd5e1;fontSize=10;">
+          <mxGeometry x="55" y="158" width="155" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="cons-eap" parent="1" vertex="1" value="&lt;b&gt;Combination-EAP-PDF&lt;/b&gt;&lt;br&gt;pasa a ser CLIENTE&lt;br&gt;(se elimina la 2ª copia&lt;br&gt;vendorizada del motor)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=10;">
+          <mxGeometry x="55" y="226" width="155" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="cons-3p" parent="1" vertex="1" value="&lt;b&gt;API de terceros&lt;/b&gt;&lt;br&gt;(producto vendible)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#cbd5e1;fontSize=10;">
+          <mxGeometry x="55" y="304" width="155" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="eventbridge" parent="1" vertex="1" value="EventBridge&lt;br&gt;cierres de ciclo&lt;br&gt;(programado)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#FF4F8B;gradientDirection=north;fillColor=#BC1356;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;">
+          <mxGeometry x="102" y="380" width="60" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════ BORDE ══════════════ -->
+        <mxCell id="waf" parent="1" vertex="1" value="AWS WAF&lt;br&gt;+ cuota por tenant" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#F54749;gradientDirection=north;fillColor=#C7131F;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.waf;">
+          <mxGeometry x="268" y="290" width="54" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="apigw" parent="1" vertex="1" value="&lt;b&gt;API Gateway&lt;/b&gt;&lt;br&gt;POST /render (sync)&lt;br&gt;POST /jobs (async)&lt;br&gt;GET /jobs/{id}" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#945DF2;gradientDirection=north;fillColor=#5A30B5;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.api_gateway;">
+          <mxGeometry x="378" y="285" width="64" height="64" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════ CARRIL SÍNCRONO ══════════════ -->
+        <mxCell id="lane-sync" parent="1" vertex="1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#22c55e;dashed=1;verticalAlign=top;">
+          <mxGeometry x="510" y="118" width="700" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl-sync" parent="1" vertex="1" value="CARRIL SÍNCRONO — interactivo" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontColor=#15803d;">
+          <mxGeometry x="522" y="124" width="260" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lambda-sync" parent="1" vertex="1" value="&lt;b&gt;Lambda Render&lt;/b&gt;&lt;br&gt;(síncrona)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;">
+          <mxGeometry x="546" y="158" width="64" height="64" as="geometry" />
+        </mxCell>
+        <mxCell id="note-sync" parent="1" vertex="1" value="&lt;b&gt;arm64 · 1.769 MB = 1 vCPU exacto&lt;/b&gt; — es el óptimo: por debajo cuesta lo mismo y tarda más;&lt;br&gt;por encima pagas de más, porque el render es monohilo.&lt;br&gt;&lt;b&gt;Concurrencia provisionada ≈ 20&lt;/b&gt; → sin arranque en frío.&lt;br&gt;&lt;br&gt;p99 de render &lt;b&gt;MEDIDO 222 ms&lt;/b&gt; → ~500 ms extremo a extremo.&lt;br&gt;&lt;b&gt;El SLA de 3 s se cumple con 5× de margen, sin colas ni ASG.&lt;/b&gt;&lt;br&gt;Devuelve el PDF (base64) o una URL prefirmada." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#22c55e;align=left;verticalAlign=top;fontSize=10;spacingLeft=8;spacingTop=4;">
+          <mxGeometry x="656" y="150" width="536" height="112" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════ CARRIL ASÍNCRONO ══════════════ -->
+        <mxCell id="lane-async" parent="1" vertex="1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#3b82f6;dashed=1;verticalAlign=top;">
+          <mxGeometry x="510" y="336" width="1050" height="352" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl-async" parent="1" vertex="1" value="CARRIL ASÍNCRONO — lotes / cierres de ciclo" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontColor=#1d4ed8;">
+          <mxGeometry x="522" y="342" width="320" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lambda-submit" parent="1" vertex="1" value="&lt;b&gt;Lambda Submit&lt;/b&gt;&lt;br&gt;valida · manifiesto&lt;br&gt;cuota por tenant&lt;br&gt;idempotency-key" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;">
+          <mxGeometry x="540" y="378" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-manifest" parent="1" vertex="1" value="&lt;b&gt;S3 Manifiesto&lt;/b&gt;&lt;br&gt;+ datos fuente&lt;br&gt;(1 KB por doc)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#60A337;gradientDirection=north;fillColor=#277116;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;">
+          <mxGeometry x="666" y="378" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="sfn" parent="1" vertex="1" value="&lt;b&gt;Step Functions&lt;/b&gt;&lt;br&gt;&lt;b&gt;Distributed Map&lt;/b&gt;&lt;br&gt;ItemBatcher = 50&lt;br&gt;child = Express" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#FF4F8B;gradientDirection=north;fillColor=#BC1356;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.step_functions;">
+          <mxGeometry x="792" y="378" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="lambda-worker" parent="1" vertex="1" value="&lt;b&gt;Lambda Render&lt;/b&gt;&lt;br&gt;&lt;b&gt;Worker&lt;/b&gt; (lote)&lt;br&gt;misma imagen&lt;br&gt;que la síncrona" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;">
+          <mxGeometry x="918" y="378" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="note-async" parent="1" vertex="1" value="&lt;b&gt;ItemBatcher = 50 documentos por invocación&lt;/b&gt; (~9,5 s cada una).&lt;br&gt;⚠️ No es por el arranque en frío —son solo 200 ms medidos— sino por la&lt;br&gt;&lt;b&gt;orquestación&lt;/b&gt;: SQS $36→$0,72 · SFN $30→$0,60 · DynamoDB $112→$0,01 al mes.&lt;br&gt;&lt;br&gt;&lt;b&gt;Concurrencia:&lt;/b&gt; 310 drena 1M en 10 min · 103 → 30 min · 52 → 1 h&lt;br&gt;(límite de cuenta 1.000; se reservan ~20 para el carril síncrono).&lt;br&gt;&lt;br&gt;&lt;b&gt;Idempotencia:&lt;/b&gt; claim condicional por (jobId, docId) + key S3 determinista&lt;br&gt;→ un reintento sobrescribe, no duplica. Mismo patrón que _claim_part." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#3b82f6;align=left;verticalAlign=top;fontSize=10;spacingLeft=8;spacingTop=4;">
+          <mxGeometry x="1010" y="368" width="536" height="132" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dlq" parent="1" vertex="1" value="&lt;b&gt;SQS DLQ&lt;/b&gt;&lt;br&gt;fallos por ítem&lt;br&gt;+ replay" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#FF4F8B;gradientDirection=north;fillColor=#BC1356;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sqs;">
+          <mxGeometry x="794" y="556" width="56" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="lambda-notify" parent="1" vertex="1" value="&lt;b&gt;Lambda Notify&lt;/b&gt;&lt;br&gt;job terminado" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;">
+          <mxGeometry x="920" y="556" width="56" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="webhook" parent="1" vertex="1" value="&lt;b&gt;Webhook del cliente&lt;/b&gt;&lt;br&gt;(o SQS del cliente)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#64748b;fontSize=10;dashed=1;">
+          <mxGeometry x="1040" y="562" width="140" height="44" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════ PLANO DE DATOS ══════════════ -->
+        <mxCell id="box-datos" parent="1" vertex="1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fafaf9;strokeColor=#94a3b8;dashed=1;verticalAlign=top;">
+          <mxGeometry x="510" y="710" width="700" height="205" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl-datos" parent="1" vertex="1" value="PLANO DE DATOS" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontColor=#475569;">
+          <mxGeometry x="522" y="716" width="200" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="ecr" parent="1" vertex="1" value="&lt;b&gt;ECR&lt;/b&gt;&lt;br&gt;imagen del renderer&lt;br&gt;(motor + fuentes,&lt;br&gt;versión pineada)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.elastic_container_registry;">
+          <mxGeometry x="540" y="748" width="58" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-tpl" parent="1" vertex="1" value="&lt;b&gt;S3 Plantillas&lt;/b&gt;&lt;br&gt;VERSIONADAS&lt;br&gt;(caché LRU en&lt;br&gt;memoria del worker)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#60A337;gradientDirection=north;fillColor=#277116;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;">
+          <mxGeometry x="676" y="748" width="58" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="ddb" parent="1" vertex="1" value="&lt;b&gt;DynamoDB Jobs&lt;/b&gt;&lt;br&gt;&lt;b&gt;POR JOB&lt;/b&gt;, no por doc&lt;br&gt;client·product·cycle&lt;br&gt;+ versión plantilla · TTL" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#4D72F3;gradientDirection=north;fillColor=#3334B9;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.dynamodb;">
+          <mxGeometry x="812" y="748" width="58" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-out" parent="1" vertex="1" value="&lt;b&gt;S3 PDFs&lt;/b&gt;&lt;br&gt;prefijo por tenant&lt;br&gt;SSE-KMS · prefirmadas&lt;br&gt;retención + BORRADO" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#60A337;gradientDirection=north;fillColor=#277116;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;">
+          <mxGeometry x="948" y="748" width="58" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="kms" parent="1" vertex="1" value="&lt;b&gt;KMS&lt;/b&gt;&lt;br&gt;CMK por tenant" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#F54749;gradientDirection=north;fillColor=#C7131F;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.key_management_service;">
+          <mxGeometry x="1084" y="748" width="58" height="58" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════ OBSERVABILIDAD ══════════════ -->
+        <mxCell id="box-obs" parent="1" vertex="1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fdf4ff;strokeColor=#a855f7;dashed=1;verticalAlign=top;">
+          <mxGeometry x="1230" y="710" width="330" height="205" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl-obs" parent="1" vertex="1" value="OBSERVABILIDAD" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontColor=#7e22ce;">
+          <mxGeometry x="1242" y="716" width="200" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="cw" parent="1" vertex="1" value="&lt;b&gt;CloudWatch&lt;/b&gt;&lt;br&gt;operación: p99, errores,&lt;br&gt;throttles, concurrencia&lt;br&gt;(NO QuickSight)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#F34482;gradientDirection=north;fillColor=#BC1356;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudwatch_2;">
+          <mxGeometry x="1272" y="748" width="58" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="sns" parent="1" vertex="1" value="&lt;b&gt;SNS&lt;/b&gt;&lt;br&gt;alarmas al equipo" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#FF4F8B;gradientDirection=north;fillColor=#BC1356;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sns;">
+          <mxGeometry x="1440" y="748" width="58" height="58" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════ EDGES ══════════════ -->
+        <mxCell id="e1" parent="1" edge="1" source="box-cons" target="waf" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;exitX=1;exitY=0.4;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" parent="1" edge="1" source="waf" target="apigw" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" parent="1" edge="1" source="apigw" target="lambda-sync" value="/render" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#16a34a;exitX=0.5;exitY=0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;fontSize=10;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" parent="1" edge="1" source="apigw" target="lambda-submit" value="/jobs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#2563eb;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;fontSize=10;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" parent="1" edge="1" source="eventbridge" target="apigw" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;dashed=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;entryPerimeter=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" parent="1" edge="1" source="lambda-submit" target="s3-manifest" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" parent="1" edge="1" source="s3-manifest" target="sfn" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" parent="1" edge="1" source="sfn" target="lambda-worker" value="lotes de 50" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;fontSize=9;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" parent="1" edge="1" source="sfn" target="dlq" value="ítems fallidos" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;dashed=1;strokeColor=#CC0000;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;fontSize=9;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" parent="1" edge="1" source="sfn" target="lambda-notify" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;dashed=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" parent="1" edge="1" source="lambda-notify" target="webhook" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" parent="1" edge="1" source="lambda-worker" target="s3-out" value="PDF" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;fontSize=9;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" parent="1" edge="1" source="lambda-worker" target="s3-tpl" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;dashed=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" parent="1" edge="1" source="lambda-sync" target="s3-tpl" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;dashed=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e15" parent="1" edge="1" source="lambda-submit" target="ddb" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.75;entryDx=0;entryDy=0;entryPerimeter=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" parent="1" edge="1" source="ecr" target="lambda-worker" value="misma imagen" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;dashed=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;entryPerimeter=0;fontSize=9;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" parent="1" edge="1" source="s3-out" target="kms" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;dashed=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e18" parent="1" edge="1" source="cw" target="sns" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;dashed=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e19" parent="1" edge="1" source="dlq" target="sfn" value="replay" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=1;dashed=1;strokeColor=#CC0000;exitX=0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=1;entryDx=0;entryDy=0;entryPerimeter=0;fontSize=9;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e20" parent="1" edge="1" source="lambda-sync" target="s3-out" value="URL prefirmada" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;dashed=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;fontSize=9;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════ NOTAS ══════════════ -->
+        <mxCell id="n-medido" parent="1" vertex="1" value="&lt;b&gt;MEDIDO CONTRA pdf_engine (ReportLab, monohilo = 1 vCPU)&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;render_ms ≈ 30 + 2,5 × filas de tabla&lt;/b&gt;   (modelo casi perfecto)&lt;br&gt;  constancia 1 pág 28,7 ms · extracto 25 movs 93,3 · 60 movs 172,5 · 300 movs 782 · 1000 movs 2.542&lt;br&gt;  pesos: 9,4 KB · 14,1 · 18,8 · 57,8 · 172,6&lt;br&gt;&lt;br&gt;Arranque en frío &lt;b&gt;200 ms&lt;/b&gt; · traducción sketch→templateJson 0,2 ms · &lt;b&gt;QR 17,5 ms&lt;/b&gt; (61% de un doc ligero) · imagen 3,8 ms&lt;br&gt;Escalado multiproceso &lt;b&gt;lineal&lt;/b&gt; (eficiencia 0,92–1,01 en 4 núcleos) → la cuenta de vCPU es válida" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#3b82f6;align=left;verticalAlign=top;fontSize=10;spacingLeft=10;spacingTop=6;">
+          <mxGeometry x="40" y="940" width="740" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n-costo" parent="1" vertex="1" value="&lt;b&gt;CAPACIDAD Y COSTO — 1M documentos/día&lt;/b&gt;&lt;br&gt;&lt;br&gt;vCPU necesarios: &lt;b&gt;2,2&lt;/b&gt; en ventana de 24 h · &lt;b&gt;12,9&lt;/b&gt; en 4 h · &lt;b&gt;51,6&lt;/b&gt; en 1 h&lt;br&gt;&lt;br&gt;Lambda arm64 &lt;b&gt;$131&lt;/b&gt; · S3 PUT &lt;b&gt;$150&lt;/b&gt; · S3 almacenamiento (mes 12) &lt;b&gt;$157&lt;/b&gt;&lt;br&gt;orquestación ~$1 · DynamoDB ~$0  →  &lt;b&gt;~$440/mes&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;$0,012 por 1.000 documentos ≈ 0,048 COP por documento&lt;/b&gt;&lt;br&gt;Día 1 con 1.000 docs/día: centavos — no hay piso ocioso.&lt;br&gt;&lt;br&gt;Migrar a Fargate/EC2 Spot solo pasados ~&lt;b&gt;15M docs/día&lt;/b&gt; (15× el objetivo)." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;verticalAlign=top;fontSize=10;spacingLeft=10;spacingTop=6;">
+          <mxGeometry x="800" y="940" width="380" height="160" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n-storage" parent="1" vertex="1" value="&lt;b&gt;DECISIONES DE ALMACENAMIENTO — ahí está el costo real&lt;/b&gt;&lt;br&gt;&lt;br&gt;• &lt;b&gt;Fuente base-14 (Helvetica) por defecto.&lt;/b&gt; Embeber una TTF pesa&lt;br&gt;  &lt;b&gt;+20 KB FIJOS por PDF&lt;/b&gt; (×2,4 en el extracto típico) = +570 GB/mes.&lt;br&gt;  Se decide sin querer, en un desplegable del editor.&lt;br&gt;&lt;br&gt;• &lt;b&gt;Retención + BORRADO, no Glacier.&lt;/b&gt; Con objetos de 20 KB la transición&lt;br&gt;  cuesta $600 una vez y ahorra $10,81/mes → &lt;b&gt;55 meses para recuperar&lt;/b&gt;&lt;br&gt;  (se cobra por objeto, no por GB). Si hay obligación legal de años:&lt;br&gt;  agregar en .tar por ciclo y transicionar el archivo.&lt;br&gt;&lt;br&gt;• &lt;b&gt;Regenerar &gt; archivar.&lt;/b&gt; Guardar un PDF 1 año ($0,0000053) ≈ regenerarlo&lt;br&gt;  una vez ($0,0000044). Guardar los DATOS (1 KB, 20× menos) + SHA-256&lt;br&gt;  del original y regenerar bajo demanda mata el crecimiento infinito.&lt;br&gt;&lt;br&gt;• &lt;b&gt;Los PUT cuestan más que guardar:&lt;/b&gt; año 1 → PUT $1.800 vs storage $1.020." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;verticalAlign=top;fontSize=10;spacingLeft=10;spacingTop=6;">
+          <mxGeometry x="1200" y="940" width="360" height="248" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n-elim" parent="1" vertex="1" value="&lt;b&gt;QUÉ SE ELIMINÓ DEL DISEÑO ANTERIOR — Y POR QUÉ&lt;/b&gt;&lt;br&gt;&lt;br&gt;✗ &lt;b&gt;5 ASG / 240 EC2 (860 vCPU)&lt;/b&gt; → se necesitan 13. El piso de 38 vCPU ya cubría el pico de una ventana de 1 h: los ASG &lt;b&gt;nunca escalaban&lt;/b&gt; y costaban &lt;b&gt;$1.179/mes ociosos&lt;/b&gt;.&lt;br&gt;✗ &lt;b&gt;EFS compartido&lt;/b&gt; → cada worker renderiza SU documento; ese temporal no lo comparte nadie. S3 → /tmp local → S3. (Además: PDFs personalizados de todos los tenants en un filesystem común.)&lt;br&gt;✗ &lt;b&gt;CloudFront sobre las plantillas&lt;/b&gt; → se consumía desde dentro de la VPC (salir al borde y volver). VPC Gateway Endpoint de S3 + caché LRU en memoria del worker.&lt;br&gt;✗ &lt;b&gt;5 colas por prioridad (1-100)&lt;/b&gt; → a 186 ms/doc no hay backlog que priorizar: 1M drena en minutos. Y con 5 colas solo tenías 5 prioridades, no 100.&lt;br&gt;✗ &lt;b&gt;SLA de 3 s detrás de un ASG&lt;/b&gt; → era inalcanzable ante ráfaga en frío (escalar toma 1-3 min). Ahora es un camino síncrono que responde en ~500 ms.&lt;br&gt;✗ &lt;b&gt;Tracking por documento en DynamoDB&lt;/b&gt; → partición caliente en el contador de progreso. Distributed Map ya entrega progreso, conteos y fallos por ítem." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;align=left;verticalAlign=top;fontSize=10;spacingLeft=10;spacingTop=6;">
+          <mxGeometry x="40" y="1112" width="1140" height="152" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════ LEYENDA ══════════════ -->
+        <mxCell id="leg-box" parent="1" vertex="1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;">
+          <mxGeometry x="40" y="600" width="400" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="leg-t" parent="1" vertex="1" value="LEYENDA" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=1;">
+          <mxGeometry x="55" y="608" width="100" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="leg-1" parent="1" edge="1" style="endArrow=classic;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="60" y="648" as="sourcePoint" /><mxPoint x="105" y="648" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="leg-1t" parent="1" vertex="1" value="Flujo principal (petición / datos)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;">
+          <mxGeometry x="115" y="638" width="230" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="leg-2" parent="1" edge="1" style="endArrow=classic;html=1;strokeWidth=2;dashed=1;">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="60" y="676" as="sourcePoint" /><mxPoint x="105" y="676" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="leg-2t" parent="1" vertex="1" value="Acceso a datos / estado / notificación" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;">
+          <mxGeometry x="115" y="666" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="leg-3" parent="1" edge="1" style="endArrow=classic;html=1;strokeWidth=2;dashed=1;strokeColor=#CC0000;">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="60" y="704" as="sourcePoint" /><mxPoint x="105" y="704" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="leg-3t" parent="1" vertex="1" value="Camino de fallo (DLQ + replay)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;">
+          <mxGeometry x="115" y="694" width="230" height="20" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
