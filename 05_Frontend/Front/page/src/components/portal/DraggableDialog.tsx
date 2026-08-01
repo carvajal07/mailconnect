@@ -41,14 +41,19 @@ export const DraggableDialog = ({
   /**
    * Posición ACOTADA a la ventana, calculada al dibujar.
    *
-   * ⚠️ Se acota aquí y no solo al arrastrar: si la ventana se achica (o se rota el móvil)
-   * con el diálogo movido, la posición guardada lo dejaría fuera de la pantalla y no
-   * habría forma de recuperarlo — no hay nada de qué agarrarlo. Siempre quedan visibles
-   * al menos 80 px de la barra de título.
+   * ⚠️ El diálogo se mantiene ENTERO dentro de la ventana. Un acotado más permisivo
+   * (dejar visible solo la barra de título) parecía suficiente y no lo era: al bajarlo
+   * un poco, los botones Cancelar/Aplicar quedaban por debajo del borde y no había forma
+   * de pulsarlos — se reprodujo antes de corregirlo.
+   *
+   * ⚠️ Se acota al DIBUJAR y no solo al arrastrar: si la ventana se achica (o se rota el
+   * móvil) con el diálogo movido, la posición guardada lo dejaría fuera de la pantalla.
+   * Si el panel es más alto que la ventana se ancla arriba, que es lo único útil.
    */
+  const caja = cajaRef.current;
   const posSegura = pos ? {
-    x: Math.min(Math.max(pos.x, 8 - width + 80), window.innerWidth - 80),
-    y: Math.min(Math.max(pos.y, 8), window.innerHeight - 44),
+    x: Math.min(Math.max(pos.x, 8), Math.max(8, window.innerWidth - (caja?.offsetWidth ?? width) - 8)),
+    y: Math.min(Math.max(pos.y, 8), Math.max(8, window.innerHeight - (caja?.offsetHeight ?? 0) - 8)),
   } : null;
 
   const onPointerDown = (e: React.PointerEvent) => {

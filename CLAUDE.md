@@ -48,6 +48,67 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
 >
 > El **piloto E2E con un cliente real** es ahora el único bloqueante del MVP.
 
+### Proveedor de envío por canal y por CLIENTE (multi-proveedor, ago 2026)
+> El admin elige por cuál proveedor sale cada canal — global o por cliente (ej.: la
+> Panadería envía EMAIL por SocketLabs y SMS por Twilio; el resto hereda el global).
+
+- **Tabla `providerConfig`** (PK `customerId` + SK `channel`; `*` = global, mismo patrón
+  de `pricingRate`) + lambdas **`Api_V1_Provider_{List,Set}`** (admin + 2ª barrera,
+  auditadas `provider.set/remove`; `Set` crea la tabla on-demand). Rutas `/Provider/
+  {List,Set}` ya en routes.json.
+- **Matriz de CAPACIDADES** (única fuente: la lambda `Set` la valida y `List` se la da al
+  front — el desplegable jamás ofrece un proveedor sin adaptador):
+  EMAIL → aws·socketlabs · SMS → aws·twilio·infobip · VOZ → aws·twilio · **WSP → solo aws**
+  (⚠️ el número de WhatsApp/WABA está registrado ante Meta con UN proveedor; cambiarlo
+  exige re-registrar el número, no es un swap de API).
+- **Resolución en Prepare-batch** (`resolve_provider`): cliente → global `*` → `aws`.
+  EM/EAU/EAP comparten la clave EMAIL. **FAIL-OPEN a aws** (una tabla caída jamás detiene
+  un envío). El proveedor viaja **en el mensaje SQS** (`build_ctx`, campo `provider`),
+  igual que el `configurationSet` de la IP dedicada; mensajes viejos en vuelo → aws.
+- **Workers — despacho + credenciales FAIL-CLOSED:** `_check_provider_config` corre
+  ⚠️ **ANTES de `_claim_part`** — si el proveedor elegido no tiene credenciales, el LOTE
+  falla y SQS reintenta, sin quemar destinatarios con estados falsos (la lección del
+  `originationIdentity` de Voz). Después del claim sería tarde: la redelivery vería la
+  parte reclamada y la omitiría.
+  - **SMS** → `_send_sms_twilio` (API Messages, Basic auth; `TWILIO_FROM_SMS` acepta
+    número o Messaging Service `MG…`) y `_send_sms_infobip` (JSON + `App` key).
+  - **VOZ** → `_send_voice_twilio` (API Calls + TwiML `<Say>` con voz Polly). ⚠️ El texto
+    se escapa como XML en modo TEXT; en SSML se pasa tal cual (escaparlo leería las
+    etiquetas en voz alta).
+  - **EMAIL (EM)** → `_send_bulk_socketlabs`: ⚠️ SES resuelve la plantilla EN SU SERVIDOR,
+    así que este camino la BAJA (`get_template`, cache por invocación) y la renderiza
+    LOCALMENTE por destinatario (`_render_ses_template`: `{{var}}` + la forma condicional
+    `{{#if}}…{{else}}…{{/if}}` del menú de variables; campo ausente → vacío, igual que
+    SES). Devuelve la respuesta con la MISMA forma que `send_bulk_templated_email` para
+    no tocar el registro de estados; un error total relanza (el chunk libera su claim y
+    reanuda). **EAU/EAP siguen por aws** (adjunto personalizado; avisan en el log si el
+    admin eligió otro proveedor) — adaptador de adjuntos en otra iteración.
+  - Todos los adaptadores usan **urllib de la stdlib** (un SDK por proveedor obligaría a
+    un layer por worker) y van COPIADOS por lambda (convención del repo).
+- ⚠️ **Credenciales de PLATAFORMA, no por cliente** (env vars): `TWILIO_{ACCOUNT_SID,
+  AUTH_TOKEN,FROM_SMS,FROM_VOICE,VOICE}`, `INFOBIP_{BASE_URL,API_KEY,FROM_SMS}`,
+  `SOCKETLABS_{SERVER_ID,API_KEY,INJECT_URL}`. Cuentas por cliente = otra fase.
+- ⚠️ **Estados de entrega de los proveedores externos:** quedan en 1 "enviado" — los
+  webhooks (Twilio status callback, SocketLabs events, Infobip DLR) son la siguiente
+  iteración. Con aws no cambia nada (eventos SNS como siempre).
+- **Front:** sección admin **"Proveedores de envío"** (`ProveedoresSection`, tab
+  `proveedores`): selector de ámbito (🌐 Global / cliente), 4 filas de canal con el
+  proveedor EFECTIVO + chip de origen (De este cliente / Global / Por defecto), botón
+  "heredar", y la lista de clientes con proveedor propio. `providersService.ts`.
+- **Cobertura:** `test_provider_routing.py` (20): gates admin, matriz que rechaza
+  proveedor sin adaptador, global vs override, remove→heredar, auditoría, resolución
+  (cliente>global>aws, fail-open, EM/EAU/EAP→EMAIL), `build_ctx` con provider, lote que
+  FALLA sin credenciales (no destinatarios rechazados), proveedor desconocido, Twilio SMS
+  llamado con Basic auth y SIN tocar AWS + sid como messageId, mensaje viejo sin campo →
+  aws, TwiML escapado, render local que replica a SES, SocketLabs renderizando + error
+  total que relanza.
+- ⚠️ `[J]`: lambdas `Api_V1_Provider_{List,Set}` (el CD las crea) + rutas ya en
+  routes.json + env `SECRET_KEY` (2ª barrera); IAM `dynamodb:GetItem/PutItem/DeleteItem/
+  Scan/CreateTable/DescribeTable providerConfig` + `PutItem adminAudit`;
+  **`dynamodb:GetItem providerConfig` en Prepare-batch**. Credenciales de los proveedores
+  como envs en los workers SOLO cuando se contrate cada proveedor — sin ellas, elegirlo
+  hace fallar el lote (a propósito). Detalle en `DESPLIEGUE.md` §25.
+
 ### Correos internos: identidad de marca, logo y pie con redes (ago 2026)
 > Los 8 correos que la PLATAFORMA envía (no los del cliente) eran fragmentos HTML sueltos
 > sin marca. Los dos de soporte eran directamente `<p>` pelados con un `<a>` sin estilo.
@@ -117,12 +178,27 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
     componente definido en el cuerpo es una identidad nueva en cada render: MUI desmonta y
     remonta el panel, eso dispara otro render y el diálogo entra en **bucle infinito**
     ("Maximum update depth exceeded"). Se reprodujo antes de corregirlo.
-  - La posición se **acota al DIBUJAR**, no solo al arrastrar: si la ventana se achica con el
-    diálogo movido, quedaría fuera de la pantalla y no habría de dónde agarrarlo.
+  - ⚠️ La posición se acota manteniendo el diálogo **ENTERO** dentro de la ventana. El
+    acotado permisivo del primer intento (dejar visible solo la barra) parecía suficiente y
+    no lo era: al bajarlo un poco, **los botones Cancelar/Aplicar quedaban por debajo del
+    borde** y no había forma de pulsarlos. Se acota al DIBUJAR, no solo al arrastrar, para
+    cubrir también el caso de achicar la ventana con el diálogo movido.
+- **Aplicado también al diálogo de TABLA, con edición EN VIVO.** Arrastrar el diálogo solo
+  sirve si el lienzo cambia mientras tanto: al **editar** una tabla ya insertada, los
+  cambios se aplican al instante sobre la tabla REAL (con su contenido), no sobre una
+  miniatura. ⚠️ Eso obliga a que **"Cancelar" DESHAGA**: se guarda la configuración con la
+  que se abrió el diálogo y se reaplica al cancelar — sin eso, los valores que el usuario
+  estaba probando se quedarían puestos y el botón no cancelaría nada. Al **insertar** no
+  hay tabla todavía, así que ahí se conserva la vista previa dentro del diálogo (y se
+  oculta al editar, donde solo distraería).
 - **Cobertura:** `test_render_pdf.py` sube a **35** (+4): el texto arranca EXACTAMENTE en el
   margen para 1,5/2/3 cm en `h1` y `p` (guard: si el motor cambiara y empezara a respetar ese
   margen, la prueba avisa de que hay que quitar la regla del lienzo) y que vale igual en la
-  hoja 2. Verificado además en el navegador (margen medido y arrastre real del diálogo).
+  hoja 2. `pdfDocument.test.ts` sube a **23** (+2) con el invariante del que depende
+  "Cancelar": reaplicar la configuración original devuelve la tabla EXACTAMENTE a como
+  estaba, y el contenido sobrevive a varias ediciones seguidas. Frontend **184**.
+  Verificado además en el navegador: margen medido, arrastre real, edición en vivo y que
+  cancelar restaura la tabla (3 filas → 6 en vivo → 3 al cancelar, conservando el texto).
 - ⚠️ `[J]`: **sin cambios de backend ni de infra.**
 
 ### Editor PDF básico: PÁGINAS discretas y tablas configurables (ago 2026)
@@ -2959,7 +3035,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **796** pruebas (~3 min) y la de frontend 182. Correrlas
+> La suite de backend son **816** pruebas (~3 min) y la de frontend 184. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 
@@ -3400,7 +3476,7 @@ README.md
 ---
 
 ## 7. Referencias rápidas
-- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 522 CP en 22 módulos) y su
+- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 531 CP en 22 módulos) y su
   **planilla de ejecución `CASOS_PRUEBA_QA.xlsx`** (un CP por fila + columnas para marcar
   **Pasó / No pasó**, resultado obtenido, observaciones, quién y cuándo; hoja de Resumen con
   conteos por estado, prioridad y módulo). ⚠️ El **`.md` es la fuente de verdad**: la planilla

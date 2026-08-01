@@ -464,6 +464,15 @@
 | CP-PDF-45 | 🔴 | Cambios en vivo | Con el diálogo a un lado, cambiar márgenes y orientación | El lienzo se actualiza sin cerrar el diálogo |
 | CP-PDF-46 | 🟡 | El diálogo no se pierde | Arrastrarlo al borde y achicar la ventana | Siempre queda visible parte de su barra para volver a agarrarlo |
 | CP-PDF-47 | 🟡 | Cerrar el diálogo | Pulsar la ✕ o Escape | Se cierra conservando los cambios aplicados |
+| CP-PRV-01 | 🔴 | **Cambiar el proveedor global de un canal** | Admin → Proveedores de envío → SMS → Twilio | Se guarda, el chip dice "Global" y queda en auditoría (provider.set) |
+| CP-PRV-02 | 🔴 | **Proveedor propio de un cliente** | Ámbito = un cliente → Correo → SocketLabs | Chip "De este cliente"; los demás canales muestran lo heredado |
+| CP-PRV-03 | 🔴 | El envío sale por el proveedor elegido | Con credenciales configuradas, campaña SMS del cliente | El log del worker dice proveedor=twilio y el messageId es el SM… de Twilio |
+| CP-PRV-04 | 🔴 | **Sin credenciales el lote NO se quema** | Elegir un proveedor sin sus envs y enviar | El lote falla y se reintenta; NINGÚN destinatario aparece "Rechazado" |
+| CP-PRV-05 | 🔴 | WhatsApp no es cambiable | Abrir el desplegable de WhatsApp | Solo AWS, con la explicación del registro ante Meta |
+| CP-PRV-06 | 🟡 | Heredar | Quitar el proveedor propio del cliente | Vuelve al global; quitar el global vuelve a AWS |
+| CP-PRV-07 | 🟡 | Correo por SocketLabs personaliza | EMAIL=socketlabs, plantilla con {{nombre}} y respaldo | El correo llega con el nombre resuelto (o el respaldo), igual que por SES |
+| CP-PRV-08 | 🟡 | Los lotes en cola no cambian | Cambiar el proveedor con un envío en curso | Los mensajes ya encolados salen por el proveedor con el que se prepararon |
+| CP-PRV-09 | 🟢 | Tabla de ruteo caída | Sin permiso o sin tabla providerConfig | El envío sale por AWS (fail-open); jamás se detiene |
 
 ---
 

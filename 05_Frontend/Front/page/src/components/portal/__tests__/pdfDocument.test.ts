@@ -158,3 +158,42 @@ describe('páginas', () => {
     expect(joinPages([''])).toBe('');
   });
 });
+
+describe('cancelar la edición de una tabla', () => {
+  it('reaplicar la configuración ORIGINAL devuelve la tabla a como estaba', () => {
+    /**
+     * Es el invariante del que depende "Cancelar": como la edición se aplica EN VIVO
+     * sobre la tabla del lienzo, cancelar consiste en volver a aplicar la configuración
+     * con la que se abrió el diálogo. Si `applyTableConfig` no fuera reversible, cancelar
+     * dejaría los cambios puestos y el botón no cancelaría nada.
+     */
+    const original = { ...DEFAULT_TABLE, rows: 2, cols: 2, header: true, borderColor: '#cbd5e1' };
+    const t = tabla(buildTableHtml(original));
+    t.rows[0].children[0].innerHTML = 'CONCEPTO';
+    t.rows[1].children[0].innerHTML = 'valor';
+    const antes = t.outerHTML;
+
+    // El usuario juguetea con los valores (aplicado en vivo)…
+    applyTableConfig(t, { ...original, rows: 6, cols: 4, borderColor: '#ff0000', zebra: true });
+    expect(t.outerHTML).not.toBe(antes);
+
+    // …y cancela.
+    applyTableConfig(t, original);
+    expect(t.rows.length).toBe(3);          // 2 de cuerpo + encabezado
+    expect(t.rows[0].children.length).toBe(2);
+    expect(t.querySelector('th')!.innerHTML).toBe('CONCEPTO');
+    expect(t.rows[1].children[0].innerHTML).toBe('valor');
+    expect(t.outerHTML).toBe(antes);
+  });
+
+  it('el contenido sobrevive a varias ediciones seguidas', () => {
+    const t = tabla(buildTableHtml({ ...DEFAULT_TABLE, rows: 3, cols: 3, header: true }));
+    t.rows[0].children[0].innerHTML = 'H';
+    t.rows[1].children[1].innerHTML = 'X';
+    for (const cfg of [
+      { rows: 8, cols: 5 }, { rows: 4, cols: 4 }, { rows: 3, cols: 3 },
+    ]) applyTableConfig(t, { ...DEFAULT_TABLE, ...cfg, header: true });
+    expect(t.querySelector('th')!.innerHTML).toBe('H');
+    expect(t.rows[1].children[1].innerHTML).toBe('X');
+  });
+});

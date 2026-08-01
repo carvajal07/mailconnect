@@ -28,7 +28,99 @@ import boto3
 from botocore.exceptions import ClientError
 
 REGION = 'us-east-1'
-ORIGINATION_IDENTITY = os.environ.get('SMS_ORIGINATION_IDENTITY', '')
+ORIGINATION_IDENTITY = os.environ.get('SMS_ORIGINATION_IDENTITY', '').strip()
+
+# ── Proveedores alternos (ruteo por providerConfig, campo `provider` del mensaje) ─────
+# Credenciales de PLATAFORMA por env var. Los adaptadores usan urllib (stdlib): sumar un
+# SDK por proveedor obligaría a un layer por worker. Helper COPIADO por lambda, como
+# `tenant_key` (convención del repo, sin imports compartidos).
+import base64 as _b64
+import urllib.error
+import urllib.parse
+import urllib.request
+
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '').strip()
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '').strip()
+# Número E.164 o Messaging Service SID (MG…) de Twilio para SMS.
+TWILIO_FROM_SMS = os.environ.get('TWILIO_FROM_SMS', '').strip()
+INFOBIP_BASE_URL = os.environ.get('INFOBIP_BASE_URL', '').strip()
+INFOBIP_API_KEY = os.environ.get('INFOBIP_API_KEY', '').strip()
+INFOBIP_FROM_SMS = os.environ.get('INFOBIP_FROM_SMS', '').strip()
+
+
+def _check_provider_config(provider):
+    """Valida ANTES de reclamar la parte que el proveedor elegido tenga credenciales.
+
+    ⚠️ Lanza (el lote FALLA y SQS lo reintenta) en vez de marcar destinatarios como
+    rechazados: un error de CONFIGURACIÓN es idéntico para todo el lote y no se intentó
+    ningún envío — quemar la parte con estados falsos ensuciaría los reportes y perdería
+    el lote sin posibilidad de reintento. Debe correr ANTES de `_claim_part`: después del
+    claim, la redelivery vería la parte reclamada y la omitiría.
+    """
+    if provider == 'aws':
+        if not ORIGINATION_IDENTITY:
+            raise RuntimeError('SMS_ORIGINATION_IDENTITY no configurada; no se procesa el lote.')
+    elif provider == 'twilio':
+        if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_SMS):
+            raise RuntimeError('Proveedor twilio elegido pero faltan credenciales '
+                               '(TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_SMS); no se procesa el lote.')
+    elif provider == 'infobip':
+        if not (INFOBIP_BASE_URL and INFOBIP_API_KEY and INFOBIP_FROM_SMS):
+            raise RuntimeError('Proveedor infobip elegido pero faltan credenciales '
+                               '(INFOBIP_BASE_URL/INFOBIP_API_KEY/INFOBIP_FROM_SMS); no se procesa el lote.')
+    else:
+        raise RuntimeError('Proveedor de SMS desconocido: {!r}; no se procesa el lote.'.format(provider))
+
+
+def _http_json(req):
+    """POST y respuesta JSON; los 4xx/5xx llevan el cuerpo del proveedor al error (sin
+    eso, diagnosticar un rechazo sería adivinar)."""
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        cuerpo = ''
+        try:
+            cuerpo = e.read().decode('utf-8')[:300]
+        except Exception:
+            pass
+        raise RuntimeError('HTTP {} del proveedor: {}'.format(e.code, cuerpo))
+
+
+def _send_sms_twilio(phone, body_text):
+    """Envía por la API de mensajes de Twilio. Devuelve el sid como messageId."""
+    url = 'https://api.twilio.com/2010-04-01/Accounts/{}/Messages.json'.format(TWILIO_ACCOUNT_SID)
+    campos = {'To': phone, 'Body': body_text}
+    # Un Messaging Service (MG…) va en su propio campo; un número, en From.
+    if TWILIO_FROM_SMS.startswith('MG'):
+        campos['MessagingServiceSid'] = TWILIO_FROM_SMS
+    else:
+        campos['From'] = TWILIO_FROM_SMS
+    req = urllib.request.Request(url, data=urllib.parse.urlencode(campos).encode(), method='POST')
+    aut = _b64.b64encode('{}:{}'.format(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN).encode()).decode()
+    req.add_header('Authorization', 'Basic ' + aut)
+    out = _http_json(req)
+    sid = out.get('sid')
+    if not sid:
+        raise RuntimeError('Twilio no devolvió sid: {}'.format(str(out)[:200]))
+    return sid
+
+
+def _send_sms_infobip(phone, body_text):
+    """Envía por la API SMS de Infobip. Devuelve su messageId."""
+    url = INFOBIP_BASE_URL.rstrip('/') + '/sms/2/text/advanced'
+    payload = {'messages': [{'destinations': [{'to': phone}],
+                             'from': INFOBIP_FROM_SMS, 'text': body_text}]}
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), method='POST')
+    req.add_header('Authorization', 'App ' + INFOBIP_API_KEY)
+    req.add_header('Content-Type', 'application/json')
+    out = _http_json(req)
+    msg = (out.get('messages') or [{}])[0]
+    # groupId 1 = PENDING (aceptado); un rechazo inmediato viene con otro grupo.
+    grupo = ((msg.get('status') or {}).get('groupId'))
+    if grupo not in (1, 3):
+        raise RuntimeError('Infobip rechazó el SMS: {}'.format(str(msg.get('status'))[:200]))
+    return str(msg.get('messageId') or '')
 CONFIGURATION_SET = os.environ.get('SMS_CONFIGURATION_SET', '')
 # Tipo de mensaje: para campañas de marketing debería ser PROMOTIONAL (implicaciones
 # regulatorias / de enrutamiento). Configurable por env.
@@ -135,12 +227,9 @@ def _record_status(tenant, process_id, rows):
 def lambda_handler(event, context):
     now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
-    # Falla ruidosamente si falta la identidad de origen: así SQS RETIENE los
-    # mensajes (y los reintenta cuando se configure) en vez de marcar todo el lote
-    # como "Rechazado" permanente y borrarlo.
-    if not ORIGINATION_IDENTITY:
-        raise RuntimeError('SMS_ORIGINATION_IDENTITY no configurada; no se procesa el lote.')
-
+    # La validación de configuración pasó a `_check_provider_config`, POR MENSAJE:
+    # cada lote trae su proveedor (aws/twilio/infobip) y solo debe exigirse la
+    # credencial del que de verdad se va a usar.
     for record in event.get('Records', []):
         try:
             body = json.loads(record['body'])
@@ -157,7 +246,11 @@ def lambda_handler(event, context):
         headers = body.get('headers', [])
         sms_body = body.get('smsBody', '') or ''
         data = body.get('data', [])
-        print(f'SMS lote: cliente={customer_name} nit={tenant} proceso={process_id} parte={part} registros={len(data)}')
+        # Proveedor elegido por el admin para este cliente/canal (mensajes viejos → aws).
+        provider = str(body.get('provider') or 'aws').strip().lower()
+        print(f'SMS lote: cliente={customer_name} nit={tenant} proceso={process_id} parte={part} registros={len(data)} proveedor={provider}')
+        # ⚠️ ANTES del claim: si falta la credencial, el lote falla y SQS reintenta.
+        _check_provider_config(provider)
 
         # IDEMPOTENCIA: reclama (processId, part) de forma atómica ANTES de enviar. Si otra
         # entrega del mismo mensaje ya lo reclamó (redelivery de SQS), se omite el lote → no
@@ -177,20 +270,26 @@ def lambda_handler(event, context):
             message_id = str(uuid.uuid4())
             error = ''
             try:
-                params = {
-                    'DestinationPhoneNumber': phone,
-                    'OriginationIdentity': ORIGINATION_IDENTITY,
-                    'MessageBody': message,
-                    'MessageType': MESSAGE_TYPE,
-                    # Metadata que EUM incluye en los eventos de entrega (SNS) para que
-                    # ReceptionStatus sepa a qué cliente/proceso pertenece cada estado. `nit`
-                    # es la llave (tenant_key) con la que se nombra {tenant}_sendStatus.
-                    'Context': {'customer': customer_name, 'nit': tenant, 'processId': process_id, 'uniqueId': unique_id},
-                }
-                if CONFIGURATION_SET:
-                    params['ConfigurationSetName'] = CONFIGURATION_SET
-                resp = sms.send_text_message(**params)
-                message_id = resp.get('MessageId', message_id)
+                if provider == 'twilio':
+                    # ⚠️ Sin webhook de entrega todavía: el estado queda en 1 (enviado).
+                    message_id = _send_sms_twilio(phone, message)
+                elif provider == 'infobip':
+                    message_id = _send_sms_infobip(phone, message)
+                else:
+                    params = {
+                        'DestinationPhoneNumber': phone,
+                        'OriginationIdentity': ORIGINATION_IDENTITY,
+                        'MessageBody': message,
+                        'MessageType': MESSAGE_TYPE,
+                        # Metadata que EUM incluye en los eventos de entrega (SNS) para que
+                        # ReceptionStatus sepa a qué cliente/proceso pertenece cada estado. `nit`
+                        # es la llave (tenant_key) con la que se nombra {tenant}_sendStatus.
+                        'Context': {'customer': customer_name, 'nit': tenant, 'processId': process_id, 'uniqueId': unique_id},
+                    }
+                    if CONFIGURATION_SET:
+                        params['ConfigurationSetName'] = CONFIGURATION_SET
+                    resp = sms.send_text_message(**params)
+                    message_id = resp.get('MessageId', message_id)
             except (ClientError, Exception) as e:
                 state = STATE_REJECTED
                 error = str(e)

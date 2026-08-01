@@ -350,6 +350,7 @@ class ProcessState:
         self.nit = None          # NIT (companyTin) del cliente → llave de recursos por cliente
         self.is_samples = False  # True en el flujo de MUESTRAS → el worker cuenta el envío OK
         self.configuration_set = DEFAULT_CONFIGURATION_SET  # config set SES → IP dedicada del cliente
+        self.provider = DEFAULT_PROVIDER  # proveedor de envío del canal (aws/twilio/…) → workers
 
     @property
     def tenant(self):
@@ -403,6 +404,40 @@ def resolve_configuration_set(customer_id):
     except Exception as e:
         print('resolve_configuration_set fallback al general: {}'.format(e))
     return DEFAULT_CONFIGURATION_SET
+
+
+# Proveedor de envío por canal (aws/twilio/infobip/socketlabs), global o por cliente.
+# Lo administra /Provider/Set (tabla `providerConfig`, PK customerId + SK channel).
+table_provider_config = dynamodb.Table('providerConfig')
+DEFAULT_PROVIDER = 'aws'
+
+
+def resolve_provider(customer_id, channel):
+    """Proveedor que atiende este envío: la fila del CLIENTE si existe, si no la GLOBAL
+    (customerId `*`), si no 'aws'. Los sub-canales de correo (EM/EAU/EAP) comparten la
+    clave EMAIL — el proveedor se elige por canal de negocio, no por modo de adjunto.
+
+    ⚠️ FAIL-OPEN a 'aws' ante cualquier error (tabla ausente, sin permiso, throttling):
+    el ruteo es una preferencia y jamás debe detener un envío. La verificación de que el
+    proveedor elegido tenga credenciales se hace en el WORKER, que es quien las usa —
+    y ahí sí es fail-closed (el lote falla y SQS reintenta, sin quemar destinatarios).
+    """
+    ch = {'EM': 'EMAIL', 'EAU': 'EMAIL', 'EAP': 'EMAIL'}.get(str(channel or '').upper(),
+                                                             str(channel or '').upper())
+    if not ch:
+        return DEFAULT_PROVIDER
+    try:
+        for scope in (str(customer_id or '').strip(), '*'):
+            if not scope:
+                continue
+            item = table_provider_config.get_item(
+                Key={'customerId': scope, 'channel': ch}).get('Item')
+            prov = str((item or {}).get('provider') or '').strip().lower()
+            if prov:
+                return prov
+    except Exception as e:
+        print('resolve_provider fallback a aws: {}'.format(e))
+    return DEFAULT_PROVIDER
 
 # --- Cobro PREPAGO (monedero) -------------------------------------------------
 # El envío REAL debita el saldo del cliente ANTES de trocear (bloqueo DURO por saldo).
@@ -1291,6 +1326,7 @@ def build_ctx(st:'ProcessState')->dict:
         "nit": st.nit,                   # NIT → bucket S3 en las lambdas de envío (.document)
         "samples": bool(st.is_samples),  # True → el worker cuenta el envío de muestra OK (por campaignId)
         "configurationSet": st.configuration_set,  # config set SES → IP dedicada del cliente (Send-EM/EAU/EAP)
+        "provider": st.provider,  # proveedor del canal (aws/twilio/…) → el worker despacha con esto
     }
 
 
@@ -2236,6 +2272,8 @@ def procesar_parte(st, job)->None:
     st.wsp_template = job.get('wspTemplate', '')
     st.voice_message = job.get('voiceMessage', '')
     st.configuration_set = job.get('configurationSet', DEFAULT_CONFIGURATION_SET)
+    # Mensajes viejos en vuelo (sin el campo) caen a aws: el camino que siempre existió.
+    st.provider = job.get('provider', DEFAULT_PROVIDER)
 
     part = job['part']
     registers_for_message = job['registersForMessage']
@@ -2400,6 +2438,9 @@ def lambda_handler(event, context):
                 consecutive = response_campaign['Items'][0]["consecutive"]
                 channel_name = response_campaign['Items'][0]["channel"]
                 st.channel = channel_name  # define el tipo de contacto (correo vs celular E.164)
+                # Proveedor del canal (cliente → global → aws). Viaja en cada mensaje
+                # SQS para que el worker despache sin volver a leer la tabla.
+                st.provider = resolve_provider(st.customer_id, channel_name)
                 data_path = response_campaign['Items'][0]["dataPath"]
                 st.from_email = response_campaign['Items'][0]["originEmail"]
                 # Contenido de SMS/WSP: se RESUELVE EN VIVO desde la plantilla referenciada

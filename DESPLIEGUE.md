@@ -1157,3 +1157,42 @@ y **pisan** el default del código. La cuenta SÍ se activaba — solo que en si
 ### Cómo confirmar el diagnóstico en 10 segundos
 Abrir a mano `https://www.mailconnect.com.co/?activacion=ok`. Si aparece el aviso verde,
 el frontend está bien y lo único mal son las envs de la lambda.
+
+---
+
+## 25. Proveedor de envío por canal y por cliente (multi-proveedor) (ago 2026)
+
+El admin elige por cuál proveedor sale cada canal (global o por cliente) desde la
+sección **"Proveedores de envío"**. Default: todo por AWS, como siempre.
+
+- [ ] `[J]` Lambdas `Api_V1_Provider_{List,Set}` (el CD las crea) + env `SECRET_KEY`
+  en ambas (2ª barrera). Rutas `/Provider/{List,Set}` ya en routes.json → correr
+  `deploy-api.yml`.
+- [ ] `[J]` IAM: `dynamodb:GetItem/PutItem/DeleteItem/Scan/CreateTable/DescribeTable`
+  sobre **`providerConfig`** + `PutItem adminAudit` en las dos lambdas nuevas;
+  **`dynamodb:GetItem providerConfig` en `Api_V1_Email_Prepare-batch-template`** (sin el
+  permiso NO rompe: fail-open a aws, pero el switch no haría efecto).
+- [ ] `[J]` Redesplegar: `Prepare-batch` (resolución + mensaje), `Sms_Send-batch`,
+  `Voice_Send-batch`, `Send-batch-template-EM` (despacho) y `Send-batch-template-EAU/EAP`
+  (aviso en log). La tabla la crea `Provider/Set` on-demand.
+- [ ] `[J]` **Credenciales por proveedor** (envs en los workers, SOLO al contratar cada
+  uno): Twilio → `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN` + `TWILIO_FROM_SMS` (número o
+  `MG…`) en Sms y `TWILIO_FROM_VOICE` (+ opcional `TWILIO_VOICE`, default Polly.Lupe) en
+  Voice · Infobip → `INFOBIP_BASE_URL`/`INFOBIP_API_KEY`/`INFOBIP_FROM_SMS` en Sms ·
+  SocketLabs → `SOCKETLABS_SERVER_ID`/`SOCKETLABS_API_KEY` en Send-EM.
+  ⚠️ Elegir un proveedor SIN sus credenciales hace FALLAR el lote (SQS reintenta) — es a
+  propósito: mejor que marcar destinatarios rechazados en falso.
+- [ ] `[J]` En el proveedor: verificar el dominio remitente en SocketLabs (SPF/DKIM
+  propios) antes de mover EMAIL; en Twilio, número con capacidad de voz para VOZ.
+- ⚠️ Pendiente `[C]` (siguiente iteración): webhooks de estado de los proveedores
+  externos (hoy el estado queda en "enviado"); adaptador de EMAIL para EAU/EAP (adjuntos);
+  cuentas/credenciales POR CLIENTE.
+
+### Verificación post-deploy
+1. Admin → Proveedores de envío: cambiar SMS global a Twilio → auditoría registra
+   `provider.set`; la fila de un cliente hereda "Global".
+2. Con credenciales de Twilio puestas: campaña SMS de prueba → el log del worker dice
+   `proveedor=twilio` y el estado lleva el `SM…` de Twilio como messageId.
+3. SIN credenciales: el lote debe fallar y reintentarse (ver la cola), NUNCA marcar
+   destinatarios rechazados.
+4. Volver el canal a "heredar" → el siguiente envío sale por aws.

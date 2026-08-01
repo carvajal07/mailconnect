@@ -66,6 +66,107 @@ global configuration_set
 DEFAULT_CONFIGURATION_SET = os.environ.get('SES_CONFIGURATION_SET', 'default')
 configuration_set = DEFAULT_CONFIGURATION_SET
 
+# ── Proveedor alterno SOCKETLABS (ruteo por providerConfig, campo `provider`) ─────────
+# SES resuelve la plantilla EN SU SERVIDOR ({{var}} vía ReplacementTemplateData); un
+# proveedor externo no la conoce, así que este camino la BAJA de SES (get_template) y la
+# renderiza LOCALMENTE por destinatario antes de inyectar. urllib de la stdlib (sin
+# layers). Credenciales de PLATAFORMA por env var.
+import urllib.error
+import urllib.request
+
+provider = 'aws'   # global legado (mismo patrón que configuration_set); el mensaje lo pisa
+SOCKETLABS_SERVER_ID = os.environ.get('SOCKETLABS_SERVER_ID', '').strip()
+SOCKETLABS_API_KEY = os.environ.get('SOCKETLABS_API_KEY', '').strip()
+SOCKETLABS_INJECT_URL = os.environ.get(
+    'SOCKETLABS_INJECT_URL', 'https://inject.socketlabs.com/api/v1/email').strip()
+
+# Cache por invocación de la plantilla bajada de SES (un lote usa UNA plantilla).
+_TEMPLATE_CACHE = {}
+
+
+def _check_provider_config(prov):
+    """⚠️ ANTES de reclamar chunks: si el proveedor elegido no tiene credenciales, el
+    lote FALLA (SQS reintenta) en vez de quemar destinatarios con estados falsos."""
+    if prov == 'socketlabs' and not (SOCKETLABS_SERVER_ID and SOCKETLABS_API_KEY):
+        raise RuntimeError('Proveedor socketlabs elegido pero faltan credenciales '
+                           '(SOCKETLABS_SERVER_ID/SOCKETLABS_API_KEY); no se procesa el lote.')
+    if prov not in ('aws', 'socketlabs'):
+        raise RuntimeError('Proveedor de EMAIL desconocido: {!r}; no se procesa el lote.'.format(prov))
+
+
+_IF_RE = re.compile(r'\{\{#if\s+([\w.]+)\s*\}\}(.*?)(?:\{\{else\}\}(.*?))?\{\{/if\}\}', re.S)
+
+
+def _render_ses_template(texto, datos):
+    """Réplica LOCAL de la sustitución que SES hace en su servidor: `{{campo}}` y la forma
+    condicional `{{#if campo}}…{{else}}…{{/if}}` (la que emite el menú de variables con
+    respaldo del constructor). Debe comportarse IGUAL que SES: campo ausente → vacío."""
+    def _cond(m):
+        valor = str(datos.get(m.group(1)) or '')
+        return m.group(2) if valor.strip() else (m.group(3) or '')
+    salida = _IF_RE.sub(_cond, texto or '')
+    return re.sub(r'\{\{\s*([\w.]+)\s*\}\}',
+                  lambda m: str(datos.get(m.group(1)) or ''), salida)
+
+
+def _ses_template_parts(nombre):
+    if nombre not in _TEMPLATE_CACHE:
+        t = ses.get_template(TemplateName=nombre)['Template']
+        _TEMPLATE_CACHE[nombre] = (t.get('SubjectPart') or '', t.get('HtmlPart') or '',
+                                   t.get('TextPart') or '')
+    return _TEMPLATE_CACHE[nombre]
+
+
+def _send_bulk_socketlabs(destinations, remitente, nombre_plantilla):
+    """Inyecta el chunk por SocketLabs y devuelve la respuesta con la MISMA forma que
+    `send_bulk_templated_email` ({'Status': [...]}) para no tocar el registro de estados.
+
+    Un fallo del REQUEST completo se relanza: el chunk libera su claim y SQS lo reanuda
+    (mismo contrato que el camino SES).
+    """
+    asunto, html, texto = _ses_template_parts(nombre_plantilla)
+    mensajes = []
+    for d in destinations:
+        datos = json.loads(d.get('ReplacementTemplateData') or '{}')
+        mensajes.append({
+            'To': [{'EmailAddress': d['Destination']['ToAddresses'][0]}],
+            'From': {'EmailAddress': remitente},
+            'Subject': _render_ses_template(asunto, datos),
+            'HtmlBody': _render_ses_template(html, datos),
+            'TextBody': _render_ses_template(texto, datos),
+        })
+    cuerpo = {'ServerId': int(SOCKETLABS_SERVER_ID), 'ApiKey': SOCKETLABS_API_KEY,
+              'Messages': mensajes}
+    req = urllib.request.Request(SOCKETLABS_INJECT_URL, data=json.dumps(cuerpo).encode(),
+                                 method='POST')
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            out = json.loads(r.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        detalle = ''
+        try:
+            detalle = e.read().decode('utf-8')[:300]
+        except Exception:
+            pass
+        raise RuntimeError('SocketLabs HTTP {}: {}'.format(e.code, detalle))
+
+    codigo = str(out.get('ErrorCode') or '')
+    if codigo == 'Success':
+        return {'Status': [{'Status': 'Success', 'MessageId': str(uuid.uuid4())}
+                           for _ in mensajes]}
+    if codigo == 'Warning':
+        # Con Warning el request entró pero algunos mensajes fallaron: MessageResults trae
+        # el índice y el error de cada uno; los demás salieron bien.
+        malos = {int(m.get('Index', -1)): str(m.get('ErrorCode') or 'Failed')
+                 for m in (out.get('MessageResults') or [])}
+        return {'Status': [
+            ({'Status': 'Failed', 'Error': malos[i]} if i in malos
+             else {'Status': 'Success', 'MessageId': str(uuid.uuid4())})
+            for i in range(len(mensajes))]}
+    # Error total (credenciales, servidor): nada salió → relanzar para reintentar.
+    raise RuntimeError('SocketLabs rechazó el lote: {}'.format(str(out)[:300]))
+
 #Separar librerias
 #poner primero las variables estaticas
 #nombrar bien las variables
@@ -297,14 +398,19 @@ def send_bulk(data:list, headers:list, start:int, end:int, default_tags:dict)->N
     # Envía el lote de correos electrónicos
     #Maximo 50 destinatarios o envios de email
     print("Ejecutando proceso de envio del bulk")
-    response = ses.send_bulk_templated_email(
-        Source=from_email,
-        Template=template_name,
-        ConfigurationSetName=configuration_set,
-        Destinations=destinations,
-        DefaultTags=default_tags,
-        DefaultTemplateData='{}'
-    )
+    if provider == 'socketlabs':
+        # ⚠️ Sin los eventos SNS de SES: aperturas/clics/rebotes de este camino llegan por
+        # el webhook del proveedor (pendiente); el estado queda en 'enviado'.
+        response = _send_bulk_socketlabs(destinations, from_email, template_name)
+    else:
+        response = ses.send_bulk_templated_email(
+            Source=from_email,
+            Template=template_name,
+            ConfigurationSetName=configuration_set,
+            Destinations=destinations,
+            DefaultTags=default_tags,
+            DefaultTemplateData='{}'
+        )
     print("Proceso de envio de bulk finalizado")
     #'Status':
     '''
@@ -377,6 +483,7 @@ def lambda_handler(event:dict, context:dict):
         return _results
     global customer_name
     global tenant
+    global provider
     global template_name
     global from_email
     global process_detail_id
@@ -412,6 +519,11 @@ def lambda_handler(event:dict, context:dict):
         # Config set SES → IP dedicada del cliente (o el general). Lo resolvió Prepare-batch
         # y viaja en el mensaje; fallback defensivo al general para mensajes viejos en vuelo.
         configuration_set = json_body.get("configurationSet") or DEFAULT_CONFIGURATION_SET
+        # Proveedor del canal (aws/socketlabs), resuelto por Prepare-batch. ⚠️ Validar la
+        # credencial ANTES del bucle de chunks: un error de configuración debe fallar el
+        # lote (SQS reintenta), no quemar chunks con estados falsos.
+        provider = str(json_body.get("provider") or 'aws').strip().lower()
+        _check_provider_config(provider)
         headers = json_body["headers"]
         template_name = json_body["templateName"]
         part = json_body["part"]

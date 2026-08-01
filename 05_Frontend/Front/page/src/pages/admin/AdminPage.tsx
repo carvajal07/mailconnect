@@ -18,6 +18,7 @@ import { SoporteSection } from '../../components/admin/SoporteSection';
 import { ClientesSection } from '../../components/admin/ClientesSection';
 import { FuncionesClienteSection } from '../../components/admin/FuncionesClienteSection';
 import { IpEnvioSection } from '../../components/admin/IpEnvioSection';
+import { ProveedoresSection } from '../../components/admin/ProveedoresSection';
 import { TarifasSection } from '../../components/admin/TarifasSection';
 import { SaldosSection } from '../../components/admin/SaldosSection';
 import { FacturacionSection } from '../../components/admin/FacturacionSection';
@@ -77,6 +78,8 @@ export const AdminPage = () => {
         return <FuncionesClienteSection />;
       case 'ipenvio':
         return <IpEnvioSection />;
+      case 'proveedores':
+        return <ProveedoresSection />;
       case 'tarifas':
         return <TarifasSection />;
       case 'saldos':
