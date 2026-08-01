@@ -11,6 +11,7 @@ import { customerService } from '../../services/customerService';
 import type { CustomerSummary } from '../../services/customerService';
 import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
+import { channelOffered } from '../../config/features';
 
 /**
  * Sección admin "Proveedores de envío": por cuál proveedor sale cada canal, GLOBAL o
@@ -19,12 +20,16 @@ import { useFeedback } from '../../hooks/useFeedback';
  * con adaptador — la UI nunca promete un proveedor que el envío no sabe cumplir.
  */
 
-const CHANNELS: { id: ProviderChannel; label: string }[] = [
+// Solo los canales que la plataforma OFRECE hoy (WhatsApp y Voz están apagados a nivel
+// de plataforma — ver channelOffered en config/features.ts). Sus filas vuelven solas al
+// reactivar el canal.
+const ALL_CHANNELS: { id: ProviderChannel; label: string }[] = [
   { id: 'EMAIL', label: 'Correo' },
   { id: 'SMS', label: 'SMS' },
   { id: 'WSP', label: 'WhatsApp' },
   { id: 'VOZ', label: 'Voz' },
 ];
+const CHANNELS = ALL_CHANNELS.filter((c) => channelOffered(c.id));
 
 export const ProveedoresSection = () => {
   const { notify, FeedbackSnackbar } = useFeedback();

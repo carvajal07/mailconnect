@@ -110,10 +110,20 @@ def test_body_como_dict_directo(mod):
 # Estas pruebas fijan que el catálogo de canales/funciones y los guardrails de qué
 # SÍ/NO puede decir sigan presentes ante cualquier edición futura del prompt.
 
-def test_prompt_cubre_los_4_canales_y_cascada(mod):
+def test_prompt_cubre_los_canales_OFRECIDOS_y_cascada(mod):
+    """Decisión de producto (ago 2026): la plataforma sale SOLO con correo y SMS. El
+    asistente es PÚBLICO — no puede ofrecer WhatsApp/voz como disponibles."""
     p = mod.SYSTEM_PROMPT
-    for kw in ('EM ', 'EAU', 'EAP', 'SMS', 'WhatsApp', 'Voz', 'cascada'):
+    for kw in ('EM ', 'EAU', 'EAP', 'SMS', 'cascada'):
         assert kw in p, f'falta "{kw}" en el rol del asistente'
+
+
+def test_prompt_no_ofrece_whatsapp_ni_voz_como_disponibles(mod):
+    """WhatsApp/voz pueden MENCIONARSE (están en el plan), pero el prompt debe instruir
+    explícitamente que NO se ofrezcan como contratables hoy."""
+    p = mod.SYSTEM_PROMPT
+    assert 'NO están disponibles' in p or 'no están disponibles' in p
+    assert 'correo y SMS' in p
 
 
 def test_prompt_ofrece_ip_dedicada_sin_detalle_tecnico(mod):

@@ -1,14 +1,21 @@
+/**
+ * ⚠️ VERSIÓN GUARDADA — Landing OMNICANAL (correo + SMS + WhatsApp + voz).
+ *
+ * Es la landing que estaba publicada hasta ago 2026, cuando se decidió salir SOLO con
+ * correo y SMS (WhatsApp exige el WABA de Meta y Voz un número de llamadas; ninguno está
+ * contratado). NO está ruteada: la versión vigente es `LandingPageOmnicanal.tsx`.
+ *
+ * Para volver a esta versión cuando los 4 canales existan:
+ *   1. En App.tsx, importar LandingPageOmnicanal y montarla en la ruta '/'.
+ *   2. Restaurar los textos de canales en index.html (description, OG y JSON-LD).
+ *   3. Reactivar los canales: PLATFORM_DISABLED_CHANNELS (features.ts + envs backend).
+ * O simplemente comparar ambos archivos y traer lo que falte.
+ */
 import { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { MailConnectLogo } from '../../components/MailConnectLogo';
 import { LandingFloating } from '../../components/LandingFloating';
 import { PRECIOS_CANAL, cop } from './precios';
-
-/* Canales que la landing OFRECE hoy (decisión de producto, ago 2026): salir solo con
-   correo y SMS. Los datos de WhatsApp/Voz siguen en precios.ts (y su guard contra la
-   lambda de tarifas sigue corriendo); aquí solo se decide qué se publica. La versión
-   omnicanal completa está guardada en LandingPageOmnicanal.tsx. */
-const CANALES_PUBLICADOS = ['Correo', 'SMS'];
 import './landing.css';
 
 /* Resultado de la activación de cuenta. La lambda Acount-activation redirige a
@@ -131,7 +138,7 @@ const WhatsAppGlyph = ({ size = 24 }: { size?: number }) => (
 
 const BARS = [38, 56, 47, 72, 63, 88, 70, 95, 80];
 
-export const LandingPage = () => {
+export const LandingPageOmnicanal = () => {
   return (
     <div className="mc-landing">
       <ActivacionAviso />
@@ -157,9 +164,9 @@ export const LandingPage = () => {
       <section className="hero">
         <div className="wrap hero-grid">
           <div>
-            <span className="eyebrow">Correo masivo · Email y SMS para empresas</span>
+            <span className="eyebrow">Correo masivo · Comunicaciones omnicanal</span>
             <h1>Envía <span className="accent">correo masivo</span> que sí llega a la bandeja de entrada.</h1>
-            <p className="lead">Diseña, segmenta y envía campañas de <strong>email marketing y SMS</strong> desde una sola plataforma. Con plantillas, combinación de correspondencia y métricas en tiempo real, sobre infraestructura AWS de alta entregabilidad.</p>
+            <p className="lead">Diseña, segmenta y envía campañas de <strong>email marketing, SMS, WhatsApp y voz</strong> desde una sola plataforma. Con plantillas, combinación de correspondencia y métricas en tiempo real, sobre infraestructura AWS de alta entregabilidad.</p>
             <div className="price-flag"><b>Precio por volumen</b><small>cotización a la medida de tu operación</small></div>
             <div className="hero-actions">
               <Link to="/register" className="btn btn-primary">Crear cuenta
@@ -191,6 +198,8 @@ export const LandingPage = () => {
             <div className="chan-mini">
               <span className="chan-tag"><i className="dot-brand" />Email</span>
               <span className="chan-tag"><i className="dot-amber" />SMS</span>
+              <span className="chan-tag"><i className="dot-green" />WhatsApp</span>
+              <span className="chan-tag"><i className="dot-violet" />Voz</span>
             </div>
           </div>
         </div>
@@ -226,6 +235,18 @@ export const LandingPage = () => {
               <h3>SMS</h3>
               <p>Mensajes de texto a móviles con segmentación y gestión de opt-in / opt-out para cumplir la normativa.</p>
               <span className="tagpill">Cobertura nacional</span>
+            </div>
+            <div className="card">
+              <span className="ico wa"><WhatsAppGlyph /></span>
+              <h3>WhatsApp</h3>
+              <p>API oficial de WhatsApp Business: plantillas aprobadas, multimedia y respuestas automáticas.</p>
+              <span className="tagpill">API oficial</span>
+            </div>
+            <div className="card">
+              <span className="ico voice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" /></svg></span>
+              <h3>Voz</h3>
+              <p>Llamadas con mensajes pregrabados o texto-a-voz para recordatorios, alertas y campañas.</p>
+              <span className="tagpill">Texto a voz</span>
             </div>
           </div>
         </div>
@@ -362,7 +383,7 @@ export const LandingPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {PRECIOS_CANAL.filter((c) => CANALES_PUBLICADOS.includes(c.canal)).map((c) => (
+                {PRECIOS_CANAL.map((c) => (
                   <tr key={c.canal}>
                     <td>
                       <b>{c.canal}</b>
@@ -380,7 +401,7 @@ export const LandingPage = () => {
 
           <ul className="price-fine">
             <li>Valores en pesos colombianos, <b>sin IVA</b>, por unidad enviada. El precio baja por tramos a medida que sube el volumen mensual; arriba solo se muestran tres puntos de referencia.</li>
-            {PRECIOS_CANAL.filter((c) => CANALES_PUBLICADOS.includes(c.canal) && c.nota).map((c) => (
+            {PRECIOS_CANAL.filter((c) => c.nota).map((c) => (
               <li key={c.canal}><b>{c.canal}:</b> {c.nota}</li>
             ))}
             <li>Correo con adjunto (único o personalizado por destinatario) tiene su propia tarifa; se cotiza aparte.</li>
@@ -400,7 +421,7 @@ export const LandingPage = () => {
             <span className="chip">PSE</span><span className="chip">Nequi</span><span className="chip">Tarjeta</span>
             <span className="chip">Transferencia</span>
           </div>
-          <p className="price-note">Cotizamos correo y SMS por separado, según el volumen mensual y el tipo de campaña. Escríbenos y te pasamos la tabla de tramos que aplica a tu caso.</p>
+          <p className="price-note">Cotizamos correo, SMS, WhatsApp y voz por separado, según el volumen mensual y el tipo de campaña. Escríbenos y te pasamos la tabla de tramos que aplica a tu caso.</p>
         </div>
       </section>
 
@@ -424,7 +445,7 @@ export const LandingPage = () => {
           <div className="foot-grid">
             <div>
               <MailConnectLogo height={38} />
-              <p className="foot-desc">Plataforma colombiana de correo masivo. Email y SMS sobre AWS, con la más alta entregabilidad.</p>
+              <p className="foot-desc">Plataforma colombiana de correo masivo y comunicaciones omnicanal. Email, SMS, WhatsApp y voz, sobre AWS.</p>
             </div>
             <div>
               <h4>Producto</h4>
@@ -459,4 +480,4 @@ export const LandingPage = () => {
   );
 };
 
-export default LandingPage;
+export default LandingPageOmnicanal;

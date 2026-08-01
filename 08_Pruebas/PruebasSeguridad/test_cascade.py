@@ -158,6 +158,10 @@ CSV_WSP = "Id;Celular;Nombre\n1;3001234567;Ana\n2;3002345678;Luis\n3;3003456789;
 
 
 def test_dispatch_crea_run_encola_paso0_y_debita(monkeypatch):
+    # El motor de cascada soporta WSP/VOZ y esta prueba lo fija COMPLETO. Los canales
+    # están apagados a nivel de plataforma (oferta), así que aquí se reactivan por env —
+    # que es exactamente el mecanismo previsto para volver a encenderlos.
+    monkeypatch.setenv('PLATFORM_DISABLED_CHANNELS', '')
     with mock_aws():
         ddb = boto3.client('dynamodb', region_name='us-east-1')
         res = boto3.resource('dynamodb', region_name='us-east-1')

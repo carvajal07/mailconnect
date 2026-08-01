@@ -127,7 +127,12 @@ export const featureEnabled = (
 export const tabEnabled = (
   flags: Record<string, boolean> | undefined,
   tabId: string,
-): boolean => featureEnabled(flags, `tab:${tabId}`);
+): boolean => {
+  // Tabs de canales que la plataforma no ofrece (ver PLATFORM_DISABLED_TABS abajo):
+  // ocultos para TODOS, sin importar los flags del cliente.
+  if (PLATFORM_DISABLED_TABS.has(String(tabId || '').toLowerCase())) return false;
+  return featureEnabled(flags, `tab:${tabId}`);
+};
 
 /**
  * Canal de campaña → claves de función que lo gobiernan (TODAS deben estar habilitadas).
@@ -144,11 +149,35 @@ const CHANNEL_FEATURES: Record<string, string[]> = {
   VOICE: [FEATURE_CHANNEL_VOICE],
 };
 
+/**
+ * ── Canales apagados a NIVEL DE PLATAFORMA (decisión de producto, ago 2026) ──────────
+ *
+ * MailConnect sale al mercado SOLO con correo y SMS: WhatsApp exige el WABA registrado
+ * ante Meta y Voz un número con capacidad de llamadas — ninguno está contratado, y
+ * ofrecer un canal que no funciona es peor que no ofrecerlo.
+ *
+ * ⚠️ Es un APAGADO, no un borrado: todo el código de WSP/VOZ (workers, plantillas HSM,
+ * cascada, tarifas) queda intacto. Para reactivar un canal: quitarlo de estas dos listas
+ * y de `PLATFORM_DISABLED_CHANNELS` en el backend (Prepare-batch / Create-campaign /
+ * Cascade_Dispatch, env del mismo nombre). La landing omnicanal está guardada en
+ * `LandingPageOmnicanal.tsx`.
+ *
+ * Se apaga POR ENCIMA de los feature flags por cliente: un flag encendido no puede
+ * reactivar un canal que la plataforma no ofrece.
+ */
+const PLATFORM_DISABLED_CHANNELS = new Set(['WSP', 'WHATSAPP', 'VOZ', 'VOICE']);
+const PLATFORM_DISABLED_TABS = new Set(['whatsapp']);
+
+/** ¿La PLATAFORMA ofrece este canal hoy? (independiente del cliente). */
+export const channelOffered = (channel: string): boolean =>
+  !PLATFORM_DISABLED_CHANNELS.has(String(channel || '').toUpperCase());
+
 /** ¿El canal de campaña está habilitado para este cliente? (canal sin clave → sí). */
 export const channelEnabled = (
   flags: Record<string, boolean> | undefined,
   channel: string,
 ): boolean => {
+  if (!channelOffered(channel)) return false;
   const keys = CHANNEL_FEATURES[String(channel || '').toUpperCase()];
   return !keys || keys.every((k) => featureEnabled(flags, k));
 };
