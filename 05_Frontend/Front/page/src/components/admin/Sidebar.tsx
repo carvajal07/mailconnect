@@ -23,6 +23,7 @@ import HistoryIcon from '@mui/icons-material/History';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import TuneIcon from '@mui/icons-material/Tune';
 import DnsIcon from '@mui/icons-material/Dns';
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
 import SupportAgentIcon from '@mui/icons-material/SupportAgent';
 import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
@@ -42,6 +43,7 @@ export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
     { id: 'clientes', label: 'Clientes', icon: <PeopleIcon /> },
     { id: 'funciones', label: 'Funciones por cliente', icon: <TuneIcon /> },
     { id: 'ipenvio', label: 'IP de envío', icon: <DnsIcon /> },
+    { id: 'proveedores', label: 'Proveedores de envío', icon: <SwapHorizIcon /> },
     { id: 'tarifas', label: 'Tarifas', icon: <PaidIcon /> },
     { id: 'saldos', label: 'Saldos', icon: <AccountBalanceWalletIcon /> },
     { id: 'facturacion', label: 'Facturación', icon: <ReceiptLongIcon /> },

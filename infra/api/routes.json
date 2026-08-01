@@ -2,105 +2,456 @@
   "_comment": "Catálogo declarativo de rutas de API Gateway. Fuente de verdad del workflow deploy-api.yml. Agrega una entrada y haz push para crearla/configurarla. Campos por ruta: path (bajo el prefix), lambda (nombre de la función AWS), method (default POST), admin (marca la ruta como admin-only; la lambda valida el rol; default false), auth (adjunta el authorizer + inyecta el mapping template de context/tenant; default true), proxy (integración AWS_PROXY; default false), cors (crea OPTIONS de preflight; default true). NOTA: toda ruta no-proxy con auth=true recibe el mapping template que inyecta requestContext.authorizer.{role,user,userId,customerId,customer} — así las lambdas de cliente obtienen el tenant del token (aislamiento multi-tenant).",
   "prefix": "/V1",
   "routes": [
-    { "path": "/Customer/List",            "lambda": "Api_V1_Customer_List",            "admin": true },
-    { "path": "/Customer/Update",          "lambda": "Api_V1_Customer_Update",          "admin": true },
-    { "path": "/Customer/Detail",          "lambda": "Api_V1_Customer_Detail",          "admin": true },
-    { "path": "/Customer/Delete",          "lambda": "Api_V1_Customer_Delete",          "admin": true },
-    { "path": "/User/SetRole",             "lambda": "Api_V1_User_SetRole",             "admin": true },
-    { "path": "/User/SetTenantRole",       "lambda": "Api_V1_User_SetTenantRole",       "admin": true },
-    { "path": "/Pricing/List",             "lambda": "Api_V1_Pricing_List",             "admin": true },
-    { "path": "/Pricing/Update",           "lambda": "Api_V1_Pricing_Update",           "admin": true },
-    { "path": "/Billing/Summary",          "lambda": "Api_V1_Billing_Summary",          "admin": true },
-    { "path": "/Admin/Dashboard",          "lambda": "Api_V1_Admin_Dashboard",          "admin": true },
-    { "path": "/Admin/Jobs",               "lambda": "Api_V1_Admin_Jobs",               "admin": true },
-    { "path": "/Admin/Campaigns",          "lambda": "Api_V1_Admin_Campaigns",          "admin": true },
-    { "path": "/Admin/Requeue",            "lambda": "Api_V1_Admin_Requeue",            "admin": true },
-    { "path": "/Admin/Audit",              "lambda": "Api_V1_Admin_Audit",              "admin": true },
-    { "path": "/Admin/Control-center",     "lambda": "Api_V1_Admin_Control-center",     "admin": true },
-    { "path": "/Admin/Deployment-health",  "lambda": "Api_V1_Admin_Deployment-health",  "admin": true },
-    { "path": "/Admin/Impersonate",        "lambda": "Api_V1_Admin_Impersonate",        "admin": true },
-    { "path": "/Admin/Recipient-lookup",   "lambda": "Api_V1_Admin_Recipient-lookup",   "admin": true },
-    { "path": "/Admin/User-support",       "lambda": "Api_V1_Admin_User-support",       "admin": true },
-    { "path": "/Admin/Templates",          "lambda": "Api_V1_Admin_Templates",          "admin": true },
-    { "path": "/Admin/Domains",            "lambda": "Api_V1_Admin_Domains",            "admin": true },
-    { "path": "/Admin/Balances",           "lambda": "Api_V1_Admin_Balances",           "admin": true },
-    { "path": "/Admin/Topups",             "lambda": "Api_V1_Admin_Topups",             "admin": true },
-    { "path": "/Admin/Topup-approve",      "lambda": "Api_V1_Admin_Topup-approve",      "admin": true },
-    { "path": "/Admin/Topup-reject",       "lambda": "Api_V1_Admin_Topup-reject",       "admin": true },
-    { "path": "/Config/Get",               "lambda": "Api_V1_Config_Get",               "admin": true },
-    { "path": "/Config/Set",               "lambda": "Api_V1_Config_Set",               "admin": true },
-    { "path": "/SendingConfig/List",       "lambda": "Api_V1_SendingConfig_List",       "admin": true },
-    { "path": "/SendingConfig/Set",        "lambda": "Api_V1_SendingConfig_Set",        "admin": true },
-    { "path": "/Balance/Topup-manual",     "lambda": "Api_V1_Balance_Topup-manual",     "admin": true },
-
-    { "path": "/Campaign/List",            "lambda": "Api_V1_Campaign_List" },
-    { "path": "/Campaign/Update",          "lambda": "Api_V1_Campaign_Update" },
-    { "path": "/Campaign/Delete",          "lambda": "Api_V1_Campaign_Delete" },
-    { "path": "/Campaign/Request-approval","lambda": "Api_V1_Campaign_Request-approval" },
-    { "path": "/Campaign/Approve",         "lambda": "Api_V1_Campaign_Approve" },
-    { "path": "/Campaign/Reject",          "lambda": "Api_V1_Campaign_Reject" },
-    { "path": "/Campaign/Create-campaign", "lambda": "Api_V1_Campaign_Create-campaign" },
-    { "path": "/Campaign/Prefirm-url",     "lambda": "Api_V1_Campaign_Prefirm-url" },
-    { "path": "/Schedule/Create",          "lambda": "Api_V1_Schedule_Create" },
-    { "path": "/Schedule/List",            "lambda": "Api_V1_Schedule_List" },
-    { "path": "/Schedule/Cancel",          "lambda": "Api_V1_Schedule_Cancel" },
-    { "path": "/User/Create",              "lambda": "Api_V1_User_Create" },
-    { "path": "/User/List",                "lambda": "Api_V1_User_List" },
-    { "path": "/User/Delete",              "lambda": "Api_V1_User_Delete" },
-    { "path": "/Template/Create-template", "lambda": "Api_V1_Template_Create-template" },
-    { "path": "/Template/Get-template",    "lambda": "Api_V1_Template_Get-template" },
-    { "path": "/Template/Delete-template", "lambda": "Api_V1_Template_Delete-template" },
-    { "path": "/Template/List",            "lambda": "Api_V1_Template_List" },
-    { "path": "/Template/Render-pdf",      "lambda": "Api_V1_Template_Render-pdf" },
-    { "path": "/Template/Render-engine",   "lambda": "Api_V1_Template_Render-engine" },
-    { "path": "/MessageTemplate/Create",   "lambda": "Api_V1_MessageTemplate_Create" },
-    { "path": "/MessageTemplate/List",     "lambda": "Api_V1_MessageTemplate_List" },
-    { "path": "/MessageTemplate/Delete",   "lambda": "Api_V1_MessageTemplate_Delete" },
-    { "path": "/Database/List",            "lambda": "Api_V1_Database_List" },
-    { "path": "/Database/Register-file",   "lambda": "Api_V1_Database_Register-file" },
-    { "path": "/Database/Delete",          "lambda": "Api_V1_Database_Delete" },
-    { "path": "/Database/Verify",          "lambda": "Api_V1_Database_Verify" },
-    { "path": "/Blacklist/List",           "lambda": "Api_V1_Blacklist_List" },
-    { "path": "/Blacklist/Add",            "lambda": "Api_V1_Blacklist_Add" },
-    { "path": "/Blacklist/Delete",         "lambda": "Api_V1_Blacklist_Delete" },
-    { "path": "/Domain/Add",               "lambda": "Api_V1_Domain_Add" },
-    { "path": "/Domain/List",              "lambda": "Api_V1_Domain_List" },
-    { "path": "/Domain/Delete",            "lambda": "Api_V1_Domain_Delete" },
-    { "path": "/Report/Statistics",        "lambda": "Api_V1_Reports_Statistics" },
-    { "path": "/Report/Series",            "lambda": "Api_V1_Reports_Series" },
-    { "path": "/Report/State-report",      "lambda": "Api_V1_Reports_state-report" },
-    { "path": "/Cost/Estimate",            "lambda": "Api_V1_Cost_Estimate" },
-    { "path": "/Cost/Attachment-weight",   "lambda": "Api_V1_Cost_Attachment-weight" },
-    { "path": "/Email/Send-test",          "lambda": "Api_V1_Email_Send-test" },
-    { "path": "/Resources/List",           "lambda": "Api_V1_Resources_List" },
-    { "path": "/Balance/Get",              "lambda": "Api_V1_Balance_Get" },
-    { "path": "/Balance/Topup-init",       "lambda": "Api_V1_Balance_Topup-init" },
-    { "path": "/Balance/Topup-manual-request", "lambda": "Api_V1_Balance_Topup-manual-request" },
-    { "path": "/Portal/Bootstrap",         "lambda": "Api_V1_Portal_Bootstrap" },
-    { "path": "/Cascade/Dispatch",         "lambda": "Api_V1_Cascade_Dispatch" },
-    { "path": "/Cascade/List",             "lambda": "Api_V1_Cascade_List" },
-    { "path": "/Assistant/Copilot",        "lambda": "Api_V1_Assistant_Copilot" },
-    { "path": "/Notifications/Prefs",      "lambda": "Api_V1_Notifications_Prefs" },
-    { "path": "/Notifications/List",       "lambda": "Api_V1_Notifications_List" },
-    { "path": "/Security/Totp",            "lambda": "Api_V1_Security_Totp" },
-
-    { "path": "/Email/Send-batch-template",         "lambda": "Api_V1_Email_Prepare-batch-template", "proxy": true },
-    { "path": "/Email/Send-batch-template-samples", "lambda": "Api_V1_Email_Prepare-batch-template", "proxy": true },
-
-    { "path": "/Security/Login",             "lambda": "Api_V1_Security_Login",             "auth": false },
-    { "path": "/Security/Register",          "lambda": "Api_V1_Security_Register",          "auth": false },
-    { "path": "/Security/Logout",            "lambda": "Api_V1_Security_Logout",            "auth": false },
-    { "path": "/Security/Change-password",   "lambda": "Api_V1_Security_Change-password",   "auth": false },
-    { "path": "/Security/Create-otp",        "lambda": "Api_V1_Security_Create-otp",        "auth": false },
-    { "path": "/Security/Validate-otp",      "lambda": "Api_V1_Security_Validate-otp",      "auth": false },
-    { "path": "/Security/Recovery-password", "lambda": "Api_V1_Security_Recovery-password", "auth": false },
-    { "path": "/Security/Refresh-token",     "lambda": "Api_V1_Security_Refresh-token" },
-    { "path": "/Security/Verify-2fa",        "lambda": "Api_V1_Security_Verify-2fa",        "auth": false },
-    { "path": "/Security/Acount-activation", "lambda": "Api_V1_Security_Acount-activation", "method": "GET", "auth": false, "proxy": true, "cors": false },
-
-    { "path": "/Email/Unsubscribe",        "lambda": "Api_V1_Email_Unsubscribe", "method": "ANY", "auth": false, "proxy": true, "cors": false },
-    { "path": "/Email/Preferences",        "lambda": "Api_V1_Email_Preferences", "method": "ANY", "auth": false, "proxy": true, "cors": false },
-    { "path": "/Wallet/Wompi-webhook",     "lambda": "Api_V1_Wallet_Wompi-webhook", "auth": false, "proxy": true, "cors": false },
-    { "path": "/Assistant/Ask",            "lambda": "Api_V1_Assistant_Ask", "auth": false, "proxy": true }
+    {
+      "path": "/Customer/List",
+      "lambda": "Api_V1_Customer_List",
+      "admin": true
+    },
+    {
+      "path": "/Customer/Update",
+      "lambda": "Api_V1_Customer_Update",
+      "admin": true
+    },
+    {
+      "path": "/Customer/Detail",
+      "lambda": "Api_V1_Customer_Detail",
+      "admin": true
+    },
+    {
+      "path": "/Customer/Delete",
+      "lambda": "Api_V1_Customer_Delete",
+      "admin": true
+    },
+    {
+      "path": "/User/SetRole",
+      "lambda": "Api_V1_User_SetRole",
+      "admin": true
+    },
+    {
+      "path": "/User/SetTenantRole",
+      "lambda": "Api_V1_User_SetTenantRole",
+      "admin": true
+    },
+    {
+      "path": "/Pricing/List",
+      "lambda": "Api_V1_Pricing_List",
+      "admin": true
+    },
+    {
+      "path": "/Pricing/Update",
+      "lambda": "Api_V1_Pricing_Update",
+      "admin": true
+    },
+    {
+      "path": "/Billing/Summary",
+      "lambda": "Api_V1_Billing_Summary",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Dashboard",
+      "lambda": "Api_V1_Admin_Dashboard",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Jobs",
+      "lambda": "Api_V1_Admin_Jobs",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Campaigns",
+      "lambda": "Api_V1_Admin_Campaigns",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Requeue",
+      "lambda": "Api_V1_Admin_Requeue",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Audit",
+      "lambda": "Api_V1_Admin_Audit",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Control-center",
+      "lambda": "Api_V1_Admin_Control-center",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Deployment-health",
+      "lambda": "Api_V1_Admin_Deployment-health",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Impersonate",
+      "lambda": "Api_V1_Admin_Impersonate",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Recipient-lookup",
+      "lambda": "Api_V1_Admin_Recipient-lookup",
+      "admin": true
+    },
+    {
+      "path": "/Admin/User-support",
+      "lambda": "Api_V1_Admin_User-support",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Templates",
+      "lambda": "Api_V1_Admin_Templates",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Domains",
+      "lambda": "Api_V1_Admin_Domains",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Balances",
+      "lambda": "Api_V1_Admin_Balances",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Topups",
+      "lambda": "Api_V1_Admin_Topups",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Topup-approve",
+      "lambda": "Api_V1_Admin_Topup-approve",
+      "admin": true
+    },
+    {
+      "path": "/Admin/Topup-reject",
+      "lambda": "Api_V1_Admin_Topup-reject",
+      "admin": true
+    },
+    {
+      "path": "/Config/Get",
+      "lambda": "Api_V1_Config_Get",
+      "admin": true
+    },
+    {
+      "path": "/Config/Set",
+      "lambda": "Api_V1_Config_Set",
+      "admin": true
+    },
+    {
+      "path": "/SendingConfig/List",
+      "lambda": "Api_V1_SendingConfig_List",
+      "admin": true
+    },
+    {
+      "path": "/SendingConfig/Set",
+      "lambda": "Api_V1_SendingConfig_Set",
+      "admin": true
+    },
+    {
+      "path": "/Balance/Topup-manual",
+      "lambda": "Api_V1_Balance_Topup-manual",
+      "admin": true
+    },
+    {
+      "path": "/Campaign/List",
+      "lambda": "Api_V1_Campaign_List"
+    },
+    {
+      "path": "/Campaign/Update",
+      "lambda": "Api_V1_Campaign_Update"
+    },
+    {
+      "path": "/Campaign/Delete",
+      "lambda": "Api_V1_Campaign_Delete"
+    },
+    {
+      "path": "/Campaign/Request-approval",
+      "lambda": "Api_V1_Campaign_Request-approval"
+    },
+    {
+      "path": "/Campaign/Approve",
+      "lambda": "Api_V1_Campaign_Approve"
+    },
+    {
+      "path": "/Campaign/Reject",
+      "lambda": "Api_V1_Campaign_Reject"
+    },
+    {
+      "path": "/Campaign/Create-campaign",
+      "lambda": "Api_V1_Campaign_Create-campaign"
+    },
+    {
+      "path": "/Campaign/Prefirm-url",
+      "lambda": "Api_V1_Campaign_Prefirm-url"
+    },
+    {
+      "path": "/Schedule/Create",
+      "lambda": "Api_V1_Schedule_Create"
+    },
+    {
+      "path": "/Schedule/List",
+      "lambda": "Api_V1_Schedule_List"
+    },
+    {
+      "path": "/Schedule/Cancel",
+      "lambda": "Api_V1_Schedule_Cancel"
+    },
+    {
+      "path": "/User/Create",
+      "lambda": "Api_V1_User_Create"
+    },
+    {
+      "path": "/User/List",
+      "lambda": "Api_V1_User_List"
+    },
+    {
+      "path": "/User/Delete",
+      "lambda": "Api_V1_User_Delete"
+    },
+    {
+      "path": "/Template/Create-template",
+      "lambda": "Api_V1_Template_Create-template"
+    },
+    {
+      "path": "/Template/Get-template",
+      "lambda": "Api_V1_Template_Get-template"
+    },
+    {
+      "path": "/Template/Delete-template",
+      "lambda": "Api_V1_Template_Delete-template"
+    },
+    {
+      "path": "/Template/List",
+      "lambda": "Api_V1_Template_List"
+    },
+    {
+      "path": "/Template/Render-pdf",
+      "lambda": "Api_V1_Template_Render-pdf"
+    },
+    {
+      "path": "/Template/Render-engine",
+      "lambda": "Api_V1_Template_Render-engine"
+    },
+    {
+      "path": "/MessageTemplate/Create",
+      "lambda": "Api_V1_MessageTemplate_Create"
+    },
+    {
+      "path": "/MessageTemplate/List",
+      "lambda": "Api_V1_MessageTemplate_List"
+    },
+    {
+      "path": "/MessageTemplate/Delete",
+      "lambda": "Api_V1_MessageTemplate_Delete"
+    },
+    {
+      "path": "/Database/List",
+      "lambda": "Api_V1_Database_List"
+    },
+    {
+      "path": "/Database/Register-file",
+      "lambda": "Api_V1_Database_Register-file"
+    },
+    {
+      "path": "/Database/Delete",
+      "lambda": "Api_V1_Database_Delete"
+    },
+    {
+      "path": "/Database/Verify",
+      "lambda": "Api_V1_Database_Verify"
+    },
+    {
+      "path": "/Blacklist/List",
+      "lambda": "Api_V1_Blacklist_List"
+    },
+    {
+      "path": "/Blacklist/Add",
+      "lambda": "Api_V1_Blacklist_Add"
+    },
+    {
+      "path": "/Blacklist/Delete",
+      "lambda": "Api_V1_Blacklist_Delete"
+    },
+    {
+      "path": "/Domain/Add",
+      "lambda": "Api_V1_Domain_Add"
+    },
+    {
+      "path": "/Domain/List",
+      "lambda": "Api_V1_Domain_List"
+    },
+    {
+      "path": "/Domain/Delete",
+      "lambda": "Api_V1_Domain_Delete"
+    },
+    {
+      "path": "/Report/Statistics",
+      "lambda": "Api_V1_Reports_Statistics"
+    },
+    {
+      "path": "/Report/Series",
+      "lambda": "Api_V1_Reports_Series"
+    },
+    {
+      "path": "/Report/State-report",
+      "lambda": "Api_V1_Reports_state-report"
+    },
+    {
+      "path": "/Cost/Estimate",
+      "lambda": "Api_V1_Cost_Estimate"
+    },
+    {
+      "path": "/Cost/Attachment-weight",
+      "lambda": "Api_V1_Cost_Attachment-weight"
+    },
+    {
+      "path": "/Email/Send-test",
+      "lambda": "Api_V1_Email_Send-test"
+    },
+    {
+      "path": "/Resources/List",
+      "lambda": "Api_V1_Resources_List"
+    },
+    {
+      "path": "/Balance/Get",
+      "lambda": "Api_V1_Balance_Get"
+    },
+    {
+      "path": "/Balance/Topup-init",
+      "lambda": "Api_V1_Balance_Topup-init"
+    },
+    {
+      "path": "/Balance/Topup-manual-request",
+      "lambda": "Api_V1_Balance_Topup-manual-request"
+    },
+    {
+      "path": "/Portal/Bootstrap",
+      "lambda": "Api_V1_Portal_Bootstrap"
+    },
+    {
+      "path": "/Cascade/Dispatch",
+      "lambda": "Api_V1_Cascade_Dispatch"
+    },
+    {
+      "path": "/Cascade/List",
+      "lambda": "Api_V1_Cascade_List"
+    },
+    {
+      "path": "/Assistant/Copilot",
+      "lambda": "Api_V1_Assistant_Copilot"
+    },
+    {
+      "path": "/Notifications/Prefs",
+      "lambda": "Api_V1_Notifications_Prefs"
+    },
+    {
+      "path": "/Notifications/List",
+      "lambda": "Api_V1_Notifications_List"
+    },
+    {
+      "path": "/Security/Totp",
+      "lambda": "Api_V1_Security_Totp"
+    },
+    {
+      "path": "/Email/Send-batch-template",
+      "lambda": "Api_V1_Email_Prepare-batch-template",
+      "proxy": true
+    },
+    {
+      "path": "/Email/Send-batch-template-samples",
+      "lambda": "Api_V1_Email_Prepare-batch-template",
+      "proxy": true
+    },
+    {
+      "path": "/Security/Login",
+      "lambda": "Api_V1_Security_Login",
+      "auth": false
+    },
+    {
+      "path": "/Security/Register",
+      "lambda": "Api_V1_Security_Register",
+      "auth": false
+    },
+    {
+      "path": "/Security/Logout",
+      "lambda": "Api_V1_Security_Logout",
+      "auth": false
+    },
+    {
+      "path": "/Security/Change-password",
+      "lambda": "Api_V1_Security_Change-password",
+      "auth": false
+    },
+    {
+      "path": "/Security/Create-otp",
+      "lambda": "Api_V1_Security_Create-otp",
+      "auth": false
+    },
+    {
+      "path": "/Security/Validate-otp",
+      "lambda": "Api_V1_Security_Validate-otp",
+      "auth": false
+    },
+    {
+      "path": "/Security/Recovery-password",
+      "lambda": "Api_V1_Security_Recovery-password",
+      "auth": false
+    },
+    {
+      "path": "/Security/Refresh-token",
+      "lambda": "Api_V1_Security_Refresh-token"
+    },
+    {
+      "path": "/Security/Verify-2fa",
+      "lambda": "Api_V1_Security_Verify-2fa",
+      "auth": false
+    },
+    {
+      "path": "/Security/Acount-activation",
+      "lambda": "Api_V1_Security_Acount-activation",
+      "method": "GET",
+      "auth": false,
+      "proxy": true,
+      "cors": false
+    },
+    {
+      "path": "/Email/Unsubscribe",
+      "lambda": "Api_V1_Email_Unsubscribe",
+      "method": "ANY",
+      "auth": false,
+      "proxy": true,
+      "cors": false
+    },
+    {
+      "path": "/Email/Preferences",
+      "lambda": "Api_V1_Email_Preferences",
+      "method": "ANY",
+      "auth": false,
+      "proxy": true,
+      "cors": false
+    },
+    {
+      "path": "/Wallet/Wompi-webhook",
+      "lambda": "Api_V1_Wallet_Wompi-webhook",
+      "auth": false,
+      "proxy": true,
+      "cors": false
+    },
+    {
+      "path": "/Assistant/Ask",
+      "lambda": "Api_V1_Assistant_Ask",
+      "auth": false,
+      "proxy": true
+    },
+    {
+      "path": "/Provider/List",
+      "lambda": "Api_V1_Provider_List",
+      "admin": true
+    },
+    {
+      "path": "/Provider/Set",
+      "lambda": "Api_V1_Provider_Set",
+      "admin": true
+    }
   ]
 }

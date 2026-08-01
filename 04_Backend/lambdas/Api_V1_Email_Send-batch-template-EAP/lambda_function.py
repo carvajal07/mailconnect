@@ -364,6 +364,14 @@ def lambda_handler(event, context):
         from_email = json_body["fromEmail"]
         # Config set SES → IP dedicada del cliente (o el general); fallback defensivo.
         configuration_set = json_body.get("configurationSet") or DEFAULT_CONFIGURATION_SET
+        # ⚠️ Los canales con ADJUNTO PERSONALIZADO aún envían solo por aws: el
+        # adaptador externo de adjuntos es otra iteración. Si el admin eligió otro
+        # proveedor para EMAIL, se avisa en el log y se envía por aws igual
+        # (fail-open al camino que funciona; jamás se pierde el lote).
+        _prov = str(json_body.get('provider') or 'aws').strip().lower()
+        if _prov != 'aws':
+            print('ADVERTENCIA: proveedor {} configurado para EMAIL, pero los envíos '
+                  'con adjunto (EAU/EAP) aún salen por aws.'.format(_prov))
         headers = json_body["headers"]
         template_name = json_body["templateName"]
         part = json_body["part"]

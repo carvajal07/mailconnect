@@ -37,6 +37,70 @@ VOICE_ID = os.environ.get('VOICE_ID', 'LUPE')  # voz en español de Amazon Polly
 CONFIGURATION_SET = os.environ.get('VOICE_CONFIGURATION_SET', '')
 BODY_TEXT_TYPE = os.environ.get('VOICE_BODY_TEXT_TYPE', 'TEXT')  # TEXT | SSML
 
+# ── Proveedor alterno TWILIO (ruteo por providerConfig, campo `provider` del mensaje) ──
+# Con numeración local o mejor cobertura hacia +57 que un número de AWS EUM (que solo
+# vende numeración de EE. UU.). Credenciales de PLATAFORMA por env var; urllib de la
+# stdlib (sin layers). Helper COPIADO por lambda, como `tenant_key`.
+import base64 as _b64
+import urllib.error
+import urllib.parse
+import urllib.request
+from xml.sax.saxutils import escape as _xml_escape
+
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '').strip()
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '').strip()
+TWILIO_FROM_VOICE = os.environ.get('TWILIO_FROM_VOICE', '').strip()  # número E.164 con voz
+# Voz Polly que Twilio usa para leer el texto (es-MX/es-US disponibles en su catálogo).
+TWILIO_VOICE = os.environ.get('TWILIO_VOICE', 'Polly.Lupe')
+
+
+def _check_provider_config(provider):
+    """Valida ANTES de reclamar la parte que el proveedor elegido tenga credenciales.
+
+    ⚠️ Lanza (el lote FALLA y SQS reintenta) en vez de marcar destinatarios rechazados:
+    un error de configuración es idéntico para todo el lote y no se intentó ninguna
+    llamada — es exactamente el caso del `originationIdentity` inválido que marcaba a
+    todos como rechazados. Debe correr ANTES de `_claim_part`.
+    """
+    if provider == 'aws':
+        if not ORIGINATION_IDENTITY:
+            raise RuntimeError('VOICE_ORIGINATION_IDENTITY no configurada; no se procesa el lote.')
+    elif provider == 'twilio':
+        if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_VOICE):
+            raise RuntimeError('Proveedor twilio elegido pero faltan credenciales '
+                               '(TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_VOICE); no se procesa el lote.')
+    else:
+        raise RuntimeError('Proveedor de VOZ desconocido: {!r}; no se procesa el lote.'.format(provider))
+
+
+def _send_voice_twilio(phone, text):
+    """Origina la llamada por la API de Twilio con TwiML `<Say>` (TTS de Polly).
+    Devuelve el sid de la llamada como messageId."""
+    url = 'https://api.twilio.com/2010-04-01/Accounts/{}/Calls.json'.format(TWILIO_ACCOUNT_SID)
+    # En TEXT el contenido se escapa (es texto plano dentro de XML). En SSML ya ES
+    # markup y se pasa tal cual — escaparlo leería las etiquetas en voz alta.
+    contenido = text if BODY_TEXT_TYPE == 'SSML' else _xml_escape(text)
+    twiml = '<Response><Say voice="{}" language="es-MX">{}</Say></Response>'.format(
+        TWILIO_VOICE, contenido)
+    campos = {'To': phone, 'From': TWILIO_FROM_VOICE, 'Twiml': twiml}
+    req = urllib.request.Request(url, data=urllib.parse.urlencode(campos).encode(), method='POST')
+    aut = _b64.b64encode('{}:{}'.format(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN).encode()).decode()
+    req.add_header('Authorization', 'Basic ' + aut)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            out = json.loads(r.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        cuerpo = ''
+        try:
+            cuerpo = e.read().decode('utf-8')[:300]
+        except Exception:
+            pass
+        raise RuntimeError('Twilio HTTP {}: {}'.format(e.code, cuerpo))
+    sid = out.get('sid')
+    if not sid:
+        raise RuntimeError('Twilio no devolvió sid: {}'.format(str(out)[:200]))
+    return sid
+
 
 def _mask_phone(phone):
     p = str(phone)
@@ -118,8 +182,8 @@ def _record_status(tenant, process_id, rows):
 def lambda_handler(event, context):
     now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
-    if not ORIGINATION_IDENTITY:
-        raise RuntimeError('VOICE_ORIGINATION_IDENTITY no configurada; no se procesa el lote.')
+    # La validación de configuración es POR MENSAJE (`_check_provider_config`): cada
+    # lote trae su proveedor y solo se exige la credencial del que se va a usar.
 
     for record in event.get('Records', []):
         try:
@@ -137,6 +201,10 @@ def lambda_handler(event, context):
         headers = body.get('headers', [])
         voice_message = body.get('voiceMessage', '') or ''
         data = body.get('data', [])
+        # Proveedor elegido por el admin para este cliente/canal (mensajes viejos → aws).
+        provider = str(body.get('provider') or 'aws').strip().lower()
+        # ⚠️ ANTES del claim: si falta la credencial, el lote falla y SQS reintenta.
+        _check_provider_config(provider)
         print(f'VOZ lote: cliente={customer_name} nit={tenant} proceso={process_id} parte={part} registros={len(data)}')
 
         # IDEMPOTENCIA: reclama (processId, part) atómicamente ANTES de llamar. Una redelivery
@@ -159,21 +227,25 @@ def lambda_handler(event, context):
             try:
                 if not message.strip():
                     raise RuntimeError('La campaña no tiene mensaje de voz (template vacío)')
-                params = {
-                    'DestinationPhoneNumber': phone,
-                    'OriginationIdentity': ORIGINATION_IDENTITY,
-                    'MessageBody': message,
-                    'MessageBodyTextType': BODY_TEXT_TYPE,
-                    'VoiceId': VOICE_ID,
-                    # Metadata que EUM incluye en los eventos de la llamada (SNS) para que
-                    # ReceptionStatus sepa a qué cliente/proceso pertenece cada estado. `nit`
-                    # es la llave (tenant_key) con la que se nombra {tenant}_sendStatus.
-                    'Context': {'customer': customer_name, 'nit': tenant, 'processId': process_id, 'uniqueId': unique_id},
-                }
-                if CONFIGURATION_SET:
-                    params['ConfigurationSetName'] = CONFIGURATION_SET
-                resp = voice.send_voice_message(**params)
-                message_id = resp.get('MessageId', message_id)
+                if provider == 'twilio':
+                    # ⚠️ Sin webhook de estado todavía: queda en 1 (llamada iniciada).
+                    message_id = _send_voice_twilio(phone, message)
+                else:
+                    params = {
+                        'DestinationPhoneNumber': phone,
+                        'OriginationIdentity': ORIGINATION_IDENTITY,
+                        'MessageBody': message,
+                        'MessageBodyTextType': BODY_TEXT_TYPE,
+                        'VoiceId': VOICE_ID,
+                        # Metadata que EUM incluye en los eventos de la llamada (SNS) para
+                        # que ReceptionStatus sepa a qué cliente/proceso pertenece cada
+                        # estado. `nit` = tenant_key que nombra {tenant}_sendStatus.
+                        'Context': {'customer': customer_name, 'nit': tenant, 'processId': process_id, 'uniqueId': unique_id},
+                    }
+                    if CONFIGURATION_SET:
+                        params['ConfigurationSetName'] = CONFIGURATION_SET
+                    resp = voice.send_voice_message(**params)
+                    message_id = resp.get('MessageId', message_id)
             except (ClientError, Exception) as e:
                 state = STATE_REJECTED
                 error = str(e)
