@@ -20,6 +20,18 @@ tabla_consecutive = dynamodb.Table('campaignControl')
 table_counter = dynamodb.Table('campaignCounter')
 table_campaign = dynamodb.Table('campaign')
 table_channel = dynamodb.Table('channel')
+
+
+# Canales apagados a NIVEL DE PLATAFORMA (decisión de producto, ago 2026): MailConnect
+# sale solo con correo y SMS — WhatsApp exige el WABA de Meta y Voz un número con
+# capacidad de llamadas, y ninguno está contratado. ⚠️ Es un APAGADO reversible, no un
+# borrado: para reactivar un canal, quitarlo de la env PLATFORM_DISABLED_CHANNELS
+# ('' = todos habilitados) — el código de WSP/VOZ queda intacto. Se lee al momento de
+# la llamada (no al importar) para poder ajustarlo en pruebas y en caliente.
+def _platform_disabled_channels():
+    raw = os.environ.get('PLATFORM_DISABLED_CHANNELS', 'WSP,VOZ')
+    return {c.strip().upper() for c in raw.split(',') if c.strip()}
+
 table_document = dynamodb.Table('document')
 _audit_table = dynamodb.Table('adminAudit')
 table_domain = dynamodb.Table('senderDomain')
@@ -303,6 +315,12 @@ def lambda_handler(event, context):
                     'description': 'Sesión sin identidad de cliente.'}
         campaignName = event['campaignName']
         channelName = event['channelName']
+        # Canal apagado a nivel de plataforma → no se puede crear la campaña. El gate
+        # real del ENVÍO vive en Prepare-batch; este evita crear algo que no va a salir.
+        if str(channelName or '').strip().upper() in _platform_disabled_channels():
+            return {'status': False, 'statusCode': 400,
+                    'description': 'El canal {} no está disponible por ahora; MailConnect '
+                                   'ofrece correo y SMS.'.format(channelName)}
         attachment_type = event['attachmentType']  
         dataPath = event['dataPath']   
         template = event['template']

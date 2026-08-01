@@ -48,6 +48,46 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
 >
 > El **piloto E2E con un cliente real** es ahora el único bloqueante del MVP.
 
+### Canales VOZ y WHATSAPP apagados a nivel de PLATAFORMA (ago 2026)
+> Decisión de producto: MailConnect sale al mercado SOLO con correo y SMS. WhatsApp exige
+> el WABA registrado ante Meta y Voz un número con capacidad de llamadas — ninguno está
+> contratado, y ofrecer un canal que no funciona es peor que no ofrecerlo.
+
+- ⚠️ **Es un APAGADO, no un borrado.** Todo el código de WSP/VOZ queda intacto y probado:
+  workers, plantillas HSM, cascada, tarifas, adaptadores multi-proveedor. `test_cascade`
+  reactiva los canales por env para seguir fijando el motor COMPLETO.
+- **Cómo reactivar un canal** (3 lugares):
+  1. Front: quitarlo de `PLATFORM_DISABLED_CHANNELS`/`PLATFORM_DISABLED_TABS` en
+     `src/config/features.ts` (la compuerta `channelOffered` — campañas, cascada,
+     estimador, tabs y la sección de proveedores la heredan).
+  2. Backend: env **`PLATFORM_DISABLED_CHANNELS`** ('' = todos habilitados; default en
+     código 'WSP,VOZ') en `Create-campaign`, `Prepare-batch` y `Cascade_Dispatch`.
+  3. Landing: volver a `LandingPageOmnicanal.tsx` (ver abajo).
+- **Tres barreras backend** (helper copiado `_platform_disabled_channels()`, leído al
+  momento de la llamada): `Create-campaign` 400 (no se crea), **`Prepare-batch` 403 vía
+  `DisabledChannel`** (la barrera real: cubre campañas viejas del canal y llamadas
+  directas a la API; sin marcar Error, la campaña vuelve a ser enviable si se reactiva) y
+  `Cascade_Dispatch` 400 (sin pasos WSP/VOZ).
+- **El apagado va POR ENCIMA de los feature flags por cliente**: un flag encendido no
+  reactiva un canal que la plataforma no ofrece.
+- **Landing en DOS VERSIONES:** la vigente (`LandingPage.tsx`) ofrece solo correo y SMS
+  (hero, badge, tarjetas de canal, tabla de precios filtrada por `CANALES_PUBLICADOS`,
+  nota de cotización, footer y el SEO de `index.html`). La OMNICANAL completa quedó
+  guardada en **`LandingPageOmnicanal.tsx`** (compila, no está ruteada; su cabecera dice
+  cómo restaurarla). ⚠️ **WhatsApp como CONTACTO se queda** (botones "Cotizar por
+  WhatsApp", FAB, footer): lo que sale es WhatsApp como producto de envío.
+- **`precios.ts` NO se tocó**: conserva los 4 canales y su guard contra la lambda de
+  tarifas sigue corriendo — la landing solo filtra qué publica.
+- **El asistente IA (público) ya no ofrece WSP/Voz**: el prompt lista correo y SMS como
+  disponibles y le ordena decir explícitamente que WhatsApp/voz "vienen en camino", nunca
+  ofrecerlos como contratables (guard en `test_assistant.py`).
+- **Cobertura:** `test_canales_apagados.py` (5: Create-campaign rechaza WSP/VOZ con
+  mensaje claro, EM/SMS NO se rozan, reactivable por env, cascada sin pasos apagados,
+  barrera de Prepare-batch) + ajustes en `test_assistant.py` y `test_cascade.py`.
+- ⚠️ `[J]`: **redesplegar `Create-campaign`, `Prepare-batch`, `Cascade_Dispatch` y
+  `Assistant_Ask`** + build del frontend. Sin envs nuevas (el default del código ya
+  apaga WSP/VOZ). Para reactivar: env `PLATFORM_DISABLED_CHANNELS` según arriba.
+
 ### Proveedor de envío por canal y por CLIENTE (multi-proveedor, ago 2026)
 > El admin elige por cuál proveedor sale cada canal — global o por cliente (ej.: la
 > Panadería envía EMAIL por SocketLabs y SMS por Twilio; el resto hereda el global).
@@ -3035,7 +3075,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **816** pruebas (~3 min) y la de frontend 184. Correrlas
+> La suite de backend son **822** pruebas (~3 min) y la de frontend 184. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 
@@ -3476,7 +3516,7 @@ README.md
 ---
 
 ## 7. Referencias rápidas
-- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 531 CP en 22 módulos) y su
+- **Casos de prueba de QA: `CASOS_PRUEBA_QA.md`** (raíz, 540 CP en 22 módulos) y su
   **planilla de ejecución `CASOS_PRUEBA_QA.xlsx`** (un CP por fila + columnas para marcar
   **Pasó / No pasó**, resultado obtenido, observaciones, quién y cuándo; hoja de Resumen con
   conteos por estado, prioridad y módulo). ⚠️ El **`.md` es la fuente de verdad**: la planilla

@@ -23,6 +23,7 @@ import PaidIcon from '@mui/icons-material/Paid';
 import CalculateIcon from '@mui/icons-material/Calculate';
 import ScaleIcon from '@mui/icons-material/Scale';
 import { getUser } from '../../services/authService';
+import { channelOffered } from '../../config/features';
 import {
   costService,
   formatCOP,
@@ -169,7 +170,8 @@ export const CostEstimate = ({ channel: initChannel = 'EMAIL', emailMode: initMo
           select label="Canal" value={channel} size="small" disabled={lockChannel}
           onChange={(e) => setChannel(e.target.value as Channel)}
         >
-          {(Object.keys(CHANNEL_LABEL) as Channel[]).map((c) => (
+          {/* Solo los canales que la plataforma OFRECE hoy (WSP/VOZ apagados). */}
+          {(Object.keys(CHANNEL_LABEL) as Channel[]).filter((c) => channelOffered(c)).map((c) => (
             <MenuItem key={c} value={c}>{CHANNEL_LABEL[c]}</MenuItem>
           ))}
         </TextField>

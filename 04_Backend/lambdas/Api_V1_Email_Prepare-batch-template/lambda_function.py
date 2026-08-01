@@ -409,6 +409,18 @@ def resolve_configuration_set(customer_id):
 # Proveedor de envío por canal (aws/twilio/infobip/socketlabs), global o por cliente.
 # Lo administra /Provider/Set (tabla `providerConfig`, PK customerId + SK channel).
 table_provider_config = dynamodb.Table('providerConfig')
+
+
+# Canales apagados a NIVEL DE PLATAFORMA (decisión de producto, ago 2026): MailConnect
+# sale solo con correo y SMS — WhatsApp exige el WABA de Meta y Voz un número con
+# capacidad de llamadas, y ninguno está contratado. ⚠️ Es un APAGADO reversible, no un
+# borrado: para reactivar un canal, quitarlo de la env PLATFORM_DISABLED_CHANNELS
+# ('' = todos habilitados) — el código de WSP/VOZ queda intacto. Se lee al momento de
+# la llamada (no al importar) para poder ajustarlo en pruebas y en caliente.
+def _platform_disabled_channels():
+    raw = os.environ.get('PLATFORM_DISABLED_CHANNELS', 'WSP,VOZ')
+    return {c.strip().upper() for c in raw.split(',') if c.strip()}
+
 DEFAULT_PROVIDER = 'aws'
 
 
@@ -658,6 +670,12 @@ MAX_SAMPLE_SENDS:int = 5
 
 class RealSendDisabled(Exception):
     """El cliente tiene deshabilitados los envíos reales (campo realSendEnabled=false)."""
+
+
+class DisabledChannel(Exception):
+    """El canal está apagado a NIVEL DE PLATAFORMA (WSP/VOZ, decisión de producto).
+    Barrera server-side: aunque quede una campaña vieja del canal o alguien llame la API
+    directo, el envío no sale. Reversible por env PLATFORM_DISABLED_CHANNELS."""
 
 
 class AlreadySending(Exception):
@@ -2438,6 +2456,10 @@ def lambda_handler(event, context):
                 consecutive = response_campaign['Items'][0]["consecutive"]
                 channel_name = response_campaign['Items'][0]["channel"]
                 st.channel = channel_name  # define el tipo de contacto (correo vs celular E.164)
+                if str(channel_name or '').upper() in _platform_disabled_channels():
+                    raise DisabledChannel(
+                        'El canal {} no está disponible por ahora; MailConnect ofrece '
+                        'correo y SMS.'.format(channel_name))
                 # Proveedor del canal (cliente → global → aws). Viaja en cada mensaje
                 # SQS para que el worker despache sin volver a leer la tabla.
                 st.provider = resolve_provider(st.customer_id, channel_name)
@@ -2619,6 +2641,13 @@ def lambda_handler(event, context):
         print(description)
     except RealSendDisabled as e:
         # Cliente con envíos reales deshabilitados: 403 claro, sin marcar Error.
+        description = str(e)
+        status = False
+        status_code = 403
+        print(description)
+    except DisabledChannel as e:
+        # Canal apagado a nivel de plataforma: 403 claro, sin marcar Error (si el canal
+        # se reactiva, la campaña vuelve a ser enviable tal cual).
         description = str(e)
         status = False
         status_code = 403

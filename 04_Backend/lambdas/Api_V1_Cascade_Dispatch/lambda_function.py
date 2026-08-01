@@ -66,6 +66,18 @@ def tax_enabled():
 
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 ALLOWED_CHANNELS = ('EM', 'SMS', 'WSP', 'VOZ')
+
+
+# Canales apagados a NIVEL DE PLATAFORMA (decisión de producto, ago 2026): MailConnect
+# sale solo con correo y SMS — WhatsApp exige el WABA de Meta y Voz un número con
+# capacidad de llamadas, y ninguno está contratado. ⚠️ Es un APAGADO reversible, no un
+# borrado: para reactivar un canal, quitarlo de la env PLATFORM_DISABLED_CHANNELS
+# ('' = todos habilitados) — el código de WSP/VOZ queda intacto. Se lee al momento de
+# la llamada (no al importar) para poder ajustarlo en pruebas y en caliente.
+def _platform_disabled_channels():
+    raw = os.environ.get('PLATFORM_DISABLED_CHANNELS', 'WSP,VOZ')
+    return {c.strip().upper() for c in raw.split(',') if c.strip()}
+
 MAX_CONTACTS = int(os.environ.get('CASCADE_MAX_CONTACTS', '5000'))  # v1: sin troceo (Fase 2)
 
 CHANNEL_QUEUE = {
@@ -288,6 +300,10 @@ def lambda_handler(event, context):
         if not isinstance(st, dict) or st.get('channel') not in ALLOWED_CHANNELS or not str(st.get('content', '')).strip():
             return {'status': False, 'statusCode': 400,
                     'description': 'Cada paso necesita channel (EM/SMS/WSP/VOZ) y content. EAU/EAP no aplican en cascada v1.'}
+        if str(st.get('channel') or '').upper() in _platform_disabled_channels():
+            return {'status': False, 'statusCode': 400,
+                    'description': 'El canal {} no está disponible por ahora; usa correo '
+                                   'o SMS en la cascada.'.format(st.get('channel'))}
 
     try:
         rows = _read_base(nit, data_path)

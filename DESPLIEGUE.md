@@ -1196,3 +1196,32 @@ sección **"Proveedores de envío"**. Default: todo por AWS, como siempre.
 3. SIN credenciales: el lote debe fallar y reintentarse (ver la cola), NUNCA marcar
    destinatarios rechazados.
 4. Volver el canal a "heredar" → el siguiente envío sale por aws.
+
+---
+
+## 26. Canales Voz y WhatsApp APAGADOS a nivel de plataforma (ago 2026)
+
+Decisión de producto: salir solo con correo y SMS. Apagado reversible, sin borrar nada.
+
+- [ ] `[J]` Redesplegar `Api_V1_Campaign_Create-campaign`, `Api_V1_Email_Prepare-batch-template`,
+  `Api_V1_Cascade_Dispatch` (barreras) y `Api_V1_Assistant_Ask` (el asistente público ya
+  no ofrece WhatsApp/voz). **Sin envs nuevas**: el default del código apaga WSP,VOZ.
+- [ ] `[J]` Build + deploy del frontend (portal sin canales/tabs apagados; landing solo
+  correo y SMS) + invalidar CloudFront.
+- **Para REACTIVAR un canal** (cuando el WABA / número de voz exista):
+  1. Env `PLATFORM_DISABLED_CHANNELS` en las 3 lambdas de arriba ('' = todo habilitado,
+     o p. ej. 'WSP' para dejar solo Voz apagada).
+  2. Front: `PLATFORM_DISABLED_CHANNELS`/`PLATFORM_DISABLED_TABS` en `src/config/features.ts`.
+  3. Landing: restaurar `LandingPageOmnicanal.tsx` (su cabecera trae los pasos) y los
+     textos de `index.html`.
+  4. Asistente: devolver el catálogo de canales al prompt de `Assistant_Ask`.
+
+### Verificación post-deploy
+1. Landing sin tarjetas de WhatsApp/Voz ni menciones en precios; el botón "Cotizar por
+   WhatsApp" (contacto) SIGUE funcionando.
+2. Portal: crear campaña solo ofrece Correo y SMS; no existe el tab "Plantillas WhatsApp";
+   la cascada solo ofrece pasos de correo y SMS.
+3. API directa: POST /Campaign/Create-campaign con channelName=VOZ → 400 "no está
+   disponible"; enviar una campaña VOZ vieja → 403 sin marcar Error.
+4. Preguntar al asistente de la landing por WhatsApp → responde que viene en camino, no
+   lo ofrece como disponible.

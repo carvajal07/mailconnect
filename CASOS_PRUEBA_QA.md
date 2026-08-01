@@ -473,6 +473,15 @@
 | CP-PRV-07 | 🟡 | Correo por SocketLabs personaliza | EMAIL=socketlabs, plantilla con {{nombre}} y respaldo | El correo llega con el nombre resuelto (o el respaldo), igual que por SES |
 | CP-PRV-08 | 🟡 | Los lotes en cola no cambian | Cambiar el proveedor con un envío en curso | Los mensajes ya encolados salen por el proveedor con el que se prepararon |
 | CP-PRV-09 | 🟢 | Tabla de ruteo caída | Sin permiso o sin tabla providerConfig | El envío sale por AWS (fail-open); jamás se detiene |
+| CP-OFF-01 | 🔴 | **Landing sin Voz/WhatsApp como producto** | Abrir la landing | Hero y tarjetas solo con correo y SMS; sin precios de WhatsApp/Voz |
+| CP-OFF-02 | 🔴 | WhatsApp de CONTACTO sigue | Clic en "Cotizar por WhatsApp" y en el FAB verde | Abren el chat de WhatsApp con el mensaje pre-cargado |
+| CP-OFF-03 | 🔴 | Crear campaña sin canales apagados | Portal → Campañas → Nueva | El selector de canal solo ofrece Correo y SMS |
+| CP-OFF-04 | 🔴 | Sin tab de Plantillas WhatsApp | Revisar el menú del portal | No aparece, aunque el cliente tuviera el flag encendido |
+| CP-OFF-05 | 🔴 | **Barrera del servidor** | POST /Campaign/Create-campaign con channelName=VOZ (API directa) | 400 "no está disponible por ahora; MailConnect ofrece correo y SMS" |
+| CP-OFF-06 | 🔴 | Campaña vieja de un canal apagado | Intentar enviar (muestras o real) una campaña VOZ ya creada | 403 claro, SIN marcar la campaña en Error |
+| CP-OFF-07 | 🟡 | Cascada solo correo→SMS | Armar una cascada | Los pasos solo ofrecen Correo y SMS |
+| CP-OFF-08 | 🟡 | El asistente no ofrece lo que no hay | Preguntar al chat de la landing "¿tienen WhatsApp?" | Dice que por ahora correo y SMS, WhatsApp viene en camino |
+| CP-OFF-09 | 🟢 | Proveedores de envío filtrado | Admin → Proveedores de envío | Solo filas de Correo y SMS |
 
 ---
 
