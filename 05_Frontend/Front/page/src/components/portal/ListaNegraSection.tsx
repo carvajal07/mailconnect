@@ -123,7 +123,7 @@ export const ListaNegraSection = () => {
 
       <Alert severity="info" sx={{ mb: 2 }}>
         Al enviar una campaña real, estos contactos se excluyen automáticamente. Para celulares usa
-        formato E.164 (+57…), igual que en las bases de SMS/WhatsApp/Voz.
+        formato E.164 (+57…), igual que en las bases de SMS.
       </Alert>
 
       {/* Agregar */}

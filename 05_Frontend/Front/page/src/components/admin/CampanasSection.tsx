@@ -37,7 +37,7 @@ import StorageIcon from '@mui/icons-material/Storage';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import { getUser } from '../../services/authService';
-import { channelEnabled } from '../../config/features';
+import { channelEnabled, channelOffered } from '../../config/features';
 import { campaignsService } from '../../services/campaignsService';
 import type { CampaignSummary } from '../../services/campaignsService';
 import { readPdfDrafts } from '../../services/pdfTemplatesService';
@@ -627,8 +627,17 @@ export const CampanasSection = () => {
                   <li><strong>EM</strong>: correo con plantilla HTML, sin adjunto.</li>
                   <li><strong>EAU</strong>: correo con un <em>adjunto único</em> (el mismo archivo para todos).</li>
                   <li><strong>EAP</strong>: correo con <em>adjunto personalizado</em> por destinatario. Dos tipos: <strong>Word (.docx)</strong> combinación de correspondencia, o <strong>PDF</strong> con campos personalizados.</li>
-                  <li><strong>SMS</strong> / <strong>WSP</strong>: mensaje de texto / plantilla de WhatsApp (sin adjunto).</li>
-                  <li><strong>VOZ</strong>: llamada telefónica que lee un mensaje por texto a voz (sin adjunto).</li>
+                  {/* Los canales apagados a nivel de plataforma no se describen: explicar
+                      WhatsApp/Voz aquí sería ofrecerlos, aunque el selector no los liste. */}
+                  {channelOffered('SMS') && (
+                    <li><strong>SMS</strong>: mensaje de texto a celular (sin adjunto).</li>
+                  )}
+                  {channelOffered('WSP') && (
+                    <li><strong>WSP</strong>: plantilla de WhatsApp aprobada por Meta (sin adjunto).</li>
+                  )}
+                  {channelOffered('VOZ') && (
+                    <li><strong>VOZ</strong>: llamada telefónica que lee un mensaje por texto a voz (sin adjunto).</li>
+                  )}
                 </Box>
               </Alert>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

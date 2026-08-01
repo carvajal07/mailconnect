@@ -18,10 +18,12 @@ import { isOk } from '../../services/apiClient';
 import { useFeedback } from '../../hooks/useFeedback';
 import { copilotService } from '../../services/copilotService';
 import type { AnalyzeResult, CopilotChannel } from '../../services/copilotService';
+import { channelOffered } from '../../config/features';
 
-const CHANNELS: { ch: CopilotChannel; label: string }[] = [
+// Solo los canales que la plataforma OFRECE hoy (WSP/VOZ apagados; ver channelOffered).
+const CHANNELS: { ch: CopilotChannel; label: string }[] = ([
   { ch: 'EM', label: 'Correo' }, { ch: 'SMS', label: 'SMS' }, { ch: 'WSP', label: 'WhatsApp' }, { ch: 'VOZ', label: 'Voz' },
-];
+] as { ch: CopilotChannel; label: string }[]).filter((c) => channelOffered(c.ch));
 const EMAIL = (ch: CopilotChannel) => ch === 'EM' || ch === 'EAU' || ch === 'EAP';
 const LEVEL_COLOR: Record<string, 'success' | 'warning' | 'error'> = { ok: 'success', warning: 'warning', critical: 'error' };
 const SEV_ICON: Record<string, React.ReactNode> = {

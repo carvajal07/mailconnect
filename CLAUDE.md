@@ -81,9 +81,23 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
 - **El asistente IA (público) ya no ofrece WSP/Voz**: el prompt lista correo y SMS como
   disponibles y le ordena decir explícitamente que WhatsApp/voz "vienen en camino", nunca
   ofrecerlos como contratables (guard en `test_assistant.py`).
+- ⚠️ **Textos sueltos (2ª pasada):** el apagado se hizo primero en los SELECTORES y quedó
+  el **texto de ayuda del modal "Crear campaña"** describiendo WSP y VOZ. Ocultar el
+  selector pero seguir DESCRIBIENDO el canal es ofrecerlo igual. Se barrieron 5 sitios:
+  ese texto, el desplegable de canal al cargar una BASE, el helper de Lista negra, el
+  catálogo del Copiloto, y ⚠️ un defecto real — `addStep` de la cascada creaba el paso
+  nuevo en **'VOZ' clavado**, un canal que el backend después rechazaba.
+- **Lo que NO se tocó, a propósito:** el botón de CONTACTO por WhatsApp, y los renders de
+  datos YA EXISTENTES (selector de plantillas HSM dentro de la rama `isWsp`, etiquetas de
+  una campaña VOZ vieja): mientras el apagado sea reversible, eso debe seguir mostrándose.
 - **Cobertura:** `test_canales_apagados.py` (5: Create-campaign rechaza WSP/VOZ con
   mensaje claro, EM/SMS NO se rozan, reactivable por env, cascada sin pasos apagados,
   barrera de Prepare-batch) + ajustes en `test_assistant.py` y `test_cascade.py`.
+  **`canalesApagados.test.ts` (7)** en el front: la compuerta en sus 4 grafías, que gana a
+  los flags del cliente, el tab oculto, y un **guard de TEXTO** que recorre las pantallas
+  buscando las dos formas de OFRECER un canal (`<li>` que lo describe y `<MenuItem
+  value="WSP">` que deja elegirlo) sin condicionar. ⚠️ Se verificó que el guard FALLA al
+  reinyectar el texto viejo — un guard que no atrapa la regresión da falsa confianza.
 - ⚠️ `[J]`: **redesplegar `Create-campaign`, `Prepare-batch`, `Cascade_Dispatch` y
   `Assistant_Ask`** + build del frontend. Sin envs nuevas (el default del código ya
   apaga WSP/VOZ). Para reactivar: env `PLATFORM_DISABLED_CHANNELS` según arriba.
@@ -3075,7 +3089,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **822** pruebas (~3 min) y la de frontend 184. Correrlas
+> La suite de backend son **822** pruebas (~3 min) y la de frontend 191. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 
