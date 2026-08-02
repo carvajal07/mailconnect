@@ -1225,3 +1225,49 @@ Decisión de producto: salir solo con correo y SMS. Apagado reversible, sin borr
    disponible"; enviar una campaña VOZ vieja → 403 sin marcar Error.
 4. Preguntar al asistente de la landing por WhatsApp → responde que viene en camino, no
    lo ofrece como disponible.
+
+---
+
+## 27. Muestras: resultado del envío + fix del ACK sin credenciales (ago 2026)
+
+**Qué cambia:** los 6 workers de envío registran el RESULTADO de la muestra en la campaña
+(`note_sample_result`): si sale, suman el cupo y limpian el aviso de fallo; si falla,
+escriben `lastSampleError`/`lastSampleErrorAt` sin gastar cupo. El portal sondea la campaña
+tras enviar en vez de leer el contador al instante (el envío es asíncrono).
+
+⚠️ Incluye un **fix de comportamiento** en `Send-EM`: la validación de credenciales del
+proveedor estaba dentro del `try` de lectura de entrada, cuyo `except` solo imprime → un
+lote con el proveedor mal configurado quedaba **ACKeado (SQS lo borra) sin enviar nada**.
+Ahora propaga y SQS reintenta hasta la DLQ.
+
+- [ ] `[J]` Redesplegar los **6 workers**: `Api_V1_Email_Send-batch-template-{EM,EAU,EAP}`,
+  `Api_V1_{Sms,Voice,Wsp}_Send-batch`.
+- [ ] `[J]` Build + deploy del frontend + invalidar CloudFront.
+- **Sin cambios de infra, IAM, rutas ni envs.** Los campos `lastSampleAt`/`lastSampleError`/
+  `lastSampleErrorAt` se crean solos en la tabla `campaign` y `Campaign/List` ya devuelve el
+  ítem completo.
+
+### Verificación post-deploy
+1. Enviar una muestra de una campaña de correo: el chip pasa a "Enviando la muestra… se
+   cuenta cuando salga" y a los pocos segundos queda en "1/5 · quedan 4" **sin refrescar**.
+   "Solicitar aprobación" se habilita solo.
+2. Enviar una muestra a un contacto inválido (SMS a un número inexistente): el contador
+   **no** sube y aparece el aviso rojo con el motivo.
+3. Elegir un proveedor sin credenciales (Proveedores de envío → SocketLabs en EMAIL) y
+   enviar: el lote debe fallar y reintentar (CloudWatch), **no** quedar en verde sin enviar.
+
+---
+
+## 28. Landing: canales centrados, "Sobre nosotros" y FAQ (ago 2026)
+
+- [ ] `[J]` **Solo build + deploy del frontend** + invalidar CloudFront. Sin backend.
+- Nuevas secciones `#nosotros` y `#faq` (más enlaces en el nav y el pie) y JSON-LD
+  `FAQPage` en `index.html`.
+
+### Verificación post-deploy
+1. La sección Canales muestra las 2 tarjetas **centradas**, no pegadas a la izquierda.
+2. `#nosotros` y `#faq` existen y los enlaces del nav/pie llevan a ellas.
+3. En un móvil (o 390 px de ancho) la página **no** hace scroll horizontal.
+4. El acordeón de FAQ abre y cierra; la pregunta 10 dice que WhatsApp y voz **todavía no**
+   se ofrecen.
+5. Rich Results Test de Google sobre la home → detecta `FAQPage` con 10 preguntas.

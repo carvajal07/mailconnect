@@ -48,6 +48,76 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
 >
 > El **piloto E2E con un cliente real** es ahora el único bloqueante del MVP.
 
+### Muestras: el portal espera el RESULTADO del envío, no la respuesta de la API (ago 2026)
+> El contador *"Envíos de muestra: 1/5 · quedan 4"* no se movía hasta refrescar a mano, y
+> "Solicitar aprobación" respondía *"no has enviado muestras"* justo después de enviar una.
+
+- **La causa, que NO era el contador.** El contador está donde debe: lo sube el **worker**
+  (`Send-*`) y solo cuando el envío SALE, para que una muestra que se prepara pero no se
+  entrega no consuma cupo. Lo que fallaba es que el portal leía la campaña **al instante**
+  de recibir el 200 de la API — y ese 200 solo dice *"quedó en cola"*. El worker manda el
+  correo segundos después, así que el portal siempre veía el valor viejo.
+- ⚠️ **El hueco de fondo: un fallo se veía IGUAL que "va en camino".** En los dos casos el
+  contador se queda quieto. El cliente esperaba un correo que nunca iba a llegar, sin nada
+  en pantalla que se lo dijera. **Ese era el defecto real**, no el refresco.
+- **`note_sample_result(campaign_id, ok, motivo)`** — helper **copiado en los 6 workers**
+  (convención del repo). OK → suma 1, escribe `lastSampleAt` y **borra** el aviso anterior
+  (si el reintento de SQS terminó bien, el error ya no existe). FALLO → escribe
+  `lastSampleError`/`lastSampleErrorAt` **sin tocar el contador**. Best-effort: dejar
+  constancia no puede tumbar un envío ya hecho. Reemplaza los `update_item` sueltos que
+  cada worker tenía (SMS/Voz/WSP toman el motivo del **primer destinatario rechazado** con
+  `_primer_error`).
+- **Front (`MuestrasSection`) — `esperarResultadoMuestra`:** tras encolar, sondea la
+  campaña (2,5 s × 12 ≈ 30 s) hasta que suba el contador o aparezca un error nuevo. Mientras
+  tanto el chip dice *"Enviando la muestra… se cuenta cuando salga"* y quedan bloqueados
+  "Enviar muestras" (se duplicaría) y "Solicitar aprobación" (el backend exige
+  `samplesSentCount > 0`). Si no llega respuesta **no se inventa un resultado**: se avisa que
+  sigue en cola. El fallo sale en un `Alert` con el motivo + *"no consumió ninguno de tus 5
+  envíos"*. Al cambiar de campaña se muestra el `lastSampleError` **persistido** de esa.
+  ⚠️ Sondeo corto y acotado a propósito: no hay websockets en la plataforma y montarlos por
+  esto sería desproporcionado (son segundos, no minutos).
+- ⚠️ **Defecto acoplado, corregido:** en `Send-EM` la validación de credenciales del
+  proveedor (`_check_provider_config`) estaba **dentro del `try` de lectura de entrada**,
+  cuyo `except` solo imprime → el lote quedaba **ACKeado (SQS lo BORRA) sin enviar nada**,
+  lo contrario del fail-closed que se buscaba. Pasa al bloque `else`, donde la excepción
+  propaga y SQS reintenta. Reproducido antes de corregirlo.
+- **Cobertura:** `test_muestras_resultado.py` (12: suma/borrado del aviso, fallo que no gasta
+  cupo, aviso sin motivo, sin tabla no rompe, SMS que sale vs SMS que falla, envío real que no
+  toca nada, y el guard del handler de EM) con **dos guards de inventario** — las 6 copias
+  del helper producen código IDÉNTICO, y ningún worker escribe `samplesSentCount` por su
+  cuenta. ⚠️ Verificado que ambos FALLAN al reinyectar el defecto.
+- ⚠️ `[J]`: **redesplegar los 6 workers de envío** (`Send-batch-template-{EM,EAU,EAP}`,
+  `{Sms,Voice,Wsp}_Send-batch`) + build del frontend. Sin cambios de infra, IAM ni rutas
+  (los campos `lastSample*` se crean solos en `campaign` y `Campaign/List` los devuelve).
+
+### Landing: canales centrados, "Sobre nosotros" y preguntas frecuentes (ago 2026)
+- **Tarjetas de canal centradas.** Al apagar WhatsApp y Voz quedaron 2 tarjetas en la
+  rejilla de 4 (`g4`): pegadas a la izquierda y media sección vacía. Pasan a `g2 narrow`
+  (clase nueva reutilizable: acota a 780 px y centra). Con `g2` a secas se estiraban a todo
+  el ancho. Al reactivar los canales vuelve `g4`.
+- **Sección "Sobre nosotros"** (`#nosotros`): quién es MailConnect + 3 pilares (que el
+  mensaje llegue · con las reglas claras · sin sorpresas en la cuenta) + fichas de "Qué
+  puedes enviar" (newsletter, promocional, estacional, bienvenida, reactivación, ecommerce,
+  transaccional). ⚠️ **Sin cifras de empresa** (años, clientes, correos enviados): no hay de
+  dónde sacarlas y un número inventado en la landing es justo lo que un cliente comprueba.
+- **Preguntas frecuentes** (`#faq`): 10 preguntas en acordeón, justo ANTES del CTA (primero
+  se responden las objeciones, después se pide la acción). Usa `<details>`/`<summary>`
+  **nativos**: abren sin JavaScript, el teclado y los lectores de pantalla ya los entienden,
+  y el navegador los incluye en su "buscar en la página". ⚠️ La pregunta por WhatsApp/voz
+  dice explícitamente que **todavía no se ofrecen** — mismo criterio que el prompt del
+  asistente; una FAQ que promete de más es la forma más cara de conseguir un cliente.
+- **JSON-LD `FAQPage`** en `index.html` (estático, como el resto del SEO: los rastreadores
+  sin JS no verían nada inyectado por React). ⚠️ Eso duplica el texto, y Google exige que la
+  respuesta marcada **esté visible y coincida** o pierde el resultado enriquecido → guard
+  `faq.test.ts` que compara el JSON-LD contra la constante `FAQ` (verificado: falla al
+  desalinearlos).
+- **Fix de paso — la landing tenía scroll horizontal en móvil** (58 px medidos a 390 px de
+  ancho): el correo de contacto del pie son 33 caracteres sin espacios que el navegador no
+  puede partir, así que estiraba su columna y con ella la página. `overflow-wrap:anywhere`.
+- **Cobertura:** `faq.test.ts` (4). Frontend **195**. Verificado en el navegador: escritorio
+  y móvil (390 px), acordeón abriendo, y desborde horizontal en **0** en ambos.
+- ⚠️ `[J]`: **solo build del frontend.** Sin backend ni infra.
+
 ### Canales VOZ y WHATSAPP apagados a nivel de PLATAFORMA (ago 2026)
 > Decisión de producto: MailConnect sale al mercado SOLO con correo y SMS. WhatsApp exige
 > el WABA registrado ante Meta y Voz un número con capacidad de llamadas — ninguno está
@@ -3089,7 +3159,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **822** pruebas (~3 min) y la de frontend 191. Correrlas
+> La suite de backend son **834** pruebas (~3 min) y la de frontend 195. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 

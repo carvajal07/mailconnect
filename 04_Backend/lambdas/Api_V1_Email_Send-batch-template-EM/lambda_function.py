@@ -286,22 +286,6 @@ def _release_part(tenant_key_value:str, process_id_value:str, part:int, stage:st
         print(f'No se pudo liberar el claim del chunk {stage} de la parte {part}: {e}')
 
 
-def count_sample_send(campaign_id:str)->None:
-    """Cuenta 1 envío de MUESTRA (atómico) en la campaña, SOLO cuando el envío salió bien.
-    Se llama desde el worker tras un envío exitoso (no en Prepare-batch), para que una
-    muestra que se prepara pero NO se entrega no consuma el cupo (MAX_SAMPLE_SENDS).
-    Idempotente en la práctica: el worker deduplica por parte (validate_process_detail),
-    así que una redelivery de SQS no vuelve a contar."""
-    try:
-        table_campaign.update_item(
-            Key={'campaignId': campaign_id},
-            UpdateExpression='SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one',
-            ExpressionAttributeValues={':one': 1, ':z': 0})
-        print('Envío de muestra contado en la campaña {}'.format(campaign_id))
-    except Exception as e:
-        print('No se pudo contar el envío de muestra: {}'.format(e))
-
-
 def insert_send_detail(data:dict)->None:
     """
     Función encargada de insertar los detalles de cada envio a la base de datos.
@@ -460,6 +444,38 @@ def send_bulk(data:list, headers:list, start:int, end:int, default_tags:dict)->N
     insert_send_detail(data_to_insert)
     print("Fin de proceso de insert de estados")
 
+def note_sample_result(campaign_id:str, ok:bool, reason:str='')->None:
+    """Registra en la campaña el resultado del último envío de MUESTRA.
+
+    OK    -> suma 1 a `samplesSentCount` (el cupo se consume solo cuando la muestra SALE)
+             y BORRA el aviso de fallo anterior: si el reintento de SQS terminó bien, el
+             cliente no puede seguir viendo un error que ya no existe.
+    FALLO -> escribe `lastSampleError`/`lastSampleErrorAt` SIN tocar el contador. Es lo
+             UNICO que el portal puede mostrar: el envío es asíncrono, así que sin esta
+             marca un fallo se ve EXACTAMENTE igual que "todavía va en camino" y el
+             usuario se queda esperando un correo que nunca va a llegar.
+
+    Best-effort en ambos casos: dejar constancia no puede tumbar un envío ya hecho.
+    """
+    if not campaign_id:
+        return
+    ahora = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        if ok:
+            dynamodb.Table('campaign').update_item(
+                Key={'campaignId': campaign_id},
+                UpdateExpression=('SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one, '
+                                  'lastSampleAt = :at REMOVE lastSampleError, lastSampleErrorAt'),
+                ExpressionAttributeValues={':one': 1, ':z': 0, ':at': ahora})
+        else:
+            dynamodb.Table('campaign').update_item(
+                Key={'campaignId': campaign_id},
+                UpdateExpression='SET lastSampleError = :e, lastSampleErrorAt = :at',
+                ExpressionAttributeValues={':e': str(reason)[:300] or 'Error desconocido', ':at': ahora})
+    except Exception as e:
+        print('No se pudo registrar el resultado de la muestra: {}'.format(e))
+
+
 def lambda_handler(event:dict, context:dict):
     """
     Función principal
@@ -519,11 +535,11 @@ def lambda_handler(event:dict, context:dict):
         # Config set SES → IP dedicada del cliente (o el general). Lo resolvió Prepare-batch
         # y viaja en el mensaje; fallback defensivo al general para mensajes viejos en vuelo.
         configuration_set = json_body.get("configurationSet") or DEFAULT_CONFIGURATION_SET
-        # Proveedor del canal (aws/socketlabs), resuelto por Prepare-batch. ⚠️ Validar la
-        # credencial ANTES del bucle de chunks: un error de configuración debe fallar el
-        # lote (SQS reintenta), no quemar chunks con estados falsos.
+        # Proveedor del canal (aws/socketlabs), resuelto por Prepare-batch. La credencial
+        # se valida en el bloque `else`, NO aquí: este `try` traga cualquier excepción con
+        # un print, así que un lote sin credenciales quedaba ACKeado (SQS lo borra) sin
+        # haber enviado nada. Ver la llamada a _check_provider_config más abajo.
         provider = str(json_body.get("provider") or 'aws').strip().lower()
-        _check_provider_config(provider)
         headers = json_body["headers"]
         template_name = json_body["templateName"]
         part = json_body["part"]
@@ -539,6 +555,12 @@ def lambda_handler(event:dict, context:dict):
         print("Error en la lectura de los datos de entrada")
 
     else:
+        # ⚠️ Validar la credencial ANTES del bucle de chunks: un error de configuración
+        # debe FALLAR el lote (excepción → SQS reintenta → DLQ), no quemar chunks con
+        # estados falsos. Va aquí, fuera del `try` de lectura de entrada, porque ese
+        # `except` se traga la excepción y el lote quedaría ACKeado sin enviar nada.
+        _check_provider_config(provider)
+
         default_tags = [{
                 "Name":"customer",
                 "Value":customer_name
@@ -587,10 +609,12 @@ def lambda_handler(event:dict, context:dict):
                 # redelivery lo reintente, y re-lanza para que SQS reprocese la parte (reanuda).
                 _release_part(tenant, process_id, part, stage=f'send#{start}')
                 print(f"Error enviando el chunk {start} de la parte {part} del proceso {process_id}: {e}")
+                if is_samples:
+                    note_sample_result(campaign_id, False, e)
                 raise
 
         print("Proceso de envios finalizado")
         # Muestras: contar 1 SOLO si esta invocación envió algo nuevo (any_sent). En una redelivery
         # donde todos los chunks ya estaban enviados no se recuenta (any_sent=False).
         if is_samples and campaign_id and any_sent:
-            count_sample_send(campaign_id)
+            note_sample_result(campaign_id, True)

@@ -105,6 +105,92 @@
               "priceCurrency": "COP",
               "description": "Saldo prepago: se paga por mensaje enviado, con precio por volumen. Sin mensualidad ni permanencia."
             }
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://www.mailconnect.com.co/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "¿Qué necesito para empezar a enviar?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Tres cosas: una cuenta, tu base de contactos y una plantilla. Creas la cuenta, subes la base en CSV, Excel o JSON, diseñas el mensaje con el editor y recargas saldo. No hay instalación ni configuración de servidores."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "¿Puedo enviar desde mi propio dominio?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Sí. Registras tu dominio (o un correo específico) en la plataforma y te entregamos los registros DNS a publicar. Cuando quedan verificados, tus campañas salen desde tu dominio con la firma DKIM correspondiente. El panel te muestra el estado de DKIM, SPF y DMARC para que sepas si tu correo está autenticando bien, sin depender de herramientas externas."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "¿Cómo se cobra? ¿Hay mensualidad?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No hay mensualidad ni permanencia. El modelo es prepago: recargas saldo y se descuenta por envío. El precio por mensaje baja con el volumen mensual. Antes de confirmar cada campaña la plataforma te muestra el costo estimado con su desglose, así que nunca envías sin saber cuánto cuesta."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "¿Qué formato debe tener mi base de datos?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Aceptamos CSV, Excel (.xlsx) y JSON. Las tres primeras columnas son fijas: identificación, contacto (correo o celular según el canal) y nombre; de ahí en adelante agregas las columnas que quieras usar como variables en la plantilla. Al subirla se valida sola: te dice cuántos contactos son válidos, cuántos están repetidos y cuáles tienen el formato mal, antes de que gastes un solo envío."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "¿Puedo probar antes de enviar a toda la base?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Sí, y es el flujo recomendado. Cada campaña permite enviar muestras a los correos o celulares que indiques —con los datos reales de tu base— y solo después de aprobarla se habilita el envío masivo. Las muestras no cuentan en tus reportes ni en tu consumo."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "¿Qué pasa con los rebotes y las bajas?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Se gestionan solos. Todo correo lleva su enlace de baja, y quien se da de baja o rebota de forma permanente entra a tu lista negra automáticamente: la plataforma lo excluye de los envíos siguientes sin que tengas que hacer nada. También puedes agregar o quitar contactos de esa lista a mano."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "¿Cumple con la Ley 1581 (habeas data)?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "La plataforma trae las piezas que exige la norma: enlace de baja en cada mensaje, centro de preferencias para el destinatario, registro de la aceptación de términos y lista de exclusión por cliente. La autorización de tratamiento de datos de tus contactos sigue siendo responsabilidad tuya como responsable de la base."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "¿Puedo generar un documento distinto para cada destinatario?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Sí: es la combinación de correspondencia. A partir de una plantilla y tu base generamos un documento único por persona —certificado, factura, extracto, carta— y lo enviamos como adjunto o como enlace de descarga. Sirve para volúmenes de miles de documentos, que es donde hacerlo a mano deja de ser viable."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "¿Qué reportes tengo después de enviar?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Enviados, entregados, aperturas, clics, rebotes y quejas, por campaña y en una serie de los últimos 30 días. Puedes exportar el detalle a CSV para cruzarlo con tus propios sistemas."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "¿Ofrecen WhatsApp y llamadas de voz?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Todavía no. Hoy la plataforma envía por correo y SMS. WhatsApp y voz están en camino, pero preferimos no ofrecerlos hasta poder prestarlos bien."
+                }
+              }
+            ]
           }
         ]
       }
