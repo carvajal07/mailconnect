@@ -78,8 +78,17 @@ export interface CampaignSummary {
   messageTemplateId?: string;
   originEmail: string;
   date: string;
-  /** Envíos de muestras ya realizados (máx. 5 por campaña; lo controla el backend). */
+  /** Envíos de muestras ya realizados (máx. 5 por campaña; lo controla el backend).
+   *  ⚠️ Lo escribe el WORKER de envío (asíncrono), no la respuesta de "Enviar muestras":
+   *  solo sube cuando la muestra SALE de verdad. Ver `esperarResultadoMuestra` en
+   *  MuestrasSection: el portal espera el resultado en vez de darlo por hecho. */
   samplesSentCount?: number;
+  /** Momento del último envío de muestra que SALIÓ bien (lo escribe el worker). */
+  lastSampleAt?: string;
+  /** Motivo del último envío de muestra que FALLÓ; se borra en cuanto uno sale bien.
+   *  Sin esto, un fallo se ve igual que "todavía va en camino" (el envío es asíncrono). */
+  lastSampleError?: string;
+  lastSampleErrorAt?: string;
   /** Formato del documento EAP (DOCX/PDF), si aplica. */
   documentFormat?: EapDocumentFormat;
   /** Modo de entrega del adjunto (NONE/ONFILE/ONLINE), si aplica (EAU/EAP). Afecta la tarifa. */

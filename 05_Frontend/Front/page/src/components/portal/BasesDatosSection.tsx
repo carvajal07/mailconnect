@@ -47,7 +47,7 @@ import { useFeedback } from '../../hooks/useFeedback';
 import { useConfirm } from '../../hooks/useConfirm';
 import { analyzeCsv, DELIMITER_LABELS, requiredColumns, channelContactType, isSpreadsheetFile, readSpreadsheet, isJsonFile, jsonToRows, rowsToCsv, detectDelimiter, detectMultiRecord, type CsvAnalysis, type ContactType, type Delimiter } from './csv';
 import MultiRecordWizard, { type MultiRecordResult } from './MultiRecordWizard';
-import { featureEnabled, FEATURE_CSV_MULTIRECORD, FEATURE_JSON_IMPORT } from '../../config/features';
+import { featureEnabled, channelOffered, FEATURE_CSV_MULTIRECORD, FEATURE_JSON_IMPORT } from '../../config/features';
 import { formatDateTime } from '../../utils/datetime';
 
 interface BaseDatos {
@@ -590,10 +590,13 @@ export const BasesDatosSection = () => {
                 fullWidth
                 helperText={contact === 'phone' ? 'La columna 2 debe ser el celular (E.164)' : 'La columna 2 debe ser el correo'}
               >
+                {/* El canal define el TIPO DE CONTACTO de la columna 2 (correo vs
+                    celular). Solo se ofrecen los canales que la plataforma vende: para
+                    una base de celulares, SMS. */}
                 <MenuItem value="EMAIL">Correo (email)</MenuItem>
                 <MenuItem value="SMS">SMS</MenuItem>
-                <MenuItem value="WHATSAPP">WhatsApp</MenuItem>
-                <MenuItem value="VOICE">Voz</MenuItem>
+                {channelOffered('WHATSAPP') && <MenuItem value="WHATSAPP">WhatsApp</MenuItem>}
+                {channelOffered('VOICE') && <MenuItem value="VOICE">Voz</MenuItem>}
               </TextField>
               <TextField
                 select

@@ -139,6 +139,10 @@
 /* ---------- Grids / cards ---------- */
 .mc-landing .grid{ display:grid; gap:24px; }
 .mc-landing .g4{ grid-template-columns:repeat(4,1fr); } .mc-landing .g3{ grid-template-columns:repeat(3,1fr); } .mc-landing .g2{ grid-template-columns:repeat(2,1fr); }
+/* Rejilla de POCAS tarjetas: se acota y se centra. Los canales publicados hoy son 2 (correo
+   y SMS): con .g4 quedaban en las dos primeras columnas y media sección vacía a la derecha,
+   y con .g2 suelto se estiraban a todo el ancho. Se reutiliza en cualquier bloque corto. */
+.mc-landing .grid.narrow{ max-width:780px; margin-left:auto; margin-right:auto; }
 .mc-landing .card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:28px 24px;
   box-shadow:var(--shadow-sm); transition:transform .2s,box-shadow .25s,border-color .2s; }
 .mc-landing .card:hover{ transform:translateY(-6px); box-shadow:var(--shadow); border-color:color-mix(in srgb,var(--brand) 40%,var(--border)); }
@@ -221,6 +225,41 @@
 .mc-landing .pricetable--canales th:last-child{ text-align:left; }
 .mc-landing .pricetable--canales small{ font-size:.75rem; font-weight:600; margin-top:2px; }
 
+/* ---------- Sobre nosotros ---------- */
+.mc-landing .about-lead{ max-width:70ch; margin-inline:auto; }
+/* "Qué puedes enviar": los tipos de campaña como fichas. Es una LISTA (ul/li) porque eso
+   es: enumerar lo que cabe en la plataforma. Que se vean como chips es presentación. */
+.mc-landing .taglist{ list-style:none; padding:0; margin:26px auto 0; max-width:860px;
+  display:flex; flex-wrap:wrap; gap:10px; justify-content:center; }
+.mc-landing .taglist li{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-pill);
+  padding:8px 16px; font-weight:700; font-size:.9rem; color:var(--text); box-shadow:var(--shadow-sm); }
+.mc-landing .taglist li b{ color:var(--brand-strong); }
+
+/* ---------- Preguntas frecuentes ---------- */
+/* Acordeón con <details>/<summary> NATIVOS: abren y cierran sin JavaScript, el teclado y
+   los lectores de pantalla ya los entienden, y el navegador los incluye en su "buscar en
+   la página". Un acordeón propio con estado de React sería más código y menos accesible. */
+.mc-landing .faq{ max-width:840px; margin:46px auto 0; display:grid; gap:12px; }
+.mc-landing .faq-item{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm);
+  box-shadow:var(--shadow-sm); overflow:hidden; transition:border-color .2s,box-shadow .25s; }
+.mc-landing .faq-item[open]{ border-color:color-mix(in srgb,var(--brand) 45%,var(--border)); box-shadow:var(--shadow); }
+.mc-landing .faq-item summary{ display:flex; align-items:center; gap:14px; cursor:pointer; list-style:none;
+  padding:18px 20px; font-weight:800; color:var(--text); }
+.mc-landing .faq-item summary::-webkit-details-marker{ display:none; }
+.mc-landing .faq-num{ flex:0 0 auto; width:30px; height:30px; border-radius:50%; display:grid; place-items:center;
+  background:var(--brand-soft); color:var(--brand-strong); font-size:.85rem; font-weight:900; }
+/* La flecha gira al abrir: sin un indicador de estado, un acordeón cerrado se lee como
+   un título suelto y nadie descubre que hay respuesta debajo. */
+.mc-landing .faq-item summary::after{ content:''; flex:0 0 auto; margin-left:auto; width:9px; height:9px;
+  border-right:2.5px solid var(--text-muted); border-bottom:2.5px solid var(--text-muted);
+  transform:rotate(45deg); transition:transform .2s; }
+.mc-landing .faq-item[open] summary::after{ transform:rotate(225deg); }
+.mc-landing .faq-item summary:hover{ background:var(--bg-alt); }
+.mc-landing .faq-answer{ padding:0 20px 20px 64px; }
+.mc-landing .faq-answer p{ margin:0; }
+.mc-landing .faq-answer p + p{ margin-top:10px; }
+@media (max-width:600px){ .mc-landing .faq-answer{ padding-left:20px; } }
+
 /* ---------- CTA ---------- */
 .mc-landing .cta{ background:var(--dark-bg); color:#fff; border-radius:28px; padding:clamp(40px,6vw,72px); text-align:center; box-shadow:var(--shadow); }
 .mc-landing .cta h2{ color:#fff; } .mc-landing .cta p{ color:#a9bad6; max-width:54ch; margin-inline:auto; }
@@ -231,9 +270,22 @@
 .mc-landing .footer .brand-logo .mail-txt{ fill:#fff; } .mc-landing .footer .brand-logo .connect-txt{ fill:var(--brand); } .mc-landing .footer .brand-logo .tag-txt{ fill:#8aa0c4; }
 .mc-landing .foot-grid{ display:grid; grid-template-columns:1.7fr 1fr 1fr 1fr; gap:32px; }
 .mc-landing .foot-grid h4{ color:#fff; font-size:.85rem; letter-spacing:.08em; text-transform:uppercase; margin-bottom:15px; }
-.mc-landing .foot-grid a{ color:#a9bad6; display:block; margin-bottom:9px; font-weight:600; font-size:.92rem; }
+/* `overflow-wrap:anywhere` por el correo de contacto: 33 caracteres SIN espacios que el
+   navegador no puede partir, así que en móvil estiraba su columna y la PÁGINA ENTERA
+   quedaba con scroll horizontal (medido: 58 px de desborde a 390 px de ancho). */
+.mc-landing .foot-grid a{ color:#a9bad6; display:block; margin-bottom:9px; font-weight:600; font-size:.92rem;
+  overflow-wrap:anywhere; }
 .mc-landing .foot-grid a:hover{ color:#fff; }
 .mc-landing .foot-desc{ margin-top:16px; max-width:34ch; color:#a9bad6; }
+/* Redes de la empresa. Área de toque de 40 px: son enlaces pequeños en el pie y en móvil
+   un icono de 18 px sin caja alrededor es casi imposible de acertar con el dedo. */
+.mc-landing .foot-social{ display:flex; gap:10px; margin-top:20px; }
+.mc-landing .foot-social a{ width:40px; height:40px; margin:0; border-radius:50%; display:grid; place-items:center;
+  background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.12); color:#a9bad6;
+  transition:background .2s,color .2s,border-color .2s,transform .2s; }
+.mc-landing .foot-social a:hover{ background:var(--brand-strong); border-color:var(--brand-strong);
+  color:#fff; transform:translateY(-2px); }
+.mc-landing .foot-social svg{ width:18px; height:18px; }
 .mc-landing .foot-bottom{ display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; border-top:1px solid rgba(255,255,255,.10); margin-top:42px; padding-top:20px; font-size:.84rem; color:#8aa0c4; }
 
 /* ---------- Responsive ---------- */

@@ -105,7 +105,10 @@ export const CascadaSection = () => {
 
   const setStep = (i: number, patch: Partial<CascadeStep>) =>
     setSteps((s) => s.map((st, idx) => (idx === i ? { ...st, ...patch } : st)));
-  const addStep = () => setSteps((s) => [...s, { channel: 'VOZ', content: '' }]);
+  // ⚠️ El canal del paso nuevo sale de los DISPONIBLES, no clavado: con 'VOZ' fijo se
+  // agregaba un paso de un canal apagado que el backend después rechazaba.
+  const addStep = () => setSteps((s) => [
+    ...s, { channel: (availableChannels[availableChannels.length - 1] ?? 'EM'), content: '' }]);
   const removeStep = (i: number) => setSteps((s) => (s.length <= 2 ? s : s.filter((_, idx) => idx !== i)));
   const move = (i: number, dir: -1 | 1) =>
     setSteps((s) => {

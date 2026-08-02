@@ -289,6 +289,38 @@ def personalized_data(custom_fields,register,personalized_text):
         personalized_text = personalized_text.replace(name,register[index])
     return personalized_text
 
+def note_sample_result(campaign_id:str, ok:bool, reason:str='')->None:
+    """Registra en la campaña el resultado del último envío de MUESTRA.
+
+    OK    -> suma 1 a `samplesSentCount` (el cupo se consume solo cuando la muestra SALE)
+             y BORRA el aviso de fallo anterior: si el reintento de SQS terminó bien, el
+             cliente no puede seguir viendo un error que ya no existe.
+    FALLO -> escribe `lastSampleError`/`lastSampleErrorAt` SIN tocar el contador. Es lo
+             UNICO que el portal puede mostrar: el envío es asíncrono, así que sin esta
+             marca un fallo se ve EXACTAMENTE igual que "todavía va en camino" y el
+             usuario se queda esperando un correo que nunca va a llegar.
+
+    Best-effort en ambos casos: dejar constancia no puede tumbar un envío ya hecho.
+    """
+    if not campaign_id:
+        return
+    ahora = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        if ok:
+            dynamodb.Table('campaign').update_item(
+                Key={'campaignId': campaign_id},
+                UpdateExpression=('SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one, '
+                                  'lastSampleAt = :at REMOVE lastSampleError, lastSampleErrorAt'),
+                ExpressionAttributeValues={':one': 1, ':z': 0, ':at': ahora})
+        else:
+            dynamodb.Table('campaign').update_item(
+                Key={'campaignId': campaign_id},
+                UpdateExpression='SET lastSampleError = :e, lastSampleErrorAt = :at',
+                ExpressionAttributeValues={':e': str(reason)[:300] or 'Error desconocido', ':at': ahora})
+    except Exception as e:
+        print('No se pudo registrar el resultado de la muestra: {}'.format(e))
+
+
 def lambda_handler(event, context):
     """
     Función principal
@@ -715,15 +747,11 @@ def lambda_handler(event, context):
         # Parte completada: marca 'Terminado' sobre la fila reclamada para envío (observabilidad).
         _mark_part(tenant, process_id, part_id, "Terminado", stage='send')
 
-        # Envío de MUESTRAS terminado sin error → contar 1 en la campaña (no cuenta si falló).
-        if status and is_samples and campaign_id:
-            try:
-                table_campaign.update_item(
-                    Key={'campaignId': campaign_id},
-                    UpdateExpression='SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one',
-                    ExpressionAttributeValues={':one': 1, ':z': 0})
-            except Exception as e:
-                print('No se pudo contar el envío de muestra EAP: {}'.format(e))
+        # Envío de MUESTRAS terminado → se cuenta si salió bien; si no, queda el aviso de
+        # fallo en la campaña (el portal lo muestra: sin eso, un fallo se ve igual que
+        # "todavía va en camino").
+        if is_samples and campaign_id:
+            note_sample_result(campaign_id, bool(status), 'No se pudo enviar la muestra.')
 
     finally:
         # Respuesta

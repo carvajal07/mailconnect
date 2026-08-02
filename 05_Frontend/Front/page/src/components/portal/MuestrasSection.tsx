@@ -60,6 +60,12 @@ interface Recipient {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX = 5;
 
+// Espera del resultado de la muestra (el envío es asíncrono; ver `esperarResultadoMuestra`).
+// ~30 s de ventana: un correo normal sale en 2-5 s, así que da margen de sobra sin dejar a
+// nadie mirando un spinner eterno cuando la cola va lenta.
+const SAMPLE_POLL_MS = 2500;
+const SAMPLE_POLL_TRIES = 12;
+
 const emptyRecipients = (n: number): Recipient[] =>
   Array.from({ length: n }, () => ({ email: '', identificacion: '' }));
 
@@ -118,6 +124,11 @@ export const MuestrasSection = () => {
     const found = campaignOptions.find((c) => c.campaignName === name);
     if (found?.template) setTemplate(found.template);
     else setTemplate('');
+    // El resultado de la muestra es POR CAMPAÑA: al cambiar de campaña se suelta el estado
+    // de la anterior y se muestra el fallo persistido de ESTA (si lo tiene), que es lo que
+    // el cliente necesita ver al volver más tarde.
+    setSampleWait('idle');
+    setSampleError(found?.lastSampleError || '');
   };
 
   // Campaña seleccionada + límite de envíos de muestras (máx. MAX_SAMPLE_SENDS por campaña).
@@ -163,6 +174,17 @@ export const MuestrasSection = () => {
   const [quantity, setQuantity] = useState(1);
   const [recipients, setRecipients] = useState<Recipient[]>(emptyRecipients(1));
   const [sending, setSending] = useState(false);
+  // Resultado del último envío de muestra. El envío es ASÍNCRONO (la API solo encola: el
+  // worker manda el correo segundos después y es él quien sube el contador), así que sin
+  // esperar el resultado el portal mostraría el contador viejo y "Solicitar aprobación"
+  // fallaría con "no has enviado muestras".
+  //   esperando → todavía en cola   ·   error → el worker reportó el fallo
+  //   demorado  → no llegó respuesta en la ventana de espera (sigue en cola, no es un fallo)
+  const [sampleWait, setSampleWait] = useState<'idle' | 'esperando' | 'demorado'>('idle');
+  const [sampleError, setSampleError] = useState('');
+  // Mientras se espera al worker no se puede volver a enviar (se duplicaría la muestra) ni
+  // solicitar la aprobación (el backend exige samplesSentCount > 0 y todavía es 0).
+  const esperandoMuestra = sampleWait === 'esperando';
   // Acciones de aprobación (solicitar/aprobar/rechazar) y envío real, sobre la campaña.
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [sendingReal, setSendingReal] = useState(false);
@@ -213,6 +235,47 @@ export const MuestrasSection = () => {
     refreshCampaigns();
   }, [loadLists, refreshCampaigns]);
 
+  /**
+   * Espera el resultado REAL del envío de muestra y actualiza la pantalla con él.
+   *
+   * ⚠️ Por qué hace falta: "Enviar muestras" solo ENCOLA. El worker manda el correo unos
+   * segundos después y es él quien sube `samplesSentCount` (así una muestra que no sale no
+   * consume cupo) o deja `lastSampleError` si falló. Al volver la API el contador todavía
+   * está viejo, así que un refresco único mostraba "0/5" y "Solicitar aprobación" respondía
+   * "no has enviado muestras" — que era exactamente lo que se veía.
+   *
+   * Se sondea la campaña hasta que llegue una de las dos señales. Si no llega ninguna en la
+   * ventana de espera NO se inventa un resultado: se dice que sigue en cola. Es un sondeo
+   * corto y acotado; no hay websockets en la plataforma y montarlos por esto sería
+   * desproporcionado (son segundos, no minutos).
+   */
+  const esperarResultadoMuestra = useCallback(async (campaignId: string, contadorAntes: number, errorAntes: string) => {
+    setSampleWait('esperando');
+    setSampleError('');
+    for (let intento = 0; intento < SAMPLE_POLL_TRIES; intento++) {
+      await new Promise((r) => setTimeout(r, SAMPLE_POLL_MS));
+      const res = customerId ? await campaignsService.list(customerId) : null;
+      if (!res || !isOk(res) || !res.data?.campaigns) continue;
+      setCampaignOptions(res.data.campaigns);
+      const c = res.data.campaigns.find((x) => x.campaignId === campaignId);
+      if (!c) continue;
+      if ((c.samplesSentCount ?? 0) > contadorAntes) {
+        setSampleWait('idle');
+        notify('La muestra salió. Revísala y solicita la aprobación.', 'success');
+        refreshCampaigns();
+        return;
+      }
+      if (c.lastSampleErrorAt && c.lastSampleErrorAt !== errorAntes) {
+        setSampleWait('idle');
+        setSampleError(c.lastSampleError || 'No se pudo enviar la muestra.');
+        notify('La muestra no se pudo enviar. Abajo está el motivo.', 'error');
+        refreshCampaigns();
+        return;
+      }
+    }
+    setSampleWait('demorado');
+  }, [customerId, notify, refreshCampaigns]);
+
   const handleSend = async () => {
     if (!cliente.trim()) {
       return notify('Tu sesión no tiene una empresa asociada. Vuelve a iniciar sesión.', 'warning');
@@ -236,6 +299,11 @@ export const MuestrasSection = () => {
       if (selective && !r.identificacion.trim()) return notify(`Falta la identificación de la muestra ${i + 1}.`, 'warning');
     }
 
+    // Se fotografía el estado ANTES de encolar: `esperarResultadoMuestra` compara contra
+    // esto para distinguir el resultado de ESTE envío de lo que ya había.
+    const contadorAntes = samplesSent;
+    const errorAntes = selectedCampaign?.lastSampleErrorAt ?? '';
+
     setSending(true);
     const res = await campaignsService.sendSamples({
       customerName: cliente.trim(),
@@ -251,8 +319,11 @@ export const MuestrasSection = () => {
     setSending(false);
 
     if (isOk(res)) {
-      notify('Muestras enviadas correctamente. Revísalas y solicita la aprobación.', 'success');
-      refreshAll(); // refresca el contador de muestras y el estado de aprobación persistido
+      // OJO: esto solo confirma que la muestra quedó EN COLA. El "salió" lo confirma el
+      // worker; hasta entonces no se le dice al cliente que ya puede pedir la aprobación.
+      notify('Muestra en cola de envío…', 'info');
+      if (selectedCampaignId) esperarResultadoMuestra(selectedCampaignId, contadorAntes, errorAntes);
+      else refreshAll();
     } else {
       notify(res.description || 'No se pudieron enviar las muestras. Revisa los datos e intenta de nuevo.', 'error');
     }
@@ -533,7 +604,7 @@ export const MuestrasSection = () => {
             variant="contained"
             startIcon={sending ? undefined : <SendIcon />}
             onClick={handleSend}
-            disabled={sending || samplesLimitReached}
+            disabled={sending || esperandoMuestra || samplesLimitReached}
           >
             {sending ? <CircularProgress size={22} /> : 'Enviar muestras'}
           </Button>
@@ -541,15 +612,36 @@ export const MuestrasSection = () => {
             <Chip
               size="small"
               variant="outlined"
-              color={samplesLimitReached ? 'error' : samplesRemaining <= 1 ? 'warning' : 'default'}
+              icon={esperandoMuestra ? <CircularProgress size={12} sx={{ ml: 1 }} /> : undefined}
+              color={esperandoMuestra ? 'info' : samplesLimitReached ? 'error' : samplesRemaining <= 1 ? 'warning' : 'default'}
               label={
-                samplesLimitReached
-                  ? `Límite alcanzado (${MAX_SAMPLE_SENDS}/${MAX_SAMPLE_SENDS})`
-                  : `Envíos de muestra: ${samplesSent}/${MAX_SAMPLE_SENDS} · quedan ${samplesRemaining}`
+                esperandoMuestra
+                  ? 'Enviando la muestra… se cuenta cuando salga'
+                  : samplesLimitReached
+                    ? `Límite alcanzado (${MAX_SAMPLE_SENDS}/${MAX_SAMPLE_SENDS})`
+                    : `Envíos de muestra: ${samplesSent}/${MAX_SAMPLE_SENDS} · quedan ${samplesRemaining}`
               }
             />
           )}
         </Stack>
+
+        {/* Resultado del envío: el cupo solo se consume cuando la muestra SALE, así que el
+            cliente tiene que ver por qué NO salió. Sin esto, un fallo se ve idéntico a
+            "todavía va en camino" y el usuario espera un correo que nunca va a llegar. */}
+        {sampleError && (
+          <Alert severity="error" variant="outlined" sx={{ mt: 1.5 }} onClose={() => setSampleError('')}>
+            <strong>La última muestra no se envió.</strong> {sampleError}
+            <br />
+            No consumió ninguno de tus {MAX_SAMPLE_SENDS} envíos: corrige el dato e inténtalo de nuevo.
+          </Alert>
+        )}
+        {sampleWait === 'demorado' && (
+          <Alert severity="info" variant="outlined" sx={{ mt: 1.5 }} onClose={() => setSampleWait('idle')}
+            action={<Button size="small" onClick={refreshAll}>Actualizar</Button>}>
+            La muestra sigue en cola. Se cuenta sola en cuanto salga; si en unos minutos no aparece,
+            revisa el estado de la campaña.
+          </Alert>
+        )}
         {samplesLimitReached && (
           <Typography variant="caption" color="error" sx={{ mt: 1, display: 'block' }}>
             Alcanzaste el máximo de {MAX_SAMPLE_SENDS} envíos de muestras para esta campaña. Aprueba y
@@ -609,12 +701,16 @@ export const MuestrasSection = () => {
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                 {/* none / rejected → solicitar (o re-solicitar) aprobación */}
                 {(approval === 'none' || approval === 'rejected') && (
-                  <Tooltip title={samplesSent <= 0 ? 'Envía al menos una muestra antes de solicitar la aprobación.' : ''}>
+                  <Tooltip title={
+                    esperandoMuestra
+                      ? 'La muestra todavía va en camino; se habilita en cuanto salga.'
+                      : samplesSent <= 0 ? 'Envía al menos una muestra antes de solicitar la aprobación.' : ''
+                  }>
                     <span>
                       <Button
                         variant="contained"
                         startIcon={approvalBusy ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
-                        disabled={approvalBusy || samplesSent <= 0}
+                        disabled={approvalBusy || esperandoMuestra || samplesSent <= 0}
                         onClick={handleRequestApproval}
                       >
                         {approval === 'rejected' ? 'Solicitar aprobación de nuevo' : 'Solicitar aprobación'}

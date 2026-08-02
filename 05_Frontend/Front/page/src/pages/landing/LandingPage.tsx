@@ -129,7 +129,108 @@ const WhatsAppGlyph = ({ size = 24 }: { size?: number }) => (
   </svg>
 );
 
+/* === Redes de la empresa ===
+   ⚠️ Hoy son CUENTAS PERSONALES, no páginas de empresa (`linkedin.com/in/…` en vez de
+   `/company/…`, un perfil de Facebook con id numérico en vez de una Página, y una cuenta
+   de usuario de Reddit). Funcionan como enlace, pero quien llega desde el pie de un sitio
+   corporativo espera la marca; cuando existan las páginas de empresa basta con cambiar la
+   URL aquí — el pie de la landing, el JSON-LD y su guard leen de esta misma lista.
+   Una red con URL vacía NO se dibuja, así que quitar una es dejarla en ''. */
+export const REDES: { nombre: string; url: string; d: string }[] = [
+  {
+    nombre: 'LinkedIn',
+    url: 'https://www.linkedin.com/in/jhon-carvajal-b85023424',
+    d: 'M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.32 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.79M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77Z',
+  },
+  {
+    nombre: 'X',
+    url: 'https://x.com/Carvajal_dev',
+    d: 'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z',
+  },
+  {
+    nombre: 'Facebook',
+    url: 'https://www.facebook.com/profile.php?id=61592784660328',
+    d: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2m13 2h-2.5A3.5 3.5 0 0 0 12 8.5V11h-2v3h2v7h3v-7h3v-3h-3V9a1 1 0 0 1 1-1h2V5Z',
+  },
+  {
+    nombre: 'Reddit',
+    url: 'https://www.reddit.com/user/Pretty_Lie4524/',
+    d: 'M22 12.14a2.19 2.19 0 0 0-3.71-1.57 10.93 10.93 0 0 0-5.86-1.87l1-4.7 3.27.71a1.56 1.56 0 1 0 .16-.76l-3.64-.77c-.11-.03-.22 0-.29.06a.36.36 0 0 0-.2.23l-1.11 5.23a10.9 10.9 0 0 0-5.8 1.87 2.2 2.2 0 0 0-1.51-.6 2.19 2.19 0 0 0-1.02 4.13 4.29 4.29 0 0 0-.05.66c0 3.37 3.92 6.11 8.75 6.11s8.75-2.74 8.75-6.11c0-.22-.02-.44-.05-.65A2.19 2.19 0 0 0 22 12.14M6.14 13.7a1.56 1.56 0 1 1 3.12 0 1.56 1.56 0 0 1-3.12 0m8.86 4.16c-.98.98-2.86 1.06-3.41 1.06s-2.43-.08-3.41-1.06a.37.37 0 0 1 0-.53.37.37 0 0 1 .53 0c.62.62 1.94.84 2.88.84s2.26-.22 2.88-.84a.37.37 0 0 1 .53 0 .37.37 0 0 1 0 .53m-.27-2.6a1.56 1.56 0 1 1 0-3.12 1.56 1.56 0 0 1 0 3.12',
+  },
+];
+
 const BARS = [38, 56, 47, 72, 63, 88, 70, 95, 80];
+
+/* Tipos de campaña que la plataforma cubre hoy. Se publican porque son la pregunta real de
+   quien llega ("¿me sirve para lo que yo mando?"), y todas se arman con las mismas piezas
+   que ya existen: plantillas, base de datos y programación. */
+const TIPOS_CAMPANA: { nombre: string; detalle: string }[] = [
+  { nombre: 'Newsletter', detalle: 'boletín periódico' },
+  { nombre: 'Promocional', detalle: 'ofertas y lanzamientos' },
+  { nombre: 'Estacional', detalle: 'cumpleaños y fechas especiales' },
+  { nombre: 'Bienvenida', detalle: 'primer contacto' },
+  { nombre: 'Reactivación', detalle: 'clientes inactivos' },
+  { nombre: 'Ecommerce', detalle: 'confirmaciones y seguimiento' },
+  { nombre: 'Transaccional', detalle: 'facturas, extractos y certificados' },
+];
+
+/**
+ * Preguntas frecuentes.
+ *
+ * ⚠️ Cada respuesta describe lo que la plataforma HACE HOY, no lo que está planeado. Una
+ * FAQ que promete de más es la forma más cara de conseguir un cliente: llega esperando algo
+ * que no existe. Por eso la de WhatsApp/voz dice explícitamente que todavía no se ofrecen
+ * —el mismo criterio que el asistente de IA (ver el prompt de Api_V1_Assistant_Ask)—.
+ */
+export const FAQ: { p: string; r: string[] }[] = [
+  {
+    p: '¿Qué necesito para empezar a enviar?',
+    r: ['Tres cosas: una cuenta, tu base de contactos y una plantilla. Creas la cuenta, subes la base en CSV, Excel o JSON, diseñas el mensaje con el editor y recargas saldo. No hay instalación ni configuración de servidores.'],
+  },
+  {
+    p: '¿Puedo enviar desde mi propio dominio?',
+    r: ['Sí. Registras tu dominio (o un correo específico) en la plataforma y te entregamos los registros DNS a publicar. Cuando quedan verificados, tus campañas salen desde tu dominio con la firma DKIM correspondiente.',
+        'El panel te muestra el estado de DKIM, SPF y DMARC para que sepas si tu correo está autenticando bien, sin depender de herramientas externas.'],
+  },
+  {
+    p: '¿Cómo se cobra? ¿Hay mensualidad?',
+    r: ['No hay mensualidad ni permanencia. El modelo es prepago: recargas saldo y se descuenta por envío. El precio por mensaje baja con el volumen mensual.',
+        'Antes de confirmar cada campaña la plataforma te muestra el costo estimado con su desglose, así que nunca envías sin saber cuánto cuesta.'],
+  },
+  {
+    p: '¿Qué formato debe tener mi base de datos?',
+    r: ['Aceptamos CSV, Excel (.xlsx) y JSON. Las tres primeras columnas son fijas: identificación, contacto (correo o celular según el canal) y nombre; de ahí en adelante agregas las columnas que quieras usar como variables en la plantilla.',
+        'Al subirla se valida sola: te dice cuántos contactos son válidos, cuántos están repetidos y cuáles tienen el formato mal, antes de que gastes un solo envío.'],
+  },
+  {
+    p: '¿Puedo probar antes de enviar a toda la base?',
+    r: ['Sí, y es el flujo recomendado. Cada campaña permite enviar muestras a los correos o celulares que indiques —con los datos reales de tu base— y solo después de aprobarla se habilita el envío masivo.',
+        'Las muestras no cuentan en tus reportes ni en tu consumo.'],
+  },
+  {
+    p: '¿Qué pasa con los rebotes y las bajas?',
+    r: ['Se gestionan solos. Todo correo lleva su enlace de baja, y quien se da de baja o rebota de forma permanente entra a tu lista negra automáticamente: la plataforma lo excluye de los envíos siguientes sin que tengas que hacer nada.',
+        'También puedes agregar o quitar contactos de esa lista a mano.'],
+  },
+  {
+    p: '¿Cumple con la Ley 1581 (habeas data)?',
+    r: ['La plataforma trae las piezas que exige la norma: enlace de baja en cada mensaje, centro de preferencias para el destinatario, registro de la aceptación de términos y lista de exclusión por cliente.',
+        'La autorización de tratamiento de datos de tus contactos sigue siendo responsabilidad tuya como responsable de la base.'],
+  },
+  {
+    p: '¿Puedo generar un documento distinto para cada destinatario?',
+    r: ['Sí: es la combinación de correspondencia. A partir de una plantilla y tu base generamos un documento único por persona —certificado, factura, extracto, carta— y lo enviamos como adjunto o como enlace de descarga.',
+        'Sirve para volúmenes de miles de documentos, que es donde hacerlo a mano deja de ser viable.'],
+  },
+  {
+    p: '¿Qué reportes tengo después de enviar?',
+    r: ['Enviados, entregados, aperturas, clics, rebotes y quejas, por campaña y en una serie de los últimos 30 días. Puedes exportar el detalle a CSV para cruzarlo con tus propios sistemas.'],
+  },
+  {
+    p: '¿Ofrecen WhatsApp y llamadas de voz?',
+    r: ['Todavía no. Hoy la plataforma envía por correo y SMS. WhatsApp y voz están en camino, pero preferimos no ofrecerlos hasta poder prestarlos bien.'],
+  },
+];
 
 export const LandingPage = () => {
   return (
@@ -144,7 +245,9 @@ export const LandingPage = () => {
             <a href="#canales">Canales</a>
             <a href="#funciones">Funciones</a>
             <a href="#correspondencia">Correspondencia</a>
+            <a href="#nosotros">Nosotros</a>
             <a href="#precios">Precios</a>
+            <a href="#faq">FAQ</a>
           </nav>
           <div className="nav-cta">
             <Link to="/login" className="btn btn-ghost btn-sm">Iniciar sesión</Link>
@@ -214,7 +317,9 @@ export const LandingPage = () => {
             <h2>Un mensaje, todos los canales</h2>
             <p className="lead">Reutiliza tus plantillas y contactos en cada canal y mide todo desde un mismo panel.</p>
           </div>
-          <div className="grid g4" style={{ marginTop: 46 }}>
+          {/* g2 + narrow: hoy se publican DOS canales; con la rejilla de 4 quedaban pegados
+              a la izquierda. Al reactivar WhatsApp/Voz (ver LandingPageOmnicanal) vuelve g4. */}
+          <div className="grid g2 narrow" style={{ marginTop: 46 }}>
             <div className="card">
               <span className="ico email"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg></span>
               <h3>Email marketing</h3>
@@ -315,7 +420,59 @@ export const LandingPage = () => {
         </div>
       </section>
 
-      {/* ================= PRECIOS ================= */}
+      {/* ================= SOBRE NOSOTROS ================= */}
+      {/* Sin cifras de empresa (años, clientes, correos enviados) a propósito: no hay de
+          dónde sacarlas todavía y un número inventado en la landing es justo lo que un
+          cliente comprueba. Lo que se cuenta es verificable en el producto. */}
+      <section id="nosotros">
+        <div className="wrap">
+          <div className="center">
+            <span className="eyebrow">Sobre nosotros</span>
+            <h2>Comunicación masiva, hecha en Colombia</h2>
+            <p className="lead about-lead">
+              MailConnect es una plataforma colombiana de comunicaciones masivas construida sobre
+              infraestructura de AWS. Nació de un problema concreto: enviar miles de mensajes
+              personalizados —y los documentos que los acompañan— sin depender de hojas de cálculo,
+              macros ni de alguien haciéndolo a mano una noche entera.
+            </p>
+          </div>
+
+          <div className="grid g3" style={{ marginTop: 46 }}>
+            <div className="card">
+              <span className="ico soft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><path d="M22 4 12 14.01l-3-3" /></svg></span>
+              <h3>Que el mensaje llegue</h3>
+              <p>Dominios propios verificados con DKIM, panel de SPF y DMARC, gestión automática de
+                rebotes y bajas, y la opción de IP dedicada para quien envía alto volumen. La
+                entregabilidad se cuida antes del envío, no después del reporte.</p>
+            </div>
+            <div className="card">
+              <span className="ico soft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg></span>
+              <h3>Con las reglas claras</h3>
+              <p>Enlace de baja en cada mensaje, centro de preferencias para el destinatario, lista
+                de exclusión por cliente y bitácora de quién hizo qué. Todo lo que la Ley 1581 pide
+                viene puesto de fábrica, no como un pendiente tuyo.</p>
+            </div>
+            <div className="card">
+              <span className="ico soft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1v22" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg></span>
+              <h3>Sin sorpresas en la cuenta</h3>
+              <p>Prepago, sin mensualidad ni permanencia. Ves el costo estimado de la campaña antes
+                de confirmarla y el saldo se descuenta por envío realizado. Si no envías, no pagas.</p>
+            </div>
+          </div>
+
+          <div className="center" style={{ marginTop: 54 }}>
+            <h3 style={{ fontSize: '1.35rem' }}>Qué puedes enviar</h3>
+            <p className="lead about-lead">Las mismas piezas —plantillas, base de datos y programación— cubren
+              desde el boletín de cada mes hasta el extracto personalizado de cada cliente.</p>
+            <ul className="taglist">
+              {TIPOS_CAMPANA.map((t) => (
+                <li key={t.nombre}><b>{t.nombre}</b> · {t.detalle}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
+
       {/* ================= PRECIOS =================
           Sin cifras a propósito (ago 2026). Las que había (planes de $190.000 / $750.000 /
           $1.300.000 y una tabla de volumen) NO coincidían con lo que cobra el sistema —la
@@ -404,6 +561,37 @@ export const LandingPage = () => {
         </div>
       </section>
 
+      {/* ================= PREGUNTAS FRECUENTES ================= */}
+      {/* Va justo antes del CTA: primero se responden las objeciones, después se pide la
+          acción. Acordeón nativo (<details>) — ver landing.css. */}
+      <section id="faq">
+        <div className="wrap">
+          <div className="center">
+            <span className="eyebrow">Preguntas frecuentes</span>
+            <h2>Lo que más nos preguntan</h2>
+            <p className="lead about-lead">Si lo tuyo no está aquí, escríbenos por WhatsApp y te respondemos.</p>
+          </div>
+          <div className="faq">
+            {FAQ.map((f, i) => (
+              <details className="faq-item" key={f.p}>
+                <summary>
+                  <span className="faq-num" aria-hidden="true">{i + 1}</span>
+                  {f.p}
+                </summary>
+                <div className="faq-answer">
+                  {f.r.map((parrafo) => <p key={parrafo}>{parrafo}</p>)}
+                </div>
+              </details>
+            ))}
+          </div>
+          <div className="center" style={{ marginTop: 34 }}>
+            <a href={whatsappUrl('Hola, tengo una pregunta sobre MailConnect.')} className="btn btn-ghost" target="_blank" rel="noopener noreferrer">
+              Preguntar por WhatsApp
+            </a>
+          </div>
+        </div>
+      </section>
+
       {/* ================= CTA ================= */}
       <section id="cta">
         <div className="wrap">
@@ -425,15 +613,27 @@ export const LandingPage = () => {
             <div>
               <MailConnectLogo height={38} />
               <p className="foot-desc">Plataforma colombiana de correo masivo. Email y SMS sobre AWS, con la más alta entregabilidad.</p>
+              {/* Iconos en SVG EN LÍNEA (no imágenes): se ven nítidos en cualquier pantalla,
+                  heredan el color del pie y no cuestan una petición cada uno. En el CORREO
+                  no se puede hacer así (Gmail elimina el SVG en línea) y por eso ahí van
+                  como PNG — ver MAIL_SOCIAL en las lambdas. */}
+              <div className="foot-social">
+                {REDES.filter((r) => r.url.trim()).map((r) => (
+                  <a key={r.nombre} href={r.url} target="_blank" rel="noopener noreferrer me"
+                    aria-label={`MailConnect en ${r.nombre}`} title={r.nombre}>
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={r.d} /></svg>
+                  </a>
+                ))}
+              </div>
             </div>
             <div>
               <h4>Producto</h4>
-              <a href="#canales">Canales</a><a href="#funciones">Funciones</a><a href="#correspondencia">Correspondencia</a><a href="#precios">Precios</a>
+              <a href="#canales">Canales</a><a href="#funciones">Funciones</a><a href="#correspondencia">Correspondencia</a><a href="#nosotros">Sobre nosotros</a><a href="#precios">Precios</a><a href="#faq">Preguntas frecuentes</a>
             </div>
-            {/* Solo enlaces que llevan a algún lado. "Sobre nosotros" y "Blog" estaban
-                en href="#": un enlace que no hace nada erosiona la confianza más de lo que
-                aporta el nombre en el menú, y Google los cuenta como enlaces rotos. Vuelven
-                cuando existan las páginas. */}
+            {/* Solo enlaces que llevan a algún lado. "Sobre nosotros" apuntaba a href="#"
+                (un enlace que no hace nada erosiona la confianza más de lo que aporta el
+                nombre, y Google los cuenta como rotos); ahora sí existe la sección. "Blog"
+                sigue fuera hasta que exista. */}
             <div>
               <h4>Contacto</h4>
               <a href={whatsappUrl('Hola, quiero información sobre MailConnect.')} target="_blank" rel="noopener noreferrer">WhatsApp comercial</a>

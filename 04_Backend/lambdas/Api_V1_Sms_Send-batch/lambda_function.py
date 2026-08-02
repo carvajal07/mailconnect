@@ -156,20 +156,6 @@ def _personalize(text, headers, row):
     return _VAR.sub(lambda m: str(values.get(m.group(1), m.group(0))), text)
 
 
-def _count_sample_send(campaign_id):
-    """Cuenta 1 envío de MUESTRA (atómico) en la campaña, SOLO si el envío salió bien.
-    Se llama tras un lote de muestras con al menos un SMS enviado (no cuenta si falla)."""
-    if not campaign_id:
-        return
-    try:
-        dynamodb.Table('campaign').update_item(
-            Key={'campaignId': campaign_id},
-            UpdateExpression='SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one',
-            ExpressionAttributeValues={':one': 1, ':z': 0})
-    except Exception as e:
-        print('No se pudo contar el envío de muestra SMS: {}'.format(e))
-
-
 def _claim_part(tenant, process_id, part, registers, date, stage='send'):
     """Reclama ATÓMICAMENTE el derecho a procesar (processId, part) en esta ETAPA.
 
@@ -222,6 +208,48 @@ def _record_status(tenant, process_id, rows):
         for item in rows:
             item['processId'] = process_id
             batch.put_item(Item=item)
+
+
+def _primer_error(status_rows)->str:
+    """Motivo del primer destinatario RECHAZADO del lote — es lo que el portal le muestra
+    al cliente cuando la muestra no salió. Sin un motivo concreto, "falló" no le dice a
+    nadie qué corregir (un número mal formado, una credencial, el saldo del proveedor)."""
+    for r in status_rows or []:
+        if r.get('state') == STATE_REJECTED:
+            return str(r.get('type2') or '')
+    return 'No se pudo enviar la muestra.'
+
+
+def note_sample_result(campaign_id:str, ok:bool, reason:str='')->None:
+    """Registra en la campaña el resultado del último envío de MUESTRA.
+
+    OK    -> suma 1 a `samplesSentCount` (el cupo se consume solo cuando la muestra SALE)
+             y BORRA el aviso de fallo anterior: si el reintento de SQS terminó bien, el
+             cliente no puede seguir viendo un error que ya no existe.
+    FALLO -> escribe `lastSampleError`/`lastSampleErrorAt` SIN tocar el contador. Es lo
+             UNICO que el portal puede mostrar: el envío es asíncrono, así que sin esta
+             marca un fallo se ve EXACTAMENTE igual que "todavía va en camino" y el
+             usuario se queda esperando un correo que nunca va a llegar.
+
+    Best-effort en ambos casos: dejar constancia no puede tumbar un envío ya hecho.
+    """
+    if not campaign_id:
+        return
+    ahora = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        if ok:
+            dynamodb.Table('campaign').update_item(
+                Key={'campaignId': campaign_id},
+                UpdateExpression=('SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one, '
+                                  'lastSampleAt = :at REMOVE lastSampleError, lastSampleErrorAt'),
+                ExpressionAttributeValues={':one': 1, ':z': 0, ':at': ahora})
+        else:
+            dynamodb.Table('campaign').update_item(
+                Key={'campaignId': campaign_id},
+                UpdateExpression='SET lastSampleError = :e, lastSampleErrorAt = :at',
+                ExpressionAttributeValues={':e': str(reason)[:300] or 'Error desconocido', ':at': ahora})
+    except Exception as e:
+        print('No se pudo registrar el resultado de la muestra: {}'.format(e))
 
 
 def lambda_handler(event, context):
@@ -315,8 +343,10 @@ def lambda_handler(event, context):
         # Parte completada: marca 'Terminado' sobre la fila reclamada (observabilidad).
         _mark_part(tenant, process_id, part, 'Terminado')
 
-        # Muestras: si al menos un SMS del lote se envió OK, contar 1 en la campaña.
-        if is_samples and any(r.get('state') == STATE_SENT for r in status_rows):
-            _count_sample_send(campaign_id)
+        # Muestras: cuenta si al menos un SMS del lote salió; si NINGUNO salió, queda el
+        # aviso de fallo con el motivo del primer rechazo (el portal lo muestra).
+        if is_samples and campaign_id:
+            enviado = any(r.get('state') == STATE_SENT for r in status_rows)
+            note_sample_result(campaign_id, enviado, _primer_error(status_rows))
 
     return {'statusCode': 200, 'body': json.dumps('SMS batch procesado')}

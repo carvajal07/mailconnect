@@ -1225,3 +1225,80 @@ Decisión de producto: salir solo con correo y SMS. Apagado reversible, sin borr
    disponible"; enviar una campaña VOZ vieja → 403 sin marcar Error.
 4. Preguntar al asistente de la landing por WhatsApp → responde que viene en camino, no
    lo ofrece como disponible.
+
+---
+
+## 27. Muestras: resultado del envío + fix del ACK sin credenciales (ago 2026)
+
+**Qué cambia:** los 6 workers de envío registran el RESULTADO de la muestra en la campaña
+(`note_sample_result`): si sale, suman el cupo y limpian el aviso de fallo; si falla,
+escriben `lastSampleError`/`lastSampleErrorAt` sin gastar cupo. El portal sondea la campaña
+tras enviar en vez de leer el contador al instante (el envío es asíncrono).
+
+⚠️ Incluye un **fix de comportamiento** en `Send-EM`: la validación de credenciales del
+proveedor estaba dentro del `try` de lectura de entrada, cuyo `except` solo imprime → un
+lote con el proveedor mal configurado quedaba **ACKeado (SQS lo borra) sin enviar nada**.
+Ahora propaga y SQS reintenta hasta la DLQ.
+
+- [ ] `[J]` Redesplegar los **6 workers**: `Api_V1_Email_Send-batch-template-{EM,EAU,EAP}`,
+  `Api_V1_{Sms,Voice,Wsp}_Send-batch`.
+- [ ] `[J]` Build + deploy del frontend + invalidar CloudFront.
+- **Sin cambios de infra, IAM, rutas ni envs.** Los campos `lastSampleAt`/`lastSampleError`/
+  `lastSampleErrorAt` se crean solos en la tabla `campaign` y `Campaign/List` ya devuelve el
+  ítem completo.
+
+### Verificación post-deploy
+1. Enviar una muestra de una campaña de correo: el chip pasa a "Enviando la muestra… se
+   cuenta cuando salga" y a los pocos segundos queda en "1/5 · quedan 4" **sin refrescar**.
+   "Solicitar aprobación" se habilita solo.
+2. Enviar una muestra a un contacto inválido (SMS a un número inexistente): el contador
+   **no** sube y aparece el aviso rojo con el motivo.
+3. Elegir un proveedor sin credenciales (Proveedores de envío → SocketLabs en EMAIL) y
+   enviar: el lote debe fallar y reintentar (CloudWatch), **no** quedar en verde sin enviar.
+
+---
+
+## 28. Landing: canales centrados, "Sobre nosotros" y FAQ (ago 2026)
+
+- [ ] `[J]` **Solo build + deploy del frontend** + invalidar CloudFront. Sin backend.
+- Nuevas secciones `#nosotros` y `#faq` (más enlaces en el nav y el pie) y JSON-LD
+  `FAQPage` en `index.html`.
+
+### Verificación post-deploy
+1. La sección Canales muestra las 2 tarjetas **centradas**, no pegadas a la izquierda.
+2. `#nosotros` y `#faq` existen y los enlaces del nav/pie llevan a ellas.
+3. En un móvil (o 390 px de ancho) la página **no** hace scroll horizontal.
+4. El acordeón de FAQ abre y cierra; la pregunta 10 dice que WhatsApp y voz **todavía no**
+   se ofrecen.
+5. Rich Results Test de Google sobre la home → detecta `FAQPage` con 10 preguntas.
+
+---
+
+## 29. Redes de la empresa en el pie (landing + correos internos) (ago 2026)
+
+**Qué cambia:** el pie de la landing publica LinkedIn, X, Facebook y Reddit (SVG en línea) y
+el `sameAs` del JSON-LD los declara. Los **correos internos** dejan de apuntar a URLs
+inventadas (`linkedin.com/company/mailconnect`, que hoy daría 404) y llevan las reales; se
+agregan los PNG `red-x.png` y `red-reddit.png` y sale Instagram (no hay cuenta).
+
+⚠️ **Las cuatro son cuentas PERSONALES, no páginas de empresa.** Publicadas así porque es lo
+que existe hoy. Cuando se creen las páginas corporativas basta con cambiar la URL en la
+constante `REDES` (landing) y en las envs `SOCIAL_*` (lambdas).
+
+- [ ] `[J]` **Desplegar el frontend ANTES o junto con las lambdas** — los PNG de los iconos
+  se sirven desde `public/email/`; hasta ese despliegue los correos saldrían con las
+  imágenes de X y Reddit rotas (degradan al `alt`).
+- [ ] `[J]` Redesplegar las **6 lambdas** que envían correo: `Api_V1_Security_{Register,
+  Create-otp,Recovery-password}`, `Api_V1_Notifications_Scan`,
+  `Api_V1_Email_Prepare-batch-template`, `Api_V1_Admin_User-support`.
+- **Envs OPCIONALES** (solo si se quiere cambiar un perfil sin tocar código):
+  `SOCIAL_LINKEDIN`, `SOCIAL_X`, `SOCIAL_FACEBOOK`, `SOCIAL_REDDIT`. `SOCIAL_INSTAGRAM` ya
+  no se lee. Sin envs, el default del código son los perfiles reales.
+- **Sin cambios de infra, IAM ni rutas.**
+
+### Verificación post-deploy
+1. Pie de la landing: los 4 iconos abren el perfil correcto en pestaña nueva.
+2. Rich Results Test de Google sobre la home → el `Organization` trae `sameAs` con las 4.
+3. Disparar un correo real (reenviar activación desde Soporte): el pie muestra los 5 iconos
+   (LinkedIn, X, Facebook, Reddit, WhatsApp) **sin imágenes rotas** y cada uno abre su
+   perfil. ⚠️ Si salen rotos, el frontend no se desplegó todavía.

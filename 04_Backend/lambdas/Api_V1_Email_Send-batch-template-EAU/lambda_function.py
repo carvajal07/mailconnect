@@ -511,6 +511,38 @@ def send_bulk(data:list, headers:list, start:int, end:int, tags:dict)->None:
     print("Fin de proceso de insert de estados")
     
 
+def note_sample_result(campaign_id:str, ok:bool, reason:str='')->None:
+    """Registra en la campaña el resultado del último envío de MUESTRA.
+
+    OK    -> suma 1 a `samplesSentCount` (el cupo se consume solo cuando la muestra SALE)
+             y BORRA el aviso de fallo anterior: si el reintento de SQS terminó bien, el
+             cliente no puede seguir viendo un error que ya no existe.
+    FALLO -> escribe `lastSampleError`/`lastSampleErrorAt` SIN tocar el contador. Es lo
+             UNICO que el portal puede mostrar: el envío es asíncrono, así que sin esta
+             marca un fallo se ve EXACTAMENTE igual que "todavía va en camino" y el
+             usuario se queda esperando un correo que nunca va a llegar.
+
+    Best-effort en ambos casos: dejar constancia no puede tumbar un envío ya hecho.
+    """
+    if not campaign_id:
+        return
+    ahora = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        if ok:
+            dynamodb.Table('campaign').update_item(
+                Key={'campaignId': campaign_id},
+                UpdateExpression=('SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one, '
+                                  'lastSampleAt = :at REMOVE lastSampleError, lastSampleErrorAt'),
+                ExpressionAttributeValues={':one': 1, ':z': 0, ':at': ahora})
+        else:
+            dynamodb.Table('campaign').update_item(
+                Key={'campaignId': campaign_id},
+                UpdateExpression='SET lastSampleError = :e, lastSampleErrorAt = :at',
+                ExpressionAttributeValues={':e': str(reason)[:300] or 'Error desconocido', ':at': ahora})
+    except Exception as e:
+        print('No se pudo registrar el resultado de la muestra: {}'.format(e))
+
+
 def lambda_handler(event, context):
     """
     Función principal
@@ -733,20 +765,7 @@ def lambda_handler(event, context):
         # Muestras: contar 1 SOLO si esta invocación envió algo nuevo (any_sent evita recontar en
         # una redelivery donde todos los chunks ya estaban enviados).
         if is_samples and campaign_id and any_sent:
-            count_sample_send(campaign_id)
-
-
-def count_sample_send(campaign_id:str)->None:
-    """Cuenta 1 envío de MUESTRA (atómico) en la campaña, SOLO cuando el envío salió bien.
-    Ver Api_V1_Email_Send-batch-template-EM (mismo patrón)."""
-    try:
-        table_campaign.update_item(
-            Key={'campaignId': campaign_id},
-            UpdateExpression='SET samplesSentCount = if_not_exists(samplesSentCount, :z) + :one',
-            ExpressionAttributeValues={':one': 1, ':z': 0})
-        print('Envío de muestra contado en la campaña {}'.format(campaign_id))
-    except Exception as e:
-        print('No se pudo contar el envío de muestra: {}'.format(e))
+            note_sample_result(campaign_id, True)
 
 
 def get_template(template:str)->dict:

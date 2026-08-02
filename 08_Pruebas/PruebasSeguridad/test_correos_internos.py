@@ -78,9 +78,36 @@ def test_lleva_el_logo_con_texto_alternativo(mod):
 
 def test_pie_con_las_redes_y_el_contacto(mod):
     html = mod.brand_email('Hola', mod.mail_p('cuerpo'))
-    for red in ('linkedin', 'facebook', 'instagram', 'whatsapp'):
+    for red in ('linkedin', 'x', 'facebook', 'reddit', 'whatsapp'):
         assert 'red-{}.png'.format(red) in html, 'falta la red {}'.format(red)
     assert 'comunicaciones@mailconnect.com.co' in html
+
+
+def test_cada_red_del_pie_tiene_su_imagen_en_el_repo(mod):
+    """⚠️ Los PNG se sirven desde el sitio (`public/email/`), o sea desde OTRO despliegue.
+    Agregar una red a MAIL_SOCIAL sin subir su icono deja el correo con una imagen rota —
+    y en un correo transaccional eso se lee como que el correo es falso."""
+    assets = (Path(__file__).resolve().parents[2] / '05_Frontend' / 'Front' / 'page'
+              / 'public' / 'email')
+    for slug, nombre, url in mod.MAIL_SOCIAL:
+        if not str(url or '').strip():
+            continue
+        assert (assets / 'red-{}.png'.format(slug)).exists(), \
+            'falta public/email/red-{}.png para {}'.format(slug, nombre)
+
+
+def test_las_redes_del_correo_son_las_mismas_de_la_landing(mod):
+    """El pie del correo y el de la landing publican los MISMOS perfiles. WhatsApp es la
+    excepción a propósito: en el correo es el canal de contacto, no una red social, y en la
+    landing ya vive como botón flotante y en la columna de Contacto."""
+    landing = (Path(__file__).resolve().parents[2] / '05_Frontend' / 'Front' / 'page'
+               / 'src' / 'pages' / 'landing' / 'LandingPage.tsx').read_text(encoding='utf-8')
+    for slug, nombre, url in mod.MAIL_SOCIAL:
+        url = str(url or '').strip()
+        if not url or slug == 'whatsapp':
+            continue
+        assert url in landing, \
+            'el correo enlaza {} a una URL que la landing NO publica: {}'.format(nombre, url)
 
 
 def test_una_red_sin_url_no_se_dibuja(mod, monkeypatch):

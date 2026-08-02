@@ -48,6 +48,114 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
 >
 > El **piloto E2E con un cliente real** es ahora el único bloqueante del MVP.
 
+### Muestras: el portal espera el RESULTADO del envío, no la respuesta de la API (ago 2026)
+> El contador *"Envíos de muestra: 1/5 · quedan 4"* no se movía hasta refrescar a mano, y
+> "Solicitar aprobación" respondía *"no has enviado muestras"* justo después de enviar una.
+
+- **La causa, que NO era el contador.** El contador está donde debe: lo sube el **worker**
+  (`Send-*`) y solo cuando el envío SALE, para que una muestra que se prepara pero no se
+  entrega no consuma cupo. Lo que fallaba es que el portal leía la campaña **al instante**
+  de recibir el 200 de la API — y ese 200 solo dice *"quedó en cola"*. El worker manda el
+  correo segundos después, así que el portal siempre veía el valor viejo.
+- ⚠️ **El hueco de fondo: un fallo se veía IGUAL que "va en camino".** En los dos casos el
+  contador se queda quieto. El cliente esperaba un correo que nunca iba a llegar, sin nada
+  en pantalla que se lo dijera. **Ese era el defecto real**, no el refresco.
+- **`note_sample_result(campaign_id, ok, motivo)`** — helper **copiado en los 6 workers**
+  (convención del repo). OK → suma 1, escribe `lastSampleAt` y **borra** el aviso anterior
+  (si el reintento de SQS terminó bien, el error ya no existe). FALLO → escribe
+  `lastSampleError`/`lastSampleErrorAt` **sin tocar el contador**. Best-effort: dejar
+  constancia no puede tumbar un envío ya hecho. Reemplaza los `update_item` sueltos que
+  cada worker tenía (SMS/Voz/WSP toman el motivo del **primer destinatario rechazado** con
+  `_primer_error`).
+- **Front (`MuestrasSection`) — `esperarResultadoMuestra`:** tras encolar, sondea la
+  campaña (2,5 s × 12 ≈ 30 s) hasta que suba el contador o aparezca un error nuevo. Mientras
+  tanto el chip dice *"Enviando la muestra… se cuenta cuando salga"* y quedan bloqueados
+  "Enviar muestras" (se duplicaría) y "Solicitar aprobación" (el backend exige
+  `samplesSentCount > 0`). Si no llega respuesta **no se inventa un resultado**: se avisa que
+  sigue en cola. El fallo sale en un `Alert` con el motivo + *"no consumió ninguno de tus 5
+  envíos"*. Al cambiar de campaña se muestra el `lastSampleError` **persistido** de esa.
+  ⚠️ Sondeo corto y acotado a propósito: no hay websockets en la plataforma y montarlos por
+  esto sería desproporcionado (son segundos, no minutos).
+- ⚠️ **Defecto acoplado, corregido:** en `Send-EM` la validación de credenciales del
+  proveedor (`_check_provider_config`) estaba **dentro del `try` de lectura de entrada**,
+  cuyo `except` solo imprime → el lote quedaba **ACKeado (SQS lo BORRA) sin enviar nada**,
+  lo contrario del fail-closed que se buscaba. Pasa al bloque `else`, donde la excepción
+  propaga y SQS reintenta. Reproducido antes de corregirlo.
+- **Cobertura:** `test_muestras_resultado.py` (12: suma/borrado del aviso, fallo que no gasta
+  cupo, aviso sin motivo, sin tabla no rompe, SMS que sale vs SMS que falla, envío real que no
+  toca nada, y el guard del handler de EM) con **dos guards de inventario** — las 6 copias
+  del helper producen código IDÉNTICO, y ningún worker escribe `samplesSentCount` por su
+  cuenta. ⚠️ Verificado que ambos FALLAN al reinyectar el defecto.
+- ⚠️ `[J]`: **redesplegar los 6 workers de envío** (`Send-batch-template-{EM,EAU,EAP}`,
+  `{Sms,Voice,Wsp}_Send-batch`) + build del frontend. Sin cambios de infra, IAM ni rutas
+  (los campos `lastSample*` se crean solos en `campaign` y `Campaign/List` los devuelve).
+
+### Redes de la empresa: pie de la landing + correos internos (ago 2026)
+> ⚠️ **Las cuatro son cuentas PERSONALES, no páginas de empresa** (`linkedin.com/in/…` en
+> vez de `/company/…`, un perfil de Facebook con id numérico en vez de una Página, y una
+> cuenta de usuario de Reddit). Funcionan como enlace y quedaron publicadas porque es lo que
+> hay hoy, pero quien llega desde el pie de un sitio corporativo espera la marca. Cuando
+> existan las páginas de empresa se cambia **la URL en dos sitios** (`REDES` de la landing y
+> las envs `SOCIAL_*` de las lambdas) y listo.
+
+- **Pie de la landing** (`REDES` en `LandingPage.tsx`): LinkedIn · X · Facebook · Reddit, en
+  **SVG en línea** — nítidos a cualquier tamaño, heredan el color del pie y no cuestan una
+  petición cada uno. Los trazados salen de `@mui/icons-material` (paths de marca correctos,
+  sin transcribirlos a ojo). Área de toque de **40 px**: en móvil un icono de 18 px sin caja
+  alrededor es casi imposible de acertar con el dedo. Una red con URL vacía **no se dibuja**.
+- **`sameAs` del `Organization`** en el JSON-LD de `index.html`: es exactamente el campo con
+  el que Google asocia la organización con sus perfiles. Estático, como el resto del SEO.
+  ⚠️ Eso lo duplica → guard `redes.test.ts` que compara el `sameAs` contra `REDES`
+  (verificado que falla al desalinearlos). La deriva aquí es especialmente fácil: el día que
+  cambien a páginas de empresa nadie se va a acordar del JSON-LD, y un `sameAs` apuntando a
+  un perfil que ya no es el oficial es peor que no tenerlo.
+- **Correos internos (`MAIL_SOCIAL`, 6 lambdas):** apuntaban a URLs **inventadas**
+  (`linkedin.com/company/mailconnect`, etc.) que hoy darían 404 — quedaron así porque se
+  construyeron antes de tener los perfiles. Ahora llevan los reales. En el correo los iconos
+  **tienen que ser PNG** (Gmail elimina el SVG en línea y bloquea los `data:` URI), así que
+  se generaron `red-x.png` y `red-reddit.png` rasterizando los mismos trazados con Chromium
+  a 4× y reduciendo a 44 px con LANCZOS, teñidos al gris de marca como los que ya había.
+  ⚠️ **Instagram salió de la lista**: no hay cuenta, y un icono que lleva a un perfil
+  inexistente desde un correo transaccional se lee como que el correo es falso. WhatsApp se
+  queda: ahí es el canal de contacto, no una red.
+- **Cobertura:** `redes.test.ts` (3) + 2 en `test_correos_internos.py` (**19**) — que cada
+  red del correo **tenga su PNG en el repo** (el asset se sirve desde OTRO despliegue: sin él
+  el correo sale con una imagen rota) y que el correo y la landing publiquen **los mismos
+  perfiles**. Frontend **198**. Verificado en el navegador: pie a 1280 y 390 px, los 4
+  enlaces con su destino y `rel="noopener noreferrer me"`, y el correo real renderizado con
+  los 5 iconos sin ninguna imagen rota.
+- ⚠️ `[J]`: **desplegar el frontend ANTES o junto con las 6 lambdas** (los PNG salen de
+  `public/email/`) y **redesplegar las 6**. Envs opcionales para cambiar un perfil sin tocar
+  código: `SOCIAL_{LINKEDIN,X,FACEBOOK,REDDIT}`.
+
+### Landing: canales centrados, "Sobre nosotros" y preguntas frecuentes (ago 2026)
+- **Tarjetas de canal centradas.** Al apagar WhatsApp y Voz quedaron 2 tarjetas en la
+  rejilla de 4 (`g4`): pegadas a la izquierda y media sección vacía. Pasan a `g2 narrow`
+  (clase nueva reutilizable: acota a 780 px y centra). Con `g2` a secas se estiraban a todo
+  el ancho. Al reactivar los canales vuelve `g4`.
+- **Sección "Sobre nosotros"** (`#nosotros`): quién es MailConnect + 3 pilares (que el
+  mensaje llegue · con las reglas claras · sin sorpresas en la cuenta) + fichas de "Qué
+  puedes enviar" (newsletter, promocional, estacional, bienvenida, reactivación, ecommerce,
+  transaccional). ⚠️ **Sin cifras de empresa** (años, clientes, correos enviados): no hay de
+  dónde sacarlas y un número inventado en la landing es justo lo que un cliente comprueba.
+- **Preguntas frecuentes** (`#faq`): 10 preguntas en acordeón, justo ANTES del CTA (primero
+  se responden las objeciones, después se pide la acción). Usa `<details>`/`<summary>`
+  **nativos**: abren sin JavaScript, el teclado y los lectores de pantalla ya los entienden,
+  y el navegador los incluye en su "buscar en la página". ⚠️ La pregunta por WhatsApp/voz
+  dice explícitamente que **todavía no se ofrecen** — mismo criterio que el prompt del
+  asistente; una FAQ que promete de más es la forma más cara de conseguir un cliente.
+- **JSON-LD `FAQPage`** en `index.html` (estático, como el resto del SEO: los rastreadores
+  sin JS no verían nada inyectado por React). ⚠️ Eso duplica el texto, y Google exige que la
+  respuesta marcada **esté visible y coincida** o pierde el resultado enriquecido → guard
+  `faq.test.ts` que compara el JSON-LD contra la constante `FAQ` (verificado: falla al
+  desalinearlos).
+- **Fix de paso — la landing tenía scroll horizontal en móvil** (58 px medidos a 390 px de
+  ancho): el correo de contacto del pie son 33 caracteres sin espacios que el navegador no
+  puede partir, así que estiraba su columna y con ella la página. `overflow-wrap:anywhere`.
+- **Cobertura:** `faq.test.ts` (4). Frontend **195**. Verificado en el navegador: escritorio
+  y móvil (390 px), acordeón abriendo, y desborde horizontal en **0** en ambos.
+- ⚠️ `[J]`: **solo build del frontend.** Sin backend ni infra.
+
 ### Canales VOZ y WHATSAPP apagados a nivel de PLATAFORMA (ago 2026)
 > Decisión de producto: MailConnect sale al mercado SOLO con correo y SMS. WhatsApp exige
 > el WABA registrado ante Meta y Voz un número con capacidad de llamadas — ninguno está
@@ -81,9 +189,23 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
 - **El asistente IA (público) ya no ofrece WSP/Voz**: el prompt lista correo y SMS como
   disponibles y le ordena decir explícitamente que WhatsApp/voz "vienen en camino", nunca
   ofrecerlos como contratables (guard en `test_assistant.py`).
+- ⚠️ **Textos sueltos (2ª pasada):** el apagado se hizo primero en los SELECTORES y quedó
+  el **texto de ayuda del modal "Crear campaña"** describiendo WSP y VOZ. Ocultar el
+  selector pero seguir DESCRIBIENDO el canal es ofrecerlo igual. Se barrieron 5 sitios:
+  ese texto, el desplegable de canal al cargar una BASE, el helper de Lista negra, el
+  catálogo del Copiloto, y ⚠️ un defecto real — `addStep` de la cascada creaba el paso
+  nuevo en **'VOZ' clavado**, un canal que el backend después rechazaba.
+- **Lo que NO se tocó, a propósito:** el botón de CONTACTO por WhatsApp, y los renders de
+  datos YA EXISTENTES (selector de plantillas HSM dentro de la rama `isWsp`, etiquetas de
+  una campaña VOZ vieja): mientras el apagado sea reversible, eso debe seguir mostrándose.
 - **Cobertura:** `test_canales_apagados.py` (5: Create-campaign rechaza WSP/VOZ con
   mensaje claro, EM/SMS NO se rozan, reactivable por env, cascada sin pasos apagados,
   barrera de Prepare-batch) + ajustes en `test_assistant.py` y `test_cascade.py`.
+  **`canalesApagados.test.ts` (7)** en el front: la compuerta en sus 4 grafías, que gana a
+  los flags del cliente, el tab oculto, y un **guard de TEXTO** que recorre las pantallas
+  buscando las dos formas de OFRECER un canal (`<li>` que lo describe y `<MenuItem
+  value="WSP">` que deja elegirlo) sin condicionar. ⚠️ Se verificó que el guard FALLA al
+  reinyectar el texto viejo — un guard que no atrapa la regresión da falsa confianza.
 - ⚠️ `[J]`: **redesplegar `Create-campaign`, `Prepare-batch`, `Cascade_Dispatch` y
   `Assistant_Ask`** + build del frontend. Sin envs nuevas (el default del código ya
   apaga WSP/VOZ). Para reactivar: env `PLATFORM_DISABLED_CHANNELS` según arriba.
@@ -172,9 +294,11 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   **rasterizó** del SVG con Chromium: en correo **no sirve el SVG** (Gmail no lo renderiza)
   ni un `data:` URI (Gmail los bloquea). Los iconos son las máscaras alfa de
   `public/social-icons/` teñidas con Pillow al gris de marca.
-- ⚠️ **Las URLs de los perfiles están DERIVADAS de la marca** (`linkedin.com/company/
-  mailconnect`, etc.), pendientes de confirmar. Viven en la constante `MAIL_SOCIAL`; una red
-  con URL vacía **no se dibuja**, así que quitarla es borrar su línea.
+- ✅ **Las URLs de los perfiles YA son las reales** (ago 2026): LinkedIn, X, Facebook y
+  Reddit, las mismas que publica el pie de la landing. Antes eran DERIVADAS de la marca
+  (`linkedin.com/company/mailconnect`) y habrían dado 404. Viven en `MAIL_SOCIAL`; una red
+  con URL vacía **no se dibuja**, así que quitarla es dejarla en ''. Ver "Redes de la
+  empresa" arriba.
 - ⚠️ **Dónde vive el HTML — decisión.** Queda **inline en el código**, copiado en las 6
   lambdas (convención del repo, como `tenant_key` o `_audit`). Se descartó S3 y SES
   Templates para los transaccionales: sacar el HTML del artefacto le agrega un modo de fallo
@@ -3075,7 +3199,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **822** pruebas (~3 min) y la de frontend 184. Correrlas
+> La suite de backend son **836** pruebas (~3 min) y la de frontend 198. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 
