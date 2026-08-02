@@ -78,12 +78,18 @@ MAIL_ASSETS = os.environ.get('EMAIL_ASSETS_URL', MAIL_SITE + '/email')
 MAIL_CONTACT = os.environ.get('CONTACT_EMAIL', 'comunicaciones@mailconnect.com.co')
 MAIL_WHATSAPP = os.environ.get('WHATSAPP_URL', 'https://wa.me/573204586576')
 
-# ⚠️ CONFIRMAR los perfiles reales antes de desplegar. Una red con URL vacía simplemente
-# NO se dibuja, así que borrar la línea la quita del pie sin tocar nada más.
+# Perfiles reales de la empresa (los mismos que publica el pie de la landing; ver la
+# constante REDES en LandingPage.tsx). Una red con URL vacía simplemente NO se dibuja, así
+# que dejarla en '' la quita del pie sin tocar nada más.
+# ⚠️ Hoy son cuentas PERSONALES, no páginas de empresa: cuando existan las páginas
+# corporativas basta con cambiar la env correspondiente, sin redesplegar.
+# ⚠️ Instagram salió de la lista: no hay cuenta. Un icono que lleva a un perfil inexistente
+# desde un correo transaccional se lee como que el correo es falso.
 MAIL_SOCIAL = [
-    ('linkedin', 'LinkedIn', os.environ.get('SOCIAL_LINKEDIN', 'https://www.linkedin.com/company/mailconnect')),
-    ('facebook', 'Facebook', os.environ.get('SOCIAL_FACEBOOK', 'https://www.facebook.com/mailconnect')),
-    ('instagram', 'Instagram', os.environ.get('SOCIAL_INSTAGRAM', 'https://www.instagram.com/mailconnect')),
+    ('linkedin', 'LinkedIn', os.environ.get('SOCIAL_LINKEDIN', 'https://www.linkedin.com/in/jhon-carvajal-b85023424')),
+    ('x', 'X', os.environ.get('SOCIAL_X', 'https://x.com/Carvajal_dev')),
+    ('facebook', 'Facebook', os.environ.get('SOCIAL_FACEBOOK', 'https://www.facebook.com/profile.php?id=61592784660328')),
+    ('reddit', 'Reddit', os.environ.get('SOCIAL_REDDIT', 'https://www.reddit.com/user/Pretty_Lie4524/')),
     ('whatsapp', 'WhatsApp', MAIL_WHATSAPP),
 ]
 

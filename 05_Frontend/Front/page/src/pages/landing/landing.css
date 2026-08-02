@@ -277,6 +277,15 @@
   overflow-wrap:anywhere; }
 .mc-landing .foot-grid a:hover{ color:#fff; }
 .mc-landing .foot-desc{ margin-top:16px; max-width:34ch; color:#a9bad6; }
+/* Redes de la empresa. Área de toque de 40 px: son enlaces pequeños en el pie y en móvil
+   un icono de 18 px sin caja alrededor es casi imposible de acertar con el dedo. */
+.mc-landing .foot-social{ display:flex; gap:10px; margin-top:20px; }
+.mc-landing .foot-social a{ width:40px; height:40px; margin:0; border-radius:50%; display:grid; place-items:center;
+  background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.12); color:#a9bad6;
+  transition:background .2s,color .2s,border-color .2s,transform .2s; }
+.mc-landing .foot-social a:hover{ background:var(--brand-strong); border-color:var(--brand-strong);
+  color:#fff; transform:translateY(-2px); }
+.mc-landing .foot-social svg{ width:18px; height:18px; }
 .mc-landing .foot-bottom{ display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; border-top:1px solid rgba(255,255,255,.10); margin-top:42px; padding-top:20px; font-size:.84rem; color:#8aa0c4; }
 
 /* ---------- Responsive ---------- */

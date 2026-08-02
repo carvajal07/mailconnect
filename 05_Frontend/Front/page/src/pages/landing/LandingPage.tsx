@@ -129,6 +129,36 @@ const WhatsAppGlyph = ({ size = 24 }: { size?: number }) => (
   </svg>
 );
 
+/* === Redes de la empresa ===
+   ⚠️ Hoy son CUENTAS PERSONALES, no páginas de empresa (`linkedin.com/in/…` en vez de
+   `/company/…`, un perfil de Facebook con id numérico en vez de una Página, y una cuenta
+   de usuario de Reddit). Funcionan como enlace, pero quien llega desde el pie de un sitio
+   corporativo espera la marca; cuando existan las páginas de empresa basta con cambiar la
+   URL aquí — el pie de la landing, el JSON-LD y su guard leen de esta misma lista.
+   Una red con URL vacía NO se dibuja, así que quitar una es dejarla en ''. */
+export const REDES: { nombre: string; url: string; d: string }[] = [
+  {
+    nombre: 'LinkedIn',
+    url: 'https://www.linkedin.com/in/jhon-carvajal-b85023424',
+    d: 'M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.32 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.79M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77Z',
+  },
+  {
+    nombre: 'X',
+    url: 'https://x.com/Carvajal_dev',
+    d: 'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z',
+  },
+  {
+    nombre: 'Facebook',
+    url: 'https://www.facebook.com/profile.php?id=61592784660328',
+    d: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2m13 2h-2.5A3.5 3.5 0 0 0 12 8.5V11h-2v3h2v7h3v-7h3v-3h-3V9a1 1 0 0 1 1-1h2V5Z',
+  },
+  {
+    nombre: 'Reddit',
+    url: 'https://www.reddit.com/user/Pretty_Lie4524/',
+    d: 'M22 12.14a2.19 2.19 0 0 0-3.71-1.57 10.93 10.93 0 0 0-5.86-1.87l1-4.7 3.27.71a1.56 1.56 0 1 0 .16-.76l-3.64-.77c-.11-.03-.22 0-.29.06a.36.36 0 0 0-.2.23l-1.11 5.23a10.9 10.9 0 0 0-5.8 1.87 2.2 2.2 0 0 0-1.51-.6 2.19 2.19 0 0 0-1.02 4.13 4.29 4.29 0 0 0-.05.66c0 3.37 3.92 6.11 8.75 6.11s8.75-2.74 8.75-6.11c0-.22-.02-.44-.05-.65A2.19 2.19 0 0 0 22 12.14M6.14 13.7a1.56 1.56 0 1 1 3.12 0 1.56 1.56 0 0 1-3.12 0m8.86 4.16c-.98.98-2.86 1.06-3.41 1.06s-2.43-.08-3.41-1.06a.37.37 0 0 1 0-.53.37.37 0 0 1 .53 0c.62.62 1.94.84 2.88.84s2.26-.22 2.88-.84a.37.37 0 0 1 .53 0 .37.37 0 0 1 0 .53m-.27-2.6a1.56 1.56 0 1 1 0-3.12 1.56 1.56 0 0 1 0 3.12',
+  },
+];
+
 const BARS = [38, 56, 47, 72, 63, 88, 70, 95, 80];
 
 /* Tipos de campaña que la plataforma cubre hoy. Se publican porque son la pregunta real de
@@ -583,6 +613,18 @@ export const LandingPage = () => {
             <div>
               <MailConnectLogo height={38} />
               <p className="foot-desc">Plataforma colombiana de correo masivo. Email y SMS sobre AWS, con la más alta entregabilidad.</p>
+              {/* Iconos en SVG EN LÍNEA (no imágenes): se ven nítidos en cualquier pantalla,
+                  heredan el color del pie y no cuestan una petición cada uno. En el CORREO
+                  no se puede hacer así (Gmail elimina el SVG en línea) y por eso ahí van
+                  como PNG — ver MAIL_SOCIAL en las lambdas. */}
+              <div className="foot-social">
+                {REDES.filter((r) => r.url.trim()).map((r) => (
+                  <a key={r.nombre} href={r.url} target="_blank" rel="noopener noreferrer me"
+                    aria-label={`MailConnect en ${r.nombre}`} title={r.nombre}>
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={r.d} /></svg>
+                  </a>
+                ))}
+              </div>
             </div>
             <div>
               <h4>Producto</h4>

@@ -90,6 +90,44 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   `{Sms,Voice,Wsp}_Send-batch`) + build del frontend. Sin cambios de infra, IAM ni rutas
   (los campos `lastSample*` se crean solos en `campaign` y `Campaign/List` los devuelve).
 
+### Redes de la empresa: pie de la landing + correos internos (ago 2026)
+> ⚠️ **Las cuatro son cuentas PERSONALES, no páginas de empresa** (`linkedin.com/in/…` en
+> vez de `/company/…`, un perfil de Facebook con id numérico en vez de una Página, y una
+> cuenta de usuario de Reddit). Funcionan como enlace y quedaron publicadas porque es lo que
+> hay hoy, pero quien llega desde el pie de un sitio corporativo espera la marca. Cuando
+> existan las páginas de empresa se cambia **la URL en dos sitios** (`REDES` de la landing y
+> las envs `SOCIAL_*` de las lambdas) y listo.
+
+- **Pie de la landing** (`REDES` en `LandingPage.tsx`): LinkedIn · X · Facebook · Reddit, en
+  **SVG en línea** — nítidos a cualquier tamaño, heredan el color del pie y no cuestan una
+  petición cada uno. Los trazados salen de `@mui/icons-material` (paths de marca correctos,
+  sin transcribirlos a ojo). Área de toque de **40 px**: en móvil un icono de 18 px sin caja
+  alrededor es casi imposible de acertar con el dedo. Una red con URL vacía **no se dibuja**.
+- **`sameAs` del `Organization`** en el JSON-LD de `index.html`: es exactamente el campo con
+  el que Google asocia la organización con sus perfiles. Estático, como el resto del SEO.
+  ⚠️ Eso lo duplica → guard `redes.test.ts` que compara el `sameAs` contra `REDES`
+  (verificado que falla al desalinearlos). La deriva aquí es especialmente fácil: el día que
+  cambien a páginas de empresa nadie se va a acordar del JSON-LD, y un `sameAs` apuntando a
+  un perfil que ya no es el oficial es peor que no tenerlo.
+- **Correos internos (`MAIL_SOCIAL`, 6 lambdas):** apuntaban a URLs **inventadas**
+  (`linkedin.com/company/mailconnect`, etc.) que hoy darían 404 — quedaron así porque se
+  construyeron antes de tener los perfiles. Ahora llevan los reales. En el correo los iconos
+  **tienen que ser PNG** (Gmail elimina el SVG en línea y bloquea los `data:` URI), así que
+  se generaron `red-x.png` y `red-reddit.png` rasterizando los mismos trazados con Chromium
+  a 4× y reduciendo a 44 px con LANCZOS, teñidos al gris de marca como los que ya había.
+  ⚠️ **Instagram salió de la lista**: no hay cuenta, y un icono que lleva a un perfil
+  inexistente desde un correo transaccional se lee como que el correo es falso. WhatsApp se
+  queda: ahí es el canal de contacto, no una red.
+- **Cobertura:** `redes.test.ts` (3) + 2 en `test_correos_internos.py` (**19**) — que cada
+  red del correo **tenga su PNG en el repo** (el asset se sirve desde OTRO despliegue: sin él
+  el correo sale con una imagen rota) y que el correo y la landing publiquen **los mismos
+  perfiles**. Frontend **198**. Verificado en el navegador: pie a 1280 y 390 px, los 4
+  enlaces con su destino y `rel="noopener noreferrer me"`, y el correo real renderizado con
+  los 5 iconos sin ninguna imagen rota.
+- ⚠️ `[J]`: **desplegar el frontend ANTES o junto con las 6 lambdas** (los PNG salen de
+  `public/email/`) y **redesplegar las 6**. Envs opcionales para cambiar un perfil sin tocar
+  código: `SOCIAL_{LINKEDIN,X,FACEBOOK,REDDIT}`.
+
 ### Landing: canales centrados, "Sobre nosotros" y preguntas frecuentes (ago 2026)
 - **Tarjetas de canal centradas.** Al apagar WhatsApp y Voz quedaron 2 tarjetas en la
   rejilla de 4 (`g4`): pegadas a la izquierda y media sección vacía. Pasan a `g2 narrow`
@@ -256,9 +294,11 @@ _Última actualización: sesiones de trabajo sobre frontend (landing + auth) y b
   **rasterizó** del SVG con Chromium: en correo **no sirve el SVG** (Gmail no lo renderiza)
   ni un `data:` URI (Gmail los bloquea). Los iconos son las máscaras alfa de
   `public/social-icons/` teñidas con Pillow al gris de marca.
-- ⚠️ **Las URLs de los perfiles están DERIVADAS de la marca** (`linkedin.com/company/
-  mailconnect`, etc.), pendientes de confirmar. Viven en la constante `MAIL_SOCIAL`; una red
-  con URL vacía **no se dibuja**, así que quitarla es borrar su línea.
+- ✅ **Las URLs de los perfiles YA son las reales** (ago 2026): LinkedIn, X, Facebook y
+  Reddit, las mismas que publica el pie de la landing. Antes eran DERIVADAS de la marca
+  (`linkedin.com/company/mailconnect`) y habrían dado 404. Viven en `MAIL_SOCIAL`; una red
+  con URL vacía **no se dibuja**, así que quitarla es dejarla en ''. Ver "Redes de la
+  empresa" arriba.
 - ⚠️ **Dónde vive el HTML — decisión.** Queda **inline en el código**, copiado en las 6
   lambdas (convención del repo, como `tenant_key` o `_audit`). Se descartó S3 y SES
   Templates para los transaccionales: sacar el HTML del artefacto le agrega un modo de fallo
@@ -3159,7 +3199,7 @@ Cinco correcciones reportadas sobre el editor del **Estudio PDF** (nivel medio):
 
 ### ⚡ Cuándo correr QUÉ pruebas (no siempre todas)
 
-> La suite de backend son **834** pruebas (~3 min) y la de frontend 195. Correrlas
+> La suite de backend son **836** pruebas (~3 min) y la de frontend 198. Correrlas
 > enteras después de cada edición pequeña gasta tiempo y tokens sin aportar nada:
 > tocar el bloque de vídeo del constructor no puede romper el 2FA.
 
