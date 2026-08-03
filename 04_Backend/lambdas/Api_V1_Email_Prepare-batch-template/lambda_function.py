@@ -27,12 +27,32 @@ from botocore.exceptions import ClientError
 #EAU -> Email con adjunto unico          #Real:250
 #EAP -> Email con adjunto personalizado  #Real:100
 
-REGISTERS_FOR_EM:int = 250
-REGISTERS_FOR_EAU:int = 250
-REGISTERS_FOR_EAP:int = 100
-REGISTERS_FOR_SMS:int = 100
-REGISTERS_FOR_WSP:int = 100
-REGISTERS_FOR_VOICE:int = 50
+def _tune(nombre, default):
+    """Tamaño de lote configurable por env, con el valor de producción como default.
+
+    ⚠️ Existe para poder PROBAR el troceo sin el volumen que exige en producción. Los
+    cortes son los mismos (part-file → mensaje al canal → chunk del worker), así que para
+    ejercitarlos de verdad —incluida la última parte incompleta, que es donde viven los
+    errores de borde— hoy hacen falta >5.000 destinatarios reales. Bajando estos valores
+    se recorre EXACTAMENTE el mismo código con 50.
+
+    Sin la env, el valor es el de siempre: desplegar esto no cambia nada por sí solo.
+    Un valor no numérico o <=0 se ignora (cae al default) — una env mal escrita no puede
+    dejar el troceo en 0 y colgar el envío.
+    """
+    try:
+        v = int(os.environ.get(nombre, '') or 0)
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+REGISTERS_FOR_EM:int = _tune('REGISTERS_FOR_EM', 250)
+REGISTERS_FOR_EAU:int = _tune('REGISTERS_FOR_EAU', 250)
+REGISTERS_FOR_EAP:int = _tune('REGISTERS_FOR_EAP', 100)
+REGISTERS_FOR_SMS:int = _tune('REGISTERS_FOR_SMS', 100)
+REGISTERS_FOR_WSP:int = _tune('REGISTERS_FOR_WSP', 100)
+REGISTERS_FOR_VOICE:int = _tune('REGISTERS_FOR_VOICE', 50)
 
 URL_SQS_EM = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-template-EM'
 URL_SQS_EAU = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Send-batch-raw-EAU'
@@ -54,7 +74,9 @@ URL_SQS_VOICE = 'https://sqs.us-east-1.amazonaws.com/873837768806/Voice_Send-bat
 # canal). Evita que UNA sola invocación procese 100k+ registros (timeout de 15 min).
 URL_SQS_PREPARE_PART = 'https://sqs.us-east-1.amazonaws.com/873837768806/Email_Prepare-batch-part'
 # Filas por part-file (tamaño del troceo). Cada parte se procesa en su propia invocación.
-PART_SIZE:int = 5000
+# Configurable por env (ver `_tune`): bajarlo a 10 permite probar el troceo de punta a punta
+# con 50 destinatarios en vez de los >5.000 que exige el valor de producción.
+PART_SIZE:int = _tune('PART_SIZE', 5000)
 REGION = 'us-east-1'
 DELIMITER = ';'          # delimitador por defecto si no se puede detectar
 CANDIDATE_DELIMITERS = [';', ',', '\t', '|']

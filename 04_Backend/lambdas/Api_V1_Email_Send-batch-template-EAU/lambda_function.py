@@ -26,7 +26,22 @@ from email.mime.application import MIMEApplication
 
 CHARSET = "ISO-8859-1"
 REGION = 'us-east-1'
-QUANTITY_BATCH = 25
+
+
+def _tune(nombre, default):
+    """Tamaño de chunk configurable por env, con el valor de producción como default.
+    Existe para poder probar la reanudación intra-parte (cada chunk se reclama aparte)
+    sin necesitar cientos de destinatarios. Sin la env, el valor es el de siempre; un
+    valor no numérico o <=0 se ignora — una env mal escrita no puede dejar el chunk en 0.
+    Ver PROVISION.md / bases-prueba."""
+    try:
+        v = int(os.environ.get(nombre, '') or 0)
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+QUANTITY_BATCH = _tune('QUANTITY_BATCH', 25)
 
 # Bucket por cliente por NIT: {prefix}-{nit}-document (DNS-safe). Fallback al viejo por nombre.
 BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')

@@ -17,7 +17,22 @@ from botocore.exceptions import ClientError
 #pylint: disable=W0604
 #C0301 -> line too long
 REGION = 'us-east-1'
-QUANTITY_BATCH = 50
+
+
+def _tune(nombre, default):
+    """Tamaño de chunk configurable por env, con el valor de producción como default.
+    Existe para poder probar la reanudación intra-parte (cada chunk se reclama aparte)
+    sin necesitar cientos de destinatarios. Sin la env, el valor es el de siempre; un
+    valor no numérico o <=0 se ignora — una env mal escrita no puede dejar el chunk en 0.
+    Ver PROVISION.md / bases-prueba."""
+    try:
+        v = int(os.environ.get(nombre, '') or 0)
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+QUANTITY_BATCH = _tune('QUANTITY_BATCH', 50)
 
 # Desuscripción: URL pública de la lambda Unsubscribe y clave para firmar el token.
 # El builder agrega al pie de cada plantilla un enlace con la variable

@@ -328,3 +328,26 @@ GB-s sea el mismo.
 - ⚠️ AWS cambió el free tier para cuentas nuevas (créditos iniciales en vez de capa gratuita
   perpetua). **Revisa en tu consola cuál de los dos esquemas aplica a tu cuenta** antes de
   planear sobre esto.
+
+---
+
+## 8. Probar el troceo sin pagar el volumen
+
+Los tres tamaños de corte (`PART_SIZE`, `REGISTERS_FOR_*` en Prepare-batch y
+`QUANTITY_BATCH` en Send-EM/EAU) **se pueden bajar por variable de entorno**; sin la env
+valen lo de siempre, así que desplegar eso no cambia nada por sí solo.
+
+Sirve para una cosa concreta: con los valores de producción, ejercitar el primer corte exige
+**más de 5.000 destinatarios reales** — y para ver la última parte INCOMPLETA, que es donde
+viven los errores de borde, hace falta además que no sea múltiplo exacto. Bajando los tres
+(`PART_SIZE=10`, `REGISTERS_FOR_EM=3`, `QUANTITY_BATCH=2`) se recorre el MISMO código con
+**53 destinatarios**.
+
+⚠️ Un valor no numérico o `<=0` se ignora y cae al default: un typo en la env no puede dejar
+un tamaño de lote en 0 (`range(0, n, 0)` lanza y un lote de 0 no avanza nunca). Cubierto por
+`test_troceo_configurable.py`.
+
+⚠️ **Quítalas al terminar.** Con `PART_SIZE=10`, una campaña real de 100.000 generaría 10.000
+part-files. No se rompe, pero es lentísimo.
+
+Detalle y bases calibradas: `09_Herramientas/bases-prueba/README.md`.
