@@ -63,8 +63,31 @@ name: Desplegar Lambdas
 #       (best-effort); las de Terraform (ya con redrive) se dejan intactas.
 #       Sin DLQ, un "mensaje veneno" se reintenta hasta agotar la retención
 #       (4 días) y se pierde en silencio.
+#     · VisibilityTimeout de una cola EXISTENTE: se SUBE si se queda corta,
+#       nunca se baja. El valor se DERIVA como 6x el timeout de la función
+#       (regla de AWS), tomando el mayor entre eso y `visibilityTimeout` del
+#       manifiesto, con el tope de SQS (43200 s). Se deriva en vez de escribirse
+#       a mano para que no haya dos números que mantener en sincronía: subir el
+#       timeout de la lambda mueve la cola sola. Si la cola libera el mensaje
+#       antes de que la función termine, SQS lo re-entrega mientras la primera
+#       invocación sigue trabajando -> dos procesos sobre el mismo lote.
+#       Se sube, no se baja, porque bajarlo PROVOCA ese daño mientras que dejarlo
+#       alto de más solo alarga la espera tras un fallo.
 #     · Una lambda disparada por SQS LEE la cola con su PROPIO rol, así que el
 #       trigger fuerza el token _SQS en el rol auto-detectado al crearla.
+#
+# ── Memoria y timeout (04_Backend/lambdas/config-map.json) ──────────────────
+# { "NombreCarpeta": { "memory": 1024, "timeout": 300, "nota": "..." } }
+# En CADA despliegue de una carpeta (crear Y actualizar) se RECONCILIA lo que hay
+# en AWS contra el manifiesto. Antes esto solo se fijaba al CREAR la función, así
+# que una lambda existente se quedaba en 256 MB / 60 s para siempre aunque su
+# trabajo hubiera crecido -- Send-batch-template-EAP (100 x get_object de S3 +
+# send_raw_email EN SERIE) y Combination-EAP-PDF (100 PDFs con ReportLab) corrían
+# así, a un mal día de S3 de agotar el tiempo.
+# Solo se listan las que se APARTAN del default; las ~95 de API ligera no llevan
+# entrada. Justificación de cada número: PROVISION.md §2. Es idempotente (si ya
+# coincide no llama a la API) y best-effort (un fallo avisa pero no aborta: el
+# código ya se subió y funciona).
 #   { "NombreCarpeta": { "sns": "NombreTopico" } }
 #     · Crea el tópico SNS si no existe, da permiso a SNS de invocar la lambda
 #       y la suscribe. OJO: apuntar el config set (SES/EUM) al tópico sigue
@@ -94,7 +117,8 @@ name: Desplegar Lambdas
 #
 # ⚠️ Al CREAR una función esta nace SIN variables de entorno y SIN layers — eso
 # sigue configurándose aparte (DESPLIEGUE.md). Los triggers SÍ se crean si están
-# declarados en trigger-map.json (ver arriba).
+# declarados en trigger-map.json, y la memoria/timeout se aplican desde
+# config-map.json (ver arriba).
 #
 # Nombre de la función en AWS = nombre de la carpeta, salvo que exista un mapeo en
 # 04_Backend/lambdas/deploy-map.json  ->  { "NombreCarpeta": "NombreFuncionAWS" }
@@ -210,6 +234,7 @@ jobs:
           MAP="$DIR/deploy-map.json"
           ROLE_MAP="$DIR/role-map.json"
           TRIGGER_MAP="$DIR/trigger-map.json"
+          CONFIG_MAP="$DIR/config-map.json"
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
           echo "### Despliegue de lambdas" >> "$SUMMARY"
@@ -351,11 +376,21 @@ jobs:
             local qname
             qname=$(echo "$cfg" | jq -r '.sqs // empty')
             if [ -n "$qname" ]; then
-              local batch vis maxrecv qurl qarn uuid out dlqname dlqarn redrive attrs existing_rd
+              local batch vis maxrecv qurl qarn uuid out dlqname dlqarn redrive attrs existing_rd cur_vis
               batch=$(echo "$cfg" | jq -r '.batchSize // 10')
               vis=$(echo "$cfg" | jq -r '.visibilityTimeout // 360')
               maxrecv=$(echo "$cfg" | jq -r '.maxReceiveCount // 5')
               dlqname="${qname}-dlq"
+
+              # VisibilityTimeout DERIVADO del timeout de la función (regla de AWS: >= 6x). Se toma
+              # el mayor entre eso y el valor declarado en trigger-map.json, con el tope de SQS
+              # (43200 s = 12 h). ⚠️ Se DERIVA en vez de escribirse a mano para que no haya dos
+              # números que mantener en sincronía: subir el timeout de la lambda mueve la cola sola.
+              # Si la cola libera el mensaje antes de que la función termine, SQS lo re-entrega
+              # mientras la primera invocación sigue trabajando → dos procesos sobre el mismo lote.
+              local vis_derivada=$(( FN_TIMEOUT * 6 ))
+              [ "$vis_derivada" -gt "$vis" ] && vis="$vis_derivada"
+              [ "$vis" -gt 43200 ] && vis=43200
 
               # Asegura la DLQ {qname}-dlq (misma convención que Terraform, retención 14 días) y
               # devuelve su ARN por stdout. Sin DLQ, un "mensaje veneno" (fallo persistente) se
@@ -401,6 +436,24 @@ jobs:
                     echo "   🔁 DLQ + redrive añadidos a la cola existente $qname (→$dlqname, maxReceiveCount=$maxrecv)"
                   else
                     echo "   ⚠️  No se pudo añadir la DLQ a $qname (¿falta sqs:SetQueueAttributes?): $(cat /tmp/rderr)"
+                  fi
+                fi
+
+                # VisibilityTimeout de una cola EXISTENTE: hasta ahora solo se fijaba al CREARLA, así
+                # que una cola vieja se quedaba en 360 s aunque su lambda pasara a 600. Se SUBE si
+                # se queda corta; NUNCA se baja. La asimetría es deliberada: bajarlo puede provocar
+                # re-entrega mientras la función sigue trabajando (el daño), mientras que dejarlo
+                # más alto de lo necesario solo alarga la espera tras un fallo (la molestia).
+                cur_vis=$(aws sqs get-queue-attributes --queue-url "$qurl" \
+                            --attribute-names VisibilityTimeout \
+                            --query 'Attributes.VisibilityTimeout' --output text 2>/dev/null || echo 0)
+                case "$cur_vis" in ''|*[!0-9]*) cur_vis=0 ;; esac
+                if [ "$cur_vis" -lt "$vis" ]; then
+                  if aws sqs set-queue-attributes --queue-url "$qurl" \
+                       --attributes "VisibilityTimeout=$vis" 2>/tmp/viserr; then
+                    echo "   ⏱️  VisibilityTimeout de $qname: ${cur_vis}s → ${vis}s (6× el timeout de la función)"
+                  else
+                    echo "   ⚠️  No se pudo subir el VisibilityTimeout de $qname: $(cat /tmp/viserr)"
                   fi
                 fi
               fi
@@ -527,6 +580,59 @@ jobs:
               fi
             done
             ROLE_JUST_CREATED=1
+          }
+
+          # Timeout de la función que el CD acaba de dejar aplicado (lo usa ensure_triggers para
+          # DERIVAR el VisibilityTimeout de su cola). Se refresca en cada reconcile_config.
+          FN_TIMEOUT="$NEW_FN_TIMEOUT"
+
+          reconcile_config() {  # $1=folder $2=fn → memoria/timeout de config-map.json
+            # ⚠️ Antes esto SOLO se fijaba al CREAR la función (NEW_FN_TIMEOUT/NEW_FN_MEMORY): una
+            # lambda ya existente se quedaba en 256 MB / 60 s para siempre, aunque su trabajo hubiera
+            # crecido. Send-batch-template-EAP (100 x get_object + send_raw_email EN SERIE, 25-40 s) y
+            # Combination-EAP-PDF (100 PDFs con ReportLab) corrían así, a un mal día de S3 de agotar
+            # el tiempo. Ahora se RECONCILIA en cada despliegue: lo que diga el manifiesto es lo que
+            # queda en AWS.
+            local folder="$1" fn="$2" cfg mem to cur cur_mem cur_to nota
+            # Se lee SIEMPRE la configuración real: aunque no haya entrada en el manifiesto, su
+            # timeout es el que ensure_triggers necesita para derivar el VisibilityTimeout (si
+            # alguien lo subió a mano en la consola, la cola tiene que seguirlo igual).
+            cur=$(aws lambda get-function-configuration --function-name "$fn" \
+                    --query '[MemorySize,Timeout]' --output text 2>/dev/null || true)
+            cur_mem=$(echo "$cur" | awk '{print $1}')
+            cur_to=$(echo "$cur" | awk '{print $2}')
+            case "${cur_to:-}" in ''|*[!0-9]*) cur_to="$NEW_FN_TIMEOUT" ;; esac
+            FN_TIMEOUT="$cur_to"
+
+            [ -f "$CONFIG_MAP" ] || return 0
+            cfg=$(jq -c --arg k "$folder" '.[$k] // empty' "$CONFIG_MAP" 2>/dev/null || true)
+            # Sin entrada en el manifiesto se deja lo que haya: las ~95 lambdas de API ligera no
+            # necesitan una línea cada una para quedarse en 256 MB / 60 s.
+            [ -n "$cfg" ] || return 0
+            mem=$(echo "$cfg" | jq -r '.memory // empty')
+            to=$(echo "$cfg" | jq -r '.timeout // empty')
+            nota=$(echo "$cfg" | jq -r '.nota // empty')
+            if [ -z "$mem" ] || [ -z "$to" ]; then
+              echo "   ⚠️  Entrada incompleta en config-map.json para $folder (falta memory o timeout); se omite."
+              return 0
+            fi
+            FN_TIMEOUT="$to"
+            # Idempotente: si ya coincide no se llama a la API (evita ruido y versiones nuevas).
+            if [ "$cur_mem" = "$mem" ] && [ "$cur_to" = "$to" ]; then
+              echo "   ⚙️  Configuración ya correcta en $fn (${mem} MB / ${to}s)"
+              return 0
+            fi
+            echo "   ⚙️  Ajustando $fn: ${cur_mem:-?} MB/${cur_to:-?}s → ${mem} MB/${to}s${nota:+  ($nota)}"
+            if aws lambda update-function-configuration --function-name "$fn" \
+                 --memory-size "$mem" --timeout "$to" >/dev/null 2>/tmp/cfgerr; then
+              # Sin esperar, el siguiente update (o el create-event-source-mapping) puede chocar
+              # con ResourceConflictException: la función queda en estado Pending un instante.
+              aws lambda wait function-updated-v2 --function-name "$fn" 2>/dev/null || true
+            else
+              # No se aborta el despliegue por esto: el código ya se subió y funciona; lo que
+              # queda es una configuración subóptima, que es visible en el log.
+              echo "   ⚠️  No se pudo ajustar la configuración de $fn (¿falta lambda:UpdateFunctionConfiguration?): $(cat /tmp/cfgerr)"
+            fi
           }
 
           reconcile_role() {  # $1=folder $2=fn → asegura que la función pueda LEER su cola (SQS).
@@ -662,6 +768,9 @@ jobs:
               # Si la lambda invoca Bedrock, asegura el inline BedrockMarketplace en su rol
               # ACTUAL (independiente de si ese rol es nuevo o ya existía).
               reconcile_bedrock "$folder" "$fn"
+              # Memoria/timeout ANTES de los triggers: ensure_triggers deriva el VisibilityTimeout
+              # de la cola a partir del timeout que quede aplicado (FN_TIMEOUT).
+              reconcile_config "$folder" "$fn"
               ensure_triggers "$folder" "$fn"
               echo "| $folder | $fn | actualizada | $runtime | $(role_for "$folder" "$src") | $TRIGGER_NOTE |" >> "$SUMMARY"
             else
@@ -708,6 +817,9 @@ jobs:
               # incluye el token Bedrock en su nombre, ensure_role no le añadió el inline; se
               # verifica aquí también.
               reconcile_bedrock "$folder" "$fn"
+              # La función nace con NEW_FN_MEMORY/NEW_FN_TIMEOUT; si el manifiesto pide otra cosa
+              # (p. ej. un worker pesado), se corrige aquí mismo — no en el siguiente despliegue.
+              reconcile_config "$folder" "$fn"
               ensure_triggers "$folder" "$fn"
               echo "   ⚠️  Recuerda configurar aparte: variables de entorno y layers (ver DESPLIEGUE.md)."
               echo "| $folder | $fn | 🆕 creada | $LAMBDA_RUNTIME | $role | $TRIGGER_NOTE |" >> "$SUMMARY"

@@ -1,0 +1,45 @@
+{
+  "_comment": "Memoria (MB) y timeout (s) por lambda que el CD (deploy-lambdas.yml) RECONCILIA en cada despliegue de la carpeta: si lo que hay en AWS no coincide, lo corrige. Solo van aquí las que se APARTAN del default (256 MB / 60 s, NEW_FN_MEMORY/NEW_FN_TIMEOUT); las ~95 lambdas de API ligera no necesitan entrada. La justificacion de cada numero esta en PROVISION.md §2. Llaves: 'memory' (MB, multiplo de 1 entre 128 y 10240), 'timeout' (segundos, max 900), 'nota' (opcional, para el log). ⚠️ El VisibilityTimeout de la cola de un worker NO se pone aqui: el CD lo DERIVA como 6x el timeout de la funcion (regla de AWS) y lo sube solo si hace falta — asi no hay dos numeros que mantener en sincronia. ⚠️ 29 s es el techo real de API Gateway REST por defecto: poner mas en una lambda de API no sirve de nada porque el cliente ya recibio un 504.",
+
+  "Api_V1_Admin_Dashboard":          { "memory": 1024, "timeout": 29, "nota": "agregador: Scan de process + BatchGet del rollup" },
+  "Api_V1_Admin_Control-center":     { "memory": 1024, "timeout": 29, "nota": "agregador: varias secciones best-effort" },
+  "Api_V1_Admin_Jobs":               { "memory": 1024, "timeout": 29 },
+  "Api_V1_Admin_Audit":              { "memory": 1024, "timeout": 29 },
+  "Api_V1_Admin_Balances":           { "memory": 1024, "timeout": 29 },
+  "Api_V1_Admin_Recipient-lookup":   { "memory": 1024, "timeout": 29, "nota": "Scan de {tenant}_sendStatus" },
+  "Api_V1_Billing_Summary":          { "memory": 1024, "timeout": 29 },
+  "Api_V1_Reports_Statistics":       { "memory": 1024, "timeout": 29 },
+  "Api_V1_Reports_Series":           { "memory": 1024, "timeout": 29 },
+  "Api_V1_Reports_state-report":     { "memory": 1024, "timeout": 29 },
+  "Api_V1_Portal_Bootstrap":         { "memory": 1024, "timeout": 29 },
+  "Api_V1_Agent_Reports":            { "memory": 1024, "timeout": 29 },
+  "Api_V1_Database_Verify":          { "memory": 1024, "timeout": 29, "nota": "lookups DNS SECUENCIALES (tope 200 dominios)" },
+
+  "Api_V1_Template_Render-pdf":      { "memory": 2048, "timeout": 29, "nota": "xhtml2pdf: CPU pura; mas memoria = mas vCPU = mas barato" },
+  "Api_V1_Template_Render-engine":   { "memory": 2048, "timeout": 29, "nota": "ReportLab: CPU pura" },
+  "Api_V1_Cost_Attachment-weight":   { "memory": 2048, "timeout": 29, "nota": "invoca a los dos render y ESPERA" },
+
+  "Api_V1_Email_Prepare-batch-template": { "memory": 1024, "timeout": 300, "nota": "1 parte = PART_SIZE filas: filtra listas, deduplica y encola" },
+  "Api_V1_Email_Send-batch-template-EM": { "memory": 512,  "timeout": 120, "nota": "250 destinatarios en 5 send_bulk" },
+  "Api_V1_Email_Send-batch-template-EAU":{ "memory": 1024, "timeout": 300, "nota": "250 destinatarios con adjunto, en trozos de 25" },
+  "Api_V1_Email_Send-batch-template-EAP":{ "memory": 1024, "timeout": 300, "nota": "100 x (get_object de S3 + send_raw_email) EN SERIE: 25-40 s" },
+  "Api_V1_Template_Combination-EAP-PDF": { "memory": 2048, "timeout": 600, "nota": "100 PDFs con ReportLab en UNA invocacion: lo mas pesado del pipeline" },
+  "Api_V1_Template_Combination":         { "memory": 1024, "timeout": 300, "nota": "100 .docx combinados" },
+  "Api_V1_Sms_Send-batch":               { "memory": 512,  "timeout": 180, "nota": "100 SMS, una llamada a la API por cada uno" },
+  "Api_V1_Wsp_Send-batch":               { "memory": 512,  "timeout": 180 },
+  "Api_V1_Voice_Send-batch":             { "memory": 512,  "timeout": 180 },
+
+  "Api_V1_Notifications_Scan":       { "memory": 1024, "timeout": 600, "nota": "cron: recorre TODOS los clientes" },
+  "Api_V1_Cascade_Advance":          { "memory": 512,  "timeout": 300, "nota": "cron: tick del motor de cascada" },
+  "Api_V1_Cron_DeleteTables":        { "memory": 256,  "timeout": 300 },
+  "Api_V1_SQS_DeleteTables":         { "memory": 256,  "timeout": 300 },
+
+  "Authorizer":                      { "memory": 256, "timeout": 10, "nota": "corre en CADA peticion; JWT con stdlib" },
+  "Authorizer2":                     { "memory": 256, "timeout": 10 },
+  "Api_V1_Assistant_Ask":            { "memory": 512, "timeout": 29, "nota": "espera a Bedrock" },
+  "Api_V1_Assistant_Copilot":        { "memory": 512, "timeout": 29 },
+  "Api_V1_Email_ReceptionStatus":    { "memory": 512, "timeout": 60, "nota": "rafagas de eventos SNS" },
+  "Api_V1_Messaging_ReceptionStatus":{ "memory": 512, "timeout": 60 },
+  "Api_V1_Wsp_ReceptionStatus":      { "memory": 512, "timeout": 60 },
+  "Api_V1_Wallet_Wompi-webhook":     { "memory": 256, "timeout": 30 }
+}

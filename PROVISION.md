@@ -64,8 +64,9 @@ efectos que sí importan:
 
 ## 2. Configuración recomendada por grupo
 
-`trigger-map.json` ya acepta `visibilityTimeout` por cola, que es donde se aplica la columna
-de la derecha.
+Estos números viven en **`config-map.json`** y los aplica el CD solo (ver "Cómo se aplica" más
+abajo). La última columna es **informativa**: el CD la deriva como 6× el timeout, no se
+escribe a mano.
 
 ### Grupo A · API de lectura/escritura ligera — **la mayoría (~95 lambdas)**
 
@@ -100,17 +101,17 @@ dominios). Es el candidato más probable a rozar los 29 s con una base sucia y g
 
 ### Grupo D · Workers del pipeline (SQS) — **donde está el riesgo**
 
-| Lambda | Carga por mensaje | Memoria | Timeout | `visibilityTimeout` de la cola |
+| Lambda | Carga por mensaje | Memoria | Timeout | Visibility de la cola *(derivado 6×)* |
 |---|---|---|---|---|
-| `Email_Prepare-batch-template` | 1 parte = **5.000 filas** (`PART_SIZE`) → filtra listas, deduplica y encola | **1024 MB** | **300 s** | **1800** |
-| `Email_Send-batch-template-EM` | 250 destinatarios → 5 × `send_bulk(50)` | **512 MB** | **120 s** | **900** |
-| `Email_Send-batch-template-EAU` | 250 destinatarios en trozos de 25, con adjunto | **1024 MB** | **300 s** | **1800** |
-| `Email_Send-batch-template-EAP` | **100 destinatarios, cada uno con `get_object` de S3 + `send_raw_email`** | **1024 MB** | **300 s** | **1800** |
-| `Template_Combination-EAP-PDF` | **100 destinatarios × renderizar un PDF con ReportLab** | **2048 MB** | **600 s** | **3600** |
-| `Template_Combination` (DOCX) | 100 destinatarios × combinar un .docx | **1024 MB** | **300 s** | **1800** |
-| `Sms_Send-batch` | 100 SMS, uno por llamada a la API | **512 MB** | **180 s** | **1080** |
-| `Wsp_Send-batch` | 100 mensajes | **512 MB** | **180 s** | **1080** |
-| `Voice_Send-batch` | 50 llamadas | **512 MB** | **180 s** | **1080** |
+| `Email_Prepare-batch-template` | 1 parte = **5.000 filas** (`PART_SIZE`) → filtra listas, deduplica y encola | **1024 MB** | **300 s** | 1800 |
+| `Email_Send-batch-template-EM` | 250 destinatarios → 5 × `send_bulk(50)` | **512 MB** | **120 s** | 720 |
+| `Email_Send-batch-template-EAU` | 250 destinatarios en trozos de 25, con adjunto | **1024 MB** | **300 s** | 1800 |
+| `Email_Send-batch-template-EAP` | **100 destinatarios, cada uno con `get_object` de S3 + `send_raw_email`** | **1024 MB** | **300 s** | 1800 |
+| `Template_Combination-EAP-PDF` | **100 destinatarios × renderizar un PDF con ReportLab** | **2048 MB** | **600 s** | 3600 |
+| `Template_Combination` (DOCX) | 100 destinatarios × combinar un .docx | **1024 MB** | **300 s** | 1800 |
+| `Sms_Send-batch` | 100 SMS, uno por llamada a la API | **512 MB** | **180 s** | 1080 |
+| `Wsp_Send-batch` | 100 mensajes | **512 MB** | **180 s** | 1080 |
+| `Voice_Send-batch` | 50 llamadas | **512 MB** | **180 s** | 1080 |
 
 ⚠️ **Los dos que hay que subir sí o sí:**
 
@@ -141,23 +142,37 @@ dominios). Es el candidato más probable a rozar los 29 s con una base sucia y g
 | `Wallet_Wompi-webhook` | **256 MB** | **30 s** | Si tarda, Wompi reintenta; es idempotente por `reference`. |
 | `Email_ReceptionStatus`, `Messaging_ReceptionStatus`, `Wsp_ReceptionStatus` | **512 MB** | **60 s** | Reciben ráfagas de eventos de SNS. |
 
-### Cómo aplicarlo
+### Cómo se aplica — **ya lo hace el despliegue automático**
 
-```bash
-# Una lambda
-aws lambda update-function-configuration \
-  --function-name Api_V1_Email_Send-batch-template-EAP \
-  --memory-size 1024 --timeout 300
+Los números de las tablas de arriba viven en **`04_Backend/lambdas/config-map.json`** y el CD
+(`deploy-lambdas.yml`) los **reconcilia en cada despliegue** de la carpeta, tanto al crear
+como al actualizar: si lo que hay en AWS no coincide, lo corrige. Solo se listan las lambdas
+que se apartan del default (256 MB / 60 s); las ~95 de API ligera no llevan entrada.
 
-# Su cola (OBLIGATORIO al subir el timeout: ver §1)
-aws sqs set-queue-attributes \
-  --queue-url "$(aws sqs get-queue-url --queue-name Email_Send-batch-raw-EAP --query QueueUrl --output text)" \
-  --attributes VisibilityTimeout=1800
+```jsonc
+"Api_V1_Email_Send-batch-template-EAP": { "memory": 1024, "timeout": 300, "nota": "…" }
 ```
 
-⚠️ El CD **solo** fija memoria/timeout al **crear** una función (`NEW_FN_TIMEOUT` /
-`NEW_FN_MEMORY` en `deploy-lambdas.yml`); en las que ya existen no los toca. Es decir: esto
-se aplica una vez a mano (o se agrega al workflow) y no se pisa en el siguiente push.
+El **`VisibilityTimeout` de la cola NO se escribe**: el CD lo **deriva** como `6 × timeout`
+(la regla de AWS), toma el mayor entre eso y el `visibilityTimeout` de `trigger-map.json`, y
+lo **sube si se queda corto — nunca lo baja**. Así no hay dos números que mantener en
+sincronía: cambiar el timeout de la lambda mueve la cola sola.
+
+⚠️ La asimetría (subir sí, bajar no) es deliberada: **bajarlo** puede provocar re-entrega
+mientras la función sigue trabajando —el daño real—, mientras que dejarlo más alto de lo
+necesario solo alarga la espera tras un fallo.
+
+Es **idempotente** (si ya coincide no llama a la API, así no se publica una versión nueva por
+gusto) y **best-effort** (si falla, avisa en el log pero no aborta: el código ya se subió y
+funciona; lo que queda es una configuración subóptima).
+
+Como el CD solo despliega las carpetas que **cambiaron**, para aplicar el manifiesto a todo
+de una vez hay que correr el workflow a mano con el input **`all`**. Cubierto por
+`test_cd_config_lambdas.py`, que extrae la función del YAML real y la ejecuta contra un `aws`
+simulado.
+
+Para un ajuste puntual sin esperar al despliegue, `./scripts/config_lambdas.sh` (con
+`--dry-run`) aplica lo mismo desde la línea de comandos.
 
 ---
 
