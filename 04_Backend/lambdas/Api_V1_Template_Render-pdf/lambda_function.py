@@ -52,6 +52,8 @@ BUCKET_PREFIX = os.environ.get('BUCKET_PREFIX', 'mailconnect')
 # Tope defensivo para descargar imágenes remotas del template (evita adjuntos gigantes/colgar el render).
 IMG_MAX_BYTES = int(os.environ.get('PDF_IMG_MAX_BYTES', str(8 * 1024 * 1024)))
 IMG_TIMEOUT = int(os.environ.get('PDF_IMG_TIMEOUT', '10'))
+# Imágenes remotas ya descargadas en ESTA invocación: {url: ruta en /tmp}.
+_IMG_CACHE = {}
 
 s3 = boto3.client('s3', region_name=REGION, config=Config(signature_version='s3v4'))
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
@@ -405,6 +407,11 @@ def _link_callback(uri, rel):
     embeba. data: URIs las maneja pisa directamente. Con tope de tamaño y timeout."""
     try:
         if uri.startswith('http://') or uri.startswith('https://'):
+            # CACHE por URL. Sin esto, la MISMA imagen se descargaba una vez por destinatario
+            # (el combinador renderiza 100 PDFs por invocación): 100 peticiones HTTP idénticas
+            # y 100 copias del mismo archivo en /tmp.
+            if uri in _IMG_CACHE:
+                return _IMG_CACHE[uri]
             ext = os.path.splitext(uri.split('?')[0])[1] or '.img'
             fd, path = tempfile.mkstemp(suffix=ext, dir='/tmp')
             os.close(fd)
@@ -413,13 +420,32 @@ def _link_callback(uri, rel):
                 data = resp.read(IMG_MAX_BYTES + 1)
             if len(data) > IMG_MAX_BYTES:
                 print('Imagen ignorada por tamaño (> {} bytes): {}'.format(IMG_MAX_BYTES, uri))
+                os.unlink(path)          # el temporal ya estaba creado: no dejarlo huérfano
                 return uri
             with open(path, 'wb') as f:
                 f.write(data)
+            _IMG_CACHE[uri] = path
             return path
     except Exception as e:
         print('link_callback no pudo obtener {}: {}'.format(uri, e))
     return uri
+
+
+def _limpiar_imagenes():
+    """Borra las imágenes descargadas a /tmp y vacía la caché.
+
+    ⚠️ Lambda REUTILIZA el contenedor entre invocaciones y `/tmp` persiste, con un tope de
+    512 MB por defecto. Sin esta limpieza los archivos se acumulaban invocación tras
+    invocación hasta 'No space left on device' — y el fallo aparecía a mitad de un lote, en
+    una lambda que ya había enviado parte de los correos. Con el tope de imagen en 8 MB,
+    bastaban unas pocas invocaciones tibias para llenarlo.
+    """
+    for p in _IMG_CACHE.values():
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+    _IMG_CACHE.clear()
 
 
 def html_to_pdf(html, page_size='A4'):
@@ -474,6 +500,19 @@ def _resolve_html(payload, customer_id):
 
 
 def lambda_handler(event, context):
+    """Envoltorio del handler real.
+
+    Su única razón de ser: garantizar que las imágenes descargadas a /tmp se borren SIEMPRE,
+    también si el render lanza. Se hace aquí y no dentro porque el handler tiene varios
+    `return` y envolverlo en un try/finally obligaría a reindentarlo entero.
+    """
+    try:
+        return _handler(event, context)
+    finally:
+        _limpiar_imagenes()
+
+
+def _handler(event, context):
     payload = _get_payload(event)
     auth = _authorizer(event)
     nit = auth.get('nit') or auth.get('companyTin')

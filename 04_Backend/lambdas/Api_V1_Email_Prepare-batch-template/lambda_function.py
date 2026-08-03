@@ -12,7 +12,11 @@ from decimal import Decimal
 from datetime import datetime
 
 import boto3
-import pandas as pd
+# ⚠️ NO reintroducir `import pandas`: estaba aquí sin usarse (ni una sola referencia a `pd`)
+# y obligaba a arrastrar el layer de pandas+numpy (~60 MB) en la lambda MÁS caliente del
+# pipeline, con ~1-2 s de arranque en frío en cada contenedor nuevo. El CSV se lee con el
+# módulo `csv` de la stdlib, que es lo correcto aquí: se procesa fila a fila en streaming,
+# sin cargar la base entera en memoria.
 from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
 

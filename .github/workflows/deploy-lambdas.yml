@@ -76,6 +76,17 @@ name: Desplegar Lambdas
 #     · Una lambda disparada por SQS LEE la cola con su PROPIO rol, así que el
 #       trigger fuerza el token _SQS en el rol auto-detectado al crearla.
 #
+#   { "NombreCarpeta": { "sns": "NombreTopico" } }
+#     · Crea el tópico SNS si no existe, da permiso a SNS de invocar la lambda
+#       y la suscribe. OJO: apuntar el config set (SES/EUM) al tópico sigue
+#       siendo manual — por eso no viene pre-llenado.
+#   { "NombreCarpeta": { "schedule": "rate(5 minutes)" } }
+#     · Crea/actualiza una regla de EventBridge (`{funcion}-cron`) con esa
+#       expresión rate()/cron() y permiso + target hacia la lambda.
+#   (Se pueden combinar varias llaves en la misma entrada.)
+# Si la cola/tópico/regla o el trigger ya existen, no se tocan (solo se crea
+# lo que falte). Lo que ya está en AWS queda igual.
+#
 # ── Memoria y timeout (04_Backend/lambdas/config-map.json) ──────────────────
 # { "NombreCarpeta": { "memory": 1024, "timeout": 300, "nota": "..." } }
 # En CADA despliegue de una carpeta (crear Y actualizar) se RECONCILIA lo que hay
@@ -88,16 +99,12 @@ name: Desplegar Lambdas
 # entrada. Justificación de cada número: PROVISION.md §2. Es idempotente (si ya
 # coincide no llama a la API) y best-effort (un fallo avisa pero no aborta: el
 # código ya se subió y funciona).
-#   { "NombreCarpeta": { "sns": "NombreTopico" } }
-#     · Crea el tópico SNS si no existe, da permiso a SNS de invocar la lambda
-#       y la suscribe. OJO: apuntar el config set (SES/EUM) al tópico sigue
-#       siendo manual — por eso no viene pre-llenado.
-#   { "NombreCarpeta": { "schedule": "rate(5 minutes)" } }
-#     · Crea/actualiza una regla de EventBridge (`{funcion}-cron`) con esa
-#       expresión rate()/cron() y permiso + target hacia la lambda.
-#   (Se pueden combinar varias llaves en la misma entrada.)
-# Si la cola/tópico/regla o el trigger ya existen, no se tocan (solo se crea
-# lo que falte). Lo que ya está en AWS queda igual.
+# Llave opcional "arch": "arm64" | "x86_64" (Graviton). Sin declararla NO se toca
+# la arquitectura. ⚠️ Solo se puede mover a arm64 una lambda cuyos layers estén
+# compilados para esa arquitectura: reportlab, Pillow, lxml y numpy traen binarios
+# y fallan con un ImportError EN EJECUCIÓN (el despliegue termina en verde). Las
+# lambdas sin layer —la gran mayoría, solo stdlib + boto3— se mueven sin tocar nada.
+# Detalle de cuáles pueden y cuáles no: PROVISION.md §9.
 #
 # ── Requisitos (una sola vez) ────────────────────────────────────────────────
 # En Settings → Secrets and variables → Actions:
@@ -593,14 +600,15 @@ jobs:
             # Combination-EAP-PDF (100 PDFs con ReportLab) corrían así, a un mal día de S3 de agotar
             # el tiempo. Ahora se RECONCILIA en cada despliegue: lo que diga el manifiesto es lo que
             # queda en AWS.
-            local folder="$1" fn="$2" cfg mem to cur cur_mem cur_to nota
+            local folder="$1" fn="$2" cfg mem to cur cur_mem cur_to cur_arch nota arch
             # Se lee SIEMPRE la configuración real: aunque no haya entrada en el manifiesto, su
             # timeout es el que ensure_triggers necesita para derivar el VisibilityTimeout (si
             # alguien lo subió a mano en la consola, la cola tiene que seguirlo igual).
             cur=$(aws lambda get-function-configuration --function-name "$fn" \
-                    --query '[MemorySize,Timeout]' --output text 2>/dev/null || true)
+                    --query '[MemorySize,Timeout,Architectures[0]]' --output text 2>/dev/null || true)
             cur_mem=$(echo "$cur" | awk '{print $1}')
             cur_to=$(echo "$cur" | awk '{print $2}')
+            cur_arch=$(echo "$cur" | awk '{print $3}')
             case "${cur_to:-}" in ''|*[!0-9]*) cur_to="$NEW_FN_TIMEOUT" ;; esac
             FN_TIMEOUT="$cur_to"
 
@@ -612,19 +620,28 @@ jobs:
             mem=$(echo "$cfg" | jq -r '.memory // empty')
             to=$(echo "$cfg" | jq -r '.timeout // empty')
             nota=$(echo "$cfg" | jq -r '.nota // empty')
+            # Arquitectura: 'arm64' (Graviton) o 'x86_64'. Sin declarar NO se toca — cambiarla
+            # a ciegas rompería cualquier lambda cuyo layer traiga binarios compilados para la
+            # otra arquitectura (reportlab, Pillow, lxml, numpy), y el fallo es un ImportError
+            # en EJECUCIÓN, no en el despliegue.
+            arch=$(echo "$cfg" | jq -r '.arch // empty')
             if [ -z "$mem" ] || [ -z "$to" ]; then
               echo "   ⚠️  Entrada incompleta en config-map.json para $folder (falta memory o timeout); se omite."
               return 0
             fi
             FN_TIMEOUT="$to"
             # Idempotente: si ya coincide no se llama a la API (evita ruido y versiones nuevas).
-            if [ "$cur_mem" = "$mem" ] && [ "$cur_to" = "$to" ]; then
-              echo "   ⚙️  Configuración ya correcta en $fn (${mem} MB / ${to}s)"
+            local arch_args=()
+            if [ -n "$arch" ] && [ "$arch" != "$cur_arch" ]; then
+              arch_args=(--architectures "$arch")
+            fi
+            if [ "$cur_mem" = "$mem" ] && [ "$cur_to" = "$to" ] && [ ${#arch_args[@]} -eq 0 ]; then
+              echo "   ⚙️  Configuración ya correcta en $fn (${mem} MB / ${to}s / ${cur_arch:-x86_64})"
               return 0
             fi
-            echo "   ⚙️  Ajustando $fn: ${cur_mem:-?} MB/${cur_to:-?}s → ${mem} MB/${to}s${nota:+  ($nota)}"
+            echo "   ⚙️  Ajustando $fn: ${cur_mem:-?} MB/${cur_to:-?}s → ${mem} MB/${to}s${arch:+ · ${cur_arch}→${arch}}${nota:+  ($nota)}"
             if aws lambda update-function-configuration --function-name "$fn" \
-                 --memory-size "$mem" --timeout "$to" >/dev/null 2>/tmp/cfgerr; then
+                 --memory-size "$mem" --timeout "$to" "${arch_args[@]}" >/dev/null 2>/tmp/cfgerr; then
               # Sin esperar, el siguiente update (o el create-event-source-mapping) puede chocar
               # con ResourceConflictException: la función queda en estado Pending un instante.
               aws lambda wait function-updated-v2 --function-name "$fn" 2>/dev/null || true

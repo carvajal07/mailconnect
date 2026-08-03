@@ -366,3 +366,87 @@ un tamaño de lote en 0 (`range(0, n, 0)` lanza y un lote de 0 no avanza nunca).
 part-files. No se rompe, pero es lentísimo.
 
 Detalle y bases calibradas: `09_Herramientas/bases-prueba/README.md`.
+
+---
+
+## 9. ARM (Graviton): qué implica y qué se puede mover ya
+
+**Qué compra:** Lambda sobre arm64 cuesta **$0,0000133334 por GB-s** contra $0,0000166667 de
+x86 — un **20% menos** de duración, mismo precio por petición. El rendimiento para Python
+puro es equivalente o algo mejor.
+
+⚠️ **Pero mira el orden de magnitud antes de emocionarte.** El cómputo de una campaña de
+100.000 correos es **$0,02**; el 20% de eso son **$0,004**. En la campaña con PDF
+personalizado, que es donde más pesa el cómputo, el ahorro sería de ~$0,40 sobre $15. **Esto
+no es una decisión de costo** — hazlo porque es gratis y no estorba, no porque vaya a bajar la
+factura. Lo que se lleva el 98% sigue siendo SES.
+
+### El único bloqueante real: los layers con binarios
+
+Un `.py` no tiene arquitectura. Lo que sí la tiene son los paquetes **compilados**. Del
+inventario del repo, **14 de 121 lambdas dependen de un layer**:
+
+| Dependencia | Lambdas | ¿Compilada? | ¿Se puede mover? |
+|---|---|---|---|
+| *(ninguna: stdlib + boto3)* | **107** | — | **Sí, sin tocar nada** |
+| `dnspython` | `Database_Verify`, `Domain_List` | No, Python puro | Sí — el layer sirve igual |
+| `PyJWT` | `Login`, `Change-password`, `Refresh-token`, `Authorizer`, `Authorizer2` | No (HS256 usa `hmac`) | Sí — el layer sirve igual |
+| `openpyxl` | `Agent_Reports` | No, Python puro | Sí |
+| `xhtml2pdf` → **reportlab + Pillow** | `Template_Render-pdf`, `Combination-EAP-PDF` | **Sí** | Solo tras **recompilar el layer** |
+| `python-docx` → **lxml** | `Template_Combination`, `Api_V1_Combination`, `CombinacionPython3-9` | **Sí** | Solo tras **recompilar el layer** |
+| ~~`pandas` → numpy~~ | ~~`Prepare-batch`~~ | **Sí** | **Ya no aplica** — ver abajo |
+
+⚠️ **El fallo de una arquitectura mal puesta NO aparece en el despliegue.** El workflow
+termina en verde y la lambda revienta con `ImportError` **en la primera invocación real** —
+que en un worker de SQS significa un lote que va a la DLQ. Por eso el CD **no toca la
+arquitectura salvo que se declare** explícitamente.
+
+### `pandas` fuera de Prepare-batch
+
+`Api_V1_Email_Prepare-batch-template` tenía `import pandas as pd` **sin una sola referencia a
+`pd` en todo el archivo**. Costaba el layer de pandas+numpy (~60 MB) y **~1-2 s de arranque en
+frío en la lambda más caliente del pipeline**, para nada. Ya se quitó: ahora es stdlib + boto3
+y puede moverse a arm64 sin layer. (El CSV se lee con el módulo `csv`, que es lo correcto:
+fila a fila en streaming, sin cargar la base entera en memoria.)
+
+### Cómo moverlas
+
+En `config-map.json`, llave `arch`:
+
+```jsonc
+"Api_V1_Campaign_List": { "memory": 256, "timeout": 15, "arch": "arm64" }
+```
+
+Sin la llave, el CD **no toca** la arquitectura. Se puede cambiar en caliente
+(`update-function-configuration --architectures arm64`) y se revierte igual de fácil.
+
+**Recomendación práctica:** si lo vas a hacer, muévelas **por tandas** y **empezando por las
+que no tienen layer**, verificando una invocación real de cada tanda antes de seguir. Las de
+PDF y DOCX déjalas en x86 hasta que tengas los layers recompilados para arm64 — y ahí la
+pregunta honesta es si vale la pena mantener dos builds de layer para ahorrar céntimos.
+
+---
+
+## 10. Los PDF: en memoria, y qué hacía falta arreglar
+
+**El PDF nunca toca disco.** Se arma en `io.BytesIO()` y se sube con
+`put_object(Body=pdf_bytes)` — sin archivo temporal, sin releerlo. Es lo correcto: el
+combinador genera 100 PDFs por invocación y un viaje a disco por cada uno se notaría.
+
+**Lo que sí bajaba a `/tmp` eran las imágenes remotas** del HTML. xhtml2pdf no descarga por
+URL: `_link_callback` trae cada imagen a un temporal y le pasa la ruta.
+
+⚠️ Ahí había un defecto real, ya corregido: **ese temporal no se borraba nunca y no había
+caché**. Como el combinador renderiza 100 PDFs por invocación, la MISMA imagen se descargaba
+100 veces y dejaba 100 copias. Y como Lambda **reutiliza el contenedor** y `/tmp` **persiste**
+(512 MB por defecto, con el tope de imagen en 8 MB), se llenaba y reventaba con *"No space
+left on device"* — a mitad de un lote, en una lambda que ya había enviado parte de los correos.
+
+Ahora hay caché por URL (una descarga por invocación, no 100) y limpieza en un `finally`, así
+que también se limpia cuando el render falla — que son justo las invocaciones que SQS
+reintenta y las que más basura dejarían. Cubierto por `test_pdf_tmp.py`.
+
+ℹ️ Si algún día un documento necesita más espacio de trabajo, Lambda permite subir el
+almacenamiento efímero de 512 MB hasta 10 GB (`--ephemeral-storage`), y se paga aparte. Con
+la caché y la limpieza puestas no debería hacer falta.
+
