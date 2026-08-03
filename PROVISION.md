@@ -450,3 +450,88 @@ reintenta y las que más basura dejarían. Cubierto por `test_pdf_tmp.py`.
 almacenamiento efímero de 512 MB hasta 10 GB (`--ephemeral-storage`), y se paga aparte. Con
 la caché y la limpieza puestas no debería hacer falta.
 
+---
+
+## 11. Que los PDF salgan VOLANDO (medido, no estimado)
+
+Todo lo de esta sección sale de correr el código real del repo (`html_to_pdf` del combinador,
+reportlab 4.5 + xhtml2pdf 0.2.17). Reproducible: los scripts están abajo.
+
+### Lo primero: dónde se va el tiempo
+
+| Qué | Medido |
+|---|---|
+| Importar la pila de PDF, **sin** bytecode precompilado | **~1.750 ms** |
+| Importar la pila de PDF, **con** bytecode precompilado | **~640 ms** |
+| Render de un PDF de 5 filas | 26 ms |
+| Render de un PDF de 25 filas | 87 ms |
+| Render de un PDF de 100 filas | 316 ms |
+| Render de un PDF de **300 filas** | **1.299 ms** |
+| 40 PDFs en serie | 3,60 s |
+| 40 PDFs con **4 hilos** | **4,59 s** — *más lento* |
+
+### Las cuatro conclusiones
+
+**1. El fan-out es la palanca grande, y no necesita código.**
+El combinador procesa **100 PDFs por mensaje** (`REGISTERS_FOR_EAP`) **en serie**. Bajarlo
+reparte el mismo trabajo en más invocaciones que Lambda corre **en paralelo**:
+
+| `REGISTERS_FOR_EAP` | Invocaciones para 100 PDFs | Render por invocación (docs de 25 filas) |
+|---|---|---|
+| 100 *(hoy)* | 1 | **8,7 s** |
+| 20 | 5 | 1,7 s |
+| **10** | 10 | **0,9 s** |
+
+Con documentos de 300 filas la diferencia es de **130 s a 13 s**. Ya es configurable por
+variable de entorno (§8) — se prueba sin desplegar código.
+
+⚠️ El precio: más invocaciones = más arranques en frío. Por eso el punto 2 va con este, no
+después.
+
+**2. Precompilar el bytecode del layer: −1,1 s por arranque en frío.**
+Python compila cada `.py` a `.pyc` la primera vez y lo guarda en `__pycache__`. En Lambda,
+`/opt` y `/var/task` son **de solo lectura**: no puede escribirlo, así que **recompila en cada
+arranque en frío, para siempre**. Un `pip install -t` normal no deja bytecode.
+`./scripts/build_layer_pdf.sh` construye el layer con `compileall` hecho.
+⚠️ Y en Lambda el ahorro es MAYOR que el medido: la medición es con una CPU completa; a
+256 MB (~0,15 vCPU) ese trabajo tarda varias veces más.
+
+**3. Memoria: 2048 MB es el punto correcto. Más NO acelera.**
+La CPU va atada a la memoria y **1 vCPU completa se alcanza a ~1.769 MB**. ReportLab es
+**monohilo**, así que por encima de eso no hay nada que ganar en un render. Poner 10 GB sería
+pagar 5× por el mismo tiempo. (La medición de los hilos lo confirma: 4 hilos van **más
+lentos** que uno, porque el GIL serializa y encima añade contención.)
+
+**4. ARM no es la palanca para esto.**
+Graviton da ±0–20% en Python puro, no un orden de magnitud. Para "volando" mandan el fan-out
+y el bytecode; ARM es un extra del 20% en costo (§9), no en velocidad.
+
+### Lo que más pesa, y no es configuración: el TAMAÑO del documento
+
+El render escala **peor que lineal**: 12× más filas (25 → 300) cuesta **15× más tiempo**. Si
+tus documentos son extractos con cientos de movimientos, ahí está el costo real y ninguna
+palanca de infraestructura lo arregla. Cosas que sí:
+
+- **Menos CSS y menos tablas anidadas.** xhtml2pdf parsea HTML y CSS en Python puro; cada
+  regla y cada celda se pagan.
+- ⚠️ **El camino del Estudio/Diseñador (`templateJson`) no pasa por xhtml2pdf**: va directo a
+  ReportLab. Es razonable esperar que sea bastante más rápido para el mismo documento, pero
+  **no lo medí** — si tus plantillas pesadas son extractos, vale la pena comprobarlo antes de
+  invertir en lo demás.
+
+### Corrección a §4
+
+En §4 dije que la concurrencia aprovisionada no tiene sentido "porque el arranque en frío es
+de 200–400 ms". Eso vale para las ~107 lambdas de stdlib + boto3, **no para las de PDF**:
+ahí el import real es de 1,7 s (0,64 s con bytecode). Sigo sin recomendarla —el fan-out
+amortiza los arranques y estas corren en cola, sin nadie esperando en pantalla— pero el
+número que di no aplicaba a este grupo.
+
+### Orden recomendado
+
+1. Construir el layer con `./scripts/build_layer_pdf.sh` y publicarlo. *(−1,1 s por arranque)*
+2. Bajar `REGISTERS_FOR_EAP` a **10** por env y medir con la base de prueba. *(el grande)*
+3. Confirmar que el combinador está en **2048 MB** (`config-map.json` ya lo pide).
+4. Medir un documento REAL tuyo con `scripts/bench_pdf.py`. Si pasa de ~300 ms, el problema
+   es la plantilla y ahí hay que mirar antes de tocar más infraestructura.
+
