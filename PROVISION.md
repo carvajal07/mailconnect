@@ -527,11 +527,52 @@ ahí el import real es de 1,7 s (0,64 s con bytecode). Sigo sin recomendarla —
 amortiza los arranques y estas corren en cola, sin nadie esperando en pantalla— pero el
 número que di no aplicaba a este grupo.
 
-### Orden recomendado
+### Cómo se aplican los dos primeros — **ya están cableados**
 
-1. Construir el layer con `./scripts/build_layer_pdf.sh` y publicarlo. *(−1,1 s por arranque)*
-2. Bajar `REGISTERS_FOR_EAP` a **10** por env y medir con la base de prueba. *(el grande)*
-3. Confirmar que el combinador está en **2048 MB** (`config-map.json` ya lo pide).
-4. Medir un documento REAL tuyo con `scripts/bench_pdf.py`. Si pasa de ~300 ms, el problema
-   es la plantilla y ahí hay que mirar antes de tocar más infraestructura.
+**1 · El layer con bytecode** → workflow **`deploy-layer-pdf.yml`** (manual). Construye,
+**comprueba que el bytecode de verdad acelera** (mide con y sin, y aborta si no hay
+diferencia), publica el layer y lo apunta en las tres lambdas de PDF conservando los layers
+que ya tuvieran.
+
+⚠️ Se hace en CI y no con el script a mano por una razón concreta: el `.pyc` lleva dentro la
+versión de Python (`cpython-313`) y **solo lo usa esa versión**. Compilado con otra, Lambda
+lo ignora y recompila — no falla, simplemente pierdes la mejora sin enterarte. El workflow
+fija la versión con `setup-python`; `build_layer_pdf.sh` aborta si no encuentra `python3.13`.
+
+Medido sobre el layer **realmente construido** (29 MB comprimido, 82 MB en disco):
+
+| | Import |
+|---|---|
+| Sin bytecode | ~1.480 ms |
+| **Con bytecode** | **~525 ms** |
+
+**2 · El fan-out** → `config-map.json`, llave **`env`**:
+
+```jsonc
+"Api_V1_Email_Prepare-batch-template": { "memory": 1024, "timeout": 300,
+  "env": { "REGISTERS_FOR_EAP": "10" } }
+```
+
+El CD la aplica en el próximo despliegue. ⚠️ **MEZCLA, nunca reemplaza**:
+`update-function-configuration --environment` pisa el mapa completo, así que el CD lee el
+actual y solo añade lo declarado — si no, cada push borraría `SECRET_KEY` y las credenciales
+de los proveedores, y **el despliegue terminaría en verde** con la lambda rota en la
+siguiente invocación. Hay prueba de comportamiento (no de texto) para eso.
+
+⚠️ **Nunca pongas un secreto en `env`**: `config-map.json` está en git y el historial no se
+borra rotando la clave. Un guard rechaza nombres que parezcan secreto (`SECRET`, `TOKEN`,
+`PASSWORD`, `API_KEY`, …).
+
+ℹ️ `REGISTERS_FOR_EAP` gobierna el lote **de los dos** eslabones pesados: el combinador que
+renderiza los PDFs y `Send-EAP`, que hace `get_object` + `send_raw_email` en serie. Bajarlo
+los acelera a ambos.
+⚠️ Vigila la cuota por segundo de SES al subir el paralelismo: más invocaciones simultáneas
+significa más llamadas concurrentes a SES.
+
+### Y después
+
+3. Confirmar que el combinador quedó en **2048 MB** (`config-map.json` ya lo pide).
+4. Medir un documento REAL tuyo con `scripts/bench_pdf.py --html tu_plantilla.html`. Si pasa
+   de ~300 ms, el problema es la plantilla y ahí hay que mirar antes de tocar más
+   infraestructura.
 

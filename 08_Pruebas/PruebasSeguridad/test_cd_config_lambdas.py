@@ -52,15 +52,23 @@ def _funcion(nombre):
     raise AssertionError('llaves desbalanceadas en ' + nombre)
 
 
-def _correr(tmp_path, folder, mem_actual, to_actual, falla_update=False):
-    """Ejecuta reconcile_config con un `aws` simulado. Devuelve (stdout, llamadas, FN_TIMEOUT)."""
+def _correr(tmp_path, folder, mem_actual, to_actual, falla_update=False, envs_actuales=None):
+    """Ejecuta reconcile_config con un `aws` simulado. Devuelve (stdout, llamadas, FN_TIMEOUT).
+
+    `envs_actuales` = mapa de variables que la función YA tiene en AWS (lo que no se puede
+    perder al mezclar). None simula una función sin variables.
+    """
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     log = tmp_path / 'llamadas.log'
+    env_json = json.dumps(envs_actuales) if envs_actuales is not None else 'null'
+    # ⚠️ El orden de los `case` importa: la consulta de envs también es un
+    # `get-function-configuration`, así que se distingue por el --query.
     (bin_dir / 'aws').write_text(textwrap.dedent(f"""\
         #!/usr/bin/env bash
         echo "$@" >> {log}
         case "$*" in
+          *Environment.Variables*) echo '{env_json}' ;;
           *get-function-configuration*) echo -e "{mem_actual}\\t{to_actual}" ;;
           *update-function-configuration*) {'echo "boom" 1>&2; exit 1' if falla_update else 'echo OK'} ;;
           *wait*) : ;;
@@ -205,3 +213,85 @@ def test_las_lambdas_detras_de_api_gateway_no_pasan_de_29s():
         if k.startswith('_') or k in asincronas:
             continue
         assert v['timeout'] <= 29, '{} está detrás de API Gateway y pide {} s'.format(k, v['timeout'])
+
+# ── Variables de entorno de AJUSTE (llave "env") ───────────────────────────
+def test_las_envs_se_MEZCLAN_nunca_reemplazan():
+    """⚠️ El guard más importante de este archivo.
+
+    `aws lambda update-function-configuration --environment` REEMPLAZA el mapa COMPLETO.
+    Si el CD lo usara con solo las claves declaradas, cada despliegue **borraría** SECRET_KEY,
+    las credenciales de los proveedores y todo lo demás — y terminaría en VERDE, con la lambda
+    rota en la siguiente invocación. Tiene que leer el mapa actual y mezclar.
+    """
+    src = _paso_bash()
+    assert 'Environment.Variables' in src, 'no lee las envs actuales antes de escribir'
+    assert '$a * $b' in src, 'falta la mezcla (jq `*`) del mapa actual con el declarado'
+
+
+def test_ninguna_env_del_manifiesto_parece_un_secreto():
+    """`config-map.json` está EN GIT. La llave `env` es para ajustes de rendimiento; un
+    secreto ahí queda en el historial para siempre, y rotarlo no lo borra."""
+    cfg = json.loads(CONFIG_MAP.read_text(encoding='utf-8'))
+    SOSPECHOSAS = ('SECRET', 'PASSWORD', 'PASSWD', 'TOKEN', 'CREDENTIAL', 'PRIVATE',
+                   'API_KEY', 'APIKEY', 'AUTH_TOKEN', 'ACCESS_KEY')
+    for lambda_, v in cfg.items():
+        if lambda_.startswith('_'):
+            continue
+        for clave in (v.get('env') or {}):
+            arriba = clave.upper()
+            assert not any(s in arriba for s in SOSPECHOSAS), (
+                '{}: la env "{}" parece un secreto y este archivo está en git'.format(lambda_, clave))
+
+
+def test_las_envs_declaradas_son_texto():
+    """La API de Lambda exige strings en el mapa de variables: un número desnudo en el JSON
+    haría fallar el `update-function-configuration` con un error poco claro."""
+    cfg = json.loads(CONFIG_MAP.read_text(encoding='utf-8'))
+    for lambda_, v in cfg.items():
+        if lambda_.startswith('_'):
+            continue
+        for clave, valor in (v.get('env') or {}).items():
+            assert isinstance(valor, str), '{}.{} debe ser texto, no {}'.format(
+                lambda_, clave, type(valor).__name__)
+
+
+def test_el_fanout_de_PDF_esta_declarado_y_es_menor_que_el_default():
+    """El punto 2 de PROVISION.md §11: bajar REGISTERS_FOR_EAP reparte los PDFs en más
+    invocaciones que Lambda corre en paralelo. Con el default (100) van EN SERIE en una sola."""
+    cfg = json.loads(CONFIG_MAP.read_text(encoding='utf-8'))
+    env = cfg['Api_V1_Email_Prepare-batch-template'].get('env') or {}
+    assert 'REGISTERS_FOR_EAP' in env, 'se perdió el fan-out del combinador de PDF'
+    assert 0 < int(env['REGISTERS_FOR_EAP']) < 100, 'debe ser MENOR que el default de 100'
+
+def test_la_mezcla_CONSERVA_las_variables_que_ya_tenia(tmp_path):
+    """⚠️ El comportamiento, no el texto. Si el CD reemplazara el mapa, la lambda perdería
+    SECRET_KEY en el próximo push y el despliegue terminaría en VERDE — el fallo aparecería
+    después, en la primera invocación."""
+    _, llamadas, _ = _correr(
+        tmp_path, 'Api_V1_Email_Prepare-batch-template', '1024', '300',
+        envs_actuales={'SECRET_KEY': 'no-me-borres', 'SES_CONFIGURATION_SET': 'default'})
+    linea = [l for l in llamadas.split('\n') if 'update-function-configuration' in l]
+    assert linea, 'no se llamó a update-function-configuration'
+    enviado = linea[0]
+    assert 'no-me-borres' in enviado, 'SE PERDIÓ SECRET_KEY al escribir las envs'
+    assert 'SES_CONFIGURATION_SET' in enviado, 'se perdió una env que ya existía'
+    assert 'REGISTERS_FOR_EAP' in enviado, 'no se aplicó la env declarada'
+
+
+def test_si_la_env_declarada_ya_esta_puesta_no_se_reescribe(tmp_path):
+    """Idempotencia también aquí: reescribir el mapa idéntico publica una versión nueva de la
+    función en cada despliegue, sin cambiar nada."""
+    cfg = json.loads(CONFIG_MAP.read_text(encoding='utf-8'))
+    ya = dict(cfg['Api_V1_Email_Prepare-batch-template']['env'])
+    ya['SECRET_KEY'] = 'x'
+    _, llamadas, _ = _correr(tmp_path, 'Api_V1_Email_Prepare-batch-template', '1024', '300',
+                             envs_actuales=ya)
+    assert 'update-function-configuration' not in llamadas
+
+
+def test_una_funcion_sin_variables_recibe_solo_las_declaradas(tmp_path):
+    """Caso borde: la API devuelve `null` (no `{}`) cuando la función nunca tuvo variables."""
+    _, llamadas, _ = _correr(tmp_path, 'Api_V1_Email_Prepare-batch-template', '1024', '300',
+                             envs_actuales=None)
+    assert 'REGISTERS_FOR_EAP' in llamadas
+

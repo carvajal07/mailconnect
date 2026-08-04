@@ -1,0 +1,139 @@
+name: Publicar layer de PDF
+
+# Construye y publica el layer de PDF (reportlab + Pillow + xhtml2pdf + …) CON EL BYTECODE
+# PRECOMPILADO, y opcionalmente lo apunta en las lambdas que renderizan.
+#
+# ⚠️ POR QUÉ EXISTE ESTE WORKFLOW EN VEZ DE CORRER EL SCRIPT A MANO
+# El .pyc lleva dentro la versión de Python (`cpython-313`) y **solo lo usa esa versión**. Si
+# se compila con otra, Lambda lo IGNORA y recompila en cada arranque en frío — no falla, solo
+# pierdes la mejora sin enterarte. Aquí la versión se fija con setup-python, así que no
+# depende de lo que tenga instalado quien lo ejecute.
+#
+# MEDIDO en este repo sobre el layer real (python3.13):
+#     con bytecode ......  ~525 ms de import
+#     sin bytecode ...... ~1.480 ms de import      → ~1 s menos por arranque en frío
+# Y en Lambda el ahorro es MAYOR: eso se midió con una CPU completa; a 256 MB (~0,15 vCPU)
+# el mismo trabajo tarda varias veces más.
+#
+# NO se dispara solo: publicar un layer crea una versión nueva y hay que apuntar las lambdas
+# a ella. Se ejecuta a mano cuando cambian las dependencias de PDF.
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: 'Arquitectura del layer'
+        type: choice
+        options: [x86_64, arm64]
+        default: x86_64
+      attach:
+        description: 'Apuntar las lambdas de PDF a la versión nueva (si no, solo se publica)'
+        type: boolean
+        default: true
+      dry_run:
+        description: 'Construir y medir, SIN publicar nada en AWS'
+        type: boolean
+        default: false
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  PYVER: '3.13'
+  # Las tres lambdas que importan la pila de PDF.
+  LAMBDAS_PDF: 'Api_V1_Template_Combination-EAP-PDF Api_V1_Template_Render-pdf Api_V1_Template_Render-engine'
+
+jobs:
+  layer:
+    name: Construir y publicar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # La versión EXACTA del runtime: es lo que hace que el bytecode sirva.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Construir el layer
+        run: ./scripts/build_layer_pdf.sh "${{ inputs.arch }}"
+
+      - name: Comprobar que el bytecode se usa de verdad
+        # Guard: mide el import con y sin bytecode sobre el layer RECIÉN construido. Si no hay
+        # diferencia, algo salió mal (tag equivocado, compileall que falló) y publicarlo sería
+        # pagar 29 MB de descarga sin la mejora.
+        run: |
+          set -euo pipefail
+          DIR="build/layer-pdf-${{ inputs.arch }}/python"
+          medir() {  # $1 = flags de python
+            python3 $1 -c "
+          import sys, time; sys.path.insert(0, '$2')
+          t = time.perf_counter(); import xhtml2pdf.pisa, reportlab.platypus
+          print(int((time.perf_counter()-t)*1000))"
+          }
+          cp -r "$DIR" /tmp/sinpyc
+          find /tmp/sinpyc -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+          CON=$(medir "" "$DIR")
+          SIN=$(medir "-B" "/tmp/sinpyc")
+          echo "Import con bytecode: ${CON} ms · sin bytecode: ${SIN} ms"
+          echo "- Import **con** bytecode: ${CON} ms" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Import **sin** bytecode: ${SIN} ms" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CON" -ge "$SIN" ]; then
+            echo "❌ El bytecode no está mejorando nada; no se publica."; exit 1
+          fi
+          echo "✅ Ahorro por arranque en frío: $((SIN - CON)) ms"
+          echo "- **Ahorro por arranque en frío: $((SIN - CON)) ms**" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Credenciales AWS
+        if: ${{ !inputs.dry_run }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Publicar el layer
+        if: ${{ !inputs.dry_run }}
+        id: publish
+        run: |
+          set -euo pipefail
+          ARN=$(aws lambda publish-layer-version \
+                  --layer-name "mailconnect-pdf-${{ inputs.arch }}" \
+                  --description "reportlab+Pillow+xhtml2pdf con bytecode precompilado (python$PYVER)" \
+                  --zip-file "fileb://build/layer-pdf-${{ inputs.arch }}.zip" \
+                  --compatible-runtimes "python$PYVER" \
+                  --compatible-architectures "${{ inputs.arch }}" \
+                  --query LayerVersionArn --output text)
+          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
+          echo "📦 $ARN"
+          echo "- Layer publicado: \`$ARN\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apuntar las lambdas de PDF al layer nuevo
+        if: ${{ !inputs.dry_run && inputs.attach }}
+        run: |
+          set -euo pipefail
+          NUEVO="${{ steps.publish.outputs.arn }}"
+          # El nombre del layer SIN la versión, para reemplazar la versión vieja y no duplicarla.
+          BASE="${NUEVO%:*}"
+          for FN in $LAMBDAS_PDF; do
+            # ⚠️ --layers REEMPLAZA la lista completa. Se leen los que la función ya tiene, se
+            # quita cualquier versión previa de ESTE layer y se añade la nueva: así no se
+            # pierden los demás layers (p. ej. el de PyJWT) ni se acumulan versiones viejas.
+            ACTUALES=$(aws lambda get-function-configuration --function-name "$FN" \
+                         --query 'Layers[].Arn' --output text 2>/dev/null || echo "")
+            LISTA=""
+            for L in $ACTUALES; do
+              [ "${L%:*}" = "$BASE" ] && continue
+              LISTA="$LISTA $L"
+            done
+            LISTA="$LISTA $NUEVO"
+            echo "🔗 $FN ←$LISTA"
+            aws lambda update-function-configuration --function-name "$FN" \
+              --layers $LISTA >/dev/null
+            aws lambda wait function-updated-v2 --function-name "$FN"
+            echo "- \`$FN\` actualizada" >> "$GITHUB_STEP_SUMMARY"
+          done
+          cat >> "$GITHUB_STEP_SUMMARY" <<'FIN'
+
+          **Verificar:** en CloudWatch, el `Init Duration` de un arranque en frío de
+          `Api_V1_Template_Combination-EAP-PDF` debe bajar ~1 s. Si no baja, el bytecode no se
+          está usando (versión de Python distinta).
+          FIN

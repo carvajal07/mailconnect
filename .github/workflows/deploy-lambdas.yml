@@ -635,13 +635,38 @@ jobs:
             if [ -n "$arch" ] && [ "$arch" != "$cur_arch" ]; then
               arch_args=(--architectures "$arch")
             fi
-            if [ "$cur_mem" = "$mem" ] && [ "$cur_to" = "$to" ] && [ ${#arch_args[@]} -eq 0 ]; then
+
+            # ── Variables de entorno de AJUSTE (llave "env") ──
+            # ⚠️ `--environment` de la CLI REEMPLAZA el mapa COMPLETO. Aquí se LEE el actual y
+            # se MEZCLAN solo las claves declaradas: si se reemplazara, la función perdería
+            # SECRET_KEY, las credenciales de los proveedores y todo lo demás — y el despliegue
+            # terminaría en verde con la lambda rota en la siguiente invocación.
+            local env_decl env_cur env_merge env_args=()
+            env_decl=$(echo "$cfg" | jq -c '.env // {}')
+            if [ "$env_decl" != "{}" ]; then
+              env_cur=$(aws lambda get-function-configuration --function-name "$fn" \
+                          --query 'Environment.Variables' --output json 2>/dev/null || echo 'null')
+              [ "$env_cur" = "null" ] || [ -z "$env_cur" ] && env_cur='{}'
+              # ⚠️ Se NORMALIZAN los dos lados (compacto + claves ordenadas) antes de comparar.
+              # `--output json` de la CLI viene indentado y con las claves en otro orden, así
+              # que una comparación de TEXTO siempre daría "distinto" y el CD reescribiría las
+              # envs —publicando una versión nueva de la función— en cada despliegue.
+              env_cur=$(jq -cS . <<<"$env_cur")
+              env_merge=$(jq -ncS --argjson a "$env_cur" --argjson b "$env_decl" '$a * $b')
+              if [ "$env_merge" != "$env_cur" ]; then
+                env_args=(--environment "$(jq -nc --argjson v "$env_merge" '{Variables:$v}')")
+                echo "   🔧 Envs de ajuste en $fn: $(echo "$env_decl" | jq -r 'to_entries|map("\(.key)=\(.value)")|join(" ")')"
+              fi
+            fi
+            if [ "$cur_mem" = "$mem" ] && [ "$cur_to" = "$to" ] \
+                 && [ ${#arch_args[@]} -eq 0 ] && [ ${#env_args[@]} -eq 0 ]; then
               echo "   ⚙️  Configuración ya correcta en $fn (${mem} MB / ${to}s / ${cur_arch:-x86_64})"
               return 0
             fi
             echo "   ⚙️  Ajustando $fn: ${cur_mem:-?} MB/${cur_to:-?}s → ${mem} MB/${to}s${arch:+ · ${cur_arch}→${arch}}${nota:+  ($nota)}"
             if aws lambda update-function-configuration --function-name "$fn" \
-                 --memory-size "$mem" --timeout "$to" "${arch_args[@]}" >/dev/null 2>/tmp/cfgerr; then
+                 --memory-size "$mem" --timeout "$to" \
+                 "${arch_args[@]}" "${env_args[@]}" >/dev/null 2>/tmp/cfgerr; then
               # Sin esperar, el siguiente update (o el create-event-source-mapping) puede chocar
               # con ResourceConflictException: la función queda en estado Pending un instante.
               aws lambda wait function-updated-v2 --function-name "$fn" 2>/dev/null || true
